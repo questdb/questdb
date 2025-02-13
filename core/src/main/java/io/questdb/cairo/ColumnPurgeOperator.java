@@ -63,7 +63,7 @@ public class ColumnPurgeOperator implements Closeable {
         try {
             this.ff = configuration.getFilesFacade();
             this.path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
-            path.of(configuration.getRoot());
+            path.of(configuration.getDbRoot());
             pathRootLen = path.size();
             this.purgeLogWriter = purgeLogWriter;
             this.updateCompleteColumnName = updateCompleteColumnName;
@@ -82,7 +82,7 @@ public class ColumnPurgeOperator implements Closeable {
         try {
             this.ff = configuration.getFilesFacade();
             this.path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
-            path.of(configuration.getRoot());
+            path.of(configuration.getDbRoot());
             pathRootLen = path.size();
             this.purgeLogWriter = null;
             this.updateCompleteColumnName = null;

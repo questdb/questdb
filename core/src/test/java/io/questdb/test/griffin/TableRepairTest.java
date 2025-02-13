@@ -49,7 +49,7 @@ public class TableRepairTest extends AbstractCairoTest {
                 // last and "active" partition is "1970-01-12"
                 try (Path path = new Path()) {
                     TableToken tableToken = engine.verifyTableName("tst");
-                    path.of(configuration.getRoot()).concat(tableToken).concat("1970-01-12").$();
+                    path.of(configuration.getDbRoot()).concat(tableToken).concat("1970-01-12").$();
                     Assert.assertTrue(Files.rmdir(path, true));
                 }
 
@@ -88,7 +88,7 @@ public class TableRepairTest extends AbstractCairoTest {
 
                 try (Path path = new Path()) {
                     TableToken tableToken = engine.verifyTableName("tst");
-                    path.of(configuration.getRoot()).concat(tableToken).concat("1970-01-09").$();
+                    path.of(configuration.getDbRoot()).concat(tableToken).concat("1970-01-09").$();
                     Assert.assertTrue(Files.rmdir(path, true));
                 }
 

@@ -1900,7 +1900,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             try (Path temp = new Path()) {
-                temp.of(engine.getConfiguration().getRoot()).concat("dummy_non_existing_path");
+                temp.of(engine.getConfiguration().getDbRoot()).concat("dummy_non_existing_path");
                 ff = new TestFilesFacadeImpl() {
                     @Override
                     public long openRO(LPSZ name) {
@@ -1939,7 +1939,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             try (Path temp = new Path()) {
-                temp.of(engine.getConfiguration().getRoot()).concat("dummy_non_existing_path").$();
+                temp.of(engine.getConfiguration().getDbRoot()).concat("dummy_non_existing_path").$();
                 ff = new TestFilesFacadeImpl() {
 
                     @Override
@@ -3551,7 +3551,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
     private static Path getPath(String tableName) {
         TableToken tableToken = engine.verifyTableName(tableName);
-        return new Path().of(engine.getConfiguration().getRoot()).concat(tableToken).concat(TableUtils.META_FILE_NAME);
+        return new Path().of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TableUtils.META_FILE_NAME);
     }
 
     private static String padHexLong(long value) {

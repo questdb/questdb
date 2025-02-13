@@ -100,7 +100,7 @@ public class AlterTableSetTypeTest extends AbstractCairoTest {
 
     private Path assertConvertFileExists(String tableName) {
         final TableToken token = engine.verifyTableName(tableName);
-        final Path path = Path.PATH.get().of(configuration.getRoot()).concat(token).concat(WalUtils.CONVERT_FILE_NAME);
+        final Path path = Path.PATH.get().of(configuration.getDbRoot()).concat(token).concat(WalUtils.CONVERT_FILE_NAME);
         Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
         return path;
     }

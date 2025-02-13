@@ -476,7 +476,7 @@ public class TableUpdateDetails implements Closeable {
                     return NOT_FOUND_LOOKUP;
                 }
                 final CairoConfiguration cairoConfiguration = engine.getConfiguration();
-                path.of(cairoConfiguration.getRoot()).concat(tableToken);
+                path.of(cairoConfiguration.getDbRoot()).concat(tableToken);
                 SymbolCache symCache = symbolCachePool.pop();
 
                 if (this.clean) {

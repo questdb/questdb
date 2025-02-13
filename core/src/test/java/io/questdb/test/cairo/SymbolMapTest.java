@@ -24,12 +24,26 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SymbolMapReaderImpl;
+import io.questdb.cairo.SymbolMapUtil;
+import io.questdb.cairo.SymbolMapWriter;
+import io.questdb.cairo.SymbolValueCountCollector;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.IntObjHashMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.NanosecondClockImpl;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -77,7 +91,7 @@ public class SymbolMapTest extends AbstractCairoTest {
     public void testAppend() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 1000;
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
                 create(path, "x", N, true);
                 Rnd rnd = new Rnd();
 
@@ -152,7 +166,7 @@ public class SymbolMapTest extends AbstractCairoTest {
             IntObjHashMap<String> symbols = new IntObjHashMap<>();
 
             SymbolMapReaderImpl reader;
-            try (final Path path = new Path().of(configuration.getRoot())) {
+            try (final Path path = new Path().of(configuration.getDbRoot())) {
                 create(path, "x", keys, false);
 
                 // Obtain the reader when there are no symbols yet.
@@ -234,7 +248,7 @@ public class SymbolMapTest extends AbstractCairoTest {
             int N = 10000000;
             int symbolCount = 1024;
             ObjList<String> symbols = new ObjList<>();
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
                 create(path, "x", symbolCount, true);
                 try (
                         SymbolMapWriter writer = new SymbolMapWriter(
@@ -271,7 +285,7 @@ public class SymbolMapTest extends AbstractCairoTest {
     @Test
     public void testMapDoesNotExist() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
                 try {
                     new SymbolMapWriter(
                             configuration,
@@ -294,7 +308,7 @@ public class SymbolMapTest extends AbstractCairoTest {
     public void testMergeAppend() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10;
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
                 create(path, "x", N, true);
                 try (
                         SymbolMapWriter writer = new SymbolMapWriter(
@@ -383,7 +397,7 @@ public class SymbolMapTest extends AbstractCairoTest {
     public void testMergeIntoEmpty() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10000;
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
                 create(path, "x", N, false);
                 try (
                         SymbolMapWriter writer = new SymbolMapWriter(
@@ -442,7 +456,7 @@ public class SymbolMapTest extends AbstractCairoTest {
     public void testMergeOverlapped() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10;
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
                 int plen = path.size();
                 create(path, "x", N, true);
                 try (
@@ -559,7 +573,7 @@ public class SymbolMapTest extends AbstractCairoTest {
     public void testMergeWithEmpty() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10000;
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
                 create(path, "x", N, false);
                 try (
                         SymbolMapWriter writer = new SymbolMapWriter(
@@ -606,7 +620,7 @@ public class SymbolMapTest extends AbstractCairoTest {
     public void testReadEmptySymbolMap() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10000;
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
                 create(path, "x", N, true);
                 try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0)) {
                     Assert.assertEquals(N, reader.getSymbolCapacity());
@@ -620,7 +634,7 @@ public class SymbolMapTest extends AbstractCairoTest {
     @Test
     public void testReaderCache() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
                 create(path, "x", 16, true);
 
                 int[] keys = new int[16];
@@ -645,7 +659,7 @@ public class SymbolMapTest extends AbstractCairoTest {
     @Test
     public void testReaderWhenMapDoesNotExist() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
                 try {
                     new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0);
                     Assert.fail();
@@ -659,7 +673,7 @@ public class SymbolMapTest extends AbstractCairoTest {
     @Test
     public void testReaderWithShortHeader() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
                 int plen = path.size();
                 Assert.assertTrue(configuration.getFilesFacade().touch(path.concat("x").put(".o").$()));
                 try {
@@ -676,7 +690,7 @@ public class SymbolMapTest extends AbstractCairoTest {
     public void testRollback() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 1024;
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
                 create(path, "x", N, true);
                 try (
                         SymbolMapWriter writer = new SymbolMapWriter(
@@ -718,7 +732,7 @@ public class SymbolMapTest extends AbstractCairoTest {
     public void testRollbackAndRetry() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 1024;
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
                 create(path, "x", N, true);
                 try (
                         SymbolMapWriter writer = new SymbolMapWriter(
@@ -776,7 +790,7 @@ public class SymbolMapTest extends AbstractCairoTest {
             ObjList<CharSequence> symbolList = new ObjList<>();
             IntList indexList = new IntList();
 
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
 
                 SymbolMapUtil smu = new SymbolMapUtil();
                 create(path, "x", N, true);
@@ -821,7 +835,7 @@ public class SymbolMapTest extends AbstractCairoTest {
     @Test
     public void testShortHeader() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
                 int plen = path.size();
                 Assert.assertTrue(configuration.getFilesFacade().touch(path.concat("x").put(".o").$()));
                 try {
@@ -846,7 +860,7 @@ public class SymbolMapTest extends AbstractCairoTest {
     public void testSimpleAdd() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 1000000;
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
                 create(path, "x", N, false);
                 try (SymbolMapWriter writer = new SymbolMapWriter(
                         configuration,
@@ -877,7 +891,7 @@ public class SymbolMapTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             int N = 1000000;
             Rnd rnd = new Rnd();
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
                 create(path, "x", N, false);
                 try (
                         SymbolMapWriter writer = new SymbolMapWriter(
@@ -920,7 +934,7 @@ public class SymbolMapTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             int N = 1000000;
             Rnd rnd = new Rnd();
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
                 create(path, "x", N, false);
                 try (
                         SymbolMapWriter writer = new SymbolMapWriter(
@@ -970,7 +984,7 @@ public class SymbolMapTest extends AbstractCairoTest {
     public void testTruncate() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 1024;
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
                 create(path, "x", N, true);
                 try (
                         SymbolMapWriter writer = new SymbolMapWriter(

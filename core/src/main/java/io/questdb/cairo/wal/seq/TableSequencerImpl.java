@@ -87,7 +87,7 @@ public class TableSequencerImpl implements TableSequencer {
         final FilesFacade ff = configuration.getFilesFacade();
         try {
             path = new Path();
-            path.of(configuration.getRoot());
+            path.of(configuration.getDbRoot());
             path.concat(tableToken.getDirName()).concat(SEQ_DIR);
             rootLen = path.size();
 

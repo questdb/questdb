@@ -98,7 +98,7 @@ public class WriterPool extends AbstractPool {
         super(configuration, configuration.getInactiveWriterTTL());
         this.configuration = configuration;
         this.clock = configuration.getMicrosecondClock();
-        this.root = configuration.getRoot();
+        this.root = configuration.getDbRoot();
         this.engine = engine;
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
     }

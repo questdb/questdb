@@ -1022,7 +1022,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                     CairoConfiguration configuration = engine.getConfiguration();
                     TableToken tableToken = engine.verifyTableName("xyz");
                     try (
-                            Path path = new Path().concat(configuration.getRoot()).concat(tableToken);
+                            Path path = new Path().concat(configuration.getDbRoot()).concat(tableToken);
                             TxnScoreboard txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path)
                     ) {
                         Assert.assertEquals(2, txnScoreboard.getMin());

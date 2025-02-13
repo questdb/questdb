@@ -255,7 +255,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                 WalWriter ww = engine.getWalWriter(tableToken)
         ) {
 
-            path.concat(engine.getConfiguration().getRoot()).concat(ww.getTableToken()).concat(WalUtils.SEQ_DIR);
+            path.concat(engine.getConfiguration().getDbRoot()).concat(ww.getTableToken()).concat(WalUtils.SEQ_DIR);
             for (int i = 0; i < iterations; i++) {
                 addColumn(ww, "newCol" + i, ColumnType.INT);
                 try (TableRecordMetadata metadata = engine.getSequencerMetadata(tableToken)) {
