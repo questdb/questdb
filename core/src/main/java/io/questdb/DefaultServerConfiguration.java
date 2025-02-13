@@ -53,12 +53,12 @@ public class DefaultServerConfiguration implements ServerConfiguration {
 
     public DefaultServerConfiguration(CharSequence dbRoot, CharSequence installRoot) {
         this.cairoConfiguration = new DefaultCairoConfiguration(dbRoot, installRoot);
+        this.lineTcpReceiverConfiguration = new DefaultLineTcpReceiverConfiguration(cairoConfiguration);
+        this.httpServerConfiguration = new DefaultHttpServerConfiguration(cairoConfiguration);
     }
 
     public DefaultServerConfiguration(CharSequence dbRoot) {
-        this.cairoConfiguration = new DefaultCairoConfiguration(dbRoot);
-        this.lineTcpReceiverConfiguration = new DefaultLineTcpReceiverConfiguration(cairoConfiguration);
-        this.httpServerConfiguration = new DefaultHttpServerConfiguration(cairoConfiguration);
+        this(dbRoot, null);
     }
 
     @Override
