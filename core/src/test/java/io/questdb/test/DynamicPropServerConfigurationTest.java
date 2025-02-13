@@ -41,9 +41,12 @@ import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.metrics.QueryTracingJob;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cutlass.http.TestHttpClient;
 import io.questdb.test.tools.TestUtils;
+import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -69,6 +72,13 @@ import static org.junit.Assert.assertFalse;
 public class DynamicPropServerConfigurationTest extends AbstractTest {
     private static final TestHttpClient testHttpClient = new TestHttpClient();
     private File serverConf;
+
+    @AfterClass
+    public static void tearDownStatic() {
+        testHttpClient.close();
+        AbstractTest.tearDownStatic();
+        assert Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN) == 0;
+    }
 
     @Before
     public void setUp() {

@@ -24,19 +24,28 @@
 
 package io.questdb.test.cutlass.http;
 
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.AfterClass;
 import org.junit.Test;
 
 public class ArrayBufferOverflowTest extends AbstractTest {
     private static final TestHttpClient testHttpClient = new TestHttpClient();
 
+    @AfterClass
+    public static void tearDownStatic() {
+        testHttpClient.close();
+        AbstractTest.tearDownStatic();
+        assert Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN) == 0;
+    }
+
     @Test
     public void testSimple() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
-            testHttpClient.assertGet(
-                    "{\"query\":\"select rnd_double_array(6, 1, 0, 10, 10, 10, 10, 10, 10);\",\"columns\":[{\"name\":\"rnd_double_array\",\"type\":\"ARRAY\",\"dim\":6,\"elemType\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[]],\"count\":1,\"error\":\"HTTP 400 (Bad request), response buffer is too small for the column value [columnName=rnd_double_array, columnIndex=0]\"}",
-                    "select rnd_double_array(6, 1, 0, 10, 10, 10, 10, 10, 10);"
-            );
-        });
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> testHttpClient.assertGet(
+                "{\"query\":\"select rnd_double_array(6, 1, 0, 10, 10, 10, 10, 10, 10);\",\"columns\":[{\"name\":\"rnd_double_array\",\"type\":\"ARRAY\",\"dim\":6,\"elemType\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[]],\"count\":1,\"error\":\"HTTP 400 (Bad request), response buffer is too small for the column value [columnName=rnd_double_array, columnIndex=0]\"}",
+                "select rnd_double_array(6, 1, 0, 10, 10, 10, 10, 10, 10);"
+        )));
     }
 }

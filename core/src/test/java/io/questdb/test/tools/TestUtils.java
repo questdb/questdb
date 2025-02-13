@@ -850,6 +850,10 @@ public final class TestUtils {
 
     public static int connect(long fd, long sockAddr) {
         Assert.assertTrue(fd > -1);
+        // clients may run out of ephemeral ports, that are still lingering
+        // enable port reuse to avoid WSAEADDRINUSE(10048)
+        Net.setReusePort(fd);
+        Net.setReuseAddress(fd);
         return Net.connect(fd, sockAddr);
     }
 

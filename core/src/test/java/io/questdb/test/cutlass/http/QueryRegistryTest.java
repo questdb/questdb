@@ -25,8 +25,11 @@
 package io.questdb.test.cutlass.http;
 
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractTest;
+import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -35,6 +38,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class QueryRegistryTest extends AbstractTest {
     private static final TestHttpClient testHttpClient = new TestHttpClient();
     private final AtomicInteger counter = new AtomicInteger();
+
+    @AfterClass
+    public static void tearDownStatic() {
+        testHttpClient.close();
+        AbstractTest.tearDownStatic();
+        assert Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN) == 0;
+    }
 
     @Before
     public void setUp() {
