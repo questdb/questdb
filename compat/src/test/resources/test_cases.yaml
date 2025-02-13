@@ -287,7 +287,7 @@ tests:
             type: "INT"
         expect:
           result:
-            - [ 'Sym2', 50, '1970-01-01 00:00:29.700000Z' ]
+            - [ 'Sym2', 50, '1970-01-01T00:00:29.700000Z' ]
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS ${table_name};"
