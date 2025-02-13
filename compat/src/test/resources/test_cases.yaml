@@ -268,9 +268,9 @@ tests:
         description: Check with first limits
         query: "SELECT col1, sum(status) as sum, last(ts) as last FROM ${table_name} ORDER BY 2 DESC LIMIT $[1],$[2]"
         parameters:
-          - value: 1
+          - value: "1"
             type: "INT4"
-          - value: 3
+          - value: "3"
             type: "INT4"
         # let's use the exact match here since it only returns one row
         expect:
@@ -281,9 +281,9 @@ tests:
         description: Check with second limits
         query: "SELECT col1, sum(status) as sum, last(ts) as last FROM ${table_name} ORDER BY 2 DESC LIMIT $[1],$[2]"
         parameters:
-          - value: 1
+          - value: "1"
             type: "INT4"
-          - value: 2
+          - value: "2"
             type: "INT4"
         expect:
           result:
