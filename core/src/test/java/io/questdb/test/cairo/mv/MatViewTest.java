@@ -869,6 +869,127 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testResumeSuspendMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            // create table and mat view
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp, extra_col long" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute(
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+
+            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
+            drainQueues();
+
+            assertSql(
+                    "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
+                            "price_1h\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tfalse\t1\t1\n",
+                    "mat_views"
+            );
+
+            assertSql(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    "price_1h order by sym"
+            );
+
+            // suspend mat view
+            execute("alter materialized view price_1h suspend wal");
+
+            execute("insert into base_price(sym, price, ts) values('jpyusd', 103.14, '2024-09-10T13:04')");
+            drainQueues();
+
+            assertSql(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    "price_1h order by sym"
+            );
+
+            assertSql(
+                    "name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+                            "base_price\tfalse\t2\t0\t2\t\t\t0\n" +
+                            "price_1h\ttrue\t1\t0\t2\t\t\t0\n",
+                    "wal_tables()"
+            );
+
+            // resume mat view
+            execute("alter materialized view price_1h resume wal");
+            drainQueues();
+
+            assertSql(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                            "jpyusd\t103.14\t2024-09-10T13:00:00.000000Z\n",
+                    "price_1h order by sym"
+            );
+
+            assertSql(
+                    "name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+                            "base_price\tfalse\t2\t0\t2\t\t\t0\n" +
+                            "price_1h\tfalse\t2\t0\t2\t\t\t0\n",
+                    "wal_tables()"
+            );
+
+            // suspend mat view again
+            execute("alter materialized view price_1h suspend wal");
+
+            execute("insert into base_price(sym, price, ts) values('jpyusd', 103.17, '2024-09-10T13:22')");
+            drainQueues();
+
+            assertSql(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                            "jpyusd\t103.14\t2024-09-10T13:00:00.000000Z\n",
+                    "price_1h order by sym"
+            );
+
+            assertSql(
+                    "name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+                            "base_price\tfalse\t3\t0\t3\t\t\t0\n" +
+                            "price_1h\ttrue\t2\t0\t3\t\t\t0\n",
+                    "wal_tables()"
+            );
+
+            // resume mat view from txn
+            execute("alter materialized view price_1h resume wal from txn 3");
+            drainQueues();
+
+            assertSql(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                            "jpyusd\t103.17\t2024-09-10T13:00:00.000000Z\n",
+                    "price_1h order by sym"
+            );
+
+            assertSql(
+                    "name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+                            "base_price\tfalse\t3\t0\t3\t\t\t0\n" +
+                            "price_1h\tfalse\t3\t0\t3\t\t\t0\n",
+                    "wal_tables()"
+            );
+        });
+    }
+
+    @Test
     @Ignore
     public void testSampleByDST() throws Exception {
         assertMemoryLeak(() -> {

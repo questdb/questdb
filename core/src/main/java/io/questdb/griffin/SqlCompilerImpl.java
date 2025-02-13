@@ -1305,12 +1305,51 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void compileAlter(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok == null || !isTableKeyword(tok)) {
+        if (tok == null || (!isTableKeyword(tok) && !isMaterializedKeyword(tok))) {
             compileAlterExt(executionContext, tok);
             return;
         }
+        if (isTableKeyword(tok)) {
+            compileAlterTable(executionContext);
+        } else {
+            compileAlterMatView(executionContext);
+        }
+    }
+
+    private void compileAlterMatView(SqlExecutionContext executionContext) throws SqlException {
+        CharSequence tok = expectToken(lexer, "'view'");
+        if (!isViewKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'view' expected'");
+        }
+
+        final int matViewNamePosition = lexer.getPosition();
+        tok = expectToken(lexer, "materialized view name");
+        assertTableNameIsQuotedOrNotAKeyword(tok, matViewNamePosition);
+        final TableToken matViewToken = tableExistsOrFail(matViewNamePosition, GenericLexer.unquote(tok), executionContext);
+
+        try {
+            tok = expectToken(lexer, "'resume' or 'suspend'");
+            if (isResumeKeyword(tok)) {
+                parseResumeWal(matViewToken, matViewNamePosition, executionContext);
+            } else if (isSuspendKeyword(tok)) {
+                parseSuspendWal(matViewToken, matViewNamePosition, executionContext);
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "'resume' or 'suspend'").put(" expected");
+            }
+        } catch (CairoException e) {
+            LOG.info().$("could not alter materialized view [table=").$(matViewToken.getTableName())
+                    .$(", errno=").$(e.getErrno())
+                    .$(", ex=").$(e.getFlyweightMessage()).$();
+            if (e.getPosition() == 0) {
+                e.position(lexer.lastTokenPosition());
+            }
+            throw e;
+        }
+    }
+
+    private void compileAlterTable(SqlExecutionContext executionContext) throws SqlException {
         final int tableNamePosition = lexer.getPosition();
-        tok = expectToken(lexer, "table name");
+        CharSequence tok = expectToken(lexer, "table name");
         assertTableNameIsQuotedOrNotAKeyword(tok, tableNamePosition);
         final TableToken tableToken = tableExistsOrFail(tableNamePosition, GenericLexer.unquote(tok), executionContext);
         checkMatViewModification(tableToken);
@@ -1529,79 +1568,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.$(lexer.lastTokenPosition(), "'param' or 'type' expected");
                 }
             } else if (isResumeKeyword(tok)) {
-                tok = expectToken(lexer, "'wal'");
-                if (!isWalKeyword(tok)) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'wal' expected");
-                }
-
-                tok = SqlUtil.fetchNext(lexer); // optional FROM part
-                long fromTxn = -1;
-                if (tok != null && !Chars.equals(tok, ';')) {
-                    if (isFromKeyword(tok)) {
-                        tok = expectToken(lexer, "'transaction' or 'txn'");
-                        if (!(isTransactionKeyword(tok) || isTxnKeyword(tok))) {
-                            throw SqlException.$(lexer.lastTokenPosition(), "'transaction' or 'txn' expected");
-                        }
-                        CharSequence txnValue = expectToken(lexer, "transaction value");
-                        try {
-                            fromTxn = Numbers.parseLong(txnValue);
-                        } catch (NumericException e) {
-                            throw SqlException.$(lexer.lastTokenPosition(), "invalid value [value=").put(txnValue).put(']');
-                        }
-                    } else {
-                        throw SqlException.$(lexer.lastTokenPosition(), "'from' expected");
-                    }
-                }
-                if (!engine.isWalTable(tableToken)) {
-                    throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
-                }
-                securityContext.authorizeResumeWal(tableToken);
-                alterTableResume(tableNamePosition, tableToken, fromTxn, executionContext);
+                parseResumeWal(tableToken, tableNamePosition, executionContext);
             } else if (isSuspendKeyword(tok)) {
-                tok = expectToken(lexer, "'wal'");
-                if (!isWalKeyword(tok)) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'wal' expected");
-                }
-                if (!engine.isWalTable(tableToken)) {
-                    throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
-                }
-                if (!configuration.isDevModeEnabled()) {
-                    throw SqlException.$(0, "Cannot suspend table, database is not in dev mode");
-                }
-
-                ErrorTag errorTag = ErrorTag.NONE;
-                String errorMessage = "";
-
-                tok = SqlUtil.fetchNext(lexer); // optional WITH part
-                if (tok != null && !Chars.equals(tok, ';')) {
-                    if (isWithKeyword(tok)) {
-                        tok = expectToken(lexer, "error code/tag");
-                        final CharSequence errorCodeOrTagValue = GenericLexer.unquote(tok).toString();
-                        try {
-                            final int errorCode = Numbers.parseInt(errorCodeOrTagValue);
-                            errorTag = ErrorTag.resolveTag(errorCode);
-                        } catch (NumericException e) {
-                            try {
-                                errorTag = ErrorTag.resolveTag(errorCodeOrTagValue);
-                            } catch (CairoException cairoException) {
-                                throw SqlException.$(lexer.lastTokenPosition(), "invalid value [value=").put(errorCodeOrTagValue).put(']');
-                            }
-                        }
-                        final CharSequence comma = expectToken(lexer, "','");
-                        if (!Chars.equals(comma, ',')) {
-                            throw SqlException.position(lexer.getPosition()).put("',' expected");
-                        }
-                        tok = expectToken(lexer, "error message");
-                        errorMessage = GenericLexer.unquote(tok).toString();
-                        tok = SqlUtil.fetchNext(lexer);
-                        if (tok != null && !Chars.equals(tok, ';')) {
-                            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [token=").put(tok).put(']');
-                        }
-                    } else {
-                        throw SqlException.$(lexer.lastTokenPosition(), "'with' expected");
-                    }
-                }
-                alterTableSuspend(tableNamePosition, tableToken, errorTag, errorMessage, executionContext);
+                parseSuspendWal(tableToken, tableNamePosition, executionContext);
             } else if (isSquashKeyword(tok)) {
                 securityContext.authorizeAlterTableDropPartition(tableToken);
                 tok = expectToken(lexer, "'partitions'");
@@ -3494,6 +3463,84 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    private void parseResumeWal(TableToken tableToken, int tableNamePosition, SqlExecutionContext executionContext) throws SqlException {
+        CharSequence tok = expectToken(lexer, "'wal'");
+        if (!isWalKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'wal' expected");
+        }
+        if (!engine.isWalTable(tableToken)) {
+            throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
+        }
+
+        tok = SqlUtil.fetchNext(lexer); // optional FROM part
+        long fromTxn = -1;
+        if (tok != null && !Chars.equals(tok, ';')) {
+            if (isFromKeyword(tok)) {
+                tok = expectToken(lexer, "'transaction' or 'txn'");
+                if (!(isTransactionKeyword(tok) || isTxnKeyword(tok))) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'transaction' or 'txn' expected");
+                }
+                CharSequence txnValue = expectToken(lexer, "transaction value");
+                try {
+                    fromTxn = Numbers.parseLong(txnValue);
+                } catch (NumericException e) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "invalid value [value=").put(txnValue).put(']');
+                }
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "'from' expected");
+            }
+        }
+        executionContext.getSecurityContext().authorizeResumeWal(tableToken);
+        alterTableResume(tableNamePosition, tableToken, fromTxn, executionContext);
+    }
+
+    private void parseSuspendWal(TableToken tableToken, int tableNamePosition, SqlExecutionContext executionContext) throws SqlException {
+        CharSequence tok = expectToken(lexer, "'wal'");
+        if (!isWalKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'wal' expected");
+        }
+        if (!engine.isWalTable(tableToken)) {
+            throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
+        }
+        if (!configuration.isDevModeEnabled()) {
+            throw SqlException.$(0, "Cannot suspend table, database is not in dev mode");
+        }
+
+        ErrorTag errorTag = ErrorTag.NONE;
+        String errorMessage = "";
+
+        tok = SqlUtil.fetchNext(lexer); // optional WITH part
+        if (tok != null && !Chars.equals(tok, ';')) {
+            if (isWithKeyword(tok)) {
+                tok = expectToken(lexer, "error code/tag");
+                final CharSequence errorCodeOrTagValue = GenericLexer.unquote(tok).toString();
+                try {
+                    final int errorCode = Numbers.parseInt(errorCodeOrTagValue);
+                    errorTag = ErrorTag.resolveTag(errorCode);
+                } catch (NumericException e) {
+                    try {
+                        errorTag = ErrorTag.resolveTag(errorCodeOrTagValue);
+                    } catch (CairoException cairoException) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "invalid value [value=").put(errorCodeOrTagValue).put(']');
+                    }
+                }
+                final CharSequence comma = expectToken(lexer, "','");
+                if (!Chars.equals(comma, ',')) {
+                    throw SqlException.position(lexer.getPosition()).put("',' expected");
+                }
+                tok = expectToken(lexer, "error message");
+                errorMessage = GenericLexer.unquote(tok).toString();
+                tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && !Chars.equals(tok, ';')) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [token=").put(tok).put(']');
+                }
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "'with' expected");
+            }
+        }
+        alterTableSuspend(tableNamePosition, tableToken, errorTag, errorMessage, executionContext);
+    }
+
     private TableToken tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
         if (executionContext.getTableStatus(path, tableName) != TableUtils.TABLE_EXISTS) {
             throw SqlException.tableDoesNotExist(position, tableName);
@@ -3539,9 +3586,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     protected void compileAlterExt(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
         if (tok == null) {
-            throw SqlException.position(lexer.getPosition()).put("'table' expected");
+            throw SqlException.position(lexer.getPosition()).put("'table' or 'materialized' expected");
         }
-        throw SqlException.position(lexer.lastTokenPosition()).put("'table' expected");
+        throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'materialized' expected");
     }
 
     protected void compileDropExt(
