@@ -80,6 +80,7 @@ public class ServerMain implements Closeable {
     private HttpServer httpServer;
     private boolean initialized;
     private WorkerPoolManager workerPoolManager;
+    private Thread hydrateMetadataThread;
 
     public ServerMain(String... args) {
         this(new Bootstrap(args));
@@ -148,7 +149,7 @@ public class ServerMain implements Closeable {
         // create default authenticator for Line TCP protocol
         if (configuration.getLineTcpReceiverConfiguration().isEnabled() && configuration.getLineTcpReceiverConfiguration().getAuthDB() != null) {
             // we need "root/" here, not "root/db/"
-            final String rootDir = new File(configuration.getCairoConfiguration().getRoot()).getParent();
+            final String rootDir = new File(configuration.getCairoConfiguration().getDbRoot()).getParent();
             final String absPath = new File(rootDir, configuration.getLineTcpReceiverConfiguration().getAuthDB()).getAbsolutePath();
             CharSequenceObjHashMap<PublicKey> authDb = AuthUtils.loadAuthDb(absPath);
             authenticatorFactory = new EllipticCurveAuthenticatorFactory(() -> new StaticChallengeResponseMatcher(authDb));
@@ -209,6 +210,12 @@ public class ServerMain implements Closeable {
     @Override
     public void close() {
         if (closed.compareAndSet(false, true)) {
+            if (hydrateMetadataThread != null) {
+                try {
+                    hydrateMetadataThread.join();
+                } catch (InterruptedException ignored) {
+                }
+            }
             System.err.println("QuestDB is shutting down...");
             System.out.println("QuestDB is shutting down...");
             if (bootstrap != null && bootstrap.getLog() != null) {
@@ -416,8 +423,8 @@ public class ServerMain implements Closeable {
         }
 
         // metadata hydration
-        Thread hydrateCairoMetadataThread = new Thread(engine.getMetadataCache()::onStartupAsyncHydrator);
-        hydrateCairoMetadataThread.start();
+        hydrateMetadataThread = new Thread(engine.getMetadataCache()::onStartupAsyncHydrator);
+        hydrateMetadataThread.start();
 
         System.gc(); // GC 1
         bootstrap.getLog().advisoryW().$("server is ready to be started").$();

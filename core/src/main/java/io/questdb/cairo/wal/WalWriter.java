@@ -174,7 +174,7 @@ public class WalWriter implements TableWriterAPI {
         final int walId = tableSequencerAPI.getNextWalId(tableToken);
         this.walName = WAL_NAME_BASE + walId;
         this.walId = walId;
-        this.path = new Path().of(configuration.getRoot());
+        this.path = new Path().of(configuration.getDbRoot());
         this.pathRootSize = path.size();
         this.path.concat(tableToken).concat(walName);
         this.pathSize = path.size();
@@ -973,7 +973,7 @@ public class WalWriter implements TableWriterAPI {
         // Copy or hard link symbol map files.
         FilesFacade ff = configuration.getFilesFacade();
         Path tempPath = Path.PATH.get();
-        tempPath.of(configuration.getRoot()).concat(tableToken);
+        tempPath.of(configuration.getDbRoot()).concat(tableToken);
         int tempPathTripLen = tempPath.size();
 
         path.trimTo(pathSize);
@@ -1077,12 +1077,12 @@ public class WalWriter implements TableWriterAPI {
 
                         // todo: use own path
                         Path path = Path.PATH2.get();
-                        path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME);
+                        path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME);
 
                         // Does not matter which PartitionBy, as long as it is partitioned
                         // WAL tables must be partitioned
                         txReader.ofRO(path.$(), PartitionBy.DAY);
-                        path.of(configuration.getRoot()).concat(tableToken).concat(COLUMN_VERSION_FILE_NAME);
+                        path.of(configuration.getDbRoot()).concat(tableToken).concat(COLUMN_VERSION_FILE_NAME);
                         columnVersionReader.ofRO(ff, path.$());
 
                         initialized = true;

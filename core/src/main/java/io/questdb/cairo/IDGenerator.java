@@ -76,7 +76,7 @@ public class IDGenerator implements Closeable {
     public void open(Path path) {
         close();
         if (path == null) {
-            path = Path.getThreadLocal(configuration.getRoot());
+            path = Path.getThreadLocal(configuration.getDbRoot());
         }
         final int rootLen = path.size();
         try {

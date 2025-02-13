@@ -406,7 +406,7 @@ public class CairoEngine implements Closeable, WriterSource {
             CharSequence lockedReason = lockAll(tableToken, "removeTable", false);
             if (lockedReason == null) {
                 try {
-                    path.of(configuration.getRoot()).concat(tableToken).$();
+                    path.of(configuration.getDbRoot()).concat(tableToken).$();
                     if (!configuration.getFilesFacade().unlinkOrRemove(path, LOG)) {
                         throw CairoException.critical(configuration.getFilesFacade().errno()).put("could not remove table [name=").put(tableToken.getTableName())
                                 .put(", dirName=").put(tableToken.getDirName()).put(']');
@@ -583,16 +583,18 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public TableReader getReaderWithRepair(TableToken tableToken) {
-        // todo: untested verification
         verifyTableToken(tableToken);
         try {
             return getReader(tableToken);
+        } catch (EntryUnavailableException e) {
+            throw e;
         } catch (CairoException e) {
             // Cannot open reader on existing table is pretty bad.
             // In some messed states, for example after _meta file swap failure Reader cannot be opened
             // but writer can be. Opening writer fixes the table mess.
             tryRepairTable(tableToken, e);
         }
+
         try {
             return getReader(tableToken);
         } catch (CairoException e) {
@@ -677,6 +679,8 @@ public class CairoEngine implements Closeable, WriterSource {
             final TableMetadata metadata = tableMetadataPool.get(tableToken);
             validateDesiredMetadataVersion(tableToken, metadata, desiredVersion);
             return metadata;
+        } catch (EntryUnavailableException e) {
+            throw e;
         } catch (CairoException e) {
             if (tableToken.isWal()) {
                 throw e;
@@ -703,7 +707,7 @@ public class CairoEngine implements Closeable, WriterSource {
         if (tableToken == null || !tableToken.equals(tableNameRegistry.getTableToken(tableToken.getTableName()))) {
             return TableUtils.TABLE_DOES_NOT_EXIST;
         }
-        return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableToken.getDirName());
+        return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getDbRoot(), tableToken.getDirName());
     }
 
     public int getTableStatus(Path path, CharSequence tableName) {
@@ -716,7 +720,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @TestOnly
     public int getTableStatus(CharSequence tableName) {
-        return getTableStatus(Path.getThreadLocal(configuration.getRoot()), tableName);
+        return getTableStatus(Path.getThreadLocal(configuration.getDbRoot()), tableName);
     }
 
     public TableToken getTableTokenByDirName(String dirName) {
@@ -883,19 +887,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return lockReadersByTableToken(tableToken);
     }
 
-    public boolean lockReadersAndMetadata(TableToken tableToken) {
+    public boolean lockReadersOnDrop(TableToken tableToken) {
         if (checkpointAgent.isInProgress()) {
             // prevent reader locking before checkpoint is released
             return false;
         }
-        if (readerPool.lock(tableToken)) {
-            if (tableMetadataPool.lock(tableToken)) {
-                return true;
-            } else {
-                readerPool.unlock(tableToken);
-            }
-        }
-        return false;
+        return readerPool.lock(tableToken);
     }
 
     public boolean lockReadersByTableToken(TableToken tableToken) {
@@ -1094,7 +1091,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             renamed = true;
                         }
                         TableUtils.overwriteTableNameFile(
-                                fromPath.of(configuration.getRoot()).concat(toTableToken),
+                                fromPath.of(configuration.getDbRoot()).concat(toTableToken),
                                 memory,
                                 configuration.getFilesFacade(),
                                 toTableToken.getTableName()
@@ -1123,7 +1120,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     try {
                         toTableToken = rename0(fromPath, fromTableToken, toPath, toTableName);
                         TableUtils.overwriteTableNameFile(
-                                fromPath.of(configuration.getRoot()).concat(toTableToken),
+                                fromPath.of(configuration.getDbRoot()).concat(toTableToken),
                                 memory,
                                 configuration.getFilesFacade(),
                                 toTableToken.getTableName()
@@ -1221,9 +1218,8 @@ public class CairoEngine implements Closeable, WriterSource {
         readerPool.unlock(tableToken);
     }
 
-    public void unlockReadersAndMetadata(TableToken tableToken) {
+    public void unlockReadersOnDrop(TableToken tableToken) {
         readerPool.unlock(tableToken);
-        tableMetadataPool.unlock(tableToken);
     }
 
     public void unlockTableCreate(TableToken tableToken) {
@@ -1312,7 +1308,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // only create the table after it has been registered
         TableUtils.createTableInVolume(
                 configuration.getFilesFacade(),
-                configuration.getRoot(),
+                configuration.getDbRoot(),
                 configuration.getMkDirMode(),
                 mem,
                 path,
@@ -1325,14 +1321,14 @@ public class CairoEngine implements Closeable, WriterSource {
 
     // caller has to acquire the lock before this method is called and release the lock after the call
     private void createTableUnsafe(MemoryMARW mem, Path path, TableStructure struct, TableToken tableToken) {
-        if (TableUtils.TABLE_DOES_NOT_EXIST != TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableToken.getDirName())) {
+        if (TableUtils.TABLE_DOES_NOT_EXIST != TableUtils.exists(configuration.getFilesFacade(), path, configuration.getDbRoot(), tableToken.getDirName())) {
             throw CairoException.nonCritical().put("name is reserved [table=").put(tableToken.getTableName()).put(']');
         }
 
         // only create the table after it has been registered
         TableUtils.createTable(
                 configuration.getFilesFacade(),
-                configuration.getRoot(),
+                configuration.getDbRoot(),
                 configuration.getMkDirMode(),
                 mem,
                 path,
@@ -1389,6 +1385,12 @@ public class CairoEngine implements Closeable, WriterSource {
                             tableSequencerAPI.registerTable(tableToken.getTableId(), struct, tableToken);
                         }
 
+                        // Unlock the table metadata and readers before registering the name
+                        // Only writer lock is needed when keepLock is true
+                        readerPool.unlock(tableToken);
+                        sequencerMetadataPool.unlock(tableToken);
+                        tableMetadataPool.unlock(tableToken);
+
                         tableNameRegistry.registerName(tableToken);
                         tableCreated = true;
                     } catch (Throwable e) {
@@ -1427,7 +1429,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
         // !!! we do not care what is inside the path1 & path2, we will reset them anyway
         final FilesFacade ff = configuration.getFilesFacade();
-        final CharSequence root = configuration.getRoot();
+        final CharSequence root = configuration.getDbRoot();
 
         fromPath.of(root).concat(fromTableToken).$();
 
@@ -1492,10 +1494,10 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     private void unlockTableUnsafe(TableToken tableToken, TableWriter writer, boolean newTable) {
-        readerPool.unlock(tableToken);
+        readerPool.unlockIfLocked(tableToken);
         writerPool.unlock(tableToken, writer, newTable);
-        sequencerMetadataPool.unlock(tableToken);
-        tableMetadataPool.unlock(tableToken);
+        sequencerMetadataPool.unlockIfLocked(tableToken);
+        tableMetadataPool.unlockIfLocked(tableToken);
     }
 
     private void validNameOrThrow(CharSequence tableName) {

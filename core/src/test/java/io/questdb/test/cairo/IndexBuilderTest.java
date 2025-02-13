@@ -24,7 +24,15 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.IndexBuilder;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.InvalidColumnException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -664,7 +672,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             TableToken xxx = engine.verifyTableName("xxx");
-            String tablePath = configuration.getRoot() + Files.SEPARATOR + xxx.getDirName();
+            String tablePath = configuration.getDbRoot() + Files.SEPARATOR + xxx.getDirName();
             changeTable.run(tablePath);
 
             indexBuilder.clear();

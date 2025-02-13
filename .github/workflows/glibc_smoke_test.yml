@@ -1,0 +1,106 @@
+name: GLIBC Smoke Test
+# Testing GLIBC compatibility
+
+on:
+  pull_request:
+    types: [ synchronize, opened, reopened, edited ]
+    paths:
+      - 'core/src/main/resources/io/questdb/bin/**'
+      - './core/src/main/bin/**'
+  workflow_dispatch:
+
+jobs:
+  amd64:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }} # Only run on non-forked PRs
+    runs-on: ubuntu-22.04
+    container:
+      # Use Amazon Linux 2 image - uses GLIBC 2.26
+      image: amazonlinux:2
+      volumes:
+        - /node20217:/node20217
+        - /node20217:/__e/node20
+    steps:
+      - name: Install dependencies
+        run: yum install -y curl git tar gunzip xz wget
+      - name: Print GLIBC version
+        run: ldd --version
+      - name: Install Node.js 20 glibc2.17
+        # A hack to override default nodejs 20 to a build compatible with older glibc.
+        # Inspired by https://github.com/pytorch/test-infra/pull/5959 If it's good for pytorch, it's good for us too! :)
+        # Q: Why do we need this hack at all? A: Because many github actions, include action/checkout@v4, depend on nodejs 20.
+        # GitHub Actions runner provides a build of nodejs 20 that requires a newer glibc than Amazon Linux 2 has.
+        # Thus we download a build of nodejs 20 that is compatible with Amazon Linux 2 and override the default one.
+        run: |
+          curl -LO https://unofficial-builds.nodejs.org/download/release/v20.9.0/node-v20.9.0-linux-x64-glibc-217.tar.xz
+          tar -xf node-v20.9.0-linux-x64-glibc-217.tar.xz --strip-components 1 -C /node20217
+          ldd /__e/node20/bin/node
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+          cache: 'maven'
+      - name: Install Apache Maven
+        # Amazon Linux 2 has too old version of Maven, so we need to install a newer one
+        run: |
+          wget https://dlcdn.apache.org/maven/maven-3/3.9.6/binaries/apache-maven-3.9.6-bin.tar.gz
+          tar xf apache-maven-3.9.6-bin.tar.gz -C /opt
+          ln -sf /opt/apache-maven-3.9.6 /opt/maven
+          echo "MAVEN_HOME=/opt/maven" >> $GITHUB_ENV
+          echo "PATH=/opt/maven/bin:$PATH" >> $GITHUB_ENV
+      - name: Build distribution
+        run: /opt/maven/bin/mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl 'core'
+      - name: Unpack distribution
+        run: tar -xzf core/target/questdb-*-no-jre-bin.tar.gz
+      - name: Start QuestDB
+        run: ./questdb-*bin/questdb.sh start
+      - name: Query database with curl
+        run: |
+          curl -G --data-urlencode \
+              "query=SELECT * FROM long_sequence(1)" \
+              http://localhost:9000/exp
+      - name: Upload logs
+        if: failure() # Only upload logs if the job failed
+        uses: actions/upload-artifact@v4
+        with:
+          path: ~/.questdb/log/*
+          name: logs
+          retention-days: 5
+  aarch64:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }} # Only run on non-forked PRs
+    runs-on: ubuntu-22.04-arm
+    container:
+      # Use AlmaLinux 8 image - uses GLIBC 2.28
+      image: almalinux:8
+    steps:
+      - name: Install dependencies
+        run: dnf install -y curl maven git
+      - name: Print GLIBC version
+        run: ldd --version
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+          cache: 'maven'
+      - name: Build distribution
+        run: mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl '!benchmarks'
+      - name: Unpack distribution
+        run: tar -xzf core/target/questdb-*-no-jre-bin.tar.gz
+      - name: Start QuestDB
+        run: ./questdb-*bin/questdb.sh start
+      - name: Query database with curl
+        run: |
+          curl -G --data-urlencode \
+              "query=SELECT * FROM long_sequence(1)" \
+              http://localhost:9000/exp
+      - name: Upload logs
+        if: failure() # Only upload logs if the job failed
+        uses: actions/upload-artifact@v4
+        with:
+          path: ~/.questdb/log/*
+          name: logs
+          retention-days: 5
+
+        
+

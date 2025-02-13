@@ -68,7 +68,7 @@ public class TxnTest extends AbstractCairoTest {
 
                 try (Path path = new Path()) {
                     TableToken tableToken = engine.verifyTableName(tableName);
-                    path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                    path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                     int testPartitionCount = 3000;
                     try (TxWriter txWriter = new TxWriter(cleanFf, configuration).ofRW(path.$(), PartitionBy.DAY)) {
                         // Add lots of partitions
@@ -122,7 +122,7 @@ public class TxnTest extends AbstractCairoTest {
 
                 try (Path path = new Path()) {
                     TableToken tableToken = engine.verifyTableName(tableName);
-                    path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                    path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                     int testPartitionCount = 2;
                     try (TxWriter txWriter = new TxWriter(ff, configuration).ofRW(path.$(), PartitionBy.DAY)) {
                         for (int i = 0; i < testPartitionCount; i++) {
@@ -183,7 +183,7 @@ public class TxnTest extends AbstractCairoTest {
                             TxReader txReader = new TxReader(ff)
                     ) {
                         TableToken tableToken = engine.verifyTableName(tableName);
-                        path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                        path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                         txReader.ofRO(path.$(), PartitionBy.HOUR);
                         MillisecondClock clock = engine.getConfiguration().getMillisecondClock();
                         long duration = 5_000;
@@ -279,7 +279,7 @@ public class TxnTest extends AbstractCairoTest {
                             TxReader txReader = new TxReader(ff)
                     ) {
                         TableToken tableToken = engine.verifyTableName(tableName);
-                        path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                        path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                         txReader.ofRO(path.$(), PartitionBy.HOUR);
                         MillisecondClock clock = engine.getConfiguration().getMillisecondClock();
                         long duration = 5_000;
@@ -382,7 +382,7 @@ public class TxnTest extends AbstractCairoTest {
                     TxWriter txWriter = new TxWriter(ff, configuration)
             ) {
                 TableToken tableToken = engine.verifyTableName(tableName);
-                path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                 txWriter.ofRW(path.$(), PartitionBy.HOUR);
 
                 start.await();

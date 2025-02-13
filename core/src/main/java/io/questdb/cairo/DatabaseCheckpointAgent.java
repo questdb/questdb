@@ -82,7 +82,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private final GrowOnlyTableNameRegistryStore tableNameRegistryStore; // protected with #lock
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private ColumnVersionReader columnVersionReader = null;
-    private Path partitionCleanPath;
+    private Path partitionCleanPath;  // To be used exclusively as parameter for `removePartitionDirsNotAttached`.
     private DateFormat partitionDirFmt;
     private int pathTableLen;
     private TableReaderMetadata tableMetadata = null;
@@ -150,124 +150,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     .I$();
         }
     }
-
-    private void rebuildSymbolFiles(Path tablePath, AtomicInteger recoveredSymbolFiles, int pathTableLen) {
-        tablePath.trimTo(pathTableLen);
-        for (int i = 0; i < tableMetadata.getColumnCount(); i++) {
-
-            int columnType = tableMetadata.getColumnType(i);
-            if (ColumnType.isSymbol(columnType)) {
-                int cleanSymbolCount = txWriter.getSymbolValueCount(tableMetadata.getDenseSymbolIndex(i));
-                String columnName = tableMetadata.getColumnName(i);
-                LOG.info().$("rebuilding symbol files [table=").$(tablePath)
-                        .$(", column=").$(columnName)
-                        .$(", count=").$(cleanSymbolCount)
-                        .I$();
-
-                int writerIndex = tableMetadata.getWriterIndex(i);
-                symbolMapUtil.rebuildSymbolFiles(
-                        configuration,
-                        tablePath,
-                        columnName,
-                        columnVersionReader.getDefaultColumnNameTxn(writerIndex),
-                        cleanSymbolCount,
-                        -1
-                );
-                recoveredSymbolFiles.incrementAndGet();
-            }
-        }
-    }
-
-    private void rebuildTableFiles(Path tablePath, AtomicInteger recoveredSymbolFiles) {
-        pathTableLen = tablePath.size();
-        try {
-            if (tableMetadata == null) {
-                tableMetadata = new TableReaderMetadata(configuration);
-            }
-            tableMetadata.load(tablePath.concat(TableUtils.META_FILE_NAME).$());
-
-            if (txWriter == null) {
-                txWriter = new TxWriter(configuration.getFilesFacade(), configuration);
-            }
-            txWriter.ofRW(tablePath.trimTo(pathTableLen).concat(TXN_FILE_NAME).$(), tableMetadata.getPartitionBy());
-            txWriter.unsafeLoadAll();
-
-            if (columnVersionReader == null) {
-                columnVersionReader = new ColumnVersionReader();
-            }
-            tablePath.trimTo(pathTableLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
-            columnVersionReader.ofRO(configuration.getFilesFacade(), tablePath.$());
-            columnVersionReader.readUnsafe();
-
-            // Symbols are not append only data structures, they can be corrupt
-            // when symbol files are copied while written to. We need to rebuild them.
-            rebuildSymbolFiles(tablePath, recoveredSymbolFiles, pathTableLen);
-
-            if (tableMetadata.isWalEnabled() && txWriter.getLagRowCount() > 0) {
-                LOG.info().$("resetting WAL lag [table=").$(tablePath)
-                        .$(", walLagRowCount=").$(txWriter.getLagRowCount())
-                        .I$();
-                // WAL Lag values is not strictly append only data structures, it can be overwritten
-                // while the snapshot was copied. Resetting it will re-apply data from copied WAL files
-                txWriter.resetLagAppliedRows();
-            }
-
-            if (PartitionBy.isPartitioned(tableMetadata.getPartitionBy())) {
-                // Remove non-attached partitions
-                LOG.debug().$("purging non attached partitions [path=").$(tablePath.$()).I$();
-                partitionCleanPath = tablePath;
-                this.partitionDirFmt = PartitionBy.getPartitionDirFormatMethod(tableMetadata.getPartitionBy());
-                ff.iterateDir(tablePath.$(), removePartitionDirsNotAttached);
-            }
-        } finally {
-            tablePath.trimTo(pathTableLen);
-        }
-    }
-
-    private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
-        // Do not remove detached partitions, they are probably about to be attached
-        // Do not remove wal and sequencer directories either
-        int checkedType = ff.typeDirOrSoftLinkDirNoDots(partitionCleanPath, pathTableLen, pUtf8NameZ, type, utf8Sink);
-        if (checkedType != Files.DT_UNKNOWN &&
-                !CairoKeywords.isDetachedDirMarker(pUtf8NameZ) &&
-                !CairoKeywords.isWal(pUtf8NameZ) &&
-                !CairoKeywords.isTxnSeq(pUtf8NameZ) &&
-                !CairoKeywords.isSeq(pUtf8NameZ) &&
-                !Utf8s.endsWithAscii(utf8Sink, configuration.getAttachPartitionSuffix())
-        ) {
-            try {
-                long txn;
-                int txnSep = Utf8s.indexOfAscii(utf8Sink, '.');
-                if (txnSep < 0) {
-                    txnSep = utf8Sink.size();
-                    txn = -1;
-                } else {
-                    txn = Numbers.parseLong(utf8Sink, txnSep + 1, utf8Sink.size());
-                }
-                long dirTimestamp = partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, txnSep, DateFormatUtils.EN_LOCALE);
-                if (txWriter.getPartitionNameTxnByPartitionTimestamp(dirTimestamp) == txn) {
-                    return;
-                }
-                if (!ff.unlinkOrRemove(partitionCleanPath, LOG)) {
-                    LOG.info()
-                            .$("failed to purge unused partition version [path=").$(partitionCleanPath)
-                            .$(", errno=").$(ff.errno()).I$();
-                } else {
-                    LOG.info().$("purged unused partition version [path=").$(partitionCleanPath).I$();
-                }
-                partitionCleanPath.trimTo(pathTableLen).$();
-            } catch (NumericException ignore) {
-                // not a date?
-                // ignore exception and leave the directory
-                partitionCleanPath.trimTo(pathTableLen);
-                partitionCleanPath.concat(pUtf8NameZ).$();
-                LOG.error().$("invalid partition directory inside table folder: ").$(partitionCleanPath).$();
-            } finally {
-                partitionCleanPath.trimTo(pathTableLen);
-            }
-        }
-    }
-
 
     private void checkpointCreate(SqlExecutionContext executionContext, CharSequence checkpointRoot) throws SqlException {
         try {
@@ -427,6 +309,123 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         }
     }
 
+    private void rebuildSymbolFiles(Path tablePath, AtomicInteger recoveredSymbolFiles, int pathTableLen) {
+        tablePath.trimTo(pathTableLen);
+        for (int i = 0; i < tableMetadata.getColumnCount(); i++) {
+
+            int columnType = tableMetadata.getColumnType(i);
+            if (ColumnType.isSymbol(columnType)) {
+                int cleanSymbolCount = txWriter.getSymbolValueCount(tableMetadata.getDenseSymbolIndex(i));
+                String columnName = tableMetadata.getColumnName(i);
+                LOG.info().$("rebuilding symbol files [table=").$(tablePath)
+                        .$(", column=").$(columnName)
+                        .$(", count=").$(cleanSymbolCount)
+                        .I$();
+
+                int writerIndex = tableMetadata.getWriterIndex(i);
+                symbolMapUtil.rebuildSymbolFiles(
+                        configuration,
+                        tablePath,
+                        columnName,
+                        columnVersionReader.getDefaultColumnNameTxn(writerIndex),
+                        cleanSymbolCount,
+                        -1
+                );
+                recoveredSymbolFiles.incrementAndGet();
+            }
+        }
+    }
+
+    private void rebuildTableFiles(Path tablePath, AtomicInteger recoveredSymbolFiles) {
+        pathTableLen = tablePath.size();
+        try {
+            if (tableMetadata == null) {
+                tableMetadata = new TableReaderMetadata(configuration);
+            }
+            tableMetadata.load(tablePath.concat(TableUtils.META_FILE_NAME).$());
+
+            if (txWriter == null) {
+                txWriter = new TxWriter(configuration.getFilesFacade(), configuration);
+            }
+            txWriter.ofRW(tablePath.trimTo(pathTableLen).concat(TXN_FILE_NAME).$(), tableMetadata.getPartitionBy());
+            txWriter.unsafeLoadAll();
+
+            if (columnVersionReader == null) {
+                columnVersionReader = new ColumnVersionReader();
+            }
+            tablePath.trimTo(pathTableLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+            columnVersionReader.ofRO(configuration.getFilesFacade(), tablePath.$());
+            columnVersionReader.readUnsafe();
+
+            // Symbols are not append only data structures, they can be corrupt
+            // when symbol files are copied while written to. We need to rebuild them.
+            rebuildSymbolFiles(tablePath, recoveredSymbolFiles, pathTableLen);
+
+            if (tableMetadata.isWalEnabled() && txWriter.getLagRowCount() > 0) {
+                LOG.info().$("resetting WAL lag [table=").$(tablePath)
+                        .$(", walLagRowCount=").$(txWriter.getLagRowCount())
+                        .I$();
+                // WAL Lag values is not strictly append only data structures, it can be overwritten
+                // while the snapshot was copied. Resetting it will re-apply data from copied WAL files
+                txWriter.resetLagAppliedRows();
+            }
+
+            if (PartitionBy.isPartitioned(tableMetadata.getPartitionBy())) {
+                // Remove non-attached partitions
+                LOG.debug().$("purging non attached partitions [path=").$(tablePath.$()).I$();
+                partitionCleanPath = tablePath; // parameter for `removePartitionDirsNotAttached`
+                this.partitionDirFmt = PartitionBy.getPartitionDirFormatMethod(tableMetadata.getPartitionBy());
+                ff.iterateDir(tablePath.$(), removePartitionDirsNotAttached);
+            }
+        } finally {
+            tablePath.trimTo(pathTableLen);
+        }
+    }
+
+    private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
+        // Do not remove detached partitions, they are probably about to be attached
+        // Do not remove wal and sequencer directories either
+        int checkedType = ff.typeDirOrSoftLinkDirNoDots(partitionCleanPath, pathTableLen, pUtf8NameZ, type, utf8Sink);
+        if (checkedType != Files.DT_UNKNOWN &&
+                !CairoKeywords.isDetachedDirMarker(pUtf8NameZ) &&
+                !CairoKeywords.isWal(pUtf8NameZ) &&
+                !CairoKeywords.isTxnSeq(pUtf8NameZ) &&
+                !CairoKeywords.isSeq(pUtf8NameZ) &&
+                !Utf8s.endsWithAscii(utf8Sink, configuration.getAttachPartitionSuffix())
+        ) {
+            try {
+                long txn;
+                int txnSep = Utf8s.indexOfAscii(utf8Sink, '.');
+                if (txnSep < 0) {
+                    txnSep = utf8Sink.size();
+                    txn = -1;
+                } else {
+                    txn = Numbers.parseLong(utf8Sink, txnSep + 1, utf8Sink.size());
+                }
+                long dirTimestamp = partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, txnSep, DateFormatUtils.EN_LOCALE);
+                if (txWriter.getPartitionNameTxnByPartitionTimestamp(dirTimestamp) == txn) {
+                    return;
+                }
+                if (!ff.unlinkOrRemove(partitionCleanPath, LOG)) {
+                    LOG.info()
+                            .$("failed to purge unused partition version [path=").$(partitionCleanPath)
+                            .$(", errno=").$(ff.errno()).I$();
+                } else {
+                    LOG.info().$("purged unused partition version [path=").$(partitionCleanPath).I$();
+                }
+                partitionCleanPath.trimTo(pathTableLen).$();
+            } catch (NumericException ignore) {
+                // not a date?
+                // ignore exception and leave the directory
+                partitionCleanPath.trimTo(pathTableLen);
+                partitionCleanPath.concat(pUtf8NameZ).$();
+                LOG.error().$("invalid partition directory inside table folder: ").$(partitionCleanPath).$();
+            } finally {
+                partitionCleanPath.trimTo(pathTableLen);
+            }
+        }
+    }
+
     void checkpointCreate(SqlExecutionContext executionContext, boolean isLegacy) throws SqlException {
         // Windows doesn't support sync() system call.
         if (Os.isWindows()) {
@@ -490,7 +489,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         }
 
         final FilesFacade ff = configuration.getFilesFacade();
-        final CharSequence root = configuration.getRoot();
+        final CharSequence installRoot = configuration.getInstallRoot();
+        final CharSequence dbRoot = configuration.getDbRoot();
         final CharSequence checkpointRoot = configuration.getCheckpointRoot();
         final CharSequence legacyCheckpointRoot = configuration.getLegacyCheckpointRoot();
 
@@ -516,7 +516,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             srcPath.concat(configuration.getDbDirectory());
             final int checkpointRootLen = srcPath.size();
 
-            dstPath.of(root).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
+            dstPath.of(installRoot).concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
             boolean triggerExists = ff.exists(dstPath.$());
 
             // Check if the checkpoint dir exists.
@@ -582,7 +582,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         .I$();
             }
 
-            dstPath.of(root);
+            dstPath.of(dbRoot);
             final int rootLen = dstPath.size();
 
             // First delete all table name registry files in dst.
@@ -692,7 +692,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         .put(", errno=").put(ff.errno())
                         .put(']');
             }
-            dstPath.of(root).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
+            dstPath.of(installRoot).concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
             if (triggerExists && !ff.removeQuiet(dstPath.$())) {
                 throw CairoException.critical(ff.errno())
                         .put("could not remove restore trigger file. file permission issues? [file=").put(dstPath).put(']');
