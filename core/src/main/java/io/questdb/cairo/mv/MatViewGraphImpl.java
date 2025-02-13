@@ -31,6 +31,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.ConcurrentQueue;
+import io.questdb.mp.Queue;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
@@ -54,14 +55,19 @@ public class MatViewGraphImpl implements MatViewGraph {
     private final MatViewTelemetryFacade matViewTelemetryFacade;
     private final MicrosecondClock microsecondClock;
     private final ConcurrentHashMap<MatViewRefreshState> refreshStateByTableDirName = new ConcurrentHashMap<>();
-    private final ConcurrentQueue<MatViewRefreshTask> refreshTaskQueue = new ConcurrentQueue<>(MatViewRefreshTask::new);
+    private final Queue<MatViewRefreshTask> refreshTaskQueue;
     private final ThreadLocal<MatViewRefreshTask> taskHolder = new ThreadLocal<>(MatViewRefreshTask::new);
 
     public MatViewGraphImpl(CairoEngine engine) {
+        this(engine, false);
+    }
+
+    public MatViewGraphImpl(CairoEngine engine, boolean disableTaskQueue) {
         this.createRefreshList = name -> new MatViewRefreshList();
         this.matViewTelemetry = engine.getTelemetryMatView();
         this.matViewTelemetryFacade = matViewTelemetry.isEnabled() ? this::storeMatViewTelemetry : this::storeMatViewTelemetryNoOp;
         this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
+        this.refreshTaskQueue = disableTaskQueue ? new NoOpConcurrentQueue<>() : new ConcurrentQueue<>(MatViewRefreshTask::new);
     }
 
     @Override

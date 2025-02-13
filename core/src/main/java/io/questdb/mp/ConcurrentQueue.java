@@ -40,7 +40,7 @@ import io.questdb.std.ObjectFactory;
  * the number of tables in the database that can be quite large, but still considered to be in
  * thousands rather than millions.
  */
-public class ConcurrentQueue<T extends ValueHolder<T>> {
+public class ConcurrentQueue<T extends ValueHolder<T>> implements Queue<T> {
     // This implementation provides an unbounded, multi-producer multi-consumer queue that
     // supports the standard Enqueue/TryDequeue operations. It is composed of a linked list of
     // bounded ring buffers, each of which has a head and a tail index, isolated from each other

@@ -904,6 +904,18 @@ public final class TableUtils {
         return !Chars.startsWith(tableName, tempTablePrefix);
     }
 
+    public static boolean isMatViewDefinitionFileExists(CairoConfiguration configuration, Path path, CharSequence dirName) {
+        FilesFacade ff = configuration.getFilesFacade();
+        path.of(configuration.getDbRoot()).concat(dirName).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
+        return ff.exists(path.$());
+    }
+
+    public static boolean isMatViewStateFileExists(CairoConfiguration configuration, Path path, CharSequence dirName) {
+        FilesFacade ff = configuration.getFilesFacade();
+        path.of(configuration.getDbRoot()).concat(dirName).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
+        return ff.exists(path.$());
+    }
+
     /*
      * Checks that the minor version of the metadata format is up to date, i.e., at least the value
      * of the TableUtils.META_FORMAT_MINOR_VERSION_LATEST constant.
@@ -1201,15 +1213,6 @@ public final class TableUtils {
             ff.close(fd);
             throw e;
         }
-    }
-
-    public static boolean matViewFilesExist(CairoConfiguration configuration, Path path, CharSequence dirName) {
-        FilesFacade ff = configuration.getFilesFacade();
-        path.of(configuration.getDbRoot()).concat(dirName).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
-        boolean defExists = ff.exists(path.$());
-        path.of(configuration.getDbRoot()).concat(dirName).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
-        boolean stateExists = ff.exists(path.$());
-        return defExists && stateExists;
     }
 
     public static long mremap(

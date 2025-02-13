@@ -103,7 +103,7 @@ public class TableConverter {
                                 boolean isProtected = tableFlagResolver.isProtected(tableName);
                                 boolean isSystem = tableFlagResolver.isSystem(tableName);
                                 boolean isPublic = tableFlagResolver.isPublic(tableName);
-                                boolean isMatView = matViewFilesExist(configuration, path, dirName);
+                                boolean isMatView = isMatViewDefinitionFileExists(configuration, path, dirName);
                                 final TableToken token = new TableToken(tableName, dirName, tableId, isMatView, walEnabled, isSystem, isProtected, isPublic);
 
                                 if (txWriter == null) {

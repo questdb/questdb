@@ -162,6 +162,10 @@ public class CairoEngine implements Closeable, WriterSource {
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
 
     public CairoEngine(CairoConfiguration configuration) {
+        this(configuration, false);
+    }
+
+    public CairoEngine(CairoConfiguration configuration, boolean isReadOnlyReplica) {
         try {
             ffCache = new FunctionFactoryCache(
                     configuration,
@@ -205,9 +209,15 @@ public class CairoEngine implements Closeable, WriterSource {
                 enablePartitionOverwriteControl();
             }
             this.metadataCache = new MetadataCache(this);
-            this.matViewGraph = configuration.isMatViewEnabled()
-                    ? new MatViewGraphImpl(this)
-                    : NoOpMatViewGraph.INSTANCE;
+            if (isReadOnlyReplica) {
+                // read-only replica does not need to publish refresh tasks,
+                // but it still needs to track mat view list
+                this.matViewGraph = new MatViewGraphImpl(this, true);
+            } else {
+                this.matViewGraph = configuration.isMatViewEnabled()
+                        ? new MatViewGraphImpl(this)
+                        : NoOpMatViewGraph.INSTANCE;
+            }
         } catch (Throwable th) {
             close();
             throw th;
@@ -908,9 +918,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // Convert tables to WAL/non-WAL, if necessary.
         final ObjList<TableToken> convertedTables = TableConverter.convertTables(this, tableSequencerAPI, tableFlagResolver, tableNameRegistry);
         tableNameRegistry.reload(convertedTables);
-        if (configuration.isMatViewEnabled()) {
-            buildMatViewGraph();
-        }
+        buildMatViewGraph();
     }
 
     public String lockAll(TableToken tableToken, String lockReason, boolean ignoreInProgressCheckpoint) {
@@ -1372,10 +1380,12 @@ public class CairoEngine implements Closeable, WriterSource {
 
         Path path = Path.getThreadLocal(configuration.getDbRoot());
         final int pathLen = path.size();
-        try (BlockFileReader reader = new BlockFileReader(configuration)) {
+        try (BlockFileReader reader = new BlockFileReader(configuration);
+             BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade())
+        ) {
             for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
                 final TableToken tableToken = tableTokenBucket.get(i);
-                if (tableToken.isMatView() && TableUtils.matViewFilesExist(configuration, path, tableToken.getDirName())) {
+                if (tableToken.isMatView() && TableUtils.isMatViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
                     try {
                         final MatViewDefinition matViewDefinition = MatViewDefinition.readFrom(
                                 reader,
@@ -1391,10 +1401,16 @@ public class CairoEngine implements Closeable, WriterSource {
                                     .I$();
                         }
 
-                        path.trimTo(pathLen).concat(tableToken.getDirName()).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
-                        reader.of(path.$());
                         MatViewRefreshState state = matViewGraph.addView(matViewDefinition);
-                        MatViewRefreshState.readFrom(reader, state);
+                        boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, tableToken.getDirName());
+                        path.trimTo(pathLen).concat(tableToken.getDirName()).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
+                        if (isMatViewStateExists) {
+                            reader.of(path.$());
+                            MatViewRefreshState.readFrom(reader, state);
+                        } else {
+                            blockFileWriter.of(path.$());
+                            MatViewRefreshState.commitTo(blockFileWriter, state);
+                        }
 
                         if (!state.isInvalid()) {
                             matViewGraph.enqueueRefresh(tableToken);

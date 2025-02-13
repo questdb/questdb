@@ -50,7 +50,7 @@ import org.jetbrains.annotations.TestOnly;
 import java.util.Map;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
-import static io.questdb.cairo.TableUtils.matViewFilesExist;
+import static io.questdb.cairo.TableUtils.isMatViewDefinitionFileExists;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.std.Files.DT_FILE;
 
@@ -375,7 +375,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                             boolean isProtected = tableFlagResolver.isProtected(tableName);
                             boolean isSystem = tableFlagResolver.isSystem(tableName);
                             boolean isPublic = tableFlagResolver.isPublic(tableName);
-                            boolean isMatView = matViewFilesExist(configuration, path, dirName);
+                            boolean isMatView = isMatViewDefinitionFileExists(configuration, path, dirName);
                             TableToken token = new TableToken(tableName, dirName, tableId, isMatView, isWal, isSystem, isProtected, isPublic);
                             TableToken existingTableToken = tableNameToTableTokenMap.get(tableName);
 
