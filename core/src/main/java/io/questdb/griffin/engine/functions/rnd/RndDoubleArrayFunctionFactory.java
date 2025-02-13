@@ -98,7 +98,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         }
 
         if (args.size() > dimensionCount + 3) {
-            throw SqlException.$(argPositions.getQuick(dimensionCount  + 3), "too many values for dim length [dimensionCount=").put(dimensionCount)
+            throw SqlException.$(argPositions.getQuick(dimensionCount + 3), "too many values for dim length [dimensionCount=").put(dimensionCount)
                     .put(", dimLengths=").put(args.size() - 3)
                     .put(']');
         }
@@ -113,11 +113,11 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
 
     public static class RndDoubleArrayFixDimLenFunction extends ArrayFunction {
         private final IntList dimLens;
+        private final int functionPosition;
         private final int nDims;
         private final int nanRate;
         private DirectArrayView array;
         private Rnd rnd;
-        private final int functionPosition;
 
         public RndDoubleArrayFixDimLenFunction(CairoConfiguration configuration, int nDims, int nanRate, IntList dimLens, int functionPosition) {
             this.nanRate = nanRate + 1;
@@ -171,12 +171,12 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
     }
 
     public static class RndDoubleArrayRndDimLenFunction extends ArrayFunction {
+        private final int functionPosition;
         private final int maxDimLen;
         private final int nDims;
         private final int nanRate;
         private DirectArrayView array;
         private Rnd rnd;
-        private final int functionPosition;
 
         public RndDoubleArrayRndDimLenFunction(CairoConfiguration configuration, int nDims, int nanRate, int maxDimLen, int functionPosition) {
             this.nanRate = nanRate + 1;

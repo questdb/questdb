@@ -35,7 +35,6 @@ import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
-import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
@@ -60,9 +59,7 @@ public class HttpMinTest extends AbstractBootstrapTest {
     public void testResponsiveOnMemoryPressure() throws Exception {
         // TODO: fix on Windows
         Assume.assumeFalse(Os.isWindows());
-        Rnd random = TestUtils.generateRandom(LOG);
         TestUtils.assertMemoryLeak(() -> {
-            long httpConnMem = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN);
             assert Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN) == 0;
 
             try (final TestServerMain serverMain = startWithEnvVariables(
