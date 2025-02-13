@@ -799,7 +799,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     final int sigArgTypeWithFlags = descriptor.getArgTypeWithFlags(argIdx);
 
                     if (FunctionFactoryDescriptor.isConstant(sigArgTypeWithFlags) && !arg.isConstant()) {
-                        match = MATCH_NO_MATCH; // no match
+                        match = MATCH_NO_MATCH;
                         break;
                     }
 
@@ -822,11 +822,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                                     arg != CharTypeConstant.INSTANCE) ||   // Ignore type constant to keep cast(X as char) working
                             (sigArgTypeTag == ColumnType.GEOHASH && ColumnType.isGeoHash(argType))) {
                         switch (match) {
-                            case MATCH_NO_MATCH: // was it no match
+                            case MATCH_NO_MATCH: // was it no match?
                                 match = MATCH_EXACT_MATCH;
                                 break;
-                            case MATCH_FUZZY_MATCH: // was it fuzzy match ?
-                                match = MATCH_PARTIAL_MATCH; // this is mixed match, fuzzy and exact
+                            case MATCH_FUZZY_MATCH: // was it fuzzy match?
+                                match = MATCH_PARTIAL_MATCH; // this is a mixed match, fuzzy and exact
                                 break;
                             default:
                                 // don't change match otherwise
