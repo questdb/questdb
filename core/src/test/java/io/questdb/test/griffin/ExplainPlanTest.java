@@ -2329,6 +2329,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             constFuncs.put(ColumnType.UUID, list(new UuidConstant(0, 1)));
             constFuncs.put(ColumnType.NULL, list(NullConstant.NULL));
             constFuncs.put(ColumnType.INTERVAL, list(IntervalConstant.NULL));
+            constFuncs.put(ColumnType.ARRAY_STRING, list(new StringToStringArrayFunction(0, "{all}")));
 
             GenericRecordMetadata metadata = new GenericRecordMetadata();
             metadata.add(new TableColumnMetadata("bbb", ColumnType.INT));

@@ -46,8 +46,8 @@ public class CurrentSchemasFunctionFactoryTest extends AbstractCairoTest {
     public void testCurrentSchemasFuncInSelect() throws Exception {
         assertQuery(
                 "s\n" +
-                        "{public}\n",
-                "select current_schemas(true) s from long_sequence(1)",
+                        "public\n",
+                "select current_schemas(true)[1] s from long_sequence(1)",
                 "create table x as (select x from long_sequence(1))",
                 null,
                 true,

@@ -815,19 +815,19 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         match = MATCH_NO_MATCH;
                         break;
                     }
-
+                    if (argIsStringArray) { // give the above checks, implies that sigIsStringArray is also true
+                        match = mergeWithExactMatch(match);
+                        continue;
+                    }
                     if (argIsArray) { // given the above checks, implies that sigIsArray is also true
                         short argElemTypeTag = ColumnType.decodeArrayElementType(argType);
                         if (sigArgTypeTag == argElemTypeTag) {
-                            if (match == MATCH_NO_MATCH) {
-                                match = MATCH_EXACT_MATCH;
-                            } else if (match == MATCH_FUZZY_MATCH) {
-                                match = MATCH_PARTIAL_MATCH;
-                            }
+                            match = mergeWithExactMatch(match);
+                            continue;
                         } else {
                             match = MATCH_NO_MATCH;
+                            break;
                         }
-                        break;
                     }
 
                     if (sigArgTypeTag == argTypeTag ||
@@ -836,17 +836,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                                     arg.isConstant() &&                    // bind variable parameter might be a string and throw error during execution.
                                     arg != CharTypeConstant.INSTANCE) ||   // Ignore type constant to keep cast(X as char) working
                             (sigArgTypeTag == ColumnType.GEOHASH && ColumnType.isGeoHash(argType))) {
-                        switch (match) {
-                            case MATCH_NO_MATCH: // was it no match?
-                                match = MATCH_EXACT_MATCH;
-                                break;
-                            case MATCH_FUZZY_MATCH: // was it fuzzy match?
-                                match = MATCH_PARTIAL_MATCH; // this is a mixed match, fuzzy and exact
-                                break;
-                            default:
-                                // don't change match otherwise
-                                break;
-                        }
+                        match = mergeWithExactMatch(match);
                         continue;
                     }
 
@@ -1228,6 +1218,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             throw SqlException.$(0, "bind variable service is not provided");
         }
         return bindVariableService;
+    }
+
+    private int mergeWithExactMatch(int match) {
+        return match == MATCH_NO_MATCH ? MATCH_EXACT_MATCH
+                : match == MATCH_FUZZY_MATCH ? MATCH_PARTIAL_MATCH
+                : match;
     }
 
     private Function parseIndexedParameter(int position, CharSequence name) throws SqlException {

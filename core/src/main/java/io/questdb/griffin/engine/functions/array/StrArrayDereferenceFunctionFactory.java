@@ -38,7 +38,7 @@ import io.questdb.std.ObjList;
 public class StrArrayDereferenceFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "[](S[]I)";
+        return "[](WI)";
     }
 
     @Override

@@ -178,10 +178,9 @@ public abstract class StrArrayFunction implements Function {
         throw new UnsupportedOperationException();
     }
 
-    // array type is not yet supported, this is a stub type to implement pg_* views
     @Override
     public final int getType() {
-        return ColumnType.STRING;
+        return ColumnType.ARRAY_STRING;
     }
 
     @Override

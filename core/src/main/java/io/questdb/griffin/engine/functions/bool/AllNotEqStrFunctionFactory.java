@@ -41,7 +41,7 @@ public class AllNotEqStrFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "<>all(Ss[])";
+        return "<>all(Sw)";
     }
 
     @Override
