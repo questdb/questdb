@@ -193,6 +193,16 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBaseTableRenameAndThenRenameBack_doNotDrainWAL() throws Exception {
+        testBaseTableRenameAndThenRenameBack(false);
+    }
+
+    @Test
+    public void testBaseTableRenameAndThenRenameBack_drainWAL() throws Exception {
+        testBaseTableRenameAndThenRenameBack(true);
+    }
+
+    @Test
     public void testBaseTableSwappedWithRename() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -1542,6 +1552,33 @@ public class MatViewTest extends AbstractCairoTest {
                     "name\tbaseTableName\tinvalid\tinvalidationReason\n" +
                             "price_1h\tbase_price\ttrue\t" + invalidationReason + "\n",
                     "select name, baseTableName, invalid, invalidationReason from mat_views"
+            );
+        });
+    }
+
+    private void testBaseTableRenameAndThenRenameBack(boolean drainWalQueue) throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute("rename table base_price to base_price2");
+            if (drainWalQueue) {
+                drainWalQueue();
+            }
+
+            execute("rename table base_price2 to base_price");
+            currentMicros = parseFloorPartialTimestamp("2024-10-24T19");
+            drainQueues();
+
+            assertSql(
+                    "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
+                            "price_1h\tbase_price\t2024-10-24T19:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\ttable rename operation\ttrue\tnull\t2\n",
+                    "mat_views"
             );
         });
     }
