@@ -35,7 +35,6 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Mutable;
 import io.questdb.std.Os;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
@@ -49,7 +48,7 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.file.BlockFileUtils.*;
 
-public class BlockFileReader implements Closeable, Mutable {
+public class BlockFileReader implements Closeable {
     private final BlockCursor blockCursor = new BlockCursor();
     private final @NotNull MillisecondClock clock;
     private final FilesFacade ff;
@@ -64,14 +63,9 @@ public class BlockFileReader implements Closeable, Mutable {
     }
 
     @Override
-    public void clear() {
+    public void close() {
         Misc.free(memory);
         Misc.free(file);
-    }
-
-    @Override
-    public void close() {
-        clear();
     }
 
     public BlockCursor getCursor() {
@@ -128,7 +122,7 @@ public class BlockFileReader implements Closeable, Mutable {
     }
 
     public void of(@Transient LPSZ path) {
-        clear();
+        close();
         final long pageSize = ff.getPageSize();
         if (!ff.exists(path)) {
             throw CairoException.critical(CairoException.ERRNO_FILE_DOES_NOT_EXIST)
