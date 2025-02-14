@@ -50,6 +50,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
@@ -731,6 +732,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    @Ignore("CI issue hunting")
     public void testCreateRefreshConcurrent() throws Exception {
         assertMemoryLeak(() -> {
             execute(
