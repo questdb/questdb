@@ -33,9 +33,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrArrayFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
-import org.jetbrains.annotations.NotNull;
 
 public class CurrentSchemasFunctionFactory implements FunctionFactory {
 
@@ -58,11 +56,6 @@ public class CurrentSchemasFunctionFactory implements FunctionFactory {
         @Override
         public FunctionExtension getExtendedOps() {
             return this;
-        }
-
-        @Override
-        public @NotNull Interval getInterval(Record rec) {
-            throw new UnsupportedOperationException();
         }
 
         @Override

@@ -27,8 +27,6 @@ package io.questdb.test.griffin.engine.functions;
 import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.StrArrayFunction;
-import io.questdb.std.Interval;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Test;
 
 public class StrArrayFunctionTest {
@@ -43,11 +41,6 @@ public class StrArrayFunctionTest {
         @Override
         public FunctionExtension getExtendedOps() {
             return this;
-        }
-
-        @Override
-        public @NotNull Interval getInterval(Record rec) {
-            throw new UnsupportedOperationException();
         }
 
         @Override

@@ -31,7 +31,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.StrArrayFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
-import io.questdb.std.Interval;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
@@ -155,11 +154,6 @@ public class StringToStringArrayFunction extends StrArrayFunction implements Fun
     @Override
     public FunctionExtension getExtendedOps() {
         return this;
-    }
-
-    @Override
-    public @NotNull Interval getInterval(Record rec) {
-        throw new UnsupportedOperationException();
     }
 
     @Override
