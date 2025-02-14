@@ -110,7 +110,7 @@ public class BlockFileReader implements Closeable, Mutable {
 
         if (checksum != expectedChecksum) {
             throw CairoException.critical(0)
-                    .put("meta file checksum mismatch [expected=")
+                    .put("block file checksum mismatch [expected=")
                     .put(expectedChecksum)
                     .put(", actual=")
                     .put(checksum)
@@ -138,14 +138,14 @@ public class BlockFileReader implements Closeable, Mutable {
         final long pageSize = ff.getPageSize();
         if (!ff.exists(path)) {
             throw CairoException.critical(CairoException.ERRNO_FILE_DOES_NOT_EXIST)
-                    .put("cannot open meta file [path")
+                    .put("cannot open block file [path")
                     .put(path)
                     .put(']');
         }
 
         if (ff.length(path) < HEADER_SIZE) {
             throw CairoException.critical(0)
-                    .put("cannot read meta file, expected at least " + HEADER_SIZE + " bytes [path=")
+                    .put("cannot read block file, expected at least " + HEADER_SIZE + " bytes [path=")
                     .put(path)
                     .put(']');
         }
@@ -157,7 +157,7 @@ public class BlockFileReader implements Closeable, Mutable {
         final long version = getVersionVolatile();
         if (version == 0) {
             throw CairoException.critical(0)
-                    .put("cannot read meta file, expected at least 1 commited data block [path=")
+                    .put("cannot read block file, expected at least 1 commited data block [path=")
                     .put(path)
                     .put(']');
         }
