@@ -27,6 +27,8 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.DirectArrayView;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.arr.NoopArrayState;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cutlass.line.tcp.ArrayParser;
@@ -37,6 +39,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
 
 public class ArrayTest extends AbstractCairoTest {
 
@@ -98,10 +101,12 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testCreateAsSelect2d() throws Exception {
-        execute("CREATE TABLE tango (a DOUBLE, b DOUBLE)");
-        execute("INSERT INTO tango VALUES (1.0, 2.0)");
-        execute("CREATE TABLE samba AS (SELECT ARRAY[[a, a], [b, b]] arr FROM tango)");
-        assertSql("arr\n[[1.0,1.0],[2.0,2.0]]\n", "samba");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE, b DOUBLE)");
+            execute("INSERT INTO tango VALUES (1.0, 2.0)");
+            execute("CREATE TABLE samba AS (SELECT ARRAY[[a, a], [b, b]] arr FROM tango)");
+            assertSql("arr\n[[1.0,1.0],[2.0,2.0]]\n", "samba");
+        });
     }
 
     @Test
@@ -220,20 +225,24 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testInsertAsSelectLiteral1d() throws Exception {
-        execute("CREATE TABLE tango (a DOUBLE, b DOUBLE)");
-        execute("CREATE TABLE samba (arr DOUBLE[])");
-        execute("INSERT INTO tango VALUES (1.0, 2.0)");
-        execute("INSERT INTO samba SELECT ARRAY[a, b] FROM tango");
-        assertSql("arr\n[1.0,2.0]\n", "samba");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE, b DOUBLE)");
+            execute("CREATE TABLE samba (arr DOUBLE[])");
+            execute("INSERT INTO tango VALUES (1.0, 2.0)");
+            execute("INSERT INTO samba SELECT ARRAY[a, b] FROM tango");
+            assertSql("arr\n[1.0,2.0]\n", "samba");
+        });
     }
 
     @Test
     public void testInsertAsSelectLiteral2d() throws Exception {
-        execute("CREATE TABLE tango (a DOUBLE, b DOUBLE)");
-        execute("CREATE TABLE samba (arr DOUBLE[][])");
-        execute("INSERT INTO tango VALUES (1.0, 2.0)");
-        execute("INSERT INTO samba SELECT ARRAY[[a, a], [b, b]] FROM tango");
-        assertSql("arr\n[[1.0,1.0],[2.0,2.0]]\n", "samba");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE, b DOUBLE)");
+            execute("CREATE TABLE samba (arr DOUBLE[][])");
+            execute("INSERT INTO tango VALUES (1.0, 2.0)");
+            execute("INSERT INTO samba SELECT ARRAY[[a, a], [b, b]] FROM tango");
+            assertSql("arr\n[[1.0,1.0],[2.0,2.0]]\n", "samba");
+        });
     }
 
     @Test
@@ -301,28 +310,70 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testSelectArrayElements() throws Exception {
-        execute("CREATE TABLE tango AS (SELECT ARRAY[1.0, 2, 3] arr FROM long_sequence(1))");
-        assertSql("x\n2.0\n", "SELECT arr[1] x FROM tango");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT ARRAY[1.0, 2, 3] arr FROM long_sequence(1))");
+            assertSql("x\n2.0\n", "SELECT arr[1] x FROM tango");
+        });
     }
 
     @Test
     public void testSelectArrayElements2d() throws Exception {
-        execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4]] arr FROM long_sequence(1))");
-        assertSql("x\n4.0\n", "SELECT arr[1, 1] x FROM tango");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4]] arr FROM long_sequence(1))");
+            assertSql("x\n4.0\n", "SELECT arr[1, 1] x FROM tango");
+        });
     }
 
     @Test
     public void testSelectArrayElements3d() throws Exception {
-        execute("CREATE TABLE tango AS (SELECT ARRAY[[[1.0, 2], [3, 4]], [[5, 6], [7, 8]] ] arr FROM long_sequence(1))");
-        assertSql("x\n8.0\n", "SELECT arr[1, 1, 1] x FROM tango");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[[1.0, 2], [3, 4]], [[5, 6], [7, 8]] ] arr FROM long_sequence(1))");
+            assertSql("x\n2.0\n", "SELECT arr[0, 0, 1] x FROM tango");
+            assertSql("x\n6.0\n", "SELECT arr[1, 0, 1] x FROM tango");
+            assertSql("x\n8.0\n", "SELECT arr[1, 1, 1] x FROM tango");
+        });
+    }
+
+    @Test
+    public void testSelectArrayElementsNotEnoughCoords() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4]] arr FROM long_sequence(1))");
+            try (RecordCursorFactory fac = select("SELECT arr[1] x FROM tango");
+                 RecordCursor cursor = fac.getCursor(sqlExecutionContext)
+            ) {
+                cursor.hasNext();
+                cursor.getRecord().getDouble(0);
+                fail("Accessing array with wrong dimension count was allowed");
+            } catch (Exception e) {
+                assertEquals("[-1] array has 2 dimensions, but provided 1 coordinates", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testSelectArrayElementsTooManyCoords() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4]] arr FROM long_sequence(1))");
+            try (RecordCursorFactory fac = select("SELECT arr[1, 2, 3] x FROM tango");
+                 RecordCursor cursor = fac.getCursor(sqlExecutionContext)
+            ) {
+                cursor.hasNext();
+                cursor.getRecord().getDouble(0);
+                fail("Accessing array with wrong dimension count was allowed");
+            } catch (Exception e) {
+                assertEquals("[-1] array has 2 dimensions, but provided 3 coordinates", e.getMessage());
+            }
+        });
     }
 
     @Test
     public void testSelectLiteral() throws Exception {
-        execute("CREATE TABLE tango (a DOUBLE, b DOUBLE)");
-        execute("INSERT INTO tango VALUES (1.0, 2.0)");
-        assertSql("ARRAY\n[1.0,2.0]\n", "SELECT ARRAY[a, b] FROM tango");
-        assertSql("ARRAY\n[[1.0],[2.0]]\n", "SELECT ARRAY[[a], [b]] FROM tango");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE, b DOUBLE)");
+            execute("INSERT INTO tango VALUES (1.0, 2.0)");
+            assertSql("ARRAY\n[1.0,2.0]\n", "SELECT ARRAY[a, b] FROM tango");
+            assertSql("ARRAY\n[[1.0],[2.0]]\n", "SELECT ARRAY[[a], [b]] FROM tango");
+        });
     }
 
     @Test

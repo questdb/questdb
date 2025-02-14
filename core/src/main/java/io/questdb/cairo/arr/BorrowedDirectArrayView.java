@@ -142,7 +142,7 @@ public class BorrowedDirectArrayView implements ArrayView {
     }
 
     public boolean hasDefaultStrides() {
-        return ArrayMeta.isDefaultStrides(shape, strides);
+        return ArrayMetaUtils.isDefaultStrides(shape, strides);
     }
 
     /**
@@ -184,8 +184,8 @@ public class BorrowedDirectArrayView implements ArrayView {
             }
             this.type = type;
             shape.of(shapePtr, shapeLength);
-            ArrayMeta.validateShape(shape);
-            final int valuesLength = ArrayMeta.flatLength(shape);
+            ArrayMetaUtils.validateShape(shape);
+            final int valuesLength = ArrayMetaUtils.flatLength(shape);
             validateValuesSize(type, valuesOffset, valuesLength, valuesSize);
             strides.of(stridesPtr, stridesLength);
             values.of(valuesPtr, valuesSize);
@@ -237,7 +237,7 @@ public class BorrowedDirectArrayView implements ArrayView {
             final int dimStride = strides.get(dimsIndex);
             flatIndex += (dimCoordinate * dimStride);
         }
-        assert flatIndex < ArrayMeta.flatLength(shape);
+        assert flatIndex < ArrayMetaUtils.flatLength(shape);
         return valuesOffset + flatIndex;
     }
 }
