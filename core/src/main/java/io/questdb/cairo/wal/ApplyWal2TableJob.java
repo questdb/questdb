@@ -199,7 +199,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             CairoEngine engine,
             @Transient Path tempPath
     ) {
-        if (engine.lockReadersOnDrop(tableToken)) {
+        if (engine.lockReadersAndMetadata(tableToken)) {
             TableWriter writerToClose = null;
             try {
                 final CairoConfiguration configuration = engine.getConfiguration();
@@ -225,7 +225,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 cleanDroppedTableDirectory(engine, tempPath, tableToken);
             } finally {
                 Misc.free(writerToClose);
-                engine.unlockReadersOnDrop(tableToken);
+                engine.unlockReadersAndMetadata(tableToken);
             }
         } else {
             LOG.info().$("table '").utf8(tableToken.getDirName())
