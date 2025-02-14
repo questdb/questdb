@@ -216,6 +216,7 @@ public class MatViewRefreshState implements QuietCloseable {
                 .concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
         blockFileReader.of(dbRoot.$());
         MatViewRefreshState.readFrom(blockFileReader, this);
+        blockFileReader.clear();
         return lastRefreshBaseTxn;
     }
 
@@ -281,6 +282,7 @@ public class MatViewRefreshState implements QuietCloseable {
                     .concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
             blockFileWriter.of(dbRoot.$());
             MatViewRefreshState.commitTo(blockFileWriter, this);
+            blockFileWriter.clear();
         }
     }
 
@@ -290,5 +292,6 @@ public class MatViewRefreshState implements QuietCloseable {
                 .concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
         blockFileWriter.of(dbRoot.$());
         MatViewRefreshState.commitTo(blockFileWriter, this);
+        blockFileWriter.clear();
     }
 }

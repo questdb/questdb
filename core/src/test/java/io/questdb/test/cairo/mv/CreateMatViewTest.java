@@ -732,7 +732,6 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    @Ignore("CI issue hunting")
     public void testCreateRefreshConcurrent() throws Exception {
         assertMemoryLeak(() -> {
             execute(
