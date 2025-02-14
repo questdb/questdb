@@ -35,7 +35,6 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Mutable;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -47,7 +46,7 @@ import java.io.Closeable;
 
 import static io.questdb.cairo.file.BlockFileUtils.*;
 
-public class BlockFileWriter implements Closeable, Mutable {
+public class BlockFileWriter implements Closeable {
     private final BlockMemoryHandleImpl blockMemoryHandle = new BlockMemoryHandleImpl();
     private final int commitMode;
     private final FilesFacade ff;
@@ -70,17 +69,11 @@ public class BlockFileWriter implements Closeable, Mutable {
     }
 
     @Override
-    public void clear() {
+    public void close() {
         Misc.free(memory);
         Misc.free(file);
+        reset();
         isCommitted = false;
-        blockOffset = 0;
-        blockCount = 0;
-    }
-
-    @Override
-    public void close() {
-        clear();
     }
 
     public void commit() {
@@ -115,11 +108,12 @@ public class BlockFileWriter implements Closeable, Mutable {
         setRegionLength(currentVersion, regionLength);
         setVersionVolatile(currentVersion);
 
-        isCommitted = true;
-
         if (commitMode != CommitMode.NOSYNC) {
             file.sync(commitMode == CommitMode.ASYNC);
         }
+
+        reset();
+        isCommitted = true;
     }
 
     public long getRegionLength(final long version) {
@@ -139,11 +133,10 @@ public class BlockFileWriter implements Closeable, Mutable {
     }
 
     public void of(@Transient final LPSZ path, final long pageSize) {
-        clear();
+        close();
         if (file == null) {
             file = Vm.getCMARWInstance();
         }
-
         file.of(ff, path, pageSize, ff.length(path), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
 
         if (memory == null) {
@@ -156,6 +149,11 @@ public class BlockFileWriter implements Closeable, Mutable {
 
     public WritableBlock reserve(int bytes) {
         return blockMemoryHandle.reset(bytes);
+    }
+
+    private void reset() {
+        blockOffset = REGION_HEADER_SIZE;
+        blockCount = 0;
     }
 
     private void setRegionLength(final long version, final long length) {
