@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.mv;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnFilter;
@@ -83,12 +84,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             this.workerId = workerId;
             this.engine = engine;
             this.mvRefreshExecutionContext = new MatViewRefreshExecutionContext(engine, workerCount, sharedWorkerCount);
-            this.txnRangeLoader = new WalTxnRangeLoader(engine.getConfiguration().getFilesFacade());
+            final CairoConfiguration configuration = engine.getConfiguration();
+            this.txnRangeLoader = new WalTxnRangeLoader(configuration.getFilesFacade());
             this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
             this.maxRecompileAttempts = engine.getConfiguration().getMatViewMaxRecompileAttempts();
             this.batchSize = engine.getConfiguration().getMatViewInsertAsSelectBatchSize();
-            this.blockFileWriter = new BlockFileWriter(engine.getConfiguration().getFilesFacade());
-            this.blockFileReader = new BlockFileReader(engine.getConfiguration());
+            this.blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
+            this.blockFileReader = new BlockFileReader(configuration);
             this.dbRoot = new Path();
             dbRoot.of(engine.getConfiguration().getDbRoot());
             this.dbRootLen = dbRoot.size();

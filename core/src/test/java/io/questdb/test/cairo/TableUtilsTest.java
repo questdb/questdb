@@ -73,7 +73,7 @@ public class TableUtilsTest extends AbstractTest {
         path.of(volumeRoot.getAbsolutePath()).concat(tableName).$();
         Assert.assertTrue(new File(dbRoot, tableName).mkdir());
         try {
-            TableUtils.createTableInVolume(
+            TableUtils.createTableOrMatViewInVolume(
                     FF,
                     dbRoot.getAbsolutePath(),
                     509,
@@ -103,7 +103,7 @@ public class TableUtilsTest extends AbstractTest {
         path.of(volumeRoot.getAbsolutePath()).concat(tableName).$();
         Assert.assertTrue(new File(volumeRoot, tableName).mkdir());
         try {
-            TableUtils.createTableInVolume(
+            TableUtils.createTableOrMatViewInVolume(
                     FF,
                     dbRoot.getAbsolutePath(),
                     509,
@@ -132,7 +132,7 @@ public class TableUtilsTest extends AbstractTest {
         path.of(volumeRoot.getAbsolutePath()).concat(tableName).$();
         Assert.assertTrue(new File(dbRoot, tableName).createNewFile());
         try {
-            TableUtils.createTableInVolume(
+            TableUtils.createTableOrMatViewInVolume(
                     FF,
                     dbRoot.getAbsolutePath(),
                     509,

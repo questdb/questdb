@@ -437,20 +437,6 @@ public final class TableUtils {
         createTableOrMatView(ff, root, mkDirMode, memory, null, path, tableDir, structure, tableVersion, tableId);
     }
 
-    public static void createTableInVolume(
-            FilesFacade ff,
-            CharSequence root,
-            int mkDirMode,
-            MemoryMARW memory,
-            Path path,
-            CharSequence tableDir,
-            TableStructure structure,
-            int tableVersion,
-            int tableId
-    ) {
-        createTableOrMatViewInVolume(ff, root, mkDirMode, memory, null, path, tableDir, structure, tableVersion, tableId);
-    }
-
     public static void createTableNameFile(MemoryMAR mem, CharSequence charSequence) {
         mem.putStr(charSequence);
         mem.putByte((byte) 0);
@@ -575,6 +561,20 @@ public final class TableUtils {
                 ff.fsyncAndClose(dirFd);
             }
         }
+    }
+
+    public static void createTableOrMatViewInVolume(
+            FilesFacade ff,
+            CharSequence root,
+            int mkDirMode,
+            MemoryMARW memory,
+            Path path,
+            CharSequence tableDir,
+            TableStructure structure,
+            int tableVersion,
+            int tableId
+    ) {
+        createTableOrMatViewInVolume(ff, root, mkDirMode, memory, null, path, tableDir, structure, tableVersion, tableId);
     }
 
     public static void createTableOrMatViewInVolume(

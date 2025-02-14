@@ -1384,8 +1384,9 @@ public class CairoEngine implements Closeable, WriterSource {
 
         Path path = Path.getThreadLocal(configuration.getDbRoot());
         final int pathLen = path.size();
-        try (BlockFileReader reader = new BlockFileReader(configuration);
-             BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade())
+        try (
+                BlockFileReader reader = new BlockFileReader(configuration);
+                BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())
         ) {
             for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
                 final TableToken tableToken = tableTokenBucket.get(i);

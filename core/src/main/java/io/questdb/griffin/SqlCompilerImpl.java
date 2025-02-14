@@ -259,7 +259,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             alterOperationBuilder = new AlterOperationBuilder();
             dropOperationBuilder = new GenericDropOperationBuilder();
             queryRegistry = engine.getQueryRegistry();
-            blockFileWriter = new BlockFileWriter(ff);
+            blockFileWriter = new BlockFileWriter(ff, configuration.getCommitMode());
         } catch (Throwable th) {
             close();
             throw th;
@@ -3872,7 +3872,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         }
 
                         if (tableToken.isMatView()) {
-                            try (BlockFileWriter writer = new BlockFileWriter(ff)) {
+                            try (BlockFileWriter writer = new BlockFileWriter(ff, configuration.getCommitMode())) {
                                 MatViewGraph graph = engine.getMatViewGraph();
                                 MatViewRefreshState state = graph.getViewRefreshState(tableToken);
                                 writer.of(auxPath.trimTo(tableRootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());

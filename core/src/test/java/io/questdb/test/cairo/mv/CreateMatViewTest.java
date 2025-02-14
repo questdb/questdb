@@ -810,7 +810,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
                 assertNotNull(matViewDefinition);
 
-                try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade())) {
+                try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
                     writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                     // Add unknown block.
                     AppendableBlock block = writer.append();
@@ -868,7 +868,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 final MatViewRefreshState matViewRefreshState = engine.getMatViewGraph().getViewRefreshState(matViewToken);
                 assertNotNull(matViewRefreshState);
 
-                try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade())) {
+                try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
                     writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
                     // Add unknown block.
                     AppendableBlock block = writer.append();

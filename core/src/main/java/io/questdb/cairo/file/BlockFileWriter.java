@@ -64,11 +64,6 @@ public class BlockFileWriter implements Closeable, Mutable {
         this.commitMode = commitMode;
     }
 
-    public BlockFileWriter(FilesFacade ff) {
-        this.ff = ff;
-        this.commitMode = CommitMode.SYNC;
-    }
-
     public AppendableBlock append() {
         return blockMemoryHandle.reset(0);
     }

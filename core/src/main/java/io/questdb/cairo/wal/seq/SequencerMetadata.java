@@ -52,6 +52,7 @@ import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class SequencerMetadata extends AbstractRecordMetadata implements TableRecordMetadata, Closeable {
+    private final int commitMode;
     private final FilesFacade ff;
     private final MemoryMARW metaMem;
     private final IntList readColumnOrder = new IntList();
@@ -62,12 +63,13 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     private int tableId;
     private TableToken tableToken;
 
-    public SequencerMetadata(FilesFacade ff) {
-        this(ff, false);
+    public SequencerMetadata(FilesFacade ff, int commitMode) {
+        this(ff, commitMode, false);
     }
 
-    public SequencerMetadata(FilesFacade ff, boolean readonly) {
+    public SequencerMetadata(FilesFacade ff, int commitMode, boolean readonly) {
         this.ff = ff;
+        this.commitMode = commitMode;
         this.readonly = readonly;
         if (!readonly) {
             roMetaMem = metaMem = Vm.getCMARWInstance();
@@ -138,7 +140,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
 
         if (writeInitialMetadata && tableStruct.isMatView()) {
             assert tableStruct.getMatViewDefinition() != null;
-            try (BlockFileWriter writer = new BlockFileWriter(ff)) {
+            try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
                 writer.of(path.trimTo(pathLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                 MatViewDefinition.commitTo(writer, tableStruct.getMatViewDefinition());
                 writer.of(path.trimTo(pathLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
