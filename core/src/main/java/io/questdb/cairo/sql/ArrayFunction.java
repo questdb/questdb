@@ -26,9 +26,11 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public abstract class ArrayFunction implements Function {
@@ -102,6 +104,11 @@ public abstract class ArrayFunction implements Function {
 
     @Override
     public int getInt(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public @NotNull Interval getInterval(Record rec) {
         throw new UnsupportedOperationException();
     }
 

@@ -30,9 +30,11 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
 public class UndefinedFunction implements Function {
     public static UndefinedFunction INSTANCE = new UndefinedFunction();
@@ -110,6 +112,11 @@ public class UndefinedFunction implements Function {
     @Override
     public int getInt(io.questdb.cairo.sql.Record rec) {
         return getByte(rec);
+    }
+
+    @Override
+    public @NotNull Interval getInterval(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

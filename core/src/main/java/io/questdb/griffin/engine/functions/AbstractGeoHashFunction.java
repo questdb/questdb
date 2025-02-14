@@ -25,13 +25,15 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.Function;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
 public abstract class AbstractGeoHashFunction implements Function {
 
@@ -93,6 +95,11 @@ public abstract class AbstractGeoHashFunction implements Function {
 
     @Override
     public int getInt(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public @NotNull Interval getInterval(Record rec) {
         throw new UnsupportedOperationException();
     }
 

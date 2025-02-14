@@ -35,10 +35,12 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
 public class NamedParameterLinkFunction implements Function {
     private final int type;
@@ -128,6 +130,11 @@ public class NamedParameterLinkFunction implements Function {
     @Override
     public int getInt(Record rec) {
         return getBase().getInt(rec);
+    }
+
+    @Override
+    public @NotNull Interval getInterval(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

@@ -111,6 +111,11 @@ public abstract class RecordFunction implements Function {
     }
 
     @Override
+    public @NotNull Interval getInterval(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public long getLong(Record rec) {
         throw new UnsupportedOperationException();
     }

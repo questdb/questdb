@@ -30,12 +30,12 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -243,6 +243,11 @@ public class JsonExtractFunction implements Function {
                 pointer,
                 stateA.simdJsonResult
         );
+    }
+
+    @Override
+    public @NotNull Interval getInterval(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
