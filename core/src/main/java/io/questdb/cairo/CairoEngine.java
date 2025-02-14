@@ -944,10 +944,13 @@ public class CairoEngine implements Closeable, WriterSource {
      * @return true if the message was successfully put on the queue and false otherwise.
      */
     public boolean notifyWalTxnCommitted(@NotNull TableToken tableToken) {
+        final CharSequence instanceId = getConfiguration().getSnapshotInstanceId();
+        LOG.info().$("notifyWalTxnCommitted :: (A) [snapshotInstanceId=").$(instanceId).$(", dirName=").$(tableToken.getDirNameUtf8()).I$();
         final Sequence pubSeq = messageBus.getWalTxnNotificationPubSequence();
         while (true) {
             long cursor = pubSeq.next();
             if (cursor > -1L) {
+                LOG.info().$("notifyWalTxnCommitted :: (B) [snapshotInstanceId=").$(instanceId).$(", dirName=").$(tableToken.getDirNameUtf8()).I$();
                 WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
                 task.of(tableToken);
                 pubSeq.done(cursor);
@@ -957,6 +960,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         .$(", table=").utf8(tableToken.getDirName())
                         .I$();
                 // queue overflow, throw away notification and notify a job to rescan all tables
+                LOG.info().$("notifyWalTxnCommitted :: (C) [snapshotInstanceId=").$(instanceId).$(", dirName=").$(tableToken.getDirNameUtf8()).I$();
                 notifyWalTxnRepublisher(tableToken);
                 return false;
             }

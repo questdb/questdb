@@ -73,6 +73,8 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
             return;
         }
 
+        final CharSequence instanceId = engine.getConfiguration().getSnapshotInstanceId();
+
         if (
                 seqTxn < 0 && TableUtils.exists(
                         ff,
@@ -124,6 +126,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     }
 
     private boolean republishNotificationsFromTrackers() {
+        final CharSequence instanceId = engine.getConfiguration().getSnapshotInstanceId();
         engine.getTableTokens(tableTokenBucket, false);
         for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
             TableToken tableToken = tableTokenBucket.get(i);

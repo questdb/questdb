@@ -259,6 +259,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             RunStatus runStatus,
             O3JobParallelismRegulator regulator
     ) {
+        final CharSequence snapshotId = engine.getConfiguration().getSnapshotInstanceId();
+        LOG.info().$("applying outstanding transactions [dirName=").$(tableToken.getDirNameUtf8()).$(", snapshotId=").$(snapshotId).I$();
+
         final TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
         boolean isTerminating;
         boolean finishedAll = true;
@@ -637,6 +640,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         SeqTxnTracker txnTracker = null;
         this.lastAttemptSeqTxn = -1;
         try {
+            final CharSequence snapshotId = engine.getConfiguration().getSnapshotInstanceId();
+            LOG.info().$("applying wal [dirName=").$(tableToken.getDirNameUtf8()).$(", snapshotId=").$(snapshotId).I$();
             // security context is checked on writing to the WAL and can be ignored here
             final TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
             if (engine.isTableDropped(tableToken) || updatedToken == null) {

@@ -80,7 +80,7 @@ public class LogFactory implements Closeable {
     public static final String LOG_DIR_VAR = "${log.dir}";
     private static final String DEFAULT_CONFIG = "/io/questdb/site/conf/" + DEFAULT_CONFIG_NAME;
     private static final int DEFAULT_LOG_LEVEL = LogLevel.INFO | LogLevel.ERROR | LogLevel.CRITICAL | LogLevel.ADVISORY;
-    private static final int DEFAULT_MSG_SIZE = 4 * 1024;
+    private static final int DEFAULT_MSG_SIZE = 16 * 1024;
     private static final int DEFAULT_QUEUE_DEPTH = 1024;
     private static final String EMPTY_STR = "";
     private static final LengthDescendingComparator LDC = new LengthDescendingComparator();
