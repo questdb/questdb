@@ -66,4 +66,8 @@ public class HttpResponseArrayState implements ArrayState, Mutable {
         response.bookmark();
         this.flatIndex = flatIndex;
     }
+
+    public void reset() {
+        Arrays.fill(contender, 0);
+    }
 }

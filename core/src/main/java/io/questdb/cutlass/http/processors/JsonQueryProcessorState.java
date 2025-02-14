@@ -29,9 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.arr.ArrayState;
 import io.questdb.cairo.arr.ArrayTypeDriver;
-import io.questdb.cairo.arr.NoopArrayState;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -41,6 +39,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.http.HttpResponseArrayState;
 import io.questdb.cutlass.http.HttpResponseSink;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.SqlException;
@@ -102,7 +101,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
     private final long statementTimeout;
     private byte apiVersion = DEFAULT_API_VERSION;
-    private final ArrayState arrayState = NoopArrayState.INSTANCE;
+    private final HttpResponseArrayState arrayState = new HttpResponseArrayState();
     private SqlExecutionCircuitBreaker circuitBreaker;
     private int columnCount;
     private int columnIndex;
@@ -725,7 +724,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putIntervalValue(response, record, columnIdx);
                     break;
                 case ColumnType.ARRAY:
-                    ArrayTypeDriver.arrayToJson(record.getArray(columnIdx, columnType), response, arrayState);
+                    arrayState.of(response);
+                    try {
+                        ArrayTypeDriver.arrayToJson(record.getArray(columnIdx, columnType), response, arrayState);
+                    } catch (Throwable e) {
+                        arrayState.reset();
+                        throw e;
+                    }
+                    arrayState.clear();
                     break;
                 default:
                     // this should never happen since metadata are already validated
