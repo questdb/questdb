@@ -101,6 +101,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
     private final long statementTimeout;
     private byte apiVersion = DEFAULT_API_VERSION;
+    private ArrayState arrayState = null;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private int columnCount;
     private int columnIndex;
@@ -130,7 +131,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private long skip;
     private long stop;
     private boolean timings = false;
-    private ArrayState arrayState = null;
 
     public JsonQueryProcessorState(
             HttpConnectionContext httpConnectionContext,
