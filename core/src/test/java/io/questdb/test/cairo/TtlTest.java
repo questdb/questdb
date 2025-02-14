@@ -39,7 +39,6 @@ import static org.junit.Assert.fail;
 
 @RunWith(Parameterized.class)
 public class TtlTest extends AbstractCairoTest {
-
     private final String wal;
 
     public TtlTest(WalMode walMode) {
