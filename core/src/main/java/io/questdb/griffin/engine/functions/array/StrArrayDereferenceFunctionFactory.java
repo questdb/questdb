@@ -67,17 +67,17 @@ public class StrArrayDereferenceFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrA(Record rec) {
-            return arrayFunction.getStrA(rec, indexFunction.getInt(rec));
+            return arrayFunction.getExtendedOps().getStrA(rec, indexFunction.getInt(rec));
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return arrayFunction.getStrB(rec, indexFunction.getInt(rec));
+            return arrayFunction.getExtendedOps().getStrB(rec, indexFunction.getInt(rec));
         }
 
         @Override
-        public int getStrLen(Record rec, int arrayIndex) {
-            return arrayFunction.getStrLen(rec, indexFunction.getInt(rec));
+        public int getStrLen(Record rec) {
+            return arrayFunction.getExtendedOps().getStrLen(rec, indexFunction.getInt(rec));
         }
 
         @Override

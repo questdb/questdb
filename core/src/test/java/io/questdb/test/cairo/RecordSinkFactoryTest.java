@@ -32,6 +32,7 @@ import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.RecordSinkSPI;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.BinarySequence;
@@ -298,7 +299,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         Assert.assertEquals(expectedPutTypes, testRecordSink.recordedTypes);
     }
 
-    private static class TestFunction implements Function {
+    private static class TestFunction implements Function, FunctionExtension {
         final int type;
         int callCount;
 
@@ -361,6 +362,11 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
             Assert.assertEquals(ColumnType.DOUBLE, type);
             callCount++;
             return 1;
+        }
+
+        @Override
+        public FunctionExtension getExtendedOps() {
+            return this;
         }
 
         @Override

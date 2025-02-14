@@ -98,12 +98,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     ArrayView getArray(Record rec);
 
-    /**
-     * Returns the length of the string array, coupled with {@link #getStrA(Record, int) getStrA/B(record, arrayindex)}.
-     * Not related to {@link #getArray(Record)}.
-     */
-    int getArrayLength();
-
     BinarySequence getBin(Record rec);
 
     long getBinLen(Record rec);
@@ -117,6 +111,10 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     long getDate(Record rec);
 
     double getDouble(Record rec);
+
+    default FunctionExtension getExtendedOps() {
+        return null;
+    }
 
     float getFloat(Record rec);
 
@@ -159,9 +157,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return getClass().getName();
     }
 
-    // function returns a record of values
-    Record getRecord(Record rec);
-
     // when function returns factory it becomes factory
     // on other words this is not a tear-away instance
     RecordCursorFactory getRecordCursorFactory();
@@ -170,15 +165,9 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     CharSequence getStrA(Record rec);
 
-    CharSequence getStrA(Record rec, int arrayIndex);
-
     CharSequence getStrB(Record rec);
 
-    CharSequence getStrB(Record rec, int arrayIndex);
-
     int getStrLen(Record rec);
-
-    int getStrLen(Record rec, int arrayIndex);
 
     CharSequence getSymbol(Record rec);
 

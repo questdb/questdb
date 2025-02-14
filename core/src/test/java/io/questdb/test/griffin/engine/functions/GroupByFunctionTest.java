@@ -54,11 +54,6 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public int getArrayLength() {
-            return 0;
-        }
-
-        @Override
         public BinarySequence getBin(Record rec) {
             return null;
         }
@@ -130,7 +125,7 @@ public class GroupByFunctionTest {
 
         @Override
         public @NotNull Interval getInterval(Record rec) {
-            return Interval.NULL;
+            return null;
         }
 
         @Override
@@ -163,11 +158,6 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public Record getRecord(Record rec) {
-            return null;
-        }
-
-        @Override
         public RecordCursorFactory getRecordCursorFactory() {
             return null;
         }
@@ -183,27 +173,12 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public CharSequence getStrA(Record rec, int arrayIndex) {
-            return null;
-        }
-
-        @Override
         public CharSequence getStrB(Record rec) {
             return null;
         }
 
         @Override
-        public CharSequence getStrB(Record rec, int arrayIndex) {
-            return null;
-        }
-
-        @Override
         public int getStrLen(Record rec) {
-            return 0;
-        }
-
-        @Override
-        public int getStrLen(Record rec, int arrayIndex) {
             return 0;
         }
 

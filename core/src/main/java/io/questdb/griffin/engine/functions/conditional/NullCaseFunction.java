@@ -56,11 +56,6 @@ class NullCaseFunction implements CaseFunction {
     }
 
     @Override
-    public int getArrayLength() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
     }
@@ -166,11 +161,6 @@ class NullCaseFunction implements CaseFunction {
     }
 
     @Override
-    public Record getRecord(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public RecordCursorFactory getRecordCursorFactory() {
         throw new UnsupportedOperationException();
     }
@@ -186,27 +176,12 @@ class NullCaseFunction implements CaseFunction {
     }
 
     @Override
-    public CharSequence getStrA(Record rec, int arrayIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public CharSequence getStrB(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public CharSequence getStrB(Record rec, int arrayIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public int getStrLen(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getStrLen(Record rec, int arrayIndex) {
         throw new UnsupportedOperationException();
     }
 

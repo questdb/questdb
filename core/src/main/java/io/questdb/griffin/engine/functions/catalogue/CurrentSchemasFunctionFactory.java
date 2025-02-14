@@ -26,13 +26,16 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrArrayFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
 public class CurrentSchemasFunctionFactory implements FunctionFactory {
 
@@ -46,11 +49,25 @@ public class CurrentSchemasFunctionFactory implements FunctionFactory {
         return new CurrentSchemaFunction();
     }
 
-    private static class CurrentSchemaFunction extends StrArrayFunction {
-
+    private static class CurrentSchemaFunction extends StrArrayFunction implements FunctionExtension {
         @Override
         public int getArrayLength() {
             return 1;
+        }
+
+        @Override
+        public FunctionExtension getExtendedOps() {
+            return this;
+        }
+
+        @Override
+        public @NotNull Interval getInterval(Record rec) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Record getRecord(Record rec) {
+            throw new UnsupportedOperationException();
         }
 
         @Override

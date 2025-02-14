@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.bool;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
@@ -46,7 +47,7 @@ public class AllNotEqStrFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        Function arrayFunction = args.getQuick(1);
+        FunctionExtension arrayFunction = args.getQuick(1).getExtendedOps();
         int arraySize = arrayFunction.getArrayLength();
         if (arraySize == 0) {
             return BooleanConstant.TRUE;
