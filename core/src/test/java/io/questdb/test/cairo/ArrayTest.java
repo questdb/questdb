@@ -313,6 +313,8 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testSelectArrayElements3d() throws Exception {
         execute("CREATE TABLE tango AS (SELECT ARRAY[[[1.0, 2], [3, 4]], [[5, 6], [7, 8]] ] arr FROM long_sequence(1))");
+        assertSql("x\n2.0\n", "SELECT arr[0, 0, 1] x FROM tango");
+        assertSql("x\n6.0\n", "SELECT arr[1, 0, 1] x FROM tango");
         assertSql("x\n8.0\n", "SELECT arr[1, 1, 1] x FROM tango");
     }
 
