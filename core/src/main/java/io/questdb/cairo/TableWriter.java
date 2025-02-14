@@ -794,7 +794,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return AttachDetachStatus.ATTACH_ERR_DIR_EXISTS;
         }
 
-        Path detachedPath = Path.PATH.get().of(configuration.getRoot()).concat(tableToken);
+        Path detachedPath = Path.PATH.get().of(configuration.getDbRoot()).concat(tableToken);
         setPathForNativePartition(detachedPath, partitionBy, timestamp, -1L);
         detachedPath.put(configuration.getAttachPartitionSuffix()).$();
         int detachedRootLen = detachedPath.size();
@@ -1656,7 +1656,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 LOG.info().$("detaching partition via unlink [path=").$substr(pathRootSize, path).I$();
             } else {
 
-                detachedPath.of(configuration.getRoot()).concat(tableToken.getDirName());
+                detachedPath.of(configuration.getDbRoot()).concat(tableToken.getDirName());
                 int detachedRootLen = detachedPath.size();
                 // detachedPath: detached partition folder
                 if (!ff.exists(detachedPath.slash$())) {
@@ -4234,9 +4234,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 denseSymbolMapWriters.size(),
                 txWriter
         );
-        // In case there are some dirty files left from rolled back transaction
-        // clean the newly created symbol files.
-        w.truncate();
+
+        try {
+            // In case there are some dirty files left from rolled back transaction
+            // clean the newly created symbol files.
+            w.truncate();
+        } catch (Throwable t) {
+            // oh, well, we tried and it failed. this can happen if there is e.g. I/O issue.
+            // we can't do much about it but make sure we close the writer to avoid leaks
+            w.close();
+            throw t;
+        }
+
         denseSymbolMapWriters.add(w);
         symbolMapWriters.extendAndSet(columnCount, w);
     }

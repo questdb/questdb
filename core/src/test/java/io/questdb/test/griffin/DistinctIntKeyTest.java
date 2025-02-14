@@ -145,7 +145,7 @@ public class DistinctIntKeyTest extends AbstractCairoTest {
             final String partition = "2020-02";
 
             TableToken tableToken = engine.verifyTableName("tab");
-            try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(tableToken).concat(partition)) {
+            try (Path path = new Path().of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(partition)) {
                 Assert.assertTrue(Files.rmdir(path, true));
             }
 

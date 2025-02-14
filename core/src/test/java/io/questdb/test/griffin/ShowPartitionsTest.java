@@ -124,8 +124,8 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                     drainWalQueue();
                 }
                 engine.releaseAllWriters();
-                srcPath.of(configuration.getRoot()).concat(engine.verifyTableName(tab2Name)).concat("2023-03").put(DETACHED_DIR_MARKER);
-                dstPath.of(configuration.getRoot()).concat(engine.verifyTableName(tabName)).concat("2023-03").put(ATTACHABLE_DIR_MARKER);
+                srcPath.of(configuration.getDbRoot()).concat(engine.verifyTableName(tab2Name)).concat("2023-03").put(DETACHED_DIR_MARKER);
+                dstPath.of(configuration.getDbRoot()).concat(engine.verifyTableName(tabName)).concat("2023-03").put(ATTACHABLE_DIR_MARKER);
                 Assert.assertEquals(0, Files.softLink(srcPath.$(), dstPath.$()));
                 assertShowPartitions(
                         "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tisParquet\tparquetFileSize\n" +
@@ -180,8 +180,8 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                     drainWalQueue();
                 }
                 engine.releaseAllWriters();
-                srcPath.of(configuration.getRoot()).concat(engine.verifyTableName(tab2Name)).concat("2023-03-15").put(DETACHED_DIR_MARKER);
-                dstPath.of(configuration.getRoot()).concat(engine.verifyTableName(tabName)).concat("2023-03-15").put(ATTACHABLE_DIR_MARKER);
+                srcPath.of(configuration.getDbRoot()).concat(engine.verifyTableName(tab2Name)).concat("2023-03-15").put(DETACHED_DIR_MARKER);
+                dstPath.of(configuration.getDbRoot()).concat(engine.verifyTableName(tabName)).concat("2023-03-15").put(ATTACHABLE_DIR_MARKER);
                 Assert.assertEquals(0, Files.softLink(srcPath.$(), dstPath.$()));
                 assertShowPartitions(
                         "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tisParquet\tparquetFileSize\n" +
@@ -220,8 +220,8 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             }
             // prepare 3 partitions for attachment
             try (
-                    Path path = new Path().of(configuration.getRoot()).concat(tableToken).concat("2023-0");
-                    Path link = new Path().of(configuration.getRoot()).concat(tableToken).concat("2023-0")
+                    Path path = new Path().of(configuration.getDbRoot()).concat(tableToken).concat("2023-0");
+                    Path link = new Path().of(configuration.getDbRoot()).concat(tableToken).concat("2023-0")
             ) {
                 int len = path.size();
                 for (int i = 2; i < 5; i++) {
@@ -472,7 +472,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
     private static void deleteFile(String tableName, String... pathParts) {
         engine.releaseAllWriters();
         TableToken tableToken = engine.verifyTableName(tableName);
-        try (Path path = new Path().of(configuration.getRoot()).concat(tableToken)) {
+        try (Path path = new Path().of(configuration.getDbRoot()).concat(tableToken)) {
             for (String part : pathParts) {
                 path.concat(part);
             }

@@ -204,7 +204,7 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
                     partitionBy = tm.getPartitionBy();
                 }
 
-                final Path path = Path.getThreadLocal(configuration.getRoot()).concat(token.getDirName());
+                final Path path = Path.getThreadLocal(configuration.getDbRoot()).concat(token.getDirName());
                 diskSize = Files.getDirSize(path);
 
                 // TxReader

@@ -1360,9 +1360,9 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     @Test
     public void testInvalidTableName() throws Exception {
         String table = "testInvalidEmptyTableName";
-        Files.touch(Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.TXN_FILE_NAME).$());
-        Files.touch(Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.META_FILE_NAME).$());
-        Files.touch(Path.getThreadLocal(configuration.getRoot()).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
+        Files.touch(Path.getThreadLocal(configuration.getDbRoot()).concat(TableUtils.TXN_FILE_NAME).$());
+        Files.touch(Path.getThreadLocal(configuration.getDbRoot()).concat(TableUtils.META_FILE_NAME).$());
+        Files.touch(Path.getThreadLocal(configuration.getDbRoot()).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
 
         runInContext(() -> {
             recvBuffer =
@@ -1710,7 +1710,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
             handleIO();
             closeContext();
-            try (Path path = new Path().of(configuration.getRoot()).concat(table)) {
+            try (Path path = new Path().of(configuration.getDbRoot()).concat(table)) {
                 Assert.assertFalse(configuration.getFilesFacade().exists(path.$()));
             }
         });

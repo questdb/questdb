@@ -4797,7 +4797,6 @@ public class SqlOptimiser implements Mutable {
      * model into a sub-query, to select all the intended columns but the artificial timestamp.
      */
     private QueryModel rewriteSampleBy(@Nullable QueryModel model) throws SqlException {
-
         if (model == null) {
             return null;
         }
@@ -4814,6 +4813,11 @@ public class SqlOptimiser implements Mutable {
             final int sampleByFillSize = sampleByFill.size();
             ExpressionNode sampleByFrom = nested.getSampleByFrom();
             ExpressionNode sampleByTo = nested.getSampleByTo();
+
+            final ObjList<ExpressionNode> groupBy = nested.getGroupBy();
+            if (sampleBy != null && groupBy != null && groupBy.size() > 0) {
+                throw SqlException.$(groupBy.getQuick(0).position, "SELECT query must not contain both GROUP BY and SAMPLE BY");
+            }
 
             if (
                     sampleBy != null
@@ -4923,7 +4927,6 @@ public class SqlOptimiser implements Mutable {
                                 break;
                         }
                     }
-
 
                     if (isKeyed) {
                         // drop out early, since we don't handle keyed
@@ -6207,7 +6210,6 @@ public class SqlOptimiser implements Mutable {
             if (index == -1) {
                 throw SqlException.invalidColumn(position, columnName);
             }
-
         } else {
             index = model.getModelAliasIndex(columnName, 0, dot);
 
@@ -6218,7 +6220,6 @@ public class SqlOptimiser implements Mutable {
             if (joinModels.getQuick(index).getAliasToColumnMap().excludes(columnName, dot + 1, columnName.length())) {
                 throw SqlException.invalidColumn(position, columnName);
             }
-
         }
         return index;
     }
