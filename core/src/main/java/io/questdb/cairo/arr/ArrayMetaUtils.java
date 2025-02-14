@@ -31,10 +31,11 @@ import org.jetbrains.annotations.NotNull;
 
 /**
  * Algorithms to work with the shape (dimensions) and strides.
- * <p>Note that, unlike in most array implementations,
- * the strides are defined in element space, thus are the same regardless of type.</p>
+ * <p>
+ * Note that, unlike in most array implementations, the strides are defined in terms
+ * of elements, not bytes, so they don't depend on the element type.
  */
-public class ArrayMeta {  // TODO(amunra): Rename to `ArrayMetaUtils`.
+public class ArrayMetaUtils {
 
     /**
      * Maximum size of any given dimension.
@@ -50,7 +51,7 @@ public class ArrayMeta {  // TODO(amunra): Rename to `ArrayMetaUtils`.
      */
     public static final int DIM_MAX_SIZE = (1 << 28) - 1;
 
-    private ArrayMeta() {
+    private ArrayMetaUtils() {
     }
 
     public static void determineDefaultStrides(long shapePtr, int shapeLength, @NotNull DirectIntList stridesOut) {

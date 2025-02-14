@@ -75,14 +75,14 @@ public class ArrayMmapBuffer implements QuietCloseable {
         assert (dataEntryPtr + Byte.BYTES) <= dataLim;
         final int shapeLength = ColumnType.decodeArrayDimensionality(columnType);
         assert (dataEntryPtr + shapeLength * Byte.BYTES) <= dataLim;
-        ArrayMeta.determineDefaultStrides(dataEntryPtr, shapeLength, strides);
+        ArrayMetaUtils.determineDefaultStrides(dataEntryPtr, shapeLength, strides);
 
         // Obtain the values ptr / len from the data.
         final int elementSize = ColumnType.sizeOf(ColumnType.decodeArrayElementType(columnType));
         final long unalignedValuesOffset = offset + ((long) (shapeLength) * Integer.BYTES);
         final long bytesToSkipForAlignment = bytesToSkipForAlignment(unalignedValuesOffset, elementSize);
         final long valuesPtr = dataAddr + unalignedValuesOffset + bytesToSkipForAlignment;
-        final int flatLength = ArrayMeta.flatLength(dataEntryPtr, shapeLength);
+        final int flatLength = ArrayMetaUtils.flatLength(dataEntryPtr, shapeLength);
         assert ColumnType.isArray(columnType) : "type class is not Array";
         final int valuesSize = flatLength * ColumnType.sizeOf(elementSize);
         assert valuesPtr + valuesSize <= dataLim;
