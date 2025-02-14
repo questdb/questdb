@@ -31,6 +31,7 @@ import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.arr.ArrayState;
 import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.NoopArrayState;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -101,7 +102,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
     private final long statementTimeout;
     private byte apiVersion = DEFAULT_API_VERSION;
-    private ArrayState arrayState = null;
+    private final ArrayState arrayState = NoopArrayState.INSTANCE;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private int columnCount;
     private int columnIndex;

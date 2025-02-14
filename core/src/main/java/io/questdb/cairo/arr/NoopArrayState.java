@@ -26,16 +26,23 @@ package io.questdb.cairo.arr;
 
 import io.questdb.std.str.CharSink;
 
-public interface ArrayState {
-    int STATE_CLOSE_BRACKET = 3;
-    int STATE_COMMA_DIMS = 2;
-    int STATE_COMMA_VALUES = 1;
-    int STATE_MAX = STATE_CLOSE_BRACKET + 1;
-    int STATE_OPEN_BRACKET = 0;
+public class NoopArrayState implements ArrayState {
+    public static final NoopArrayState INSTANCE = new NoopArrayState();
 
-    void record(int flatIndex);
+    private NoopArrayState() {
+    }
 
-    boolean notRecorded(int flatIndex);
+    @Override
+    public void record(int flatIndex) {
+    }
 
-    void putAsciiIfNotRecorded(int eventType, int eventDelta, CharSink<?> sink, char symbol);
+    @Override
+    public boolean notRecorded(int flatIndex) {
+        return true;
+    }
+
+    @Override
+    public void putAsciiIfNotRecorded(int eventType, int eventDelta, CharSink<?> sink, char symbol) {
+        sink.put(symbol);
+    }
 }

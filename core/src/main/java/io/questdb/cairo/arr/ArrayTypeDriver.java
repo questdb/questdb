@@ -120,6 +120,20 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     private static final ArrayValueAppender VALUE_APPENDER_DOUBLE = ArrayTypeDriver::appendDoubleFromArrayToSink;
     private static final ArrayValueAppender VALUE_APPENDER_LONG = ArrayTypeDriver::appendLongFromArrayToSink;
 
+    public static void appendDoubleFromArrayToSink(
+            @NotNull ArrayView view,
+            int index,
+            @NotNull CharSink<?> sink,
+            @NotNull String nullLiteral
+    ) {
+        double d = view.getDoubleAtFlatIndex(index);
+        if (!Numbers.isNull(d)) {
+            sink.put(d);
+        } else {
+            sink.putAscii(nullLiteral);
+        }
+    }
+
     public static void appendValue(
             @NotNull MemoryA auxMem,
             @NotNull MemoryA dataMem,
@@ -143,13 +157,22 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     public static void arrayToJson(
             @Nullable ArrayView arrayView,
             @NotNull CharSink<?> sink,
-            ArrayState arrayState
+            @NotNull ArrayState arrayState
     ) {
         if (arrayView == null) {
             sink.put("null");
         } else {
-            arrayToText(arrayView, 0, 0, 0, sink, resolveAppender(arrayView), '[', ']', "null", arrayState);
+            arrayToJson(arrayView, sink, resolveAppender(arrayView), arrayState);
         }
+    }
+
+    public static void arrayToJson(
+            @NotNull ArrayView array,
+            @NotNull CharSink<?> sink,
+            @NotNull ArrayValueAppender appender,
+            ArrayState arrayState
+    ) {
+        arrayToText(array, sink, appender, '[', ']', "null", arrayState);
     }
 
     /**
@@ -157,10 +180,17 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
      */
     public static void arrayToPgWire(
             @NotNull ArrayView arrayView,
-            @NotNull CharSink<?> sink,
-            ArrayState arrayState
+            @NotNull CharSink<?> sink
     ) {
-        arrayToText(arrayView, 0, 0, 0, sink, resolveAppender(arrayView), '{', '}', "NULL", arrayState);
+        arrayToText(
+                arrayView,
+                sink,
+                resolveAppender(arrayView),
+                '{',
+                '}',
+                "NULL",
+                NoopArrayState.INSTANCE
+        );
     }
 
     /**
@@ -168,18 +198,14 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
      * With [] as open-close chars, it produces JSON. With {}, it produces PG Wire format.
      *
      * @param array       flat array containing all the elements
-     * @param dim         current dimension being processed, starting at 0
-     * @param flatIndex   index of the current element in the flat array, starting at 0
      * @param sink        sink that accumulates the JSON string
      * @param openChar    opening character for each array plane
      * @param closeChar   closing character for each array plane
      * @param nullLiteral text that represents a null value
+     * @param arrayState  state management object to allow this builder to restart if the output sink runs out of space.
      */
     public static void arrayToText(
             @NotNull ArrayView array,
-            int dim,
-            int dimIndex,
-            int flatIndex,
             @NotNull CharSink<?> sink,
             @NotNull ArrayValueAppender appender,
             char openChar,
@@ -187,36 +213,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             @NotNull String nullLiteral,
             ArrayState arrayState
     ) {
-
-        final int count = array.getDimLen(dim);
-        final int stride = array.getStride(dim);
-        final boolean atDeepestDim = dim == array.getDimCount() - 1;
-
-        sink.putAscii(openChar);
-        if (atDeepestDim) {
-            for (int i = dimIndex; i < count; i++) {
-                if (i % 64 == 0 && arrayState != null) {
-                    arrayState.bookmark(dim, i, flatIndex);
-                }
-                if (i != 0) {
-                    sink.putAscii(',');
-                }
-                appender.appendFromFlatIndex(array, flatIndex, sink, nullLiteral);
-                flatIndex += stride;
-            }
-        } else {
-            for (int i = dimIndex; i < count; i++) {
-                if (arrayState != null) {
-                    arrayState.bookmark(dim, i, flatIndex);
-                }
-                if (i != 0) {
-                    sink.putAscii(',');
-                }
-                arrayToText(array, dim + 1, 0, flatIndex, sink, appender, openChar, closeChar, nullLiteral, arrayState);
-                flatIndex += stride;
-            }
-        }
-        sink.putAscii(closeChar);
+        arrayToText(array, 0, 0, sink, appender, openChar, closeChar, nullLiteral, arrayState);
     }
 
     /**
@@ -558,6 +555,50 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         appendNullImpl(auxMem, offset);
     }
 
+    private static void arrayToText(
+            @NotNull ArrayView array,
+            int dim,
+            int flatIndex,
+            @NotNull CharSink<?> sink,
+            @NotNull ArrayValueAppender appender,
+            char openChar,
+            char closeChar,
+            @NotNull String nullLiteral,
+            ArrayState arrayState
+    ) {
+        final int count = array.getDimLen(dim);
+        final int stride = array.getStride(dim);
+        final boolean atDeepestDim = dim == array.getDimCount() - 1;
+
+        arrayState.putAsciiIfNotRecorded(ArrayState.STATE_OPEN_BRACKET, 1, sink, openChar);
+
+        if (atDeepestDim) {
+            int elementCommaCount = 0;
+            for (int i = 0; i < count; i++) {
+                if (i != 0) {
+                    arrayState.putAsciiIfNotRecorded(ArrayState.STATE_COMMA_VALUES, ++elementCommaCount, sink, ',');
+                }
+                if (arrayState.notRecorded(flatIndex)) {
+                    appender.appendFromFlatIndex(array, flatIndex, sink, nullLiteral);
+                    flatIndex += stride;
+                    arrayState.record(flatIndex);
+                } else {
+                    flatIndex += stride;
+                }
+            }
+        } else {
+            int dimCommaCount = 0;
+            for (int i = 0; i < count; i++) {
+                if (i != 0) {
+                    arrayState.putAsciiIfNotRecorded(ArrayState.STATE_COMMA_DIMS, ++dimCommaCount, sink, ',');
+                }
+                arrayToText(array, dim + 1, flatIndex, sink, appender, openChar, closeChar, nullLiteral, arrayState);
+                flatIndex += stride;
+            }
+        }
+        arrayState.putAsciiIfNotRecorded(ArrayState.STATE_CLOSE_BRACKET, 1, sink, closeChar);
+    }
+
     private static void padTo(@NotNull MemoryA dataMem, int byteAlignment) {
         dataMem.zeroMem(bytesToSkipForAlignment(dataMem.getAppendOffset(), byteAlignment));
     }
@@ -663,20 +704,6 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return offset + size;
     }
 
-    static void appendDoubleFromArrayToSink(
-            @NotNull ArrayView view,
-            int index,
-            @NotNull CharSink<?> sink,
-            @NotNull String nullLiteral
-    ) {
-        double d = view.getDoubleAtFlatIndex(index);
-        if (!Numbers.isNull(d)) {
-            sink.put(d);
-        } else {
-            sink.putAscii(nullLiteral);
-        }
-    }
-
     static void appendLongFromArrayToSink(
             @NotNull ArrayView view,
             int index,
@@ -692,7 +719,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     @FunctionalInterface
-    private interface ArrayValueAppender {
+    public interface ArrayValueAppender {
         void appendFromFlatIndex(
                 @NotNull ArrayView view,
                 int index,

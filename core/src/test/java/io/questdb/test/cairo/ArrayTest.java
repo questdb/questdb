@@ -27,6 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.DirectArrayView;
+import io.questdb.cairo.arr.NoopArrayState;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cutlass.line.tcp.ArrayParser;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -53,7 +54,7 @@ public class ArrayTest extends AbstractCairoTest {
             array.putDouble(2, 3.0);
             array.putDouble(3, 4.0);
             sink.clear();
-            ArrayTypeDriver.arrayToJson(array, sink, null);
+            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayState.INSTANCE);
             assertEquals("[[1.0,2.0],[3.0,4.0]]", sink.toString());
         }
     }
@@ -72,7 +73,7 @@ public class ArrayTest extends AbstractCairoTest {
             array.putLong(2, 3);
             array.putLong(3, 4);
             sink.clear();
-            ArrayTypeDriver.arrayToJson(array, sink, null);
+            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayState.INSTANCE);
             assertEquals("[[1,2],[3,4]]", sink.toString());
         }
     }
@@ -88,7 +89,7 @@ public class ArrayTest extends AbstractCairoTest {
             sink.put("[6f").put(arrayExpr.substring(1));
             parser.parse(str.of(sink.lo(), sink.hi()));
             sink.clear();
-            ArrayTypeDriver.arrayToJson(parser.getArray(), sink, null);
+            ArrayTypeDriver.arrayToJson(parser.getArray(), sink, NoopArrayState.INSTANCE);
             assertEquals(arrayExpr, sink.toString());
         } catch (ArrayParser.ParseException e) {
             throw new RuntimeException(e);

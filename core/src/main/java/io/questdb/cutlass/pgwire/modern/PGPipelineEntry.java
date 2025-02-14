@@ -1871,7 +1871,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             return;
         }
         long a = utf8Sink.skipInt();
-        ArrayTypeDriver.arrayToPgWire(arrayView, utf8Sink, null);
+        ArrayTypeDriver.arrayToPgWire(arrayView, utf8Sink);
         utf8Sink.putLenEx(a);
     }
 
