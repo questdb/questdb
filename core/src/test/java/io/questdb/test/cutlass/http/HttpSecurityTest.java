@@ -33,10 +33,13 @@ import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.StaticHttpAuthenticatorFactory;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractTest;
 import org.jetbrains.annotations.NotNull;
+import org.junit.AfterClass;
 import org.junit.Test;
 
 public class HttpSecurityTest extends AbstractTest {
@@ -90,6 +93,13 @@ public class HttpSecurityTest extends AbstractTest {
         }
     };
     private static final TestHttpClient testHttpClient = new TestHttpClient();
+
+    @AfterClass
+    public static void tearDownStatic() {
+        testHttpClient.close();
+        AbstractTest.tearDownStatic();
+        assert Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN) == 0;
+    }
 
     @Test
     public void testChkAllowWithValidCredentials() throws Exception {
