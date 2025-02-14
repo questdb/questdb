@@ -39,7 +39,7 @@ import io.questdb.std.ObjList;
 public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "[](D[]I)";
+        return "[](D[]V)";
     }
 
     @Override
@@ -50,32 +50,40 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        assert args.size() == 2;
         Function arrayArg = args.getQuick(0);
-        Function indexArg = args.getQuick(1);
-        return new DoubleArrayAccessFunction(arrayArg, indexArg);
+        args.remove(0);
+        return new DoubleArrayAccessFunction(arrayArg, args);
     }
 
     private static class DoubleArrayAccessFunction extends DoubleFunction {
 
         private final Function arrayArg;
-        private final Function indexArg;
+        private final ObjList<Function> indexArgs;
 
-        DoubleArrayAccessFunction(Function arrayArg, Function indexArg) {
+        DoubleArrayAccessFunction(Function arrayArg, ObjList<Function> indexArgs) {
             this.arrayArg = arrayArg;
-            this.indexArg = indexArg;
+            this.indexArgs = indexArgs;
         }
 
         @Override
         public double getDouble(Record rec) {
             ArrayView array = arrayArg.getArray(rec);
-            int arrayIndex = indexArg.getInt(rec);
-            return array.getDoubleAtFlatIndex(arrayIndex);
+            int flatIndex = 0;
+            for (int n = indexArgs.size(), dim = 0; dim < n; dim++) {
+                int indexAtDim = indexArgs.getQuick(dim).getInt(rec);
+                int strideAtDim = array.getStride(dim);
+                flatIndex += strideAtDim * indexAtDim;
+            }
+            return array.getDoubleAtFlatIndex(flatIndex);
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("[](").val(arrayArg).val(',').val(indexArg).val(')');
+            sink.val("[](").val(arrayArg);
+            for (int n = indexArgs.size(), i = 0; i < n; i++) {
+                sink.val(',').val(indexArgs.getQuick(i));
+            }
+            sink.val(')');
         }
     }
 }

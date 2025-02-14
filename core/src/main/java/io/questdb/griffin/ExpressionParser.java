@@ -421,9 +421,9 @@ public class ExpressionParser {
                                     2,
                                     node.position
                             );
-                            node.paramCount = 2;
                             // paramCount counts commas in this case. For array access, the 1st arg is the array,
                             // 2nd arg is the first index, etc. So, with no commas, there are already two args.
+                            node.paramCount = paramCount + 2;
                             opStack.push(node);
                         } else {
                             assert node.token.equals("[[") : "token is neither '[' nor '[['";
