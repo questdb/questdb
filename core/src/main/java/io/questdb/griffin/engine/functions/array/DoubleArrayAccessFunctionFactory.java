@@ -39,7 +39,7 @@ import io.questdb.std.ObjList;
 public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "[](D[]V)";
+        return "[](D[]IV)";
     }
 
     @Override
