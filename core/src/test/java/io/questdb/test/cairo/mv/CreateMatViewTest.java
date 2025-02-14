@@ -757,6 +757,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                         execute("insert into base_price values('gbpusd', 1.320, now())", executionContext);
                         drainWalQueue();
                         execute("drop materialized view if exists price_1h", executionContext);
+                        drainWalQueue();
                         createCounter.incrementAndGet();
                     }
                 } catch (Exception e) {
