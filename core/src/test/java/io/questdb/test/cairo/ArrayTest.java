@@ -27,6 +27,8 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.DirectArrayView;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cutlass.line.tcp.ArrayParser;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -36,6 +38,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
 
 public class ArrayTest extends AbstractCairoTest {
 
@@ -327,6 +330,38 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("x\n2.0\n", "SELECT arr[0, 0, 1] x FROM tango");
             assertSql("x\n6.0\n", "SELECT arr[1, 0, 1] x FROM tango");
             assertSql("x\n8.0\n", "SELECT arr[1, 1, 1] x FROM tango");
+        });
+    }
+
+    @Test
+    public void testSelectArrayElementsNotEnoughCoords() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4]] arr FROM long_sequence(1))");
+            try (RecordCursorFactory fac = select("SELECT arr[1] x FROM tango");
+                 RecordCursor cursor = fac.getCursor(sqlExecutionContext)
+            ) {
+                cursor.hasNext();
+                cursor.getRecord().getDouble(0);
+                fail("Accessing array with wrong dimension count was allowed");
+            } catch (Exception e) {
+                assertEquals("[-1] array has 2 dimensions, but provided 1 coordinates", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testSelectArrayElementsTooManyCoords() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4]] arr FROM long_sequence(1))");
+            try (RecordCursorFactory fac = select("SELECT arr[1, 2, 3] x FROM tango");
+                 RecordCursor cursor = fac.getCursor(sqlExecutionContext)
+            ) {
+                cursor.hasNext();
+                cursor.getRecord().getDouble(0);
+                fail("Accessing array with wrong dimension count was allowed");
+            } catch (Exception e) {
+                assertEquals("[-1] array has 2 dimensions, but provided 3 coordinates", e.getMessage());
+            }
         });
     }
 

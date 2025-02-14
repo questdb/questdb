@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -68,8 +69,15 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             ArrayView array = arrayArg.getArray(rec);
+            int accessDimCount = indexArgs.size();
+            int arrayDimCount = array.getDimCount();
+            if (accessDimCount != arrayDimCount) {
+                throw CairoException.nonCritical()
+                        .put("array has ").put(arrayDimCount).put(" dimensions, but provided ")
+                        .put(accessDimCount).put(" coordinates");
+            }
             int flatIndex = 0;
-            for (int n = indexArgs.size(), dim = 0; dim < n; dim++) {
+            for (int dim = 0; dim < accessDimCount; dim++) {
                 int indexAtDim = indexArgs.getQuick(dim).getInt(rec);
                 int strideAtDim = array.getStride(dim);
                 flatIndex += strideAtDim * indexAtDim;
