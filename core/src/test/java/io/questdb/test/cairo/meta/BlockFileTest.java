@@ -188,7 +188,7 @@ public class BlockFileTest extends AbstractCairoTest {
                     assertRegionOffset(writer, 2, regionLength, prevRegionOffset + prevRegionLength);
                 }
 
-                readAllBlocks(path, 1);
+                readAllBlocks(path, 1, 2);
             }
         });
     }
@@ -234,7 +234,7 @@ public class BlockFileTest extends AbstractCairoTest {
                     assertRegionOffset(writer, 3, regionLength, prevRegionOffset + prevRegionLength);
                 }
 
-                readAllBlocks(path, 1);
+                readAllBlocks(path, 1, 3);
             }
         });
     }
@@ -250,7 +250,7 @@ public class BlockFileTest extends AbstractCairoTest {
                     commitMsgAVersion1(memory1);
                     writer.commit();
                 }
-                readAllBlocks(path, 1);
+                readAllBlocks(path, 1, 1);
 
                 // corrupt data
                 try (MemoryCMARW mem = Vm.getCMARWInstance()) {
@@ -259,7 +259,7 @@ public class BlockFileTest extends AbstractCairoTest {
                 }
 
                 try {
-                    readAllBlocks(path, 1);
+                    readAllBlocks(path, 1, 0);
                     Assert.fail("checksum mismatch expected");
                 } catch (Exception e) {
                     Assert.assertTrue(e.getMessage().contains("meta file checksum mismatch"));
@@ -275,6 +275,7 @@ public class BlockFileTest extends AbstractCairoTest {
             Rnd rnd = TestUtils.generateRandom(LOG);
             int readerThreads = 4;
             CyclicBarrier start = new CyclicBarrier(readerThreads + 1);
+            AtomicInteger errorCounter = new AtomicInteger();
             AtomicInteger done = new AtomicInteger();
             int iterations = 1000;
             Thread writerThread = new Thread(() -> {
@@ -301,27 +302,29 @@ public class BlockFileTest extends AbstractCairoTest {
                             writer.commit();
                         }
                     }
-                } catch (Exception e) {
-                    LOG.error().$("Error in writer thread: ").$(e).$();
+                } catch (Throwable th) {
+                    LOG.error().$("Error in writer thread: ").$(th).$();
+                    errorCounter.incrementAndGet();
                 } finally {
                     done.incrementAndGet();
                 }
             });
 
             Thread[] readers = new Thread[readerThreads];
-            for (int th = 0; th < readerThreads; th++) {
+            for (int t = 0; t < readerThreads; t++) {
                 Thread readerThread = new Thread(() -> {
                     try (Path path = getDefinitionFilePath("test")) {
                         start.await();
                         for (int i = 0; i < iterations; i++) {
                             Os.sleep(1); // interleave reads and writes
-                            readAllBlocks(path, 1);
+                            readAllBlocks(path, 1, -1);
                         }
-                    } catch (Exception e) {
-                        LOG.error().$("Error in reader thread: ").$(e).$();
+                    } catch (Throwable th) {
+                        LOG.error().$("Error in reader thread: ").$(th).$();
+                        errorCounter.incrementAndGet();
                     }
                 });
-                readers[th] = readerThread;
+                readers[t] = readerThread;
                 readerThread.start();
             }
 
@@ -330,6 +333,7 @@ public class BlockFileTest extends AbstractCairoTest {
             for (int th = 0; th < readerThreads; th++) {
                 readers[th].join();
             }
+            Assert.assertEquals(0, errorCounter.get());
         });
     }
 
@@ -372,7 +376,7 @@ public class BlockFileTest extends AbstractCairoTest {
                     assertRegionOffset(writer, 3, regionLength, 0);
                 }
 
-                readAllBlocks(path, 1);
+                readAllBlocks(path, 1, 3);
             }
         });
     }
@@ -399,7 +403,7 @@ public class BlockFileTest extends AbstractCairoTest {
                     writer.commit();
                 }
 
-                readAllBlocks(path, 3);
+                readAllBlocks(path, 3, 1);
             }
         });
     }
@@ -428,7 +432,7 @@ public class BlockFileTest extends AbstractCairoTest {
                     Assert.assertFalse(writer.commit());
                 }
 
-                readAllBlocks(path, 3);
+                readAllBlocks(path, 3, 1);
             }
         });
     }
@@ -443,7 +447,6 @@ public class BlockFileTest extends AbstractCairoTest {
     }
 
     private static int commitAllTypesMsgAppendAPI(AppendableBlock memory) {
-
         BinarySequence binarySequence = new BinarySequence() {
             @Override
             public byte byteAt(long index) {
@@ -571,15 +574,18 @@ public class BlockFileTest extends AbstractCairoTest {
         return path.of(configuration.getDbRoot()).concat(tableName).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
     }
 
-    private static void readAllBlocks(Path path, int expectedBlocks) {
-        readAllBlocks(path, configuration, expectedBlocks);
+    private static void readAllBlocks(Path path, int expectedBlocks, long expectedRegionVersion) {
+        readAllBlocks(path, configuration, expectedBlocks, expectedRegionVersion);
     }
 
-    private static void readAllBlocks(Path path, CairoConfiguration configuration, int expectedBlocks) {
+    private static void readAllBlocks(Path path, CairoConfiguration configuration, int expectedBlocks, long expectedRegionVersion) {
         try (BlockFileReader reader = new BlockFileReader(configuration)) {
             reader.of(path.$());
             int blockCount = 0;
             BlockFileReader.BlockCursor cursor = reader.getCursor();
+            if (expectedRegionVersion != -1) {
+                Assert.assertEquals(expectedRegionVersion, cursor.getRegionVersion());
+            }
             while (cursor.hasNext()) {
                 ReadableBlock block = cursor.next();
                 final short type = block.type();

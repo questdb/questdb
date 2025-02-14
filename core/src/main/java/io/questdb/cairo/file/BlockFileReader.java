@@ -77,8 +77,9 @@ public class BlockFileReader implements Closeable, Mutable {
     public BlockCursor getCursor() {
         long regionLength;
         long deadline = clock.getTicks() + spinLockTimeoutMs;
+        long currentVersion;
         while (true) {
-            long currentVersion = getVersionVolatile();
+            currentVersion = getVersionVolatile();
             final long regionOffset = HEADER_SIZE + file.getLong(getRegionOffsetOffset(currentVersion));
             regionLength = file.getLong(getRegionLengthOffset(currentVersion));
 
@@ -92,10 +93,9 @@ public class BlockFileReader implements Closeable, Mutable {
 
             if (clock.getTicks() > deadline) {
                 throw CairoException.critical(0)
-                        .put("meta file read timeout [timeout=")
+                        .put("block file read timeout [timeout=")
                         .put(spinLockTimeoutMs)
-                        .put("ms")
-                        .put(", fd=")
+                        .put("ms, fd=")
                         .put(file.getFd())
                         .put(']');
             }
@@ -122,7 +122,7 @@ public class BlockFileReader implements Closeable, Mutable {
         final int blockCount = memory.getInt(REGION_BLOCK_COUNT_OFFSET);
         assert blockCount > 0;
         final long blocksLength = regionLength - REGION_HEADER_SIZE;
-        blockCursor.of(blockCount, REGION_HEADER_SIZE, blocksLength);
+        blockCursor.of(currentVersion, blockCount, REGION_HEADER_SIZE, blocksLength);
         return blockCursor;
     }
 
@@ -172,6 +172,11 @@ public class BlockFileReader implements Closeable, Mutable {
         private int blockCount;
         private long blocksLimit;
         private long currentBlockOffset;
+        private long regionVersion;
+
+        public long getRegionVersion() {
+            return regionVersion;
+        }
 
         public boolean hasNext() {
             if (blockCount > 0 && currentBlockOffset < blocksLimit) {
@@ -194,7 +199,8 @@ public class BlockFileReader implements Closeable, Mutable {
             return block;
         }
 
-        public void of(int blockCount, long blocksOffset, long blocksLength) {
+        public void of(long regionVersion, int blockCount, long blocksOffset, long blocksLength) {
+            this.regionVersion = regionVersion;
             this.blockCount = blockCount;
             this.blocksLimit = blocksOffset + blocksLength;
             this.currentBlockOffset = blocksOffset;
