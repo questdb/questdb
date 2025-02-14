@@ -132,13 +132,17 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     final MatViewRefreshState viewState = engine.getMatViewGraph().getViewRefreshState(viewToken);
                     if (viewState != null && !viewState.isDropped()) {
                         TableToken baseTableToken = engine.getTableTokenIfExists(viewState.getViewDefinition().getBaseTableName());
-                        final long lastAppliedBaseTxn = baseTableToken == null ?
-                                -1 : engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn();
+                        final long lastRefreshedBaseTxn = viewState.getLastRefreshBaseTxn();
+                        final long lastRefreshTimestamp = viewState.getLastRefreshTimestamp();
+                        // Read base table txn after mat view's last refreshed txn to avoid
+                        // showing obsolete base table txn.
+                        final long lastAppliedBaseTxn = baseTableToken != null
+                                ? engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn() : -1;
 
                         record.of(
                                 viewState.getViewDefinition(),
-                                viewState.getLastRefreshTimestamp(),
-                                viewState.getLastRefreshBaseTxn(),
+                                lastRefreshTimestamp,
+                                lastRefreshedBaseTxn,
                                 lastAppliedBaseTxn,
                                 viewState.getInvalidationReason(),
                                 viewState.isInvalid()
