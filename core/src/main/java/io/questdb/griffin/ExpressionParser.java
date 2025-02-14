@@ -324,9 +324,7 @@ public class ExpressionParser {
                         thisBranch = BRANCH_COMMA;
 
                         Scope scope0 = scopeStack.peek();
-                        if (scope0 != Scope.PAREN && scope0 != Scope.BRACKET &&
-                                scope0 != Scope.ARRAY
-                        ) {
+                        if (scope0 != Scope.PAREN && scope0 != Scope.BRACKET && scope0 != Scope.ARRAY) {
                             // comma outside of parens/brackets
                             lexer.unparseLast();
                             break OUT;
@@ -424,6 +422,8 @@ public class ExpressionParser {
                                     node.position
                             );
                             node.paramCount = 2;
+                            // paramCount counts commas in this case. For array access, the 1st arg is the array,
+                            // 2nd arg is the first index, etc. So, with no commas, there are already two args.
                             opStack.push(node);
                         } else {
                             assert node.token.equals("[[") : "token is neither '[' nor '[['";
@@ -433,6 +433,7 @@ public class ExpressionParser {
                                     2,
                                     node.position
                             );
+                            // paramCount counts commas in this case. So, with no commas, there's already 1 arg.
                             node.paramCount = paramCount + 1;
                             argStackDepth = onNode(listener, node, argStackDepth, false);
                         }
