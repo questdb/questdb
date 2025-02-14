@@ -25,6 +25,7 @@
 package io.questdb.cairo.file;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.Vm;
@@ -82,14 +83,18 @@ public class BlockFileWriter implements Closeable, Mutable {
         clear();
     }
 
-    public boolean commit() {
+    public void commit() {
+        if (!blockMemoryHandle.isCommitted) {
+            throw CairoException.critical(0).put("block must be committed before writer commit call");
+        }
         if (isCommitted) {
-            return false;
+            throw CairoException.critical(0).put("duplicate writer commit call");
         }
 
         final long memoryBaseAddress = memory.getPageAddress(0);
         final long checksumAddress = memoryBaseAddress + REGION_HEADER_SIZE + REGION_BLOCK_COUNT_OFFSET;
         final long checksumSize = blockOffset - REGION_HEADER_SIZE - REGION_BLOCK_COUNT_OFFSET;
+        // Write checksum to detect file corruption on reads.
         final int checksum = getChecksum(checksumAddress, checksumSize);
 
         memory.putInt(REGION_CHECKSUM_OFFSET, checksum);
@@ -98,8 +103,8 @@ public class BlockFileWriter implements Closeable, Mutable {
         long currentVersion = getVersionVolatile();
         final long regionLength = blockOffset;
         final long currentRegionOffset = getRegionOffset(currentVersion);
-        final long regionWriteOffset = (regionLength <= currentRegionOffset) ?
-                0 : currentRegionOffset + getRegionLength(currentVersion);
+        final long regionWriteOffset = (regionLength <= currentRegionOffset)
+                ? 0 : currentRegionOffset + getRegionLength(currentVersion);
 
         file.jumpTo(regionWriteOffset + HEADER_SIZE + regionLength);
         final long fileBaseAddress = file.getPageAddress(0);
@@ -115,8 +120,6 @@ public class BlockFileWriter implements Closeable, Mutable {
         if (commitMode != CommitMode.NOSYNC) {
             file.sync(commitMode == CommitMode.ASYNC);
         }
-
-        return true;
     }
 
     public long getRegionLength(final long version) {
@@ -128,10 +131,7 @@ public class BlockFileWriter implements Closeable, Mutable {
     }
 
     public long getVersionVolatile() {
-        return Unsafe.getUnsafe().getLongVolatile(
-                null,
-                file.getPageAddress(0) + HEADER_VERSION_OFFSET
-        );
+        return Unsafe.getUnsafe().getLongVolatile(null, file.getPageAddress(0) + HEADER_VERSION_OFFSET);
     }
 
     public void of(@Transient final LPSZ path) {
@@ -176,10 +176,9 @@ public class BlockFileWriter implements Closeable, Mutable {
         private long payloadOffset;
 
         @Override
-        public boolean commit(short type, byte version, byte flags) {
-
+        public void commit(short type, byte version, byte flags) {
             if (isCommitted) {
-                return false;
+                throw CairoException.critical(0).put("duplicate block commit call");
             }
 
             final int blockLength = length() + BLOCK_HEADER_SIZE;
@@ -193,7 +192,6 @@ public class BlockFileWriter implements Closeable, Mutable {
             blockCount += 1;
 
             isCommitted = true;
-            return true;
         }
 
         @Override
@@ -349,6 +347,7 @@ public class BlockFileWriter implements Closeable, Mutable {
 
         public BlockMemoryHandleImpl reset(int length) {
             assert length >= 0;
+            BlockFileWriter.this.isCommitted = false;
             isCommitted = false;
             payloadOffset = blockOffset + BLOCK_HEADER_SIZE;
             memory.jumpTo(payloadOffset + length);

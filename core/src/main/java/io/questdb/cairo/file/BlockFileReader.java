@@ -108,6 +108,7 @@ public class BlockFileReader implements Closeable, Mutable {
         final int checksum = getChecksum(checksumAddress, checksumSize);
         final int expectedChecksum = memory.getInt(REGION_CHECKSUM_OFFSET);
 
+        // Compare actual checksum with the one from the region header to detect file corruption on reads.
         if (checksum != expectedChecksum) {
             throw CairoException.critical(0)
                     .put("block file checksum mismatch [expected=")
@@ -124,13 +125,6 @@ public class BlockFileReader implements Closeable, Mutable {
         final long blocksLength = regionLength - REGION_HEADER_SIZE;
         blockCursor.of(currentVersion, blockCount, REGION_HEADER_SIZE, blocksLength);
         return blockCursor;
-    }
-
-    public long getVersionVolatile() {
-        return Unsafe.getUnsafe().getLongVolatile(
-                null,
-                file.getPageAddress(0) + HEADER_VERSION_OFFSET
-        );
     }
 
     public void of(@Transient LPSZ path) {
@@ -165,6 +159,10 @@ public class BlockFileReader implements Closeable, Mutable {
         if (memory == null) {
             memory = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    private long getVersionVolatile() {
+        return Unsafe.getUnsafe().getLongVolatile(null, file.getPageAddress(0) + HEADER_VERSION_OFFSET);
     }
 
     public class BlockCursor {

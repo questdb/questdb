@@ -37,7 +37,7 @@ import org.jetbrains.annotations.Nullable;
  */
 public interface WritableBlock {
 
-    boolean commit(short type, byte version, byte flags);
+    void commit(short type, byte version, byte flags);
 
     int length();
 

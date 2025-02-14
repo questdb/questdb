@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.file;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileReader;
@@ -40,6 +41,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.GcUtf8String;
@@ -280,10 +282,17 @@ public class BlockFileTest extends AbstractCairoTest {
             Thread writerThread = new Thread(() -> {
                 try (Path path = getDefinitionFilePath("test")) {
                     start.await();
-                    for (int i = 0; i < iterations; i++) {
-                        int msg = rnd.nextInt(4);
-                        try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
-                            writer.of(path.$());
+                    BlockFileWriter writer = new BlockFileWriter(ff, commitMode);
+                    writer.of(path.$());
+                    try {
+                        for (int i = 0; i < iterations; i++) {
+                            int msg = rnd.nextInt(4);
+                            // Reopen the writer occasionally.
+                            if (rnd.nextInt(100) > 95) {
+                                Misc.free(writer);
+                                writer = new BlockFileWriter(ff, commitMode);
+                                writer.of(path.$());
+                            }
                             switch (msg) {
                                 case 0:
                                     commitMsgAVersion1(writer.append(), i + 1);
@@ -300,6 +309,8 @@ public class BlockFileTest extends AbstractCairoTest {
                             }
                             writer.commit();
                         }
+                    } finally {
+                        Misc.free(writer);
                     }
                 } catch (Throwable th) {
                     LOG.error().$("Error in writer thread: ").$(th).$();
@@ -415,6 +426,13 @@ public class BlockFileTest extends AbstractCairoTest {
                 try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
                     writer.of(path.$());
 
+                    // No blocks were committed yet, so commit must fail.
+                    try {
+                        writer.commit();
+                        Assert.fail();
+                    } catch (CairoException ignored) {
+                    }
+
                     AppendableBlock memory1 = writer.append();
                     commitAllTypesMsgAppendAPI(memory1);
                     final int commitedLength = memory1.length();
@@ -427,8 +445,12 @@ public class BlockFileTest extends AbstractCairoTest {
                     AppendableBlock memory3 = writer.append();
                     commitAllTypesMsgAppendAPI(memory3);
 
-                    Assert.assertTrue(writer.commit());
-                    Assert.assertFalse(writer.commit());
+                    writer.commit();
+                    try {
+                        writer.commit();
+                        Assert.fail();
+                    } catch (CairoException ignored) {
+                    }
                 }
 
                 readAllBlocks(path, 3, 1);
@@ -470,8 +492,12 @@ public class BlockFileTest extends AbstractCairoTest {
         memory.putShort((short) 12345);
         memory.putStr("Hello, World!");
         memory.putVarchar(new GcUtf8String("Hello, UTF-8 World!"));
-        Assert.assertTrue(memory.commit(MSG_TYPE_ALL, MSG_TYPE_ALL_VERSION_1, (byte) 0));
-        Assert.assertFalse(memory.commit(MSG_TYPE_ALL, MSG_TYPE_ALL_VERSION_1, (byte) 0));
+        memory.commit(MSG_TYPE_ALL, MSG_TYPE_ALL_VERSION_1, (byte) 0);
+        try {
+            memory.commit(MSG_TYPE_ALL, MSG_TYPE_ALL_VERSION_1, (byte) 0);
+            Assert.fail();
+        } catch (CairoException ignored) {
+        }
         return memory.length();
     }
 
@@ -511,8 +537,12 @@ public class BlockFileTest extends AbstractCairoTest {
         offset += Vm.getStorageLength("Hello, World!");
         memory.putVarchar(offset, new GcUtf8String("Hello, UTF-8 World!"));
 
-        Assert.assertTrue(memory.commit(MSG_TYPE_ALL, MSG_TYPE_ALL_VERSION_1, (byte) 0));
-        Assert.assertFalse(memory.commit(MSG_TYPE_ALL, MSG_TYPE_ALL_VERSION_1, (byte) 0));
+        memory.commit(MSG_TYPE_ALL, MSG_TYPE_ALL_VERSION_1, (byte) 0);
+        try {
+            memory.commit(MSG_TYPE_ALL, MSG_TYPE_ALL_VERSION_1, (byte) 0);
+            Assert.fail();
+        } catch (CairoException ignored) {
+        }
         return memory.length();
     }
 
