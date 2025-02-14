@@ -174,7 +174,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
 
             // disable services
             writer.println(HTTP_QUERY_CACHE_ENABLED + "=false");
-            writer.println(PG_SELECT_CACHE_ENABLED + "=true");
+            writer.println(PG_SELECT_CACHE_ENABLED + "=false");
             writer.println(PG_INSERT_CACHE_ENABLED + "=false");
             writer.println(PG_UPDATE_CACHE_ENABLED + "=false");
             writer.println(CAIRO_WAL_ENABLED_DEFAULT + "=false");
