@@ -119,7 +119,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     barrier.await();
                     int knownCount;
                     int droppedAt = 0;
-                    while ((knownCount = createCounter.get()) < iterations) {
+                    while ((knownCount = createCounter.get()) < iterations && errorCounter.get() == 0) {
                         if (knownCount > droppedAt) {
                             execute("drop materialized view if exists price_1h", executionContext);
                             droppedAt = createCounter.get();
@@ -773,7 +773,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
                     try {
                         barrier.await();
-                        while (createCounter.get() < iterations) {
+                        while (createCounter.get() < iterations && errorCounter.get() == 0) {
                             if (!refreshJob.run(0)) {
                                 Os.sleep(1);
                             }
