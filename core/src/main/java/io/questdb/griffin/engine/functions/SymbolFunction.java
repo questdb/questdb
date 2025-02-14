@@ -29,7 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.model.IntervalUtils;
@@ -48,7 +48,7 @@ import org.jetbrains.annotations.Nullable;
  * populated by function dynamically, in that values that have not yet been returned via
  * getInt() are not cached.*
  */
-public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
+public abstract class SymbolFunction implements Function, SymbolTable {
     private final Utf8StringSink utf8SinkA = new Utf8StringSink();
     private final Utf8StringSink utf8SinkB = new Utf8StringSink();
 

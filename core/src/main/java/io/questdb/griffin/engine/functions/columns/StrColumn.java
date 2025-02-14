@@ -25,11 +25,11 @@
 package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.StrFunction;
 
-public class StrColumn extends StrFunction implements ScalarFunction {
+public class StrColumn extends StrFunction implements Function {
     private final int columnIndex;
 
     public StrColumn(int columnIndex) {

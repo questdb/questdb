@@ -30,7 +30,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Interval;
@@ -40,7 +40,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
-public final class NullConstant implements ConstantFunction, ScalarFunction {
+public final class NullConstant implements ConstantFunction, Function {
 
     public static final NullConstant NULL = new NullConstant();
 

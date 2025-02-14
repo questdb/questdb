@@ -25,13 +25,12 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 
-class IntBindVariable extends IntFunction implements ScalarFunction, Mutable {
+class IntBindVariable extends IntFunction implements Mutable {
     int value;
 
     IntBindVariable() {
@@ -49,12 +48,12 @@ class IntBindVariable extends IntFunction implements ScalarFunction, Mutable {
     }
 
     @Override
-    public boolean isThreadSafe() {
+    public boolean isRuntimeConstant() {
         return true;
     }
 
     @Override
-    public boolean isRuntimeConstant() {
+    public boolean isThreadSafe() {
         return true;
     }
 

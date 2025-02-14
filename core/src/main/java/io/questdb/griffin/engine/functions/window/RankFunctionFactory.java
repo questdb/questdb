@@ -43,7 +43,6 @@ import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
@@ -110,7 +109,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
-    protected static class RankOverPartitionFunction extends LongFunction implements ScalarFunction, WindowFunction, Reopenable {
+    protected static class RankFunction extends LongFunction implements WindowFunction, Reopenable {
 
         private final VirtualRecord partitionByRecord;
         private final RecordSink partitionBySink;

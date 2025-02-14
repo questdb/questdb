@@ -29,7 +29,6 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -41,7 +40,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 
-public class NamedParameterLinkFunction implements ScalarFunction {
+public class NamedParameterLinkFunction implements Function {
     private final int type;
     private final String variableName;
     private Function base;

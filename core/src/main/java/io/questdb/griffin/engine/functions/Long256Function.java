@@ -28,11 +28,11 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.cairo.sql.Function;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.str.Utf8Sequence;
 
-public abstract class Long256Function implements ScalarFunction {
+public abstract class Long256Function implements Function {
     @Override
     public ArrayView getArray(Record rec) {
         throw new UnsupportedOperationException();

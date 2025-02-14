@@ -25,12 +25,12 @@
 package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IPv4Function;
 import io.questdb.std.Numbers;
 
-public class IPv4Column extends IPv4Function implements ScalarFunction {
+public class IPv4Column extends IPv4Function implements Function {
     private final int columnIndex;
 
     public IPv4Column(int columnIndex) {

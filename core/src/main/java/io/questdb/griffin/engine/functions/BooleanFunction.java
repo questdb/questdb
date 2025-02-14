@@ -28,14 +28,14 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.cairo.sql.Function;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 
-public abstract class BooleanFunction implements ScalarFunction {
+public abstract class BooleanFunction implements Function {
     protected static final Utf8String UTF_8_FALSE = new Utf8String("false");
     protected static final Utf8String UTF_8_TRUE = new Utf8String("true");
 

@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
@@ -146,7 +145,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     @NotNull
-    public static ScalarFunction createColumn(
+    public static Function createColumn(
             int position,
             CharSequence name,
             RecordMetadata metadata

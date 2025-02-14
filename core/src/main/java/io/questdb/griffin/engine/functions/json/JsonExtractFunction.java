@@ -30,7 +30,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -50,7 +50,7 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class JsonExtractFunction implements ScalarFunction {
+public class JsonExtractFunction implements Function {
     private static final boolean defaultBool = false;
     private final Function json;
     private final int maxSize;

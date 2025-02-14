@@ -28,7 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.cairo.sql.Function;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
@@ -40,7 +40,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.Numbers.IPv4_NULL;
 
-public abstract class IPv4Function implements ScalarFunction {
+public abstract class IPv4Function implements Function {
     private final StringSink sinkA = new StringSink();
     private final StringSink sinkB = new StringSink();
     private final Utf8StringSink utf8SinkA = new Utf8StringSink();

@@ -31,7 +31,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
-public abstract class ArrayFunction implements ScalarFunction {
+public abstract class ArrayFunction implements Function {
 
     protected int type = ColumnType.UNDEFINED;
 

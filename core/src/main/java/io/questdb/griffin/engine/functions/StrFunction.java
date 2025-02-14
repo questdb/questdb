@@ -30,7 +30,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
@@ -38,7 +38,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
-public abstract class StrFunction implements ScalarFunction {
+public abstract class StrFunction implements Function {
     private final Utf8StringSink utf8SinkA = new Utf8StringSink();
     private final Utf8StringSink utf8SinkB = new Utf8StringSink();
 

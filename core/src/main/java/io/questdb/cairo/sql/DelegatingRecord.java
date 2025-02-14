@@ -105,7 +105,7 @@ public class DelegatingRecord implements Record {
 
     @Override
     public Interval getInterval(int col) {
-        return base.getInterval(col);
+        return base.getExtendedOps().getInterval(col);
     }
 
     @Override

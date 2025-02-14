@@ -98,7 +98,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         return new SequenceRowNumberFunction();
     }
 
-    private static class RowNumberFunction extends LongFunction implements ScalarFunction, WindowFunction, Reopenable {
+    private static class RowNumberFunction extends LongFunction implements WindowFunction, Reopenable {
         private final Map map;
         private final VirtualRecord partitionByRecord;
         private final RecordSink partitionBySink;
@@ -188,7 +188,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class SequenceRowNumberFunction extends LongFunction implements ScalarFunction, WindowFunction, Reopenable {
+    private static class SequenceRowNumberFunction extends LongFunction implements WindowFunction, Reopenable {
         private int columnIndex;
         private long rowNumber = 0;
 

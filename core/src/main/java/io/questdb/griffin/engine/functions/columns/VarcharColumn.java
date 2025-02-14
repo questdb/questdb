@@ -25,12 +25,12 @@
 package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.str.Utf8Sequence;
 
-public class VarcharColumn extends VarcharFunction implements ScalarFunction {
+public class VarcharColumn extends VarcharFunction implements Function {
     private final int columnIndex;
 
     public VarcharColumn(int columnIndex) {
