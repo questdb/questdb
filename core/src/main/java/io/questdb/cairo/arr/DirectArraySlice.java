@@ -105,6 +105,10 @@ public class DirectArraySlice implements DirectSequence {
         return ptr;
     }
 
+    public void shl(long delta) {
+        this.ptr -= delta;
+    }
+
     /**
      * Invalidate
      */

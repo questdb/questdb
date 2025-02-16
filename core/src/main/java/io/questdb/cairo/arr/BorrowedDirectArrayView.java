@@ -109,6 +109,13 @@ public class BorrowedDirectArrayView implements ArrayView {
     }
 
     /**
+     * Get the array's shapes
+     */
+    public DirectIntSlice getShapes() {
+        return shape;
+    }
+
+    /**
      * Buffer holding the flattened array values.
      * <p>
      * Data is stored in row-major order.
