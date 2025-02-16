@@ -32,6 +32,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 
@@ -218,6 +219,16 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
             shape = new int[nDims];
             strides = new int[nDims];
         }
+    }
+
+    @TestOnly
+    public long getValuePtr() {
+        return mem;
+    }
+
+    @TestOnly
+    public long getValueSize() {
+        return size;
     }
 
     private void ensureCapacity(long requiredCapacity) {

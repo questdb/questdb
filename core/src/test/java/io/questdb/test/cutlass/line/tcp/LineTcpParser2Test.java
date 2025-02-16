@@ -25,13 +25,19 @@
 package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.NoopArrayState;
 import io.questdb.cutlass.line.LineException;
+import io.questdb.cutlass.line.tcp.ArrayParser;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ProtoEntity;
 import io.questdb.std.*;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import io.questdb.test.cairo.ArrayTest;
 import io.questdb.test.cutlass.line.udp.LineUdpLexerTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -63,6 +69,63 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
                 "measurement,tag=value,tag2=value field=1.123E-03,field2=9.19097E10,field3=10.097E+3 100000\n",
                 "measurement,tag=value,tag2=value field=1.123E-03,field2=9.19097E10,field3=10.097E+3 100000\n"
         );
+    }
+
+    @Test
+    public void testArrayTextParser() {
+        try (
+                DirectUtf8Sink sink = new DirectUtf8Sink(20)
+        ) {
+            String array1 = "[1,2]";
+            String array2 = "[[1.1,2.1,3.1],[4.1,5.1,6.1]]";
+            String array1Text = sink.put("[6i").put(array1.substring(1)).toString();
+            sink.clear();
+            String array2Text = sink.put("[6f").put(array2.substring(1)).toString();
+
+            assertThat(
+                    "measurement,tag=value field=" + array1 + ",field2=" + array2 + ",field3=10 100000\n",
+                    "measurement,tag=value field=" + array1Text + ",field2=" + array2Text + ",field3=10 100000\n"
+            );
+        }
+    }
+
+    @Test
+    public void testArrayBinaryFormat() {
+        final long allocSize = 2048;
+        long mem = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
+        try (
+                DirectUtf8Sink sink = new DirectUtf8Sink(1024);
+                ArrayParser parser = new ArrayParser(configuration);
+        ) {
+            String array1 = "[1,2]";
+            DirectUtf8String str = new DirectUtf8String();
+            sink.clear();
+            sink.put("[6i").put(array1.substring(1));
+            parser.parse(str.of(sink.lo(), sink.hi()));
+            Unsafe.getUnsafe().putByte(mem, LineTcpParser.ENTITY_TYPE_ND_ARRAY);
+            long array1Addr = mem + 1;
+            long array1Size = ArrayTest.arrayViewToBinaryFormat(parser.getArray(), array1Addr);
+            long array2Addr = array1Addr + array1Size;
+
+            Unsafe.getUnsafe().putByte(array2Addr, LineTcpParser.ENTITY_TYPE_ND_ARRAY);
+            String array2 = "[[1.1,2.1,3.1],[4.1,5.1,6.1]]";
+            sink.clear();
+            sink.put("[6f").put(array2.substring(1));
+            parser.parse(str.of(sink.lo(), sink.hi()));
+            long array2Size = ArrayTest.arrayViewToBinaryFormat(parser.getArray(), array2Addr + 1);
+
+            assertThat(
+                    "measurement,tag=value field=" + array1 + ",field2=" + array2 + ",field3=10 100000\n",
+                    "measurement,tag=value field:,field2:,field3=10 100000\n",
+                    1,
+                    new long[]{mem, array2Addr},
+                    new long[]{array1Size + 1, array2Size + 1}
+            );
+        } catch (ArrayParser.ParseException e) {
+            throw new RuntimeException(e);
+        } finally {
+            Unsafe.free(mem, allocSize, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test
@@ -477,6 +540,9 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
                 case LineTcpParser.ENTITY_TYPE_LONG256:
                     sink.put(entity.getValue()).put('i');
                     break;
+                case LineTcpParser.ENTITY_TYPE_ND_ARRAY:
+                    ArrayTypeDriver.arrayToJson(entity.getArray(), sink, NoopArrayState.INSTANCE);
+                    break;
                 default:
                     Utf8s.utf8ToUtf16(entity.getValue().lo(), entity.getValue().hi(), sink);
                     break;
@@ -565,18 +631,38 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     }
 
     protected void assertThat(CharSequence expected, String lineStr, int start) throws LineException {
+        assertThat(expected, lineStr, start, null, null);
+    }
+
+    protected void assertThat(CharSequence expected, String lineStr, int start, long[] binaryValuesPtr, long[] binaryValuesSize) throws LineException {
         byte[] line = lineStr.getBytes(Files.UTF_8);
-        final int len = line.length;
+        int len = line.length;
+        long binaryValueSizes = 0;
+        if (binaryValuesSize != null) {
+            for (long l : binaryValuesSize) {
+                binaryValueSizes += l;
+            }
+        }
+
         final boolean endWithEOL = line[len - 1] == '\n' || line[len - 1] == '\r';
-        int fullLen = endWithEOL ? line.length : line.length + 1;
+        int fullLen = (int) (endWithEOL ? line.length + binaryValueSizes : line.length + 1 + binaryValueSizes);
         long memFull = Unsafe.malloc(fullLen, MemoryTag.NATIVE_DEFAULT);
         long mem = Unsafe.malloc(fullLen, MemoryTag.NATIVE_DEFAULT);
-        for (int j = 0; j < len; j++) {
-            Unsafe.getUnsafe().putByte(memFull + j, line[j]);
+        int binaryValueIndex = 0;
+        long memStart = memFull;
+        for (byte b : line) {
+            Unsafe.getUnsafe().putByte(memStart, b);
+            memStart++;
+            if (b == ':') {
+                Vect.memcpy(memStart, binaryValuesPtr[binaryValueIndex], binaryValuesSize[binaryValueIndex]);
+                memStart += binaryValuesSize[binaryValueIndex];
+                binaryValueIndex++;
+            }
         }
         if (!endWithEOL) {
-            Unsafe.getUnsafe().putByte(memFull + len, (byte) '\n');
+            Unsafe.getUnsafe().putByte(memStart, (byte) '\n');
         }
+        len = (int) (len + binaryValueSizes);
 
         try {
             for (int i = start; i < len; i++) {

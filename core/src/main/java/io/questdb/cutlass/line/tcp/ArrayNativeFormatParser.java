@@ -25,8 +25,8 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.arr.ArrayMeta;
-import io.questdb.cairo.arr.ArrayViewImpl;
+import io.questdb.cairo.arr.ArrayMetaUtils;
+import io.questdb.cairo.arr.BorrowedDirectArrayView;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -42,7 +42,7 @@ import org.jetbrains.annotations.NotNull;
  * +----------+----------+------------------------+--------------------+
  * | elemType |  dims    |       shapes           |    flat values     |
  * +----------+----------+------------------------+--------------------+
- * |  1 byte  | 6 bytes  |  $dims *4 bytes bits   |       1 byte       |
+ * |  1 byte  | 6 bytes  |  $dims *4 bytes bits   |                    |
  * </pre>
  *
  * <strong>Won't validate length of flat values for performance reason</strong>
@@ -50,7 +50,7 @@ import org.jetbrains.annotations.NotNull;
 public class ArrayNativeFormatParser implements QuietCloseable {
 
     private final DirectIntList strides = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG2);
-    private final ArrayViewImpl view = new ArrayViewImpl();
+    private final BorrowedDirectArrayView view = new BorrowedDirectArrayView();
     private short elemType;
     private int dims;
     private long shapeAddr;
@@ -64,7 +64,7 @@ public class ArrayNativeFormatParser implements QuietCloseable {
         Misc.free(strides);
     }
 
-    public @NotNull ArrayViewImpl getView() {
+    public @NotNull BorrowedDirectArrayView getView() {
         assert binaryPart == BinaryPart.FINISH;
         return view;
     }
@@ -94,7 +94,7 @@ public class ArrayNativeFormatParser implements QuietCloseable {
                 return false;
             case SHAPES:
                 shapeAddr = addr;
-                ArrayMeta.determineDefaultStrides(shapeAddr, dims, strides);
+                ArrayMetaUtils.determineDefaultStrides(shapeAddr, dims, strides);
                 binaryPart = BinaryPart.VALUES;
                 nextBinaryPartExpectSize = strides.get(0) * Unsafe.getUnsafe().getInt(shapeAddr) * ColumnType.sizeOf(elemType);
                 return false;
@@ -108,8 +108,7 @@ public class ArrayNativeFormatParser implements QuietCloseable {
                         (int) strides.size(),
                         addr,
                         nextBinaryPartExpectSize,
-                        0,
-                        (short) 0
+                        0
                 );
                 binaryPart = BinaryPart.FINISH;
                 return true;

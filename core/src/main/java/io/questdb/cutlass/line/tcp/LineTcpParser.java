@@ -25,11 +25,12 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.arr.DirectArrayView;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cutlass.line.tcp.ArrayParser.ParseException;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -84,6 +85,7 @@ public class LineTcpParser implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(LineTcpParser.class);
 
     private static final boolean[] controlBytes;
+    private static final IntHashSet nativeFormatSupportType = new IntHashSet();
     private final CairoConfiguration cairoConfiguration;
     private final DirectUtf8String charSeq = new DirectUtf8String();
     private final ObjList<ProtoEntity> entityCache = new ObjList<>();
@@ -103,6 +105,8 @@ public class LineTcpParser implements QuietCloseable {
     private boolean tagsComplete;
     private long timestamp;
     private byte timestampUnit;
+    private NativeFormatStreamStep nativeFormatStreamStep = NativeFormatStreamStep.NotINNativeFormat;
+    private int bracketCount;
 
     public LineTcpParser(CairoConfiguration configuration) {
         this.cairoConfiguration = configuration;
@@ -189,10 +193,17 @@ public class LineTcpParser implements QuietCloseable {
             }
             nQuoteCharacters = 0;
             bufAt++;
+        } else if (nativeFormatStreamStep != NativeFormatStreamStep.NotINNativeFormat) {
+            if (!expectNativeFormat(bufHi)) {
+                if (errorCode == ErrorCode.INVALID_FIELD_VALUE_STR_UNDERFLOW) {
+                    return ParseResult.BUFFER_UNDERFLOW;
+                }
+                return ParseResult.ERROR;
+            }
+            nativeFormatStreamStep = NativeFormatStreamStep.NotINNativeFormat;
         }
 
         // Main parsing loop
-        int bracketCount = 0;
         while (bufAt < bufHi) {
             byte b = Unsafe.getUnsafe().getByte(bufAt);
 
@@ -221,6 +232,7 @@ public class LineTcpParser implements QuietCloseable {
                     }
                 case '=':
                 case ' ':
+                case ':':
                     isQuotedFieldValue = false;
                     if (!completeEntity(b, bufHi)) {
                         // parse of key or value is unsuccessful
@@ -245,7 +257,9 @@ public class LineTcpParser implements QuietCloseable {
                         return ParseResult.ERROR;
                     }
                     // skip the separator
-                    bufAt++;
+                    if (b != ':') {
+                        bufAt++;
+                    }
                     if (!isQuotedFieldValue) {
                         // reset few indicators
                         nEscapedChars = 0;
@@ -377,6 +391,8 @@ public class LineTcpParser implements QuietCloseable {
         scape = false;
         nextValueCanBeOpenQuote = false;
         asciiSegment = true;
+        nativeFormatStreamStep = NativeFormatStreamStep.NotINNativeFormat;
+        bracketCount = 0;
     }
 
     private boolean completeEntity(byte endOfEntityByte, long bufHi) {
@@ -401,7 +417,9 @@ public class LineTcpParser implements QuietCloseable {
     }
 
     private boolean expectEntityName(byte endOfEntityByte, long bufHi) {
-        if (endOfEntityByte == (byte) '=') {
+        // '=' represents text value format following
+        // ':' represents native byte value format following, which only supported in fieldVale
+        if (endOfEntityByte == (byte) '=' || endOfEntityByte == (byte) ':') {
             if (bufAt - entityLo - nEscapedChars == 0) { // no tag/field name
                 errorCode = tagsComplete ? ErrorCode.INCOMPLETE_FIELD : ErrorCode.INCOMPLETE_TAG;
                 return false;
@@ -410,24 +428,38 @@ public class LineTcpParser implements QuietCloseable {
             currentEntity = popEntity();
             nEntities++;
             currentEntity.setName();
-            entityHandler = ENTITY_HANDLER_VALUE;
-            if (tagsComplete) {
-                if (bufAt + 3 < bufHi) { // peek oncoming value's 1st byte, only caring for valid strings (2 quotes plus a follow-up byte)
-                    long candidateQuoteIdx = bufAt + 1;
-                    byte b = Unsafe.getUnsafe().getByte(candidateQuoteIdx);
-                    if (b == (byte) '"') {
-                        nEscapedChars = 0;
-                        nQuoteCharacters++;
-                        bufAt += 2;
-                        return prepareQuotedEntity(candidateQuoteIdx, bufHi);// go to first byte of the string, past the '"'
+            if (endOfEntityByte == (byte) '=') {
+                entityHandler = ENTITY_HANDLER_VALUE;
+                if (tagsComplete) {
+                    if (bufAt + 3 < bufHi) { // peek oncoming value's 1st byte, only caring for valid strings (2 quotes plus a follow-up byte)
+                        long candidateQuoteIdx = bufAt + 1;
+                        byte b = Unsafe.getUnsafe().getByte(candidateQuoteIdx);
+                        if (b == (byte) '"') {
+                            nEscapedChars = 0;
+                            nQuoteCharacters++;
+                            bufAt += 2;
+                            return prepareQuotedEntity(candidateQuoteIdx, bufHi);// go to first byte of the string, past the '"'
+                        } else {
+                            nextValueCanBeOpenQuote = false;
+                        }
                     } else {
-                        nextValueCanBeOpenQuote = false;
+                        nextValueCanBeOpenQuote = true;
                     }
-                } else {
-                    nextValueCanBeOpenQuote = true;
                 }
+                return true;
+            } else {
+                if (tagsComplete) {
+                    nativeFormatStreamStep = NativeFormatStreamStep.INNativeFormat;
+                    bufAt++;
+                    if (expectNativeFormat(bufHi)) {
+                        nativeFormatStreamStep = NativeFormatStreamStep.NotINNativeFormat;
+                        return true;
+                    }
+                    return false;
+                }
+                errorCode = ErrorCode.INVALID_COLUMN_NAME;
+                return false;
             }
-            return true;
         }
 
         boolean emptyEntity = bufAt == entityLo;
@@ -548,6 +580,38 @@ public class LineTcpParser implements QuietCloseable {
         }
     }
 
+    private boolean expectNativeFormat(long bufHi) {
+        assert nativeFormatStreamStep != NativeFormatStreamStep.NotINNativeFormat;
+        if (nativeFormatStreamStep == NativeFormatStreamStep.INNativeFormat) {
+            if (!currentEntity.parseNativeFormat(bufHi)) {
+                return false;
+            }
+            nativeFormatStreamStep = NativeFormatStreamStep.ExpectFieldSeparator;
+        }
+
+        if (bufAt + 1 < bufHi) {
+            bufAt++;
+            byte expectSeparator = Unsafe.getUnsafe().getByte(bufAt);
+            if (expectSeparator == (byte) ' ') {
+                entityHandler = ENTITY_HANDLER_TIMESTAMP;
+                bufAt++;
+                entityLo = bufAt;
+                return true;
+            } else if (expectSeparator == (byte) ',' || expectSeparator == (byte) '\n' || expectSeparator == (byte) '\r') {
+                entityHandler = ENTITY_HANDLER_NAME;
+                bufAt++;
+                entityLo = bufAt;
+                return true;
+            } else {
+                entityLo = bufAt;
+                errorCode = ErrorCode.INVALID_FIELD_SEPARATOR;
+                return false;
+            }
+        }
+        errorCode = ErrorCode.INVALID_FIELD_VALUE_STR_UNDERFLOW;
+        return false;
+    }
+
     private ParseResult getError(long bufHi) {
         switch (entityHandler) {
             case ENTITY_HANDLER_NAME:
@@ -645,6 +709,7 @@ public class LineTcpParser implements QuietCloseable {
         INVALID_COLUMN_NAME,
         MISSING_FIELD_VALUE,
         MISSING_TAG_VALUE,
+        UNSUPPORTED_NATIVE_FORMAT,
 
         /**
          * Unexpected early end of input
@@ -675,6 +740,7 @@ public class LineTcpParser implements QuietCloseable {
 
     public class ProtoEntity implements QuietCloseable {
         private final ArrayParser arrayParser;
+        private final ArrayNativeFormatParser arrayNativeParser = new ArrayNativeFormatParser();
         private final DirectUtf8String name = new DirectUtf8String();
         private final DirectUtf8String value = new DirectUtf8String();
         private boolean booleanValue;
@@ -682,6 +748,7 @@ public class LineTcpParser implements QuietCloseable {
         private long longValue;
         private byte type = ENTITY_TYPE_NONE;
         private byte unit = ENTITY_UNIT_NONE;
+        private ArrayView arrayView;
 
         public ProtoEntity(CairoConfiguration configuration) {
             arrayParser = new ArrayParser(configuration);
@@ -692,8 +759,8 @@ public class LineTcpParser implements QuietCloseable {
             Misc.free(arrayParser);
         }
 
-        public DirectArrayView getArray() {
-            return arrayParser.getArray();
+        public ArrayView getArray() {
+            return arrayView;
         }
 
         public boolean getBooleanValue() {
@@ -727,6 +794,7 @@ public class LineTcpParser implements QuietCloseable {
         public void shl(long shl) {
             name.shl(shl);
             value.shl(shl);
+            arrayNativeParser.shl(shl);
         }
 
         private void clear() {
@@ -814,6 +882,7 @@ public class LineTcpParser implements QuietCloseable {
                 case ']': {
                     try {
                         arrayParser.parse(value);
+                        arrayView = arrayParser.getArray();
                         type = ENTITY_TYPE_ND_ARRAY;
                         errorCode = ErrorCode.NONE;
                         return true;
@@ -832,6 +901,90 @@ public class LineTcpParser implements QuietCloseable {
                         return false;
                     }
                     return true;
+            }
+        }
+
+        private boolean parseNativeFormat(long bufHi) {
+            try {
+                while (bufAt < bufHi) {
+                    if (type == ENTITY_TYPE_NONE) {
+                        type = Unsafe.getUnsafe().getByte(bufAt);
+                        if (!nativeFormatSupportType.contains(type)) {
+                            errorCode = ErrorCode.UNSUPPORTED_NATIVE_FORMAT;
+                            return false;
+                        }
+                        if (type == ENTITY_TYPE_ND_ARRAY) {
+                            arrayNativeParser.reset();
+                        }
+                        bufAt++;
+                        entityLo = bufAt;
+                        continue;
+                    }
+
+                    switch (type) {
+                        case ENTITY_TYPE_BOOLEAN:
+                            booleanValue = Unsafe.getUnsafe().getByte(entityLo) == 1;
+                            bufAt++;
+                            return true;
+                        case ENTITY_TYPE_FLOAT:
+                            bufAt++;
+                            if (bufAt - entityLo == 4) {
+                                floatValue = Unsafe.getUnsafe().getFloat(entityLo);
+                                return true;
+                            }
+                            break;
+                        case ENTITY_TYPE_DOUBLE:
+                            bufAt++;
+                            if (bufAt - entityLo == 8) {
+                                type = ENTITY_TYPE_FLOAT;
+                                floatValue = Unsafe.getUnsafe().getDouble(entityLo);
+                                return true;
+                            }
+                            break;
+                        case ENTITY_TYPE_INTEGER:
+                            if (bufAt - entityLo == 4) {
+                                longValue = Unsafe.getUnsafe().getInt(entityLo);
+                                bufAt++;
+                                return true;
+                            }
+                            bufAt++;
+                            break;
+                        case ENTITY_TYPE_LONG:
+                            if (bufAt - entityLo == 8) {
+                                type = ENTITY_TYPE_INTEGER;
+                                longValue = Unsafe.getUnsafe().getLong(entityLo);
+                                bufAt++;
+                                return true;
+                            }
+                            bufAt++;
+                            break;
+                        case ENTITY_TYPE_TIMESTAMP:
+                            if (bufAt - entityLo == 9) {
+                                unit = Unsafe.getUnsafe().getByte(entityLo);
+                                longValue = Unsafe.getUnsafe().getLong(entityLo + 1);
+                                bufAt++;
+                                return true;
+                            }
+                            bufAt++;
+                            break;
+                        case ENTITY_TYPE_ND_ARRAY:
+                            if (bufAt - entityLo + 1 == arrayNativeParser.getNextExpectSize()) {
+                                if (arrayNativeParser.processNextBinaryPart(entityLo)) {
+                                    arrayView = arrayNativeParser.getView();
+                                    return true;
+                                }
+                                bufAt++;
+                                entityLo = bufAt;
+                            }
+                            bufAt++;
+                    }
+                }
+
+                errorCode = ErrorCode.INVALID_FIELD_VALUE_STR_UNDERFLOW;
+                return false;
+            } catch (ParseException e) {
+                errorCode = e.errorCode();
+                return false;
             }
         }
 
@@ -878,8 +1031,14 @@ public class LineTcpParser implements QuietCloseable {
         }
     }
 
+    private enum NativeFormatStreamStep {
+        NotINNativeFormat,
+        ExpectFieldSeparator,
+        INNativeFormat,
+    }
+
     static {
-        char[] chars = new char[]{'\n', '\r', '=', ',', ' ', '\\', '"', '\0', '/', '[', ']'};
+        char[] chars = new char[]{'\n', '\r', '=', ',', ' ', '\\', '"', '\0', '/', '[', ']', ':'};
         controlBytes = new boolean[256];
         for (char ch : chars) {
             controlBytes[ch] = true;
@@ -888,5 +1047,13 @@ public class LineTcpParser implements QuietCloseable {
         for (int i = 128; i < 256; i++) {
             controlBytes[i] = true;
         }
+
+        nativeFormatSupportType.add(ENTITY_TYPE_BOOLEAN);
+        nativeFormatSupportType.add(ENTITY_TYPE_FLOAT);
+        nativeFormatSupportType.add(ENTITY_TYPE_DOUBLE);
+        nativeFormatSupportType.add(ENTITY_TYPE_INTEGER);
+        nativeFormatSupportType.add(ENTITY_TYPE_LONG);
+        nativeFormatSupportType.add(ENTITY_TYPE_TIMESTAMP);
+        nativeFormatSupportType.add(ENTITY_TYPE_ND_ARRAY);
     }
 }
