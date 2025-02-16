@@ -737,7 +737,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                         arrayState.clear();
                         columnValueFullySent = true;
                     } catch (Throwable e) {
-                        columnValueFullySent = false;
+                        // we have to disambiguate here if this is very first attempt to send the value, which failed
+                        // and we have any partial value we can send to the clint, or our state did not bookmark anything?
+                        columnValueFullySent = arrayState.zeroState();
                         arrayState.reset(arrayView);
                         throw e;
                     }

@@ -83,4 +83,20 @@ public class HttpResponseArrayState implements ArrayState, Mutable {
         Arrays.fill(contender, 0);
         this.arrayView = arrayView;
     }
+
+    /**
+     * Zero state is when nothing has been successfully sent to the buffer.
+     *
+     * @return false when something has been written to the buffer, anything.
+     */
+    public boolean zeroState() {
+        long sum = flatIndex;
+        for (int i = 0, n = target.length; i < n; i++) {
+            sum += target[i];
+            if (sum > 0) {
+                return false;
+            }
+        }
+        return sum == 0;
+    }
 }
