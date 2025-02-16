@@ -28,14 +28,16 @@ import io.questdb.std.str.CharSink;
 
 public interface ArrayState {
     int STATE_CLOSE_BRACKET = 3;
+    int STATE_CLOSE_QUOTE = 5;
     int STATE_COMMA_DIMS = 2;
     int STATE_COMMA_VALUES = 1;
-    int STATE_MAX = STATE_CLOSE_BRACKET + 1;
+    int STATE_MAX = STATE_CLOSE_QUOTE + 1;
     int STATE_OPEN_BRACKET = 0;
-
-    void record(int flatIndex);
+    int STATE_OPEN_QUOTE = 4;
 
     boolean notRecorded(int flatIndex);
 
     void putAsciiIfNotRecorded(int eventType, int eventDelta, CharSink<?> sink, char symbol);
+
+    void record(int flatIndex);
 }

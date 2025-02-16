@@ -142,7 +142,6 @@ public class TestHttpClient implements QuietCloseable {
     ) {
         try {
             toSink0(url, sql, sink, username, password, token, null, null);
-            System.out.println(sink);
             TestUtils.assertEquals(expectedResponse, sink);
         } finally {
             if (!keepConnection) {

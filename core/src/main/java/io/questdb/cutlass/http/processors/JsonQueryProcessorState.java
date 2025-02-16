@@ -86,6 +86,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_SUFFIX = 7;
     private static final byte DEFAULT_API_VERSION = 1;
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
+    private final HttpResponseArrayState arrayState = new HttpResponseArrayState();
     private final ObjList<String> columnNames = new ObjList<>();
     private final IntList columnSkewList = new IntList();
     private final IntList columnTypesAndFlags = new IntList();
@@ -101,7 +102,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
     private final long statementTimeout;
     private byte apiVersion = DEFAULT_API_VERSION;
-    private final HttpResponseArrayState arrayState = new HttpResponseArrayState();
     private SqlExecutionCircuitBreaker circuitBreaker;
     private int columnCount;
     private int columnIndex;
@@ -730,19 +730,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putIntervalValue(response, record, columnIdx);
                     break;
                 case ColumnType.ARRAY:
-                    arrayState.of(response);
-                    var arrayView = arrayState.getArrayView() == null ? record.getArray(columnIdx, columnType) : arrayState.getArrayView();
-                    try {
-                        ArrayTypeDriver.arrayToJson(arrayView, response, arrayState);
-                        arrayState.clear();
-                        columnValueFullySent = true;
-                    } catch (Throwable e) {
-                        // we have to disambiguate here if this is very first attempt to send the value, which failed
-                        // and we have any partial value we can send to the clint, or our state did not bookmark anything?
-                        columnValueFullySent = arrayState.zeroState();
-                        arrayState.reset(arrayView);
-                        throw e;
-                    }
+                    putArrayValue(response, columnIdx, columnType);
                     break;
                 default:
                     // this should never happen since metadata are already validated
@@ -893,6 +881,22 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         queryState = QUERY_PREFIX;
         JsonQueryProcessor.header(response, getHttpConnectionContext(), keepAliveHeader, 200);
         onQueryPrefix(response, columnCount);
+    }
+
+    private void putArrayValue(HttpChunkedResponse response, int columnIdx, int columnType) {
+        arrayState.of(response);
+        var arrayView = arrayState.getArrayView() == null ? record.getArray(columnIdx, columnType) : arrayState.getArrayView();
+        try {
+            ArrayTypeDriver.arrayToJson(arrayView, response, arrayState);
+            arrayState.clear();
+            columnValueFullySent = true;
+        } catch (Throwable e) {
+            // we have to disambiguate here if this is very first attempt to send the value, which failed
+            // and we have any partial value we can send to the clint, or our state did not bookmark anything?
+            columnValueFullySent = arrayState.zeroState();
+            arrayState.reset(arrayView);
+            throw e;
+        }
     }
 
     private void putBinValue(HttpChunkedResponse response) {

@@ -660,7 +660,6 @@ public class HttpHeaderParserTest {
         long p = TestUtils.toMemory(v);
         long s1 = System.currentTimeMillis();
         long s2 = System.nanoTime();
-        System.out.println("s1: " + s1 + "L; s2: " + s2 + "L;");
         Rnd rnd = new Rnd(s1, s2);
         int steps = rnd.nextInt(v.length()) + 1;
         int stepMax = rnd.nextInt(v.length() / steps + 1) + 1;
