@@ -25,6 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.log.Log;
@@ -245,13 +246,17 @@ class LineTcpMeasurementEvent implements Closeable {
                         row.putLong128(colIndex, buffer.readLong(address), buffer.readLong(address + Long.BYTES));
                         address += Long.BYTES * 2;
                         break;
-                    case LineTcpParser.ENTITY_TYPE_VARCHAR: {
+                    case LineTcpParser.ENTITY_TYPE_VARCHAR:
                         final boolean ascii = buffer.readByte(address++) == 0;
                         Utf8Sequence s = buffer.readVarchar(address, ascii);
                         row.putVarchar(colIndex, s);
                         address += Integer.BYTES + s.size();
-                    }
-                    break;
+                        break;
+                    case LineTcpParser.ENTITY_TYPE_ND_ARRAY:
+                        ArrayView array = buffer.readArray(address);
+                        row.putArray(colIndex, array);
+                        address += buffer.columnValueLength(entityType, address);
+                        break;
                     case ENTITY_TYPE_NULL:
                         // ignored, default nulls is used
                         break;
@@ -563,6 +568,12 @@ class LineTcpMeasurementEvent implements Closeable {
                     }
                     break;
                 }
+                case LineTcpParser.ENTITY_TYPE_ND_ARRAY:
+                    if (!ColumnType.isArray(colType)) {
+                        throw castError(tud.getTableNameUtf16(), "ND_ARRAY", colType, entity.getName());
+                    }
+                    offset = buffer.addArray(offset, entity.getArray());
+                    break;
                 case ENTITY_TYPE_NULL:
                     offset = buffer.addNull(offset);
                     break;

@@ -62,13 +62,13 @@ public class LineUdpSender extends AbstractLineSender {
 
     @Override
     public final AbstractLineSender timestampColumn(CharSequence name, Instant value) {
-        writeFieldName(name).put((value.getEpochSecond() * Timestamps.SECOND_NANOS + value.getNano()) / 1000);
+        writeFieldName(name, false).put((value.getEpochSecond() * Timestamps.SECOND_NANOS + value.getNano()) / 1000);
         return this;
     }
 
     @Override
     public final AbstractLineSender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
-        writeFieldName(name).put(Timestamps.toMicros(value, unit));
+        writeFieldName(name, false).put(Timestamps.toMicros(value, unit));
         return this;
     }
 }

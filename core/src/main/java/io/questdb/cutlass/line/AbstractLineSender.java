@@ -24,9 +24,12 @@
 
 package io.questdb.cutlass.line;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.auth.AuthUtils;
+import io.questdb.cutlass.line.array.DoubleArray;
+import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -147,12 +150,12 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
     }
 
     public AbstractLineSender field(CharSequence name, long value) {
-        writeFieldName(name).put(value).put('i');
+        writeFieldName(name, false).put(value).put('i');
         return this;
     }
 
     public AbstractLineSender field(CharSequence name, CharSequence value) {
-        writeFieldName(name).put('"');
+        writeFieldName(name, false).put('"');
         quoted = true;
         put(value);
         quoted = false;
@@ -161,18 +164,204 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
     }
 
     public AbstractLineSender field(CharSequence name, double value) {
-        writeFieldName(name).put(value);
+        writeFieldName(name, false).put(value);
         return this;
     }
 
     public AbstractLineSender field(CharSequence name, boolean value) {
-        writeFieldName(name).putAsciiInternal(value ? 't' : 'f');
+        writeFieldName(name, false).putAsciiInternal(value ? 't' : 'f');
         return this;
     }
 
     @Override
-    public Sender arrayColumn(CharSequence name, CharSequence value) {
-        writeFieldName(name).put(value);
+    public Sender doubleArray(CharSequence name, double[] values) {
+        writeFieldName(name, true)
+                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
+                .put((byte) ColumnType.DOUBLE)
+                .put((byte) 1);
+        DoubleArray.processArrayShape(ptr, values);
+        ptr += Integer.BYTES;
+        ptr = DoubleArray.processArrayData(ptr, null, values);
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][] values) {
+        writeFieldName(name, true)
+                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
+                .put((byte) ColumnType.DOUBLE)
+                .put((byte) 2);
+        DoubleArray.processArrayShape(ptr, values);
+        ptr += Integer.BYTES * 2;
+        ptr = DoubleArray.processArrayData(ptr, null, values);
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][] values) {
+        writeFieldName(name, true)
+                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
+                .put((byte) ColumnType.DOUBLE)
+                .put((byte) 3);
+        DoubleArray.processArrayShape(ptr, values);
+        ptr += Integer.BYTES * 3;
+        ptr = DoubleArray.processArrayData(ptr, null, values);
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][] values) {
+        writeFieldName(name, true)
+                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
+                .put((byte) ColumnType.DOUBLE)
+                .put((byte) 4);
+        DoubleArray.processArrayShape(ptr, values);
+        ptr += Integer.BYTES * 4;
+        ptr = DoubleArray.processArrayData(ptr, null, values);
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][][] values) {
+        writeFieldName(name, true)
+                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
+                .put((byte) ColumnType.DOUBLE)
+                .put((byte) 5);
+        DoubleArray.processArrayShape(ptr, values);
+        ptr += Integer.BYTES * 5;
+        ptr = DoubleArray.processArrayData(ptr, null, values);
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][][][] values) {
+        writeFieldName(name, true)
+                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
+                .put((byte) ColumnType.DOUBLE)
+                .put((byte) 6);
+        DoubleArray.processArrayShape(ptr, values);
+        ptr += Integer.BYTES * 6;
+        ptr = DoubleArray.processArrayData(ptr, null, values);
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][][][][] values) {
+        writeFieldName(name, true)
+                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
+                .put((byte) ColumnType.DOUBLE)
+                .put((byte) 7);
+        DoubleArray.processArrayShape(ptr, values);
+        ptr += Integer.BYTES * 7;
+        ptr = DoubleArray.processArrayData(ptr, null, values);
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][][][][][] values) {
+        writeFieldName(name, true)
+                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
+                .put((byte) ColumnType.DOUBLE)
+                .put((byte) 8);
+        DoubleArray.processArrayShape(ptr, values);
+        ptr += Integer.BYTES * 8;
+        ptr = DoubleArray.processArrayData(ptr, null, values);
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][][][][][][] values) {
+        writeFieldName(name, true)
+                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
+                .put((byte) ColumnType.DOUBLE)
+                .put((byte) 9);
+        DoubleArray.processArrayShape(ptr, values);
+        ptr += Integer.BYTES * 9;
+        ptr = DoubleArray.processArrayData(ptr, null, values);
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][][][][][][][] values) {
+        writeFieldName(name, true)
+                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
+                .put((byte) ColumnType.DOUBLE)
+                .put((byte) 10);
+        DoubleArray.processArrayShape(ptr, values);
+        ptr += Integer.BYTES * 10;
+        ptr = DoubleArray.processArrayData(ptr, null, values);
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][][][][][][][][] values) {
+        writeFieldName(name, true)
+                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
+                .put((byte) ColumnType.DOUBLE)
+                .put((byte) 11);
+        DoubleArray.processArrayShape(ptr, values);
+        ptr += Integer.BYTES * 11;
+        ptr = DoubleArray.processArrayData(ptr, null, values);
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][][][][][][][][][] values) {
+        writeFieldName(name, true)
+                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
+                .put((byte) ColumnType.DOUBLE)
+                .put((byte) 12);
+        DoubleArray.processArrayShape(ptr, values);
+        ptr += Integer.BYTES * 12;
+        ptr = DoubleArray.processArrayData(ptr, null, values);
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][][][][][][][][][][] values) {
+        writeFieldName(name, true)
+                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
+                .put((byte) ColumnType.DOUBLE)
+                .put((byte) 13);
+        DoubleArray.processArrayShape(ptr, values);
+        ptr += Integer.BYTES * 13;
+        ptr = DoubleArray.processArrayData(ptr, null, values);
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][][][][][][][][][][][] values) {
+        writeFieldName(name, true)
+                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
+                .put((byte) ColumnType.DOUBLE)
+                .put((byte) 14);
+        DoubleArray.processArrayShape(ptr, values);
+        ptr += Integer.BYTES * 14;
+        ptr = DoubleArray.processArrayData(ptr, null, values);
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][][][][][][][][][][][][] values) {
+        writeFieldName(name, true)
+                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
+                .put((byte) ColumnType.DOUBLE)
+                .put((byte) 15);
+        DoubleArray.processArrayShape(ptr, values);
+        ptr += Integer.BYTES * 15;
+        ptr = DoubleArray.processArrayData(ptr, null, values);
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][][][][][][][][][][][][][] values) {
+        writeFieldName(name, true)
+                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
+                .put((byte) ColumnType.DOUBLE)
+                .put((byte) 16);
+        DoubleArray.processArrayShape(ptr, values);
+        ptr += Integer.BYTES * 16;
+        ptr = DoubleArray.processArrayData(ptr, null, values);
         return this;
     }
 
@@ -488,7 +677,7 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
         }
     }
 
-    protected AbstractLineSender writeFieldName(CharSequence name) {
+    protected AbstractLineSender writeFieldName(CharSequence name, boolean binaryFormat) {
         validateNotClosed();
         validateColumnName(name);
         if (hasTable) {
@@ -499,7 +688,11 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
                 putAsciiInternal(',');
             }
             put(name);
-            return putAsciiInternal('=');
+            if (binaryFormat) {
+                return putAsciiInternal(':');
+            } else {
+                return putAsciiInternal('=');
+            }
         }
         throw new LineSenderException("table expected");
     }

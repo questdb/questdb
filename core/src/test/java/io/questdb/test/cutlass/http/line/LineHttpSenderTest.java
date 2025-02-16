@@ -50,8 +50,10 @@ import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 
+import java.lang.reflect.Array;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Arrays;
 
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.PropertyKey.LINE_HTTP_ENABLED;
@@ -328,17 +330,20 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
-    @Ignore
-    // todo: move ILP to send binary data for arrays
     public void testInsertNdArray() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "8192"
             )) {
                 serverMain.start();
 
                 String tableName = "ndarr_test";
-                serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, y SYMBOL, l1 LONG, a1 DOUBLE[], a2 LONG[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, y SYMBOL, l1 LONG, a1 DOUBLE[], " +
+                        "a2 DOUBLE[][], a3 DOUBLE[][][], a4 DOUBLE[][][][], a5 DOUBLE[][][][][], a6 DOUBLE[][][][][][]," +
+                        "a7 DOUBLE[][][][][][][], a8 DOUBLE[][][][][][][][], a9 DOUBLE[][][][][][][][][]," +
+                        "a10 DOUBLE[][][][][][][][][][], a11 DOUBLE[][][][][][][][][][][], a12 DOUBLE[][][][][][][][][][][][], " +
+                        "a13 DOUBLE[][][][][][][][][][][][][], a14 DOUBLE[][][][][][][][][][][][][][], a15 DOUBLE[][][][][][][][][][][][][][][]," +
+                        "a16 DOUBLE[][][][][][][][][][][][][][][][], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
@@ -352,21 +357,85 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .symbol("x", "42i")
                             .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")  // ensuring no array parsing for symbol
                             .longColumn("l1", 23452345)
-                            .arrayColumn("a1", "[6f1.0,2.5,3.0,4.5,5.0]")  // TODO(amunra): API it's the raw buffer passed into ILP
-                            .arrayColumn("a2", "[6i-1,0,100000000]")  // TODO(amunra): API it's the raw buffer passed into ILP
+                            .doubleArray("a1", (double[]) createDoubleArrays(new int[]{5}))
+                            .doubleArray("a2", (double[][]) createDoubleArrays(new int[]{2, 3}))
+                            .doubleArray("a3", (double[][][]) createDoubleArrays(new int[]{1, 2, 3}))
+                            .doubleArray("a4", (double[][][][]) createDoubleArrays(new int[]{1, 2, 1, 1}))
+                            .doubleArray("a5", (double[][][][][]) createDoubleArrays(new int[]{3, 2, 1, 4, 1}))
+                            .doubleArray("a6", (double[][][][][][]) createDoubleArrays(new int[]{1, 3, 4, 2, 1, 1}))
+                            .doubleArray("a7", (double[][][][][][][]) createDoubleArrays(new int[]{2, 2, 2, 1, 1, 1, 2}))
+                            .doubleArray("a8", (double[][][][][][][][]) createDoubleArrays(new int[]{1, 1, 2, 1, 1, 1, 2, 1}))
+                            .doubleArray("a9", (double[][][][][][][][][]) createDoubleArrays(new int[]{1, 2, 1, 2, 1, 1, 2, 1, 1}))
+                            .doubleArray("a10", (double[][][][][][][][][][]) createDoubleArrays(new int[]{2, 1, 1, 2, 1, 1, 1, 1, 1, 2}))
+                            .doubleArray("a11", (double[][][][][][][][][][][]) createDoubleArrays(new int[]{3, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1}))
+                            .doubleArray("a12", (double[][][][][][][][][][][][]) createDoubleArrays(new int[]{1, 2, 1, 2, 1, 1, 1, 1, 2, 2, 1, 1}))
+                            .doubleArray("a13", (double[][][][][][][][][][][][][]) createDoubleArrays(new int[]{1, 1, 2, 2, 1, 2, 1, 1, 2, 1, 1, 2, 1}))
+                            .doubleArray("a14", (double[][][][][][][][][][][][][][]) createDoubleArrays(new int[]{1, 1, 3, 1, 1, 1, 1, 1, 2, 1, 1, 2, 2, 1}))
+                            .doubleArray("a15", (double[][][][][][][][][][][][][][][]) createDoubleArrays(new int[]{1, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 3, 1, 1, 1}))
+                            .doubleArray("a16", (double[][][][][][][][][][][][][][][][]) createDoubleArrays(new int[]{1, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}))
                             .at(100000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
                 serverMain.awaitTxn(tableName, 1);
 
-                serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta1\ta2\tts\n" +
-                        "42i\t" +
-                        "[6f1.0,2.5,3.0,4.5,5.0]\t" +
-                        "23452345\t" +
-                        "[1.0,2.5,3.0,4.5,5.0]\t" +
-                        "[-1,0,100000000]\t" +
+                serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta1\ta2\ta3\ta4\ta5\ta6\ta7\ta8\ta9\ta10\ta11\ta12\ta13\ta14\ta15\ta16\tts\n" +
+                        "42i\t[6f1.0,2.5,3.0,4.5,5.0]\t23452345\t" +
+                        "[1.0,2.0,3.0,4.0,5.0]\t" +
+                        "[[1.0,2.0,3.0],[2.0,4.0,6.0]]\t" +
+                        "[[[1.0,2.0,3.0],[2.0,4.0,6.0]]]\t" +
+                        "[[[[1.0]],[[2.0]]]]\t" +
+                        "[[[[[1.0],[2.0],[3.0],[4.0]]],[[[2.0],[4.0],[6.0],[8.0]]]],[[[[2.0],[4.0],[6.0],[8.0]]],[[[4.0],[8.0],[12.0],[16.0]]]],[[[[3.0],[6.0],[9.0],[12.0]]],[[[6.0],[12.0],[18.0],[24.0]]]]]\t" +
+                        "[[[[[[1.0]],[[2.0]]],[[[2.0]],[[4.0]]],[[[3.0]],[[6.0]]],[[[4.0]],[[8.0]]]],[[[[2.0]],[[4.0]]],[[[4.0]],[[8.0]]],[[[6.0]],[[12.0]]],[[[8.0]],[[16.0]]]],[[[[3.0]],[[6.0]]],[[[6.0]],[[12.0]]],[[[9.0]],[[18.0]]],[[[12.0]],[[24.0]]]]]]\t" +
+                        "[[[[[[[1.0,2.0]]]],[[[[2.0,4.0]]]]],[[[[[2.0,4.0]]]],[[[[4.0,8.0]]]]]],[[[[[[2.0,4.0]]]],[[[[4.0,8.0]]]]],[[[[[4.0,8.0]]]],[[[[8.0,16.0]]]]]]]\t" +
+                        "[[[[[[[[1.0],[2.0]]]]],[[[[[2.0],[4.0]]]]]]]]\t" +
+                        "[[[[[[[[[1.0]],[[2.0]]]]],[[[[[2.0]],[[4.0]]]]]]],[[[[[[[2.0]],[[4.0]]]]],[[[[[4.0]],[[8.0]]]]]]]]]\t" +
+                        "[[[[[[[[[[1.0,2.0]]]]]],[[[[[[2.0,4.0]]]]]]]]],[[[[[[[[[2.0,4.0]]]]]],[[[[[[4.0,8.0]]]]]]]]]]\t" +
+                        "[[[[[[[[[[[1.0],[2.0]]]]]]],[[[[[[[2.0],[4.0]]]]]]]]]],[[[[[[[[[[2.0],[4.0]]]]]]],[[[[[[[4.0],[8.0]]]]]]]]]],[[[[[[[[[[3.0],[6.0]]]]]]],[[[[[[[6.0],[12.0]]]]]]]]]]]\t" +
+                        "[[[[[[[[[[[[1.0]],[[2.0]]],[[[2.0]],[[4.0]]]]]]]],[[[[[[[[2.0]],[[4.0]]],[[[4.0]],[[8.0]]]]]]]]]],[[[[[[[[[[2.0]],[[4.0]]],[[[4.0]],[[8.0]]]]]]]],[[[[[[[[4.0]],[[8.0]]],[[[8.0]],[[16.0]]]]]]]]]]]]\t" +
+                        "[[[[[[[[[[[[[1.0],[2.0]]]],[[[[2.0],[4.0]]]]]]],[[[[[[[2.0],[4.0]]]],[[[[4.0],[8.0]]]]]]]]],[[[[[[[[[2.0],[4.0]]]],[[[[4.0],[8.0]]]]]]],[[[[[[[4.0],[8.0]]]],[[[[8.0],[16.0]]]]]]]]]],[[[[[[[[[[2.0],[4.0]]]],[[[[4.0],[8.0]]]]]]],[[[[[[[4.0],[8.0]]]],[[[[8.0],[16.0]]]]]]]]],[[[[[[[[[4.0],[8.0]]]],[[[[8.0],[16.0]]]]]]],[[[[[[[8.0],[16.0]]]],[[[[16.0],[32.0]]]]]]]]]]]]]\t" +
+                        "[[[[[[[[[[[[[[1.0],[2.0]],[[2.0],[4.0]]]]],[[[[[2.0],[4.0]],[[4.0],[8.0]]]]]]]]]]],[[[[[[[[[[[2.0],[4.0]],[[4.0],[8.0]]]]],[[[[[4.0],[8.0]],[[8.0],[16.0]]]]]]]]]]],[[[[[[[[[[[3.0],[6.0]],[[6.0],[12.0]]]]],[[[[[6.0],[12.0]],[[12.0],[24.0]]]]]]]]]]]]]]\t" +
+                        "[[[[[[[[[[[[[[[1.0]]],[[[2.0]]],[[[3.0]]]]],[[[[[2.0]]],[[[4.0]]],[[[6.0]]]]]]]]]]],[[[[[[[[[[[2.0]]],[[[4.0]]],[[[6.0]]]]],[[[[[4.0]]],[[[8.0]]],[[[12.0]]]]]]]]]]]]]]]\t" +
+                        "[[[[[[[[[[[[[[[[1.0]]]]]]]]]]]],[[[[[[[[[[[[2.0]]]]]]]]]]]],[[[[[[[[[[[[3.0]]]]]]]]]]]]],[[[[[[[[[[[[[2.0]]]]]]]]]]]],[[[[[[[[[[[[4.0]]]]]]]]]]]],[[[[[[[[[[[[6.0]]]]]]]]]]]]]]]]\t" +
                         "1970-01-02T03:46:40.000000Z\n");
+            }
+        });
+    }
+
+    @Test
+    public void testInsertNullNdArray() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.start();
+
+                String tableName = "ndarr_nullable_test";
+                serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, l1 LONG, a1 DOUBLE[], " +
+                        "a2 DOUBLE[][], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.awaitTxn(tableName, 0);
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
+                        .retryTimeoutMillis(0)
+                        .build()
+                ) {
+                    sender.table(tableName)
+                            .symbol("x", "42i")
+                            .longColumn("l1", 123098948)
+                            .doubleArray("a1", (double[]) null)
+                            .doubleArray("a2", (double[][]) null)
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTxn(tableName, 1);
+
+                serverMain.assertSql("select * from " + tableName,
+                        "x\tl1\ta1\ta2\tts\n" +
+                                "42i\t123098948\tnull\tnull\t1970-01-02T03:46:40.000000Z\n");
             }
         });
     }
@@ -726,6 +795,74 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         .at(timestamp, ChronoUnit.MICROS);
             }
             sender.flush();
+        }
+    }
+
+    public static Object createDoubleArrays(int[] shapes) {
+        return buildNestedArray(shapes, 0, new int[shapes.length]);
+    }
+
+    private static Object buildNestedArray(int[] shapes, int currentDim, int[] indices) {
+        if (currentDim == shapes.length - 1) {
+            double[] arr = new double[shapes[currentDim]];
+            for (int i = 0; i < arr.length; i++) {
+                indices[currentDim] = i;
+                double product = 1.0;
+                for (int idx : indices) {
+                    product *= (idx + 1);
+                }
+                arr[i] = product;
+            }
+            return arr;
+        } else {
+            Object arr = Array.newInstance(getComponentType(shapes.length - currentDim - 1), shapes[currentDim]);
+            for (int i = 0; i < shapes[currentDim]; i++) {
+                indices[currentDim] = i;
+                Object subArr = buildNestedArray(shapes, currentDim + 1, indices);
+                Array.set(arr, i, subArr);
+            }
+            return arr;
+        }
+    }
+
+    private static Class<?> getComponentType(int dimsRemaining) {
+        switch (dimsRemaining) {
+            case 0:
+                return double.class;
+            case 1:
+                return double[].class;
+            case 2:
+                return double[][].class;
+            case 3:
+                return double[][][].class;
+            case 4:
+                return double[][][][].class;
+            case 5:
+                return double[][][][][].class;
+            case 6:
+                return double[][][][][][].class;
+            case 7:
+                return double[][][][][][][].class;
+            case 8:
+                return double[][][][][][][][].class;
+            case 9:
+                return double[][][][][][][][][].class;
+            case 10:
+                return double[][][][][][][][][][].class;
+            case 11:
+                return double[][][][][][][][][][][].class;
+            case 12:
+                return double[][][][][][][][][][][][].class;
+            case 13:
+                return double[][][][][][][][][][][][][].class;
+            case 14:
+                return double[][][][][][][][][][][][][][].class;
+            case 15:
+                return double[][][][][][][][][][][][][][][].class;
+            case 16:
+                return double[][][][][][][][][][][][][][][][].class;
+            default:
+                throw new RuntimeException("array dimension to large");
         }
     }
 }
