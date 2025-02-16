@@ -105,6 +105,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private SqlExecutionCircuitBreaker circuitBreaker;
     private int columnCount;
     private int columnIndex;
+    // indicates to the state machine that column value was fully sent to
+    // the client, as opposed to being partially send
+    private boolean columnValueFullySent;
     private long compilerNanos;
     private boolean containsSecret;
     private long count;
@@ -180,6 +183,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         columnsQueryParameter.clear();
         queryState = QUERY_SETUP_FIRST_RECORD;
         columnIndex = 0;
+        columnValueFullySent = true;
+        arrayState.clear();
         countRows = false;
         explain = false;
         noMeta = false;
@@ -637,6 +642,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(query).putQuote().putAscii(',')
                 .putAsciiQuoted("columns").putAscii(':').putAscii('[');
         columnIndex = 0;
+        columnValueFullySent = true;
         return true;
     }
 
@@ -644,7 +650,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         queryState = QUERY_RECORD;
         for (; columnIndex < columnCount; columnIndex++) {
             response.bookmark();
-            if (columnIndex > 0) {
+            if (columnIndex > 0 && columnValueFullySent) {
                 response.putAscii(',');
             }
 
@@ -725,13 +731,16 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     break;
                 case ColumnType.ARRAY:
                     arrayState.of(response);
+                    var arrayView = arrayState.getArrayView() == null ? record.getArray(columnIdx, columnType) : arrayState.getArrayView();
                     try {
-                        ArrayTypeDriver.arrayToJson(record.getArray(columnIdx, columnType), response, arrayState);
+                        ArrayTypeDriver.arrayToJson(arrayView, response, arrayState);
+                        arrayState.clear();
+                        columnValueFullySent = true;
                     } catch (Throwable e) {
-                        arrayState.reset();
+                        columnValueFullySent = false;
+                        arrayState.reset(arrayView);
                         throw e;
                     }
-                    arrayState.clear();
                     break;
                 default:
                     // this should never happen since metadata are already validated
@@ -927,6 +936,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
 
         columnIndex = 0;
+        columnValueFullySent = true;
         record = cursor.getRecord();
         cursorHasRows = true;
     }

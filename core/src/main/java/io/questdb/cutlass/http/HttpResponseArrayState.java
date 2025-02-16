@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cairo.arr.ArrayState;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.Mutable;
 import io.questdb.std.str.CharSink;
 
@@ -33,6 +34,8 @@ import java.util.Arrays;
 public class HttpResponseArrayState implements ArrayState, Mutable {
     private final int[] contender = new int[STATE_MAX];
     private final int[] target = new int[STATE_MAX];
+    // array view that was partially sent
+    private ArrayView arrayView;
     private int flatIndex;
     private HttpChunkedResponse response;
 
@@ -41,6 +44,15 @@ public class HttpResponseArrayState implements ArrayState, Mutable {
         this.flatIndex = 0;
         Arrays.fill(contender, 0);
         Arrays.fill(target, 0);
+        arrayView = null;
+    }
+
+    public ArrayView getArrayView() {
+        return arrayView;
+    }
+
+    public boolean isClear() {
+        return arrayView == null;
     }
 
     @Override
@@ -67,7 +79,8 @@ public class HttpResponseArrayState implements ArrayState, Mutable {
         this.flatIndex = flatIndex;
     }
 
-    public void reset() {
+    public void reset(ArrayView arrayView) {
         Arrays.fill(contender, 0);
+        this.arrayView = arrayView;
     }
 }
