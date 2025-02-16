@@ -74,6 +74,10 @@ public class DirectIntSlice implements DirectSequence {
         return length * Integer.BYTES;
     }
 
+    public void shl(long delta) {
+        this.ptr -= delta;
+    }
+
     @TestOnly
     public int[] toArray() {
         final int[] res = new int[length];

@@ -413,6 +413,18 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
+        public void checkCapacity(long capacity) {
+            HttpClient.this.checkCapacity(capacity);
+        }
+
+        public long getPtr() {
+            return ptr;
+        }
+
+        public void setPtr(long ptr) {
+            HttpClient.this.ptr = ptr;
+        }
+
         public Request query(CharSequence name, CharSequence value) {
             assert state == STATE_URL_DONE || state == STATE_QUERY;
             if (state == STATE_URL_DONE) {

@@ -32,6 +32,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
@@ -427,8 +428,8 @@ public class LineWalAppender {
                         break;
                     }
                     case LineTcpParser.ENTITY_TYPE_ND_ARRAY:
-                        DirectArray array = ent.getArray();
-                        if (array.getType() != colType) {
+                        ArrayView array = ent.getArray();
+                        if (array != null && array.getType() != colType) {
                             throw castError(tud.getTableNameUtf16(), "ND_ARRAY", colType, ent.getName());
                         }
                         r.putArray(columnIndex, array);

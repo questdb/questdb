@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Mutable array that owns its backing native memory.
@@ -168,6 +169,16 @@ public class DirectArray extends ArrayView implements ArraySink, Mutable {
             shape.add(0);
             strides.add(0);
         }
+    }
+
+    @TestOnly
+    public long getFlatViewPtr() {
+        return borrowedFlatView().ptr();
+    }
+
+    @TestOnly
+    public long getFlatViewSize() {
+        return borrowedFlatView().size();
     }
 
     private void ensureCapacity(long requiredCapacity) {

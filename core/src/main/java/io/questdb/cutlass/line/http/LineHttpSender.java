@@ -27,6 +27,7 @@ package io.questdb.cutlass.line.http;
 import io.questdb.BuildInformationHolder;
 import io.questdb.ClientTlsConfiguration;
 import io.questdb.HttpClientConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.http.HttpConstants;
@@ -39,6 +40,8 @@ import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.json.JsonParser;
 import io.questdb.cutlass.line.LineSenderException;
+import io.questdb.cutlass.line.array.DoubleArray;
+import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.NanosecondClockImpl;
@@ -152,10 +155,274 @@ public final class LineHttpSender implements Sender {
     }
 
     @Override
-    public Sender arrayColumn(CharSequence name, CharSequence value) {
-        // TODO(amunra): Validation of the value
-        writeFieldName(name);
-        request.put(value);
+    public Sender doubleArray(CharSequence name, double[] values) {
+        if (processNullArray(name, values)) {
+            return this;
+        }
+        writeFieldName(name, true);
+        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                .put((byte) ColumnType.DOUBLE) // element type
+                .put((byte) 1); // dims.
+        request.checkCapacity(Integer.BYTES);
+        long addr = request.getPtr();
+        DoubleArray.processArrayShape(addr, values);
+        addr += Integer.BYTES;
+        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][] values) {
+        if (processNullArray(name, values)) {
+            return this;
+        }
+        writeFieldName(name, true);
+        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                .put((byte) ColumnType.DOUBLE) // element type
+                .put((byte) 2); // dims.
+        request.checkCapacity(Integer.BYTES * 2);
+        long addr = request.getPtr();
+        DoubleArray.processArrayShape(addr, values);
+        addr += Integer.BYTES * 2;
+        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][] values) {
+        if (processNullArray(name, values)) {
+            return this;
+        }
+        writeFieldName(name, true);
+        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                .put((byte) ColumnType.DOUBLE) // element type
+                .put((byte) 3); // dims.
+        request.checkCapacity(Integer.BYTES * 3);
+        long addr = request.getPtr();
+        DoubleArray.processArrayShape(addr, values);
+        addr += Integer.BYTES * 3;
+        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][] values) {
+        if (processNullArray(name, values)) {
+            return this;
+        }
+        writeFieldName(name, true);
+        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                .put((byte) ColumnType.DOUBLE) // element type
+                .put((byte) 4); // dims.
+        request.checkCapacity(Integer.BYTES * 4);
+        long addr = request.getPtr();
+        DoubleArray.processArrayShape(addr, values);
+        addr += Integer.BYTES * 4;
+        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][][] values) {
+        if (processNullArray(name, values)) {
+            return this;
+        }
+        writeFieldName(name, true);
+        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                .put((byte) ColumnType.DOUBLE) // element type
+                .put((byte) 5); // dims.
+        request.checkCapacity(Integer.BYTES * 5);
+        long addr = request.getPtr();
+        DoubleArray.processArrayShape(addr, values);
+        addr += Integer.BYTES * 5;
+        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][][][] values) {
+        if (processNullArray(name, values)) {
+            return this;
+        }
+        writeFieldName(name, true);
+        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                .put((byte) ColumnType.DOUBLE) // element type
+                .put((byte) 6); // dims.
+        request.checkCapacity(Integer.BYTES * 6);
+        long addr = request.getPtr();
+        DoubleArray.processArrayShape(addr, values);
+        addr += Integer.BYTES * 6;
+        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][][][][] values) {
+        if (processNullArray(name, values)) {
+            return this;
+        }
+        writeFieldName(name, true);
+        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                .put((byte) ColumnType.DOUBLE) // element type
+                .put((byte) 7); // dims.
+        request.checkCapacity(Integer.BYTES * 7);
+        long addr = request.getPtr();
+        DoubleArray.processArrayShape(addr, values);
+        addr += Integer.BYTES * 7;
+        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][][][][][] values) {
+        if (processNullArray(name, values)) {
+            return this;
+        }
+        writeFieldName(name, true);
+        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                .put((byte) ColumnType.DOUBLE) // element type
+                .put((byte) 8); // dims.
+        request.checkCapacity(Integer.BYTES * 8);
+        long addr = request.getPtr();
+        DoubleArray.processArrayShape(addr, values);
+        addr += Integer.BYTES * 8;
+        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][][][][][][] values) {
+        if (processNullArray(name, values)) {
+            return this;
+        }
+        writeFieldName(name, true);
+        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                .put((byte) ColumnType.DOUBLE) // element type
+                .put((byte) 9); // dims.
+        request.checkCapacity(Integer.BYTES * 9);
+        long addr = request.getPtr();
+        DoubleArray.processArrayShape(addr, values);
+        addr += Integer.BYTES * 9;
+        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][][][][][][][] values) {
+        if (processNullArray(name, values)) {
+            return this;
+        }
+        writeFieldName(name, true);
+        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                .put((byte) ColumnType.DOUBLE) // element type
+                .put((byte) 10); // dims.
+        request.checkCapacity(Integer.BYTES * 10);
+        long addr = request.getPtr();
+        DoubleArray.processArrayShape(addr, values);
+        addr += Integer.BYTES * 10;
+        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][][][][][][][][] values) {
+        if (processNullArray(name, values)) {
+            return this;
+        }
+        writeFieldName(name, true);
+        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                .put((byte) ColumnType.DOUBLE) // element type
+                .put((byte) 11); // dims.
+        request.checkCapacity(Integer.BYTES * 11);
+        long addr = request.getPtr();
+        DoubleArray.processArrayShape(addr, values);
+        addr += Integer.BYTES * 11;
+        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][][][][][][][][][] values) {
+        if (processNullArray(name, values)) {
+            return this;
+        }
+        writeFieldName(name, true);
+        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                .put((byte) ColumnType.DOUBLE) // element type
+                .put((byte) 12); // dims.
+        request.checkCapacity(Integer.BYTES * 12);
+        long addr = request.getPtr();
+        DoubleArray.processArrayShape(addr, values);
+        addr += Integer.BYTES * 12;
+        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][][][][][][][][][][] values) {
+        if (processNullArray(name, values)) {
+            return this;
+        }
+        writeFieldName(name, true);
+        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                .put((byte) ColumnType.DOUBLE) // element type
+                .put((byte) 13); // dims.
+        request.checkCapacity(Integer.BYTES * 13);
+        long addr = request.getPtr();
+        DoubleArray.processArrayShape(addr, values);
+        addr += Integer.BYTES * 13;
+        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][][][][][][][][][][][] values) {
+        if (processNullArray(name, values)) {
+            return this;
+        }
+        writeFieldName(name, true);
+        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                .put((byte) ColumnType.DOUBLE) // element type
+                .put((byte) 14); // dims.
+        request.checkCapacity(Integer.BYTES * 14);
+        long addr = request.getPtr();
+        DoubleArray.processArrayShape(addr, values);
+        addr += Integer.BYTES * 14;
+        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][][][][][][][][][][][][] values) {
+        if (processNullArray(name, values)) {
+            return this;
+        }
+        writeFieldName(name, true);
+        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                .put((byte) ColumnType.DOUBLE) // element type
+                .put((byte) 15); // dims.
+        request.checkCapacity(Integer.BYTES * 15);
+        long addr = request.getPtr();
+        DoubleArray.processArrayShape(addr, values);
+        addr += Integer.BYTES * 15;
+        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        return this;
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, double[][][][][][][][][][][][][][][][] values) {
+        if (processNullArray(name, values)) {
+            return this;
+        }
+        writeFieldName(name, true);
+        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                .put((byte) ColumnType.DOUBLE) // element type
+                .put((byte) 16); // dims.
+        request.checkCapacity(Integer.BYTES * 16);
+        long addr = request.getPtr();
+        DoubleArray.processArrayShape(addr, values);
+        addr += Integer.BYTES * 16;
+        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
         return this;
     }
 
@@ -193,7 +460,7 @@ public final class LineHttpSender implements Sender {
 
     @Override
     public Sender boolColumn(CharSequence name, boolean value) {
-        writeFieldName(name);
+        writeFieldName(name, false);
         request.put(value ? 't' : 'f');
         return this;
     }
@@ -225,7 +492,7 @@ public final class LineHttpSender implements Sender {
 
     @Override
     public Sender doubleColumn(CharSequence name, double value) {
-        writeFieldName(name);
+        writeFieldName(name, false);
         request.put(value);
         return this;
     }
@@ -237,7 +504,7 @@ public final class LineHttpSender implements Sender {
 
     @Override
     public Sender longColumn(CharSequence name, long value) {
-        writeFieldName(name);
+        writeFieldName(name, false);
         request.put(value);
         request.put('i');
         return this;
@@ -254,7 +521,7 @@ public final class LineHttpSender implements Sender {
 
     @Override
     public Sender stringColumn(CharSequence name, CharSequence value) {
-        writeFieldName(name);
+        writeFieldName(name, false);
         request.put('"');
         escapeString(value);
         request.put('"');
@@ -304,14 +571,14 @@ public final class LineHttpSender implements Sender {
     @Override
     public Sender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
         // micros
-        writeFieldName(name).put(Timestamps.toMicros(value, unit)).put('t');
+        writeFieldName(name, false).put(Timestamps.toMicros(value, unit)).put('t');
         return this;
     }
 
     @Override
     public Sender timestampColumn(CharSequence name, Instant value) {
         // micros
-        writeFieldName(name).put((value.getEpochSecond() * Timestamps.SECOND_MICROS + value.getNano() / 1000L)).put('t');
+        writeFieldName(name, false).put((value.getEpochSecond() * Timestamps.SECOND_MICROS + value.getNano() / 1000L)).put('t');
         return this;
     }
 
@@ -340,6 +607,16 @@ public final class LineHttpSender implements Sender {
         int backoff = retryBackoff + jitter;
         Os.sleep(backoff);
         return Math.min(RETRY_MAX_BACKOFF_MS, backoff * RETRY_BACKOFF_MULTIPLIER);
+    }
+
+    private boolean processNullArray(CharSequence name, Object value) {
+        if (value == null) {
+            writeFieldName(name, true);
+            request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                    .put((byte) ColumnType.NULL); // element type
+            return true;
+        }
+        return false;
     }
 
     private void consumeChunkedResponse(HttpClient.ResponseHeaders response) {
@@ -578,7 +855,7 @@ public final class LineHttpSender implements Sender {
         }
     }
 
-    private HttpClient.Request writeFieldName(CharSequence name) {
+    private HttpClient.Request writeFieldName(CharSequence name, boolean nativeFormat) {
         validateColumnName(name);
         switch (state) {
             case EMPTY:
@@ -594,7 +871,11 @@ public final class LineHttpSender implements Sender {
                 break;
         }
         escapeQuotedString(name);
-        request.put('=');
+        if (nativeFormat) {
+            request.put(':');
+        } else {
+            request.put('=');
+        }
         return request;
     }
 
