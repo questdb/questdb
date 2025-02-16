@@ -35,7 +35,6 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.SelectFacade;
 import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.util.concurrent.atomic.AtomicReference;
@@ -97,11 +96,6 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     @Override
     public int getConnectionPoolInitialCapacity() {
         return getDelegate().getConnectionPoolInitialCapacity();
-    }
-
-    @Override
-    public DateLocale getDefaultDateLocale() {
-        return getDelegate().getDefaultDateLocale();
     }
 
     @Override
@@ -217,11 +211,6 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     @Override
     public int getNamedStatementLimit() {
         return getDelegate().getNamedStatementLimit();
-    }
-
-    @Override
-    public int getNamesStatementPoolCapacity() {
-        return getDelegate().getNamesStatementPoolCapacity();
     }
 
     @Override
@@ -362,11 +351,6 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     @Override
     public boolean isInsertCacheEnabled() {
         return getDelegate().isInsertCacheEnabled();
-    }
-
-    @Override
-    public boolean isLegacyModeEnabled() {
-        return getDelegate().isLegacyModeEnabled();
     }
 
     @Override

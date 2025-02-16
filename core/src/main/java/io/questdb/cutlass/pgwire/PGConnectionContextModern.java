@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire.modern;
+package io.questdb.cutlass.pgwire;
 
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
@@ -38,10 +38,6 @@ import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.auth.SocketAuthenticator;
-import io.questdb.cutlass.pgwire.BadProtocolException;
-import io.questdb.cutlass.pgwire.OptionsListener;
-import io.questdb.cutlass.pgwire.PGResponseSink;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.griffin.BatchCallback;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
@@ -1522,16 +1518,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         responseUtf8Sink.bookmarkPtr = sendBufferPtr;
         bufferRemainingSize = 0;
         bufferRemainingOffset = 0;
-    }
-
-    public static class Portal implements Mutable {
-
-        public CharSequence statementName = null;
-
-        @Override
-        public void clear() {
-            statementName = null;
-        }
     }
 
     private class PGConnectionBatchCallback implements BatchCallback {

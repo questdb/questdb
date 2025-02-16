@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire.modern;
+package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.std.AbstractSelfReturningObject;

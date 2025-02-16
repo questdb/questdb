@@ -57,10 +57,6 @@ public class PGWireMetrics implements Mutable {
         return cachedSelectsGauge;
     }
 
-    public LongGauge cachedUpdatesGauge() {
-        return cachedUpdatesGauge;
-    }
-
     @Override
     public void clear() {
         cachedSelectsGauge.setValue(0);

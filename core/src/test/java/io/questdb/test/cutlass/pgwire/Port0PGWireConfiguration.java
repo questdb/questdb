@@ -31,14 +31,12 @@ import io.questdb.std.Rnd;
 public class Port0PGWireConfiguration extends DefaultPGWireConfiguration {
     private static final String DEBUG_PGWIRE_PORT = "QDB_DEBUG_PGWIRE_PORT";
     int connectionLimit;
-    boolean isLegacyMode;
 
     public Port0PGWireConfiguration() {
-        this(-1, false);
+        this(-1);
     }
 
-    public Port0PGWireConfiguration(int connectionLimit, boolean isLegacyMode) {
-        this.isLegacyMode = isLegacyMode;
+    public Port0PGWireConfiguration(int connectionLimit) {
         this.connectionLimit = connectionLimit;
     }
 
@@ -64,10 +62,5 @@ public class Port0PGWireConfiguration extends DefaultPGWireConfiguration {
     @Override
     public Rnd getRandom() {
         return new Rnd();
-    }
-
-    @Override
-    public boolean isLegacyModeEnabled() {
-        return isLegacyMode;
     }
 }

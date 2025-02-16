@@ -39,8 +39,6 @@ import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 import org.postgresql.PGProperty;
 import org.postgresql.util.PSQLException;
 
@@ -48,13 +46,11 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.Collection;
 import java.util.Properties;
 import java.util.TimeZone;
 
 import static io.questdb.test.tools.TestUtils.assertContains;
 
-@RunWith(Parameterized.class)
 public class PGSecurityTest extends BasePGTest {
 
     private static final SecurityContextFactory READ_ONLY_SECURITY_CONTEXT_FACTORY = new ReadOnlyUsersAwareSecurityContextFactory(true, null, false);
@@ -89,18 +85,9 @@ public class PGSecurityTest extends BasePGTest {
         }
     };
 
-    public PGSecurityTest(LegacyMode legacyMode) {
-        super(legacyMode);
-    }
-
     @BeforeClass
     public static void init() {
         inputRoot = TestUtils.getCsvRoot();
-    }
-
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<Object[]> testParams() {
-        return legacyModeParams();
     }
 
     @Test
