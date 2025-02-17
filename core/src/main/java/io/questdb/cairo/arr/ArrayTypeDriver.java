@@ -656,7 +656,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         // for shorts, it's on a 2-byte boundary. For booleans, we align to the byte.
         final int requiredByteAlignment = ColumnType.sizeOf(ColumnType.decodeArrayElementType(arrayView.getType()));
         padTo(dataMem, requiredByteAlignment);
-        arrayView.appendWithDefaultStrides(dataMem);
+        arrayView.flatView().appendToMem(dataMem);
         // We pad at the end, ready for the next entry that starts with an int.
         padTo(dataMem, Integer.BYTES);
     }

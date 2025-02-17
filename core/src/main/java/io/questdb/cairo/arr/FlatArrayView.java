@@ -24,7 +24,11 @@
 
 package io.questdb.cairo.arr;
 
+import io.questdb.cairo.vm.api.MemoryA;
+
 public interface FlatArrayView {
+    void appendToMem(MemoryA mem);
+
     double getDouble(int elemIndex);
 
     long getLong(int elemIndex);

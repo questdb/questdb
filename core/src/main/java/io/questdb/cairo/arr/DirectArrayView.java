@@ -27,7 +27,6 @@ package io.questdb.cairo.arr;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
@@ -54,11 +53,6 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
 
     public DirectArrayView(CairoConfiguration configuration) {
         this.configuration = configuration;
-    }
-
-    @Override
-    public void appendWithDefaultStrides(MemoryA fromMem) {
-        fromMem.putBlockOfBytes(ptr, byteSize);
     }
 
     @Override

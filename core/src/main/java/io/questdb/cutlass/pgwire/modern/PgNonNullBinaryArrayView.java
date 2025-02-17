@@ -43,15 +43,16 @@ final class PgNonNullBinaryArrayView implements ArrayView, FlatArrayView, Mutabl
     private int type;
 
     @Override
-    public void appendWithDefaultStrides(MemoryA mem) {
+    public void appendToMem(MemoryA mem) {
+        int size = this.size;
         switch (ColumnType.decodeArrayElementType(type)) {
             case ColumnType.LONG:
-                for (int i = 0, n = size; i < n; i++) {
+                for (int i = 0; i < size; i++) {
                     mem.putLong(getLong(i));
                 }
                 break;
             case ColumnType.DOUBLE:
-                for (int i = 0, n = size; i < n; i++) {
+                for (int i = 0; i < size; i++) {
                     mem.putDouble(getDouble(i));
                 }
                 break;

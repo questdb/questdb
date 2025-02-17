@@ -25,7 +25,6 @@
 package io.questdb.cairo.arr;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.MemoryTag;
 
@@ -44,11 +43,6 @@ public class BorrowedArrayView implements ArrayView {
     private int type = ColumnType.UNDEFINED;
     private int valuesOffset;
 
-
-    @Override
-    public void appendWithDefaultStrides(MemoryA mem) {
-        mem.putBlockOfBytes(flatView.ptr(), flatView.size());
-    }
 
     @Override
     public FlatArrayView flatView() {
@@ -90,24 +84,6 @@ public class BorrowedArrayView implements ArrayView {
      */
     public int getValuesOffset() {
         return valuesOffset;
-    }
-
-    /**
-     * Returns a view over the raw block of memory the N-dimensional array. It contains
-     * the values stored in the row-major order. For example, for a 4x3x2 array:
-     * <pre>
-     * {
-     *     {{1, 2}, {3, 4}, {5, 6}},
-     *     {{7, 8}, {9, 0}, {1, 2}},
-     *     {{3, 4}, {5, 6}, {7, 8}},
-     *     {{9, 0}, {1, 2}, {3, 4}}
-     * }
-     * </pre>
-     * The flat array would contain a flat vector of elements with the numbers
-     * <code>[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4]</code>.
-     */
-    public BorrowedFlatArrayView getValuesView() {
-        return flatView;
     }
 
     /**

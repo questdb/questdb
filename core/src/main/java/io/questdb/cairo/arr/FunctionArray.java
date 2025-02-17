@@ -49,7 +49,7 @@ public class FunctionArray implements ArrayView, FlatArrayView, Closeable {
     }
 
     @Override
-    public void appendWithDefaultStrides(MemoryA mem) {
+    public void appendToMem(MemoryA mem) {
         final short elemType = ColumnType.decodeArrayElementType(type);
         final Function[] functions = functions();
         int elemCount = getFlatElemCount();

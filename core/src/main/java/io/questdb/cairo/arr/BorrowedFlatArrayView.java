@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.arr;
 
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.Unsafe;
 import io.questdb.std.bytes.DirectSequence;
 
@@ -36,6 +37,12 @@ import io.questdb.std.bytes.DirectSequence;
 public class BorrowedFlatArrayView implements DirectSequence, FlatArrayView {
     private long ptr = 0;
     private int size = 0;
+
+    @Override
+    public void appendToMem(MemoryA mem) {
+        assert ptr != 0;
+        mem.putBlockOfBytes(ptr, size);
+    }
 
     @Override
     public double getDouble(int elemIndex) {

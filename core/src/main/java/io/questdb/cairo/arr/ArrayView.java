@@ -25,12 +25,23 @@
 package io.questdb.cairo.arr;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.vm.api.MemoryA;
 
 public interface ArrayView extends ArrayShape {
 
-    void appendWithDefaultStrides(MemoryA mem);
-
+    /**
+     * Returns a flat view over the elements of the N-dimensional array. It contains
+     * the values stored in row-major order. For example, for a 4x3x2 array:
+     * <pre>
+     * {
+     *     {{1, 2}, {3, 4}, {5, 6}},
+     *     {{7, 8}, {9, 0}, {1, 2}},
+     *     {{3, 4}, {5, 6}, {7, 8}},
+     *     {{9, 0}, {1, 2}, {3, 4}}
+     * }
+     * </pre>
+     * The flat array would contain a flat vector of elements with the numbers
+     * <code>[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4]</code>.
+     */
     FlatArrayView flatView();
 
     /**
