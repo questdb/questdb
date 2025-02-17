@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.arr;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectIntSlice;
 import io.questdb.std.Unsafe;
@@ -75,70 +76,23 @@ public class ArrayMetaUtils {
     }
 
     /**
-     * Set the list to the default strides for a row-major vector of the specified dimensions.
-     * <p>The strides are expressed in element space (not byte space).</p>
+     * Validates that each dimension in the shape is positive and doesn't exceed
+     * {@value DIM_MAX_SIZE}. Validates that the flat element count fits into an {@code int}.
+     * Returns the flat element count.
      */
-    public static void determineDefaultStrides(@NotNull DirectIntSlice shape, @NotNull DirectIntList strides) {
-        determineDefaultStrides(shape.ptr(), shape.length(), strides);
-    }
-
-    /**
-     * The product of all the shape's dimensions.
-     * <p>This returns the number of elements contained in the values
-     * vector returned by {@link BorrowedDirectArrayView#getValues()}.</p>
-     */
-    public static int flatLength(@NotNull DirectIntSlice shape) {
-        return flatLength(shape.ptr(), shape.length());
-    }
-
-    public static int flatLength(long shapePtr, int shapeLength) {
-        if (shapeLength == 0) {
-            return 0;
+    public static int validateShapeAndGetFlatElemCount(DirectIntSlice shape) {
+        int nDims = shape.length();
+        if (nDims > ColumnType.ARRAY_NDIMS_LIMIT) {
+            throw new AssertionError("shape length exceeds max dimensionality: " + nDims);
         }
-        int length = 1;
-        for (int dimIndex = 0; dimIndex < shapeLength; ++dimIndex) {
-            final long dimAddr = shapePtr + ((long) dimIndex * Integer.BYTES);
-            final int dim = Unsafe.getUnsafe().getInt(dimAddr);
-            length *= dim;
-        }
-        return length;
-    }
-
-    /**
-     * Determine if the strides are the default strides.
-     * <p>If they are, the data can be iterated in order simply by accessing the {@link BorrowedDirectArrayView#getValues()} vec.</p>
-     */
-    public static boolean isDefaultStrides(DirectIntSlice shape, DirectIntSlice strides) {
-        assert shape.length() == strides.length();
-        int expected = 1;
-        for (int dimIndex = shape.length() - 1; dimIndex >= 0; --dimIndex) {
-            final int actual = strides.get(dimIndex);
-            if (actual != expected) {
-                return false;
+        int elemCount = 1;
+        for (int dimIndex = 0; dimIndex < nDims; ++dimIndex) {
+            final int dimLength = shape.get(dimIndex);
+            if (dimLength <= 0 || dimLength >= DIM_MAX_SIZE) {
+                throw new AssertionError(String.format("shape dimension %,d out of bounds: %,d", dimIndex, dimLength));
             }
-            expected *= shape.get(dimIndex);
+            elemCount = Math.multiplyExact(elemCount, dimLength);
         }
-        return true;
-    }
-
-    /**
-     * Swap the axes.
-     * <p>We hold data as row-major. If needed we can also use transposition to
-     * represent it as column major for the purposes of library compatibility.</p>
-     */
-    public static void transpose(DirectIntList strides) {
-        strides.reverse();
-    }
-
-    /**
-     * Validate that each dimension in the shape is positive and doesn't exceed
-     * {@value DIM_MAX_SIZE}.
-     */
-    public static void validateShape(DirectIntSlice shape) {
-        for (int dimIndex = 0, nDims = shape.length(); dimIndex < nDims; ++dimIndex) {
-            final int dim = shape.get(dimIndex);
-            if ((dim <= 0) || (dim >= DIM_MAX_SIZE))
-                throw new AssertionError(String.format("shape dimension %,d out of bounds: %,d", dimIndex, dim));
-        }
+        return elemCount;
     }
 }
