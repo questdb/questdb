@@ -67,6 +67,7 @@ public class BlockFileTest extends AbstractCairoTest {
     private static final byte MSG_TYPE_A1 = 1;
     private static final byte MSG_TYPE_A2 = 2;
     private static final short MSG_TYPE_ALL = 5;
+    private static final short MSG_TYPE_NLONGS = 6;
     private static final short MSG_TYPE_B = 3;
     private static final short MSG_TYPE_C = 4;
     protected static int commitMode = CommitMode.NOSYNC;
@@ -278,11 +279,13 @@ public class BlockFileTest extends AbstractCairoTest {
             Thread writerThread = new Thread(() -> {
                 try (Path path = getDefinitionFilePath("test")) {
                     start.await();
+                    final long pageSize = ff.getPageSize();
+                    long maxCommitedRegionLength = 0;
                     BlockFileWriter writer = new BlockFileWriter(ff, commitMode);
                     writer.of(path.$());
                     try {
                         for (int i = 0; i < iterations; i++) {
-                            int msg = rnd.nextInt(4);
+                            int msg = rnd.nextInt(6);
                             // Reopen the writer occasionally.
                             if (rnd.nextInt(100) > 95) {
                                 Misc.free(writer);
@@ -302,12 +305,30 @@ public class BlockFileTest extends AbstractCairoTest {
                                 case 3:
                                     commitMsgC(writer.append());
                                     break;
+                                case 4:
+                                    commitAllTypesMsgAppendAPI(writer.append());
+                                    break;
+                                case 5:
+                                    // generate several pages of longs
+                                    int numLongs = 2 + rnd.nextInt(2*(int)pageSize/Long.BYTES);
+                                    commitLongsMsgAppendAPI(writer.append(), numLongs);
+                                    break;
                             }
                             writer.commit();
+                            maxCommitedRegionLength = Math.max(
+                                    maxCommitedRegionLength,
+                                    writer.getRegionLength(writer.getVersionVolatile())
+                            );
                         }
                     } finally {
                         Misc.free(writer);
                     }
+
+                    long maxCommitSize = maxCommitedRegionLength + BlockFileUtils.HEADER_SIZE;
+                    // file grows in pages, never truncated
+                    long actualSize = ((maxCommitSize / pageSize) + 1) * pageSize;
+                    long fileSize = ff.length(path.$());
+                    Assert.assertTrue(fileSize <= 2*actualSize);
                 } catch (Throwable th) {
                     LOG.error().$("Error in writer thread: ").$(th).$();
                     errorCounter.incrementAndGet();
@@ -497,6 +518,20 @@ public class BlockFileTest extends AbstractCairoTest {
         return memory.length();
     }
 
+    private static int commitLongsMsgAppendAPI(AppendableBlock memory, int numLongs) {
+        memory.putInt(numLongs);
+        for (int i = 0; i < numLongs; i++) {
+            memory.putLong(i);
+        }
+        memory.commit(MSG_TYPE_NLONGS);
+        try {
+            memory.commit(MSG_TYPE_NLONGS);
+            Assert.fail();
+        } catch (CairoException ignored) {
+        }
+        return memory.length();
+    }
+
     private static int commitAllTypesMsgWriteAPI(WritableBlock memory) {
         BinarySequence binarySequence = new BinarySequence() {
             @Override
@@ -633,6 +668,9 @@ public class BlockFileTest extends AbstractCairoTest {
                         long len = readAllTypesMsg(block);
                         Assert.assertEquals(msgLen, len);
                         break;
+                    case MSG_TYPE_NLONGS:
+                        readLongsMsg(block);
+                        break;
                     default:
                         Assert.fail("Unexpected type");
                 }
@@ -682,6 +720,16 @@ public class BlockFileTest extends AbstractCairoTest {
         Utf8Sequence readUtf8Sequence = memory.getVarchar(offset);
         Assert.assertEquals("Hello, UTF-8 World!", readUtf8Sequence.toString());
         return offset + STRING_LENGTH_BYTES + readUtf8Sequence.size();
+    }
+
+    private static void readLongsMsg(ReadableBlock memory) {
+        long offset = 0;
+        int numLongs = memory.getInt(offset);
+        offset += Integer.BYTES;
+        for (int i = 0; i < numLongs; i++) {
+            Assert.assertEquals(i, memory.getLong(offset));
+            offset += Long.BYTES;
+        }
     }
 
     private static void readMsgA1(ReadableBlock memory, long regionVersion) {
