@@ -34,7 +34,6 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
-import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -65,7 +64,6 @@ import org.jetbrains.annotations.TestOnly;
 public class MatViewRefreshJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MatViewRefreshJob.class);
     private final long batchSize;
-    private final BlockFileReader blockFileReader;
     private final BlockFileWriter blockFileWriter;
     private final ObjList<TableToken> childViewSink = new ObjList<>();
     private final EntityColumnFilter columnFilter = new EntityColumnFilter();
@@ -90,7 +88,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             this.maxRecompileAttempts = engine.getConfiguration().getMatViewMaxRecompileAttempts();
             this.batchSize = engine.getConfiguration().getMatViewInsertAsSelectBatchSize();
             this.blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
-            this.blockFileReader = new BlockFileReader(configuration);
             this.dbRoot = new Path();
             dbRoot.of(engine.getConfiguration().getDbRoot());
             this.dbRootLen = dbRoot.size();
@@ -110,7 +107,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         LOG.info().$("materialized view refresh job closing [workerId=").$(workerId).I$();
         Misc.free(mvRefreshExecutionContext);
         Misc.free(blockFileWriter);
-        Misc.free(blockFileReader);
         Misc.free(dbRoot);
     }
 
@@ -320,15 +316,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 return;
             }
             try {
-                setInvalidState(state, invalidationReason);
+                // Mark the view invalid only if it was ever refreshed.
+                if (state.getLastRefreshBaseTxn() != -1) {
+                    setInvalidState(state, invalidationReason);
+                }
             } finally {
                 state.unlock();
             }
         }
-    }
-
-    private long readLastRefreshBaseTableTxn(MatViewRefreshState state) {
-        return state.readLastRefreshBaseTableTxn(blockFileReader, dbRoot.trimTo(dbRootLen));
     }
 
     private boolean rebuildView(@NotNull TableToken viewToken, MatViewGraph viewGraph, long refreshTriggeredTimestamp) {
@@ -565,7 +560,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // - apply resulting commit
         // - update applied to txn in MatViewGraph
         if (fromBaseTxn < 0) {
-            fromBaseTxn = readLastRefreshBaseTableTxn(state);
+            fromBaseTxn = state.getLastRefreshBaseTxn();
             if (fromBaseTxn >= toBaseTxn) {
                 // Already refreshed
                 return false;

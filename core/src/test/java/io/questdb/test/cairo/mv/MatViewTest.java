@@ -250,6 +250,29 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBaseTableTruncateDoesNotInvalidateFreshMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL;"
+            );
+
+            final String viewSql = "select sym, last(price) as price, ts from base_price sample by 1h";
+            execute("create materialized view price_1h as (" + viewSql + ") partition by DAY");
+
+            execute("truncate table base_price;");
+            drainQueues();
+
+            assertSql(
+                    "name\tinvalid\n" +
+                            "price_1h\tfalse\n",
+                    "select name, invalid from mat_views"
+            );
+        });
+    }
+
+    @Test
     public void testBatchInsert() throws Exception {
         setProperty(PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE, "10");
         assertMemoryLeak(() -> {
@@ -1564,7 +1587,15 @@ public class MatViewTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
 
+            execute(
+                    "insert into base_price " +
+                            "select 'gbpusd', 1.320 + x / 1000.0, timestamp_sequence('2024-09-10T12:02', 1000000*60*5) " +
+                            "from long_sequence(24 * 20 * 5)"
+            );
+
             createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+            currentMicros = parseFloorPartialTimestamp("2024-10-24T19");
+            drainQueues();
 
             execute("rename table base_price to base_price2");
             if (drainWalQueue) {
@@ -1572,12 +1603,11 @@ public class MatViewTest extends AbstractCairoTest {
             }
 
             execute("rename table base_price2 to base_price");
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T19");
             drainQueues();
 
             assertSql(
                     "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
-                            "price_1h\tbase_price\t2024-10-24T19:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\ttable rename operation\ttrue\tnull\t2\n",
+                            "price_1h\tbase_price\t2024-10-24T19:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\ttable rename operation\ttrue\t1\t3\n",
                     "mat_views"
             );
         });
@@ -1593,9 +1623,10 @@ public class MatViewTest extends AbstractCairoTest {
 
             createMatView(viewSql);
 
-            execute("insert into base_price " +
-                    "select 'gbpusd', 1.320 + x / 1000.0, timestamp_sequence('2024-09-10T12:02', 1000000*60*5) " +
-                    "from long_sequence(24 * 20 * 5)"
+            execute(
+                    "insert into base_price " +
+                            "select 'gbpusd', 1.320 + x / 1000.0, timestamp_sequence('2024-09-10T12:02', 1000000*60*5) " +
+                            "from long_sequence(24 * 20 * 5)"
             );
             drainQueues();
 
@@ -1605,8 +1636,9 @@ public class MatViewTest extends AbstractCairoTest {
                     "select sequencerTxn, minTimestamp, maxTimestamp from wal_transactions('price_1h')"
             );
 
-            execute("insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
-                    ",('gbpusd', 1.325, '2024-09-10T13:03')"
+            execute(
+                    "insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
+                            ",('gbpusd', 1.325, '2024-09-10T13:03')"
             );
             drainQueues();
 

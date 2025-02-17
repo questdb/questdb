@@ -106,7 +106,7 @@ public class MatViewRefreshState implements QuietCloseable {
     public static void writeTo(@NotNull AppendableBlock mem, @Nullable MatViewRefreshState refreshState) {
         if (refreshState == null) {
             mem.putBool(false);
-            mem.putLong(Numbers.LONG_NULL);
+            mem.putLong(-1);
             mem.putStr(null);
             return;
         }
@@ -204,17 +204,6 @@ public class MatViewRefreshState implements QuietCloseable {
         }
     }
 
-    public long readLastRefreshBaseTableTxn(@NotNull BlockFileReader blockFileReader, @NotNull Path dbRoot) {
-        dbRoot
-                .concat(getViewDefinition().getMatViewToken())
-                .concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
-        try (blockFileReader) {
-            blockFileReader.of(dbRoot.$());
-            MatViewRefreshState.readFrom(blockFileReader, this);
-        }
-        return lastRefreshBaseTxn;
-    }
-
     public void refreshFail(@NotNull BlockFileWriter blockFileWriter, @NotNull Path dbRoot, long refreshTimestamp, CharSequence errorMessage) {
         assert latch.get();
         markAsInvalid(blockFileWriter, dbRoot, errorMessage);
@@ -270,7 +259,7 @@ public class MatViewRefreshState implements QuietCloseable {
     }
 
     public void writeLastRefreshBaseTableTxn(@NotNull BlockFileWriter blockFileWriter, @NotNull Path dbRoot, long txn) {
-        if (txn != lastRefreshBaseTxn) {
+        if (lastRefreshBaseTxn != txn) {
             lastRefreshBaseTxn = txn;
             dbRoot
                     .concat(getViewDefinition().getMatViewToken())
