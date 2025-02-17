@@ -272,6 +272,17 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testStressSqlRecompilation() throws Exception {
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_SQL_MAX_RECOMPILE_ATTEMPTS, 1);
+        assertMemoryLeak(() -> {
+            Rnd rnd = fuzzer.generateRandom(LOG);
+            setFuzzParams(rnd, 0);
+            setFuzzProperties(rnd);
+            runMvFuzz(rnd, getTestName(), 1);
+        });
+    }
+
+    @Test
     public void testStressWalPurgeJob() throws Exception {
         // Here we generate many WAL segments and run WalPurgeJob frequently.
         // The goal is to make sure WalPurgeJob doesn't delete WAL-E files used by MatViewRefreshJob.

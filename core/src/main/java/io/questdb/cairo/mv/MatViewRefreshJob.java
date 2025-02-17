@@ -275,10 +275,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 } catch (TableReferenceOutOfDateException e) {
                     factory = Misc.free(factory);
                     if (i == maxRecompileAttempts - 1) {
-                        LOG.error().$("error refreshing materialized view, base table is under heavy DDL changes [view=").$(viewDef.getMatViewToken())
+                        LOG.info().$("base table is under heavy DDL changes, will reattempt refresh later [view=").$(viewDef.getMatViewToken())
                                 .$(", recompileAttempts=").$(maxRecompileAttempts)
                                 .I$();
-                        refreshFailState(state, refreshTimestamp, "base table is under heavy DDL changes");
+                        engine.getMatViewGraph().enqueueRefresh(viewDef.getMatViewToken());
                         return false;
                     }
                 } catch (Throwable th) {
