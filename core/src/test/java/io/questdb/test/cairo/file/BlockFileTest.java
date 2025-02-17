@@ -67,9 +67,9 @@ public class BlockFileTest extends AbstractCairoTest {
     private static final byte MSG_TYPE_A1 = 1;
     private static final byte MSG_TYPE_A2 = 2;
     private static final short MSG_TYPE_ALL = 5;
-    private static final short MSG_TYPE_NLONGS = 6;
     private static final short MSG_TYPE_B = 3;
     private static final short MSG_TYPE_C = 4;
+    private static final short MSG_TYPE_NLONGS = 6;
     protected static int commitMode = CommitMode.NOSYNC;
 
     public BlockFileTest(int commitMode) {
@@ -310,7 +310,7 @@ public class BlockFileTest extends AbstractCairoTest {
                                     break;
                                 case 5:
                                     // generate several pages of longs
-                                    int numLongs = 2 + rnd.nextInt(2*(int)pageSize/Long.BYTES);
+                                    int numLongs = 2 + rnd.nextInt(2 * (int) pageSize / Long.BYTES);
                                     commitLongsMsgAppendAPI(writer.append(), numLongs);
                                     break;
                             }
@@ -328,7 +328,7 @@ public class BlockFileTest extends AbstractCairoTest {
                     // file grows in pages, never truncated
                     long actualSize = ((maxCommitSize / pageSize) + 1) * pageSize;
                     long fileSize = ff.length(path.$());
-                    Assert.assertTrue(fileSize <= 2*actualSize);
+                    Assert.assertTrue(fileSize <= 2 * actualSize);
                 } catch (Throwable th) {
                     LOG.error().$("Error in writer thread: ").$(th).$();
                     errorCounter.incrementAndGet();
@@ -518,20 +518,6 @@ public class BlockFileTest extends AbstractCairoTest {
         return memory.length();
     }
 
-    private static int commitLongsMsgAppendAPI(AppendableBlock memory, int numLongs) {
-        memory.putInt(numLongs);
-        for (int i = 0; i < numLongs; i++) {
-            memory.putLong(i);
-        }
-        memory.commit(MSG_TYPE_NLONGS);
-        try {
-            memory.commit(MSG_TYPE_NLONGS);
-            Assert.fail();
-        } catch (CairoException ignored) {
-        }
-        return memory.length();
-    }
-
     private static int commitAllTypesMsgWriteAPI(WritableBlock memory) {
         BinarySequence binarySequence = new BinarySequence() {
             @Override
@@ -571,6 +557,20 @@ public class BlockFileTest extends AbstractCairoTest {
         memory.commit(MSG_TYPE_ALL);
         try {
             memory.commit(MSG_TYPE_ALL);
+            Assert.fail();
+        } catch (CairoException ignored) {
+        }
+        return memory.length();
+    }
+
+    private static int commitLongsMsgAppendAPI(AppendableBlock memory, int numLongs) {
+        memory.putInt(numLongs);
+        for (int i = 0; i < numLongs; i++) {
+            memory.putLong(i);
+        }
+        memory.commit(MSG_TYPE_NLONGS);
+        try {
+            memory.commit(MSG_TYPE_NLONGS);
             Assert.fail();
         } catch (CairoException ignored) {
         }
