@@ -76,6 +76,9 @@ public class BlockFileReader implements Closeable {
             currentVersion = getVersionVolatile();
             final long regionOffset = HEADER_SIZE + file.getLong(getRegionOffsetOffset(currentVersion));
             regionLength = file.getLong(getRegionLengthOffset(currentVersion));
+            if (regionOffset + regionLength > file.size()) {
+                file.extend(regionOffset + regionLength);
+            }
 
             final long fileBaseAddress = file.getPageAddress(0);
             final long memoryBaseAddress = memory.resize(regionLength);
