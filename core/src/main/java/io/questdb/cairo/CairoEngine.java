@@ -1406,8 +1406,8 @@ public class CairoEngine implements Closeable, WriterSource {
                                     .I$();
                         }
 
-                        MatViewRefreshState state = matViewGraph.addView(matViewDefinition);
-                        boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, tableToken.getDirName());
+                        final MatViewRefreshState state = matViewGraph.addView(matViewDefinition);
+                        final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, tableToken.getDirName());
                         path.trimTo(pathLen).concat(tableToken.getDirName()).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
                         if (isMatViewStateExists) {
                             reader.of(path.$());

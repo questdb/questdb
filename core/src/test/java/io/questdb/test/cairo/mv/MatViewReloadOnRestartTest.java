@@ -64,17 +64,21 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
                     PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
             )) {
-                execute(main1, "create table base_price (" +
-                        "sym varchar, price double, ts timestamp" +
-                        ") timestamp(ts) partition by DAY WAL"
+                execute(
+                        main1,
+                        "create table base_price (" +
+                                "sym varchar, price double, ts timestamp" +
+                                ") timestamp(ts) partition by DAY WAL"
                 );
 
                 createMatView(main1, "price_1h", "select sym, last(price) as price, ts from base_price sample by 1h");
 
-                execute(main1, "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
-                        ",('gbpusd', 1.323, '2024-09-10T12:02')" +
-                        ",('jpyusd', 103.21, '2024-09-10T12:02')" +
-                        ",('gbpusd', 1.321, '2024-09-10T13:02')"
+                execute(
+                        main1,
+                        "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                                ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                                ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                                ",('gbpusd', 1.321, '2024-09-10T13:02')"
                 );
                 drainWalQueue(main1.getEngine());
 
@@ -150,17 +154,21 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
                     PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
             )) {
-                execute(main1, "create table base_price (" +
-                        "sym varchar, price double, ts timestamp" +
-                        ") timestamp(ts) partition by DAY WAL"
+                execute(
+                        main1,
+                        "create table base_price (" +
+                                "sym varchar, price double, ts timestamp" +
+                                ") timestamp(ts) partition by DAY WAL"
                 );
 
                 createMatView(main1, "price_1h", "select sym, last(price) as price, ts from base_price sample by 1h");
 
-                execute(main1, "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
-                        ",('gbpusd', 1.323, '2024-09-10T12:02')" +
-                        ",('jpyusd', 103.21, '2024-09-10T12:02')" +
-                        ",('gbpusd', 1.321, '2024-09-10T13:02')"
+                execute(
+                        main1,
+                        "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                                ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                                ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                                ",('gbpusd', 1.321, '2024-09-10T13:02')"
                 );
                 drainWalQueue(main1.getEngine());
 
@@ -207,8 +215,10 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 assertSql(main2, expected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
                 assertSql(main2, expected, "price_1h order by ts, sym");
 
-                execute(main2, "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:10')" +
-                        ",('gbpusd', 1.327, '2024-09-10T13:03')"
+                execute(
+                        main2,
+                        "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:10')" +
+                                ",('gbpusd', 1.327, '2024-09-10T13:03')"
                 );
 
                 drainWalQueue(main2.getEngine());
@@ -237,17 +247,21 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
                     PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
             )) {
-                execute(main1, "create table base_price (" +
-                        "sym varchar, price double, ts timestamp" +
-                        ") timestamp(ts) partition by DAY WAL"
+                execute(
+                        main1,
+                        "create table base_price (" +
+                                "sym varchar, price double, ts timestamp" +
+                                ") timestamp(ts) partition by DAY WAL"
                 );
 
                 createMatView(main1, "price_1h", "select sym, last(price) as price, ts from base_price sample by 1h");
 
-                execute(main1, "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
-                        ",('gbpusd', 1.323, '2024-09-10T12:02')" +
-                        ",('jpyusd', 103.21, '2024-09-10T12:02')" +
-                        ",('gbpusd', 1.321, '2024-09-10T13:02')"
+                execute(
+                        main1,
+                        "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                                ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                                ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                                ",('gbpusd', 1.321, '2024-09-10T13:02')"
                 );
                 drainWalQueue(main1.getEngine());
 
@@ -277,7 +291,6 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
                     PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
             )) {
-
                 try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine())) {
                     refreshJob.run(0);
                 }
@@ -453,6 +466,69 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 }
 
                 // The mat view should be loaded, but left in invalid state.
+                assertSql(
+                        main2,
+                        "name\tinvalid\n" +
+                                "price_1h\ttrue\n",
+                        "select name, invalid from mat_views();"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testMatViewsReloadOnServerStartNonWalBaseTable() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain main1 = startWithEnvVariables0(
+                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
+                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
+            )) {
+                execute(
+                        main1,
+                        "create table base_price (" +
+                                "sym varchar, price double, ts timestamp" +
+                                ") timestamp(ts) partition by DAY WAL"
+                );
+
+                createMatView(main1, "price_1h", "select sym, last(price) as price, ts from base_price sample by 1h");
+
+                execute(
+                        main1,
+                        "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                                ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                                ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                                ",('gbpusd', 1.321, '2024-09-10T13:02')"
+                );
+                drainWalQueue(main1.getEngine());
+
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main1.getEngine())) {
+                    refreshJob.run(0);
+                    drainWalQueue(main1.getEngine());
+                }
+
+                assertSql(
+                        main1,
+                        "sym\tprice\tts\n" +
+                                "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                                "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                                "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
+                        "price_1h order by ts, sym"
+                );
+
+                // Convert base table to non-WAL.
+                execute(main1, "alter table base_price set type bypass wal");
+            }
+
+            // The mat view should be skipped on server start.
+            try (final TestServerMain main2 = startWithEnvVariables0(
+                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
+                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
+            )) {
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine())) {
+                    refreshJob.run(0);
+                }
+
+                // The mat view should be loaded, but marked as invalid after refresh.
                 assertSql(
                         main2,
                         "name\tinvalid\n" +
