@@ -50,6 +50,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -76,6 +77,13 @@ public class BlockFileTest extends AbstractCairoTest {
         BlockFileTest.commitMode = commitMode;
     }
 
+    @Before
+    public void setUp() {
+        super.setUp();
+        FilesFacade ff = configuration.getFilesFacade();
+        ff.remove(getDefinitionFilePath().$());
+    }
+
     @Parameterized.Parameters(name = "mode={0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
@@ -88,7 +96,7 @@ public class BlockFileTest extends AbstractCairoTest {
     @Test
     public void testCreateEmptyDefinitionFile() throws Exception {
         assertMemoryLeak(() -> {
-            try (Path path = getDefinitionFilePath("test")) {
+            try (Path path = getDefinitionFilePath()) {
                 FilesFacade ff = configuration.getFilesFacade();
                 Assert.assertTrue(ff.touch(path.$()));
 
@@ -108,7 +116,7 @@ public class BlockFileTest extends AbstractCairoTest {
     @Test
     public void testReadEmptyDefinitionFile() throws Exception {
         assertMemoryLeak(() -> {
-            try (Path path = getDefinitionFilePath("test")) {
+            try (Path path = getDefinitionFilePath()) {
                 FilesFacade ff = configuration.getFilesFacade();
                 Assert.assertTrue(ff.touch(path.$()));
 
@@ -124,7 +132,7 @@ public class BlockFileTest extends AbstractCairoTest {
     @Test
     public void testReadEmptyDefinitionFile2() throws Exception {
         assertMemoryLeak(() -> {
-            try (Path path = getDefinitionFilePath("test")) {
+            try (Path path = getDefinitionFilePath()) {
                 FilesFacade ff = configuration.getFilesFacade();
 
                 // size > HEADER_SIZE
@@ -146,7 +154,7 @@ public class BlockFileTest extends AbstractCairoTest {
     @Test
     public void testReadNonExistingDefinitionFile() throws Exception {
         assertMemoryLeak(() -> {
-            try (Path path = getDefinitionFilePath("test")) {
+            try (Path path = getDefinitionFilePath()) {
                 try (BlockFileReader reader = new BlockFileReader(configuration)) {
                     reader.of(path.$());
                     Assert.fail("Expected exception");
@@ -160,7 +168,7 @@ public class BlockFileTest extends AbstractCairoTest {
     @Test
     public void testReadWriteAppendNewRegion() throws Exception {
         assertMemoryLeak(() -> {
-            try (Path path = getDefinitionFilePath("test")) {
+            try (Path path = getDefinitionFilePath()) {
                 FilesFacade ff = configuration.getFilesFacade();
                 long prevRegionOffset;
                 long prevRegionLength;
@@ -194,7 +202,7 @@ public class BlockFileTest extends AbstractCairoTest {
     @Test
     public void testReadWriteAppendNewRegionNoSpace() throws Exception {
         assertMemoryLeak(() -> {
-            try (Path path = getDefinitionFilePath("test")) {
+            try (Path path = getDefinitionFilePath()) {
                 FilesFacade ff = configuration.getFilesFacade();
                 long prevRegionOffset;
                 long prevRegionLength;
@@ -240,7 +248,7 @@ public class BlockFileTest extends AbstractCairoTest {
     @Test
     public void testReadWriteChecksum() throws Exception {
         assertMemoryLeak(() -> {
-            try (Path path = getDefinitionFilePath("test")) {
+            try (Path path = getDefinitionFilePath()) {
                 FilesFacade ff = configuration.getFilesFacade();
                 try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
                     writer.of(path.$());
@@ -277,8 +285,7 @@ public class BlockFileTest extends AbstractCairoTest {
             AtomicInteger done = new AtomicInteger();
             int iterations = 1000;
             Thread writerThread = new Thread(() -> {
-                try (Path path = getDefinitionFilePath("test")) {
-                    start.await();
+                try (Path path = getDefinitionFilePath()) {
                     final long pageSize = ff.getPageSize();
                     long maxCommitedRegionLength = 0;
                     BlockFileWriter writer = new BlockFileWriter(ff, commitMode);
@@ -310,7 +317,8 @@ public class BlockFileTest extends AbstractCairoTest {
                                     break;
                                 case 5:
                                     // generate several pages of longs
-                                    int numLongs = 2 + rnd.nextInt(2 * (int) pageSize / Long.BYTES);
+                                    int bound = (int)pageSize/Long.BYTES;
+                                    int numLongs = bound/2 + rnd.nextInt(bound);
                                     commitLongsMsgAppendAPI(writer.append(), numLongs);
                                     break;
                             }
@@ -319,6 +327,10 @@ public class BlockFileTest extends AbstractCairoTest {
                                     maxCommitedRegionLength,
                                     writer.getRegionLength(writer.getVersionVolatile())
                             );
+                            // start reading after first commit
+                            if (i == 0) {
+                                start.await();
+                            }
                         }
                     } finally {
                         Misc.free(writer);
@@ -328,7 +340,10 @@ public class BlockFileTest extends AbstractCairoTest {
                     // file grows in pages, never truncated
                     long actualSize = ((maxCommitSize / pageSize) + 1) * pageSize;
                     long fileSize = ff.length(path.$());
-                    Assert.assertTrue(fileSize <= 2 * actualSize);
+                    // A truly random data file can grow if Size(v) > Size(v-2) + Size(v-3) + ... + Size(1), where v is the version.
+                    // In this test, we generate a maximum of 2 pages of data per commit,
+                    // so the file should not grow beyond 3 versions of the maximum size.
+                    Assert.assertTrue(fileSize <= 3*actualSize);
                 } catch (Throwable th) {
                     LOG.error().$("Error in writer thread: ").$(th).$();
                     errorCounter.incrementAndGet();
@@ -340,7 +355,7 @@ public class BlockFileTest extends AbstractCairoTest {
             Thread[] readers = new Thread[readerThreads];
             for (int t = 0; t < readerThreads; t++) {
                 Thread readerThread = new Thread(() -> {
-                    try (Path path = getDefinitionFilePath("test")) {
+                    try (Path path = getDefinitionFilePath()) {
                         start.await();
                         for (int i = 0; i < iterations; i++) {
                             Os.sleep(1); // interleave reads and writes
@@ -367,7 +382,7 @@ public class BlockFileTest extends AbstractCairoTest {
     @Test
     public void testReadWriteOverwriteNewRegion() throws Exception {
         assertMemoryLeak(() -> {
-            try (Path path = getDefinitionFilePath("test")) {
+            try (Path path = getDefinitionFilePath()) {
                 FilesFacade ff = configuration.getFilesFacade();
                 long prevRegionOffset;
                 long prevRegionLength;
@@ -411,7 +426,7 @@ public class BlockFileTest extends AbstractCairoTest {
     @Test
     public void testReadWriteSimple() throws Exception {
         assertMemoryLeak(() -> {
-            try (Path path = getDefinitionFilePath("test")) {
+            try (Path path = getDefinitionFilePath()) {
                 FilesFacade ff = configuration.getFilesFacade();
                 try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
                     writer.of(path.$());
@@ -438,7 +453,7 @@ public class BlockFileTest extends AbstractCairoTest {
     @Test
     public void testReadWriteSimpleAllTypes() throws Exception {
         assertMemoryLeak(() -> {
-            try (Path path = getDefinitionFilePath("test")) {
+            try (Path path = getDefinitionFilePath()) {
                 FilesFacade ff = configuration.getFilesFacade();
                 try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
                     writer.of(path.$());
@@ -627,11 +642,11 @@ public class BlockFileTest extends AbstractCairoTest {
         return memory.length();
     }
 
-    private static Path getDefinitionFilePath(final String tableName) {
-        Path path = new Path().of(configuration.getDbRoot()).concat(tableName).slash();
+    private static Path getDefinitionFilePath() {
+        Path path = new Path().of(configuration.getDbRoot()).concat("test").slash();
         FilesFacade ff = configuration.getFilesFacade();
         ff.mkdirs(path, configuration.getMkDirMode());
-        return path.of(configuration.getDbRoot()).concat(tableName).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
+        return path.of(configuration.getDbRoot()).concat("test").concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
     }
 
     private static void readAllBlocks(Path path, int expectedBlocks, long expectedRegionVersion) {
