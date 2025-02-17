@@ -94,6 +94,9 @@ import org.postgresql.jdbc.PgConnection;
 import org.postgresql.jdbc.PgResultSet;
 import org.postgresql.util.PGTimestamp;
 import org.postgresql.util.PSQLException;
+import org.reactivestreams.Publisher;
+import reactor.core.publisher.Mono;
+import reactor.test.StepVerifier;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -1349,6 +1352,36 @@ public class PGJobContextTest extends BasePGTest {
             }
         });
     }
+
+    @Test
+    public void testR2DBC() throws Exception {
+        skipInLegacyMode(); // R2DBC is not supported in legacy mode, it fails occasionally
+        skipOnWalRun(); // there is no actual table used
+
+        assertWithR2RDBC(conn -> {
+            String name = "QuestDB";
+            String verb = "Rocks";
+
+            Mono<String> r = Mono.from(conn)
+                    .flatMap(c ->
+                            Mono.from(c
+                                            .createStatement("SELECT concat($1, ' ', $2)")
+                                            .bind(0, name)
+                                            .bind(1, verb)
+                                            .execute())
+                                    .flatMap(result ->
+                                            Mono.from(result.map((row, metadata) ->
+                                                    row.get(0, String.class)))
+                                    )
+                                    .doFinally(signalType -> c.close())
+                    );
+
+            StepVerifier.create(r)
+                    .expectNext("QuestDB Rocks")
+                    .verifyComplete();
+        });
+    }
+
 
     @Test
     /*
@@ -12779,6 +12812,11 @@ create table tab as (
     @FunctionalInterface
     public interface ConnectionAwareRunnable {
         void run(Connection connection, boolean binary, Mode mode, int port) throws Exception;
+    }
+
+    @FunctionalInterface
+    public interface AsyncConnectionAwareRunnable {
+        void run(Publisher<? extends io.r2dbc.spi.Connection> connection);
     }
 
     @FunctionalInterface

@@ -32,6 +32,11 @@ open module io.questdb.test {
     requires static java.management;
     requires jdk.management;
     requires org.checkerframework.checker.qual;
+    requires reactor.core;
+    requires reactor.test;
+    requires r2dbc.postgresql;
+    requires r2dbc.spi;
+    requires org.reactivestreams;
 
     uses io.questdb.griffin.FunctionFactory;
 
