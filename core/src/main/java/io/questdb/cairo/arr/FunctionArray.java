@@ -52,60 +52,61 @@ public class FunctionArray implements ArrayView, FlatArrayView, Closeable {
     public void appendWithDefaultStrides(MemoryA mem) {
         final short elemType = ColumnType.decodeArrayElementType(type);
         final Function[] functions = functions();
+        int elemCount = getFlatElemCount();
         switch (elemType) {
             case ColumnType.BYTE:
-                for (int n = getFlatElemCount(), i = 0; i < n; i++) {
+                for (int i = 0; i < elemCount; i++) {
                     mem.putByte(functions[i].getByte(record));
                 }
                 break;
             case ColumnType.SHORT:
-                for (int n = getFlatElemCount(), i = 0; i < n; i++) {
+                for (int i = 0; i < elemCount; i++) {
                     mem.putShort(functions[i].getShort(record));
                 }
                 break;
             case ColumnType.INT:
-                for (int n = getFlatElemCount(), i = 0; i < n; i++) {
+                for (int i = 0; i < elemCount; i++) {
                     mem.putInt(functions[i].getInt(record));
                 }
                 break;
             case ColumnType.LONG:
-                for (int n = getFlatElemCount(), i = 0; i < n; i++) {
+                for (int i = 0; i < elemCount; i++) {
                     mem.putLong(functions[i].getLong(record));
                 }
                 break;
             case ColumnType.DATE:
-                for (int n = getFlatElemCount(), i = 0; i < n; i++) {
+                for (int i = 0; i < elemCount; i++) {
                     mem.putLong(functions[i].getDate(record));
                 }
                 break;
             case ColumnType.TIMESTAMP:
-                for (int n = getFlatElemCount(), i = 0; i < n; i++) {
+                for (int i = 0; i < elemCount; i++) {
                     mem.putLong(functions[i].getTimestamp(record));
                 }
                 break;
             case ColumnType.FLOAT:
-                for (int n = getFlatElemCount(), i = 0; i < n; i++) {
+                for (int i = 0; i < elemCount; i++) {
                     mem.putFloat(functions[i].getFloat(record));
                 }
                 break;
             case ColumnType.DOUBLE:
-                for (int n = getFlatElemCount(), i = 0; i < n; i++) {
+                for (int i = 0; i < elemCount; i++) {
                     mem.putDouble(functions[i].getDouble(record));
                 }
                 break;
             case ColumnType.LONG256:
-                for (int n = getFlatElemCount(), i = 0; i < n; i++) {
+                for (int i = 0; i < elemCount; i++) {
                     Long256 v = functions[i].getLong256A(record);
                     mem.putLong256(v.getLong0(), v.getLong1(), v.getLong2(), v.getLong3());
                 }
                 break;
             case ColumnType.UUID:
-                for (int n = getFlatElemCount(), i = 0; i < n; i++) {
+                for (int i = 0; i < elemCount; i++) {
                     mem.putLong128(functions[i].getLong128Lo(record), functions[i].getLong128Hi(record));
                 }
                 break;
             case ColumnType.IPv4:
-                for (int n = getFlatElemCount(), i = 0; i < n; i++) {
+                for (int i = 0; i < elemCount; i++) {
                     mem.putInt(functions[i].getIPv4(record));
                 }
                 break;
