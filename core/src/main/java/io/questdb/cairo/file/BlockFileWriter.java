@@ -71,7 +71,9 @@ public class BlockFileWriter implements Closeable {
     @Override
     public void close() {
         Misc.free(memory);
-        Misc.free(file);
+        if (file != null) {
+            file.close(false);
+        }
         reset();
         isCommitted = false;
     }
