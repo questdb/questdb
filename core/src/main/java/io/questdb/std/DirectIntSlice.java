@@ -24,7 +24,6 @@
 
 package io.questdb.std;
 
-import io.questdb.cairo.arr.ArrayShape;
 import io.questdb.std.bytes.DirectSequence;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.TestOnly;
@@ -32,7 +31,7 @@ import org.jetbrains.annotations.TestOnly;
 /**
  * A flyweight to an immutable int slice stored in native memory.
  */
-public class DirectIntSlice implements DirectSequence, ArrayShape {
+public class DirectIntSlice implements DirectSequence {
     private int length = 0;
     private long ptr = 0;
 
@@ -40,16 +39,6 @@ public class DirectIntSlice implements DirectSequence, ArrayShape {
         assert index >= 0;
         assert index < length;
         return Unsafe.getUnsafe().getInt(ptr + ((long) index << 2));
-    }
-
-    @Override
-    public int getDimCount() {
-        return length;
-    }
-
-    @Override
-    public int getDimLen(int dimension) {
-        return get(dimension);
     }
 
     public int length() {
