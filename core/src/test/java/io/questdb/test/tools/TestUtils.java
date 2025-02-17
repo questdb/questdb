@@ -1797,8 +1797,8 @@ public final class TestUtils {
         if (dim == actual.getDimCount() - 1) {
             for (int i = 0; i < dimLen; i++) {
                 Assert.assertEquals(
-                        expected.getDoubleAtFlatIndex(expected.getValuesOffset() + expectedFlatIndex + i),
-                        actual.getDoubleAtFlatIndex(actual.getValuesOffset() + actualFlatIndex + i),
+                        expected.flatView().getDouble(expected.getValuesOffset() + expectedFlatIndex + i),
+                        actual.flatView().getDouble(actual.getValuesOffset() + actualFlatIndex + i),
                         Numbers.TOLERANCE
                 );
             }

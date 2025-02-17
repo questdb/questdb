@@ -1679,7 +1679,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 // Write array elements in row-major order, which is native to both
                 // PostgreSQL wire protocol and our ArrayView
                 for (int i = 0; i < totalElements; i++) {
-                    double d = arrayView.getDoubleAtFlatIndex(i);
+                    double d = arrayView.flatView().getDouble(i);
                     if (Numbers.isNull(d)) {
                         hasNulls = true;
                         utf8Sink.setNullValue();
@@ -1691,7 +1691,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 break;
             case ColumnType.LONG:
                 for (int i = 0; i < totalElements; i++) {
-                    long l = arrayView.getLongAtFlatIndex(i);
+                    long l = arrayView.flatView().getLong(i);
                     if (l == Numbers.LONG_NULL) {
                         hasNulls = true;
                         utf8Sink.setNullValue();

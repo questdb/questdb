@@ -34,7 +34,7 @@ import io.questdb.std.Misc;
 import java.io.Closeable;
 import java.io.IOException;
 
-public class FunctionArray implements ArrayView, Closeable {
+public class FunctionArray implements ArrayView, FlatArrayView, Closeable {
 
     private final int[] shape;
     private final int[] strides;
@@ -138,6 +138,11 @@ public class FunctionArray implements ArrayView, Closeable {
     }
 
     @Override
+    public FlatArrayView flatView() {
+        return this;
+    }
+
+    @Override
     public int getDimCount() {
         return shape.length;
     }
@@ -148,7 +153,7 @@ public class FunctionArray implements ArrayView, Closeable {
     }
 
     @Override
-    public double getDoubleAtFlatIndex(int flatIndex) {
+    public double getDouble(int flatIndex) {
         return functions()[flatIndex].getDouble(record);
     }
 
@@ -162,7 +167,7 @@ public class FunctionArray implements ArrayView, Closeable {
     }
 
     @Override
-    public long getLongAtFlatIndex(int flatIndex) {
+    public long getLong(int flatIndex) {
         return functions()[flatIndex].getLong(record);
     }
 

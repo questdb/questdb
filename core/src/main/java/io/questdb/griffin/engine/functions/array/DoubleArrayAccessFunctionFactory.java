@@ -82,7 +82,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                 int strideAtDim = array.getStride(dim);
                 flatIndex += strideAtDim * indexAtDim;
             }
-            return array.getDoubleAtFlatIndex(flatIndex);
+            return array.flatView().getDouble(flatIndex);
         }
 
         @Override

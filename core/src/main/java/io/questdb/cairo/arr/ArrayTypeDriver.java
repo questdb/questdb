@@ -120,20 +120,6 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     private static final ArrayValueAppender VALUE_APPENDER_DOUBLE = ArrayTypeDriver::appendDoubleFromArrayToSink;
     private static final ArrayValueAppender VALUE_APPENDER_LONG = ArrayTypeDriver::appendLongFromArrayToSink;
 
-    public static void appendDoubleFromArrayToSink(
-            @NotNull ArrayView view,
-            int index,
-            @NotNull CharSink<?> sink,
-            @NotNull String nullLiteral
-    ) {
-        double d = view.getDoubleAtFlatIndex(index);
-        if (!Numbers.isNull(d)) {
-            sink.put(d);
-        } else {
-            sink.putAscii(nullLiteral);
-        }
-    }
-
     public static void appendValue(
             @NotNull MemoryA auxMem,
             @NotNull MemoryA dataMem,
@@ -704,13 +690,27 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return offset + size;
     }
 
+    static void appendDoubleFromArrayToSink(
+            @NotNull ArrayView view,
+            int index,
+            @NotNull CharSink<?> sink,
+            @NotNull String nullLiteral
+    ) {
+        double d = view.flatView().getDouble(index);
+        if (!Numbers.isNull(d)) {
+            sink.put(d);
+        } else {
+            sink.putAscii(nullLiteral);
+        }
+    }
+
     static void appendLongFromArrayToSink(
             @NotNull ArrayView view,
             int index,
             @NotNull CharSink<?> sink,
             @NotNull String nullLiteral
     ) {
-        long d = view.getLongAtFlatIndex(index);
+        long d = view.flatView().getLong(index);
         if (d != Numbers.LONG_NULL) {
             sink.put(d);
         } else {

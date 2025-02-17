@@ -232,15 +232,15 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             assertEquals(ColumnType.INT, decodeArrayElementType(array.getType()));
             assertEquals(1, array.getDimCount());
             assertEquals(1, f.getArray(null).getFlatElemCount());
-            assertEquals(1, array.getLongAtFlatIndex(0));
+            assertEquals(1, array.flatView().getLong(0));
         }
         try (Function f = parseFunction("ARRAY[1, 2.0]", metadata, functionParser)) {
             ArrayView array = f.getArray(null);
             assertEquals(ColumnType.DOUBLE, decodeArrayElementType(array.getType()));
             assertEquals(2, array.getFlatElemCount());
             assertEquals(1, array.getDimCount());
-            assertEquals(1.0, array.getDoubleAtFlatIndex(0), 0.0001);
-            assertEquals(2.0, array.getDoubleAtFlatIndex(1), 0.0001);
+            assertEquals(1.0, array.flatView().getDouble(0), 0.0001);
+            assertEquals(2.0, array.flatView().getDouble(1), 0.0001);
         }
         try (Function f = parseFunction("ARRAY[[1]]", metadata, functionParser)) {
             ArrayView array = f.getArray(null);
@@ -249,7 +249,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             assertEquals(1, array.getDimLen(0));
             assertEquals(1, array.getDimLen(1));
             assertEquals(1, array.getFlatElemCount());
-            assertEquals(1, array.getLongAtFlatIndex(0));
+            assertEquals(1, array.flatView().getLong(0));
         }
         try (Function f = parseFunction("ARRAY[[1], [2.0]]", metadata, functionParser)) {
             ArrayView array = f.getArray(null);
@@ -257,8 +257,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             assertEquals(2, array.getDimLen(0));
             assertEquals(1, array.getDimLen(1));
             assertEquals(2, array.getFlatElemCount());
-            assertEquals(1.0, array.getDoubleAtFlatIndex(0), 0.0001);
-            assertEquals(2.0, array.getDoubleAtFlatIndex(1), 0.0001);
+            assertEquals(1.0, array.flatView().getDouble(0), 0.0001);
+            assertEquals(2.0, array.flatView().getDouble(1), 0.0001);
         }
         try (Function f = parseFunction("ARRAY[[1, 2], [3, 4]]", metadata, functionParser)) {
             ArrayView array = f.getArray(null);
@@ -266,10 +266,10 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             assertEquals(2, array.getDimLen(0));
             assertEquals(2, array.getDimLen(1));
             assertEquals(4, array.getFlatElemCount());
-            assertEquals(1, array.getLongAtFlatIndex(0));
-            assertEquals(2, array.getLongAtFlatIndex(1));
-            assertEquals(3, array.getLongAtFlatIndex(2));
-            assertEquals(4, array.getLongAtFlatIndex(3));
+            assertEquals(1, array.flatView().getLong(0));
+            assertEquals(2, array.flatView().getLong(1));
+            assertEquals(3, array.flatView().getLong(2));
+            assertEquals(4, array.flatView().getLong(3));
         }
     }
 
@@ -293,14 +293,14 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             ArrayView array = f.getArray(record);
             assertEquals(1, array.getDimCount());
             assertEquals(1, array.getFlatElemCount());
-            assertEquals(1, array.getLongAtFlatIndex(0));
+            assertEquals(1, array.flatView().getLong(0));
         }
         try (Function f = parseFunction("ARRAY[a, b]", metadata, functionParser)) {
             ArrayView array = f.getArray(record);
             assertEquals(2, array.getFlatElemCount());
             assertEquals(1, array.getDimCount());
-            assertEquals(1, array.getLongAtFlatIndex(0));
-            assertEquals(2, array.getLongAtFlatIndex(1));
+            assertEquals(1, array.flatView().getLong(0));
+            assertEquals(2, array.flatView().getLong(1));
         }
         try (Function f = parseFunction("ARRAY[[a]]", metadata, functionParser)) {
             ArrayView array = f.getArray(record);
@@ -308,25 +308,25 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             assertEquals(1, array.getDimLen(0));
             assertEquals(1, array.getDimLen(1));
             assertEquals(1, array.getFlatElemCount());
-            assertEquals(1, array.getLongAtFlatIndex(0));
+            assertEquals(1, array.flatView().getLong(0));
         }
         try (Function f = parseFunction("ARRAY[[a], [b]]", metadata, functionParser)) {
             ArrayView array = f.getArray(record);
             assertEquals(2, array.getDimLen(0));
             assertEquals(1, array.getDimLen(1));
             assertEquals(2, array.getFlatElemCount());
-            assertEquals(1, array.getLongAtFlatIndex(0));
-            assertEquals(2, array.getLongAtFlatIndex(1));
+            assertEquals(1, array.flatView().getLong(0));
+            assertEquals(2, array.flatView().getLong(1));
         }
         try (Function f = parseFunction("ARRAY[[a, b], [c, d]]", metadata, functionParser)) {
             ArrayView array = f.getArray(record);
             assertEquals(2, array.getDimLen(0));
             assertEquals(2, array.getDimLen(1));
             assertEquals(4, array.getFlatElemCount());
-            assertEquals(1, array.getLongAtFlatIndex(0));
-            assertEquals(2, array.getLongAtFlatIndex(1));
-            assertEquals(3, array.getLongAtFlatIndex(2));
-            assertEquals(4, array.getLongAtFlatIndex(3));
+            assertEquals(1, array.flatView().getLong(0));
+            assertEquals(2, array.flatView().getLong(1));
+            assertEquals(3, array.flatView().getLong(2));
+            assertEquals(4, array.flatView().getLong(3));
         }
     }
 

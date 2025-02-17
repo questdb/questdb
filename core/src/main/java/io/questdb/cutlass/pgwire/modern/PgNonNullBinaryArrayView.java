@@ -26,6 +26,7 @@ package io.questdb.cutlass.pgwire.modern;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.std.IntList;
@@ -33,7 +34,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 
-final class PgNonNullBinaryArrayView implements ArrayView, Mutable {
+final class PgNonNullBinaryArrayView implements ArrayView, FlatArrayView, Mutable {
     private final IntList dimSizes = new IntList();
     private final IntList strides = new IntList();
     private long hi;
@@ -46,12 +47,12 @@ final class PgNonNullBinaryArrayView implements ArrayView, Mutable {
         switch (ColumnType.decodeArrayElementType(type)) {
             case ColumnType.LONG:
                 for (int i = 0, n = size; i < n; i++) {
-                    mem.putLong(getLongAtFlatIndex(i));
+                    mem.putLong(getLong(i));
                 }
                 break;
             case ColumnType.DOUBLE:
                 for (int i = 0, n = size; i < n; i++) {
-                    mem.putDouble(getDoubleAtFlatIndex(i));
+                    mem.putDouble(getDouble(i));
                 }
                 break;
             default:
@@ -70,6 +71,11 @@ final class PgNonNullBinaryArrayView implements ArrayView, Mutable {
     }
 
     @Override
+    public FlatArrayView flatView() {
+        return this;
+    }
+
+    @Override
     public int getDimCount() {
         return dimSizes.size();
     }
@@ -80,7 +86,7 @@ final class PgNonNullBinaryArrayView implements ArrayView, Mutable {
     }
 
     @Override
-    public double getDoubleAtFlatIndex(int flatIndex) {
+    public double getDouble(int flatIndex) {
         final long addr = lo + Integer.BYTES + ((long) flatIndex * (Double.BYTES + Integer.BYTES));
         assert addr < hi;
         long networkOrderVal = Unsafe.getUnsafe().getLong(addr);
@@ -93,7 +99,7 @@ final class PgNonNullBinaryArrayView implements ArrayView, Mutable {
     }
 
     @Override
-    public long getLongAtFlatIndex(int flatIndex) {
+    public long getLong(int flatIndex) {
         final long addr = lo + Integer.BYTES + ((long) flatIndex * (Long.BYTES + Integer.BYTES));
         assert addr < hi;
         long networkOrderVal = Unsafe.getUnsafe().getLong(addr);

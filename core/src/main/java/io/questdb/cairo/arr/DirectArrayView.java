@@ -44,10 +44,11 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
     private static final long LONG_BYTES = 8;
     private static final int MEM_TAG = MemoryTag.NATIVE_ND_ARRAY;
     private final CairoConfiguration configuration;
+    private final BorrowedFlatArrayView flatView = new BorrowedFlatArrayView();
+    private int byteSize = 0;
     private long capacity;
-    private long mem = 0;
+    private long ptr = 0;
     private int[] shape;
-    private long size = 0;
     private int[] strides;
     private int type = ColumnType.UNDEFINED;
 
@@ -57,7 +58,7 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
 
     @Override
     public void appendWithDefaultStrides(MemoryA fromMem) {
-        fromMem.putBlockOfBytes(mem, size);
+        fromMem.putBlockOfBytes(ptr, byteSize);
     }
 
     @Override
@@ -77,9 +78,10 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
             }
             assert flatElemCount > 0;
         }
-        long size = (long) flatElemCount << ColumnType.pow2SizeOf(ColumnType.decodeArrayElementType(type));
-        ensureCapacity(size);
-        this.size = size;
+        int byteSize = flatElemCount << ColumnType.pow2SizeOf(ColumnType.decodeArrayElementType(type));
+        ensureCapacity(byteSize);
+        this.byteSize = byteSize;
+        flatView.of(ptr, byteSize);
 
         int stride = 1;
         for (int i = shape.length - 1; i >= 0; i--) {
@@ -90,23 +92,28 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
 
     @Override
     public void clear() {
-        this.size = 0;
-        this.type = ColumnType.UNDEFINED;
+        byteSize = 0;
+        flatView.reset();
         if (shape != null) {
-            Arrays.fill(this.shape, 0);
-            Arrays.fill(this.strides, 0);
+            Arrays.fill(shape, 0);
+            Arrays.fill(strides, 0);
         }
     }
 
     @Override
     public void close() {
-        this.type = ColumnType.UNDEFINED;
-        this.mem = Unsafe.free(mem, capacity, MEM_TAG);
-        this.size = 0;
-        this.capacity = 0;
-        this.shape = null;
-        this.strides = null;
-        assert this.mem == 0;
+        type = ColumnType.UNDEFINED;
+        ptr = Unsafe.free(ptr, capacity, MEM_TAG);
+        byteSize = 0;
+        capacity = 0;
+        shape = null;
+        strides = null;
+        assert ptr == 0;
+    }
+
+    @Override
+    public FlatArrayView flatView() {
+        return flatView;
     }
 
     @Override
@@ -120,28 +127,8 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
     }
 
     @Override
-    public double getDoubleAtFlatIndex(int flatIndex) {
-        assert mem != 0 : "uninitialized DirectArrayView";
-        assert ColumnType.decodeArrayElementType(type) == ColumnType.DOUBLE : "accessing DOUBLE on an non-DOUBLE array";
-        assert flatIndex >= 0 : "negative flatIndex";
-        long offset = flatIndex * DOUBLE_BYTES;
-        assert offset + DOUBLE_BYTES <= size : "flatIndex out of range";
-        return Unsafe.getUnsafe().getDouble(mem + offset);
-    }
-
-    @Override
     public int getFlatElemCount() {
-        return (int) (size >> ColumnType.pow2SizeOf(ColumnType.decodeArrayElementType(type)));
-    }
-
-    @Override
-    public long getLongAtFlatIndex(int flatIndex) {
-        assert mem != 0 : "uninitialized DirectArrayView";
-        assert ColumnType.decodeArrayElementType(type) == ColumnType.LONG : "accessing LONG on a non-LONG array";
-        assert flatIndex >= 0 : "negative flatIndex";
-        long offset = flatIndex * LONG_BYTES;
-        assert offset + LONG_BYTES <= size : "flatIndex out of range";
-        return Unsafe.getUnsafe().getLong(mem + offset);
+        return byteSize >> ColumnType.pow2SizeOf(ColumnType.decodeArrayElementType(type));
     }
 
     public int[] getShape() {
@@ -159,10 +146,11 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
     }
 
     public void ofNull() {
-        this.type = ColumnType.UNDEFINED;
-        this.shape = EMPTY_INTS;
-        this.strides = EMPTY_INTS;
-        this.size = 0;
+        byteSize = 0;
+        type = ColumnType.UNDEFINED;
+        flatView.reset();
+        shape = EMPTY_INTS;
+        strides = EMPTY_INTS;
     }
 
     @Override
@@ -176,7 +164,7 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
         assert flatIndex >= 0 : "negative flatIndex";
         long offset = flatIndex * DOUBLE_BYTES;
         ensureCapacity(offset + DOUBLE_BYTES);
-        Unsafe.getUnsafe().putDouble(mem + offset, value);
+        Unsafe.getUnsafe().putDouble(ptr + offset, value);
     }
 
     @Override
@@ -195,7 +183,7 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
         assert flatIndex >= 0 : "negative flatIndex";
         long offset = flatIndex * LONG_BYTES;
         ensureCapacity(offset + LONG_BYTES);
-        Unsafe.getUnsafe().putLong(mem + offset, value);
+        Unsafe.getUnsafe().putLong(ptr + offset, value);
     }
 
     @Override
@@ -209,11 +197,11 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
     }
 
     @Override
-    public void setElementType(int elementType) {
-        assert ColumnType.isArray(elementType);
+    public void setType(int encodedType) {
+        assert ColumnType.isArray(encodedType);
 
-        int nDims = ColumnType.decodeArrayDimensionality(elementType);
-        this.type = elementType;
+        int nDims = ColumnType.decodeArrayDimensionality(encodedType);
+        this.type = encodedType;
         if (shape == null || shape.length != nDims) {
             shape = new int[nDims];
             strides = new int[nDims];
@@ -221,8 +209,8 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
     }
 
     private void ensureCapacity(long requiredCapacity) {
-        if (mem == 0) {
-            mem = Unsafe.malloc(requiredCapacity, MEM_TAG);
+        if (ptr == 0) {
+            ptr = Unsafe.malloc(requiredCapacity, MEM_TAG);
             capacity = requiredCapacity;
         } else if (capacity < requiredCapacity) {
             long newCapacity = capacity;
@@ -232,7 +220,7 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
                     throw CairoException.nonCritical().put("array capacity overflow");
                 }
             }
-            mem = Unsafe.realloc(mem, capacity, newCapacity, MEM_TAG);
+            ptr = Unsafe.realloc(ptr, capacity, newCapacity, MEM_TAG);
             capacity = newCapacity;
         }
     }

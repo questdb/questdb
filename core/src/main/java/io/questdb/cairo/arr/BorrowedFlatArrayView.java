@@ -33,21 +33,11 @@ import io.questdb.std.bytes.DirectSequence;
  * It can access an array of any element type. This means that there isn't one definite
  * length of the array it represents -- it depends on the assumed element type.
  */
-public class DirectArraySlice implements DirectSequence {
+public class BorrowedFlatArrayView implements DirectSequence, FlatArrayView {
     private long ptr = 0;
     private int size = 0;
 
-    public boolean getBoolean(int elemIndex) {
-        return getByte(elemIndex) != 0;
-    }
-
-    public byte getByte(int elemIndex) {
-        assert elemIndex >= 0;
-        assert elemIndex < size;
-        final long addr = ptr + elemIndex;
-        return Unsafe.getUnsafe().getByte(addr);
-    }
-
+    @Override
     public double getDouble(int elemIndex) {
         assert elemIndex >= 0;
         assert size % Double.BYTES == 0;
@@ -56,22 +46,7 @@ public class DirectArraySlice implements DirectSequence {
         return Unsafe.getUnsafe().getDouble(addr);
     }
 
-    public float getFloat(int elemIndex) {
-        assert elemIndex >= 0;
-        assert size % Float.BYTES == 0;
-        assert ((elemIndex + 1) * Float.BYTES) <= size;
-        final long addr = ptr + ((long) elemIndex * Float.BYTES);
-        return Unsafe.getUnsafe().getFloat(addr);
-    }
-
-    public int getInt(int elemIndex) {
-        assert elemIndex >= 0;
-        assert size % Integer.BYTES == 0;
-        assert ((elemIndex + 1) * Integer.BYTES) <= size;
-        final long addr = ptr + ((long) elemIndex * Integer.BYTES);
-        return Unsafe.getUnsafe().getInt(addr);
-    }
-
+    @Override
     public long getLong(int elemIndex) {
         assert elemIndex >= 0;
         assert size % Long.BYTES == 0;
@@ -80,15 +55,7 @@ public class DirectArraySlice implements DirectSequence {
         return Unsafe.getUnsafe().getLong(addr);
     }
 
-    public short getShort(int elemIndex) {
-        assert elemIndex >= 0;
-        assert size % Short.BYTES == 0;
-        assert ((elemIndex + 1) * Short.BYTES) <= size;
-        final long addr = ptr + ((long) elemIndex * Short.BYTES);
-        return Unsafe.getUnsafe().getShort(addr);
-    }
-
-    public DirectArraySlice of(long ptr, int size) {
+    public BorrowedFlatArrayView of(long ptr, int size) {
         assert ptr > 0;
         assert size > 0;
         this.ptr = ptr;
@@ -105,9 +72,6 @@ public class DirectArraySlice implements DirectSequence {
         return ptr;
     }
 
-    /**
-     * Invalidate
-     */
     public void reset() {
         ptr = 0;
         size = 0;

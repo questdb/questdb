@@ -24,38 +24,8 @@
 
 package io.questdb.cairo.arr;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.vm.api.MemoryA;
+public interface FlatArrayView {
+    double getDouble(int elemIndex);
 
-public interface ArrayView extends ArrayShape {
-
-    void appendWithDefaultStrides(MemoryA mem);
-
-    FlatArrayView flatView();
-
-    /**
-     * Returns the total number of data points (leaf values) in this array.
-     */
-    int getFlatElemCount();
-
-    int getStride(int dimension);
-
-    /**
-     * Returns the encoded array type, as specified in {@link ColumnType#encodeArrayType(short, int)}.
-     */
-    int getType();
-
-    default int getValuesOffset() {
-        return 0;
-    }
-
-    /**
-     * If the underling array has default strides, 0 values offset and is aligned, we
-     * call it "vanilla" and we can persist the array without manipulating it.
-     *
-     * @return true for arrays lifted direct from storage or otherwise implementing "vanilla" layouts.
-     */
-    default boolean isVanilla() {
-        return true;
-    }
+    long getLong(int elemIndex);
 }
