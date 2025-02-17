@@ -64,7 +64,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private boolean ignoreIfExists = false;
     private ExpressionNode likeTableNameExpr;
     private int maxUncommittedRows;
-    private long o3MaxLag;
+    private long o3MaxLag = -1;
     private ExpressionNode partitionByExpr;
     private QueryModel queryModel;
     private RecordCursorFactory recordCursorFactory;
@@ -152,21 +152,25 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     @Override
     public void clear() {
-        batchO3MaxLag = -1;
-        batchSize = -1;
         columnNameIndexMap.clear();
         columnNames.clear();
+        columnModels.clear();
+        typeCasts.clear();
+        batchO3MaxLag = -1;
+        batchSize = -1;
+        defaultSymbolCapacity = 0;
         ignoreIfExists = false;
         likeTableNameExpr = null;
+        maxUncommittedRows = 0;
         o3MaxLag = -1;
         partitionByExpr = null;
         queryModel = null;
         tableNameExpr = null;
         timestampExpr = null;
-        columnModels.clear();
-        typeCasts.clear();
+        selectText = null;
         volumeAlias = null;
         ttlHoursOrMonths = 0;
+        walEnabled = false;
     }
 
     public int getColumnCount() {
