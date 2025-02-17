@@ -97,7 +97,7 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
 
                 assertFilesExist(partitions, "testPurge", files, "", false);
 
-                Path path = Path.getThreadLocal(configuration.getRoot());
+                Path path = Path.getThreadLocal(configuration.getDbRoot());
                 path.concat(engine.verifyTableName("testPurge"));
                 int pathLen = path.size();
                 for (String partition : partitions) {
@@ -143,7 +143,7 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
 
                 assertFilesExist(partitions, "testPurge", files, "", false);
 
-                Path path = Path.getThreadLocal(configuration.getRoot());
+                Path path = Path.getThreadLocal(configuration.getDbRoot());
                 path.concat(engine.verifyTableName("testPurge"));
                 int pathLen = path.size();
                 for (String partition : partitions) {
