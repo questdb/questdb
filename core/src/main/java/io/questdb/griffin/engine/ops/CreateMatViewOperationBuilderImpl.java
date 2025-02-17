@@ -44,8 +44,8 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     private final CharSequenceHashSet baseKeyColumnNames = new CharSequenceHashSet();
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
     private String baseTableName;
-    private long samplingInterval;
-    private char samplingIntervalUnit;
+    private long samplingInterval = -1;
+    private char samplingIntervalUnit = '\0';
     private String timeZone;
     private String timeZoneOffset;
     private String viewSql;
