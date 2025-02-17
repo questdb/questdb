@@ -235,15 +235,17 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                 if (tableToken.isMatView()) {
                                     final MatViewGraph graph = engine.getMatViewGraph();
                                     final MatViewRefreshState state = graph.getViewRefreshState(tableToken);
-                                    writer.of(path.trimTo(rootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                                    MatViewRefreshState.commitTo(writer, state);
                                     final MatViewDefinition matViewDefinition = (state != null)
                                             ? state.getViewDefinition() : graph.getViewDefinition(tableToken);
                                     if (matViewDefinition != null) {
+                                        writer.of(path.trimTo(rootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                                        MatViewRefreshState.commitTo(writer, state);
                                         writer.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                                         MatViewDefinition.commitTo(writer, matViewDefinition);
+
+                                        LOG.info().$("materialized view definition and state included in the checkpoint [view=").$(tableToken).I$();
                                     } else {
-                                        LOG.info().$("materialized view definition not found [view=").$(tableToken).I$();
+                                        LOG.info().$("materialized view definition or state not found [view=").$(tableToken).I$();
                                     }
                                 }
 
