@@ -48,7 +48,7 @@ public class ArrayTest extends AbstractCairoTest {
         try (DirectArrayView array = new DirectArrayView(configuration);
              DirectUtf8Sink sink = new DirectUtf8Sink(20)
         ) {
-            array.setElementType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2));
+            array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2));
             array.setDimLen(0, 2);
             array.setDimLen(1, 2);
             array.applyShape(1);
@@ -67,7 +67,7 @@ public class ArrayTest extends AbstractCairoTest {
         try (DirectArrayView array = new DirectArrayView(configuration);
              DirectUtf8Sink sink = new DirectUtf8Sink(20)
         ) {
-            array.setElementType(ColumnType.encodeArrayType(ColumnType.LONG, 2));
+            array.setType(ColumnType.encodeArrayType(ColumnType.LONG, 2));
             array.setDimLen(0, 2);
             array.setDimLen(1, 2);
             array.applyShape(2);

@@ -65,15 +65,15 @@ public class RndLongArrayFunctionFactory implements FunctionFactory {
 
     public static class RndLongArrayFunction extends ArrayFunction {
         private static final int MAX_DIM_LEN = 16;
+        private final int functionPosition;
         private final int nDims;
         private DirectArrayView array;
         private Rnd rnd;
-        private final int functionPosition;
 
         public RndLongArrayFunction(CairoConfiguration configuration, int nDims, int functionPosition) {
             this.nDims = nDims;
             this.array = new DirectArrayView(configuration);
-            this.array.setElementType(ColumnType.encodeArrayType(ColumnType.LONG, nDims));
+            this.array.setType(ColumnType.encodeArrayType(ColumnType.LONG, nDims));
             this.functionPosition = functionPosition;
         }
 

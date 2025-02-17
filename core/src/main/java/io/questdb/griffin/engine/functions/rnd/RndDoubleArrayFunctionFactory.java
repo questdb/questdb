@@ -123,7 +123,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
             this.nanRate = nanRate + 1;
             this.nDims = nDims;
             this.array = new DirectArrayView(configuration);
-            this.array.setElementType(ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims));
+            this.array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims));
             this.dimLens = dimLens;
             this.functionPosition = functionPosition;
         }
@@ -182,7 +182,7 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
             this.nanRate = nanRate + 1;
             this.nDims = nDims;
             this.array = new DirectArrayView(configuration);
-            this.array.setElementType(ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims));
+            this.array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims));
             this.maxDimLen = maxDimLen;
             this.functionPosition = functionPosition;
         }

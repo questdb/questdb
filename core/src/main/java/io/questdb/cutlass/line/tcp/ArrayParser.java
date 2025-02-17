@@ -74,15 +74,14 @@ public class ArrayParser implements QuietCloseable {
     // determined, we set it to the size of the current element.
     private final DirectArrayView array;
     private final DirectUtf8String input = new DirectUtf8String();
-
-    public ArrayParser(CairoConfiguration configuration) {
-        array = new DirectArrayView(configuration);
-    }
-
     /**
      * Address where the input string starts. Used to calculate the current position.
      */
     private long inputStartAddr = 0;
+
+    public ArrayParser(CairoConfiguration configuration) {
+        array = new DirectArrayView(configuration);
+    }
 
     @Override
     public void close() {
@@ -190,7 +189,7 @@ public class ArrayParser implements QuietCloseable {
             throw ParseException.invalidType(position());
         }
 
-        array.setElementType(arrayType);
+        array.setType(arrayType);
         input.advance();
     }
 
@@ -298,7 +297,7 @@ public class ArrayParser implements QuietCloseable {
                 }
             }
         }
-        array.setElementType(ColumnType.encodeArrayType(elemType, nDims));
+        array.setType(ColumnType.encodeArrayType(elemType, nDims));
         for (int n = shape.size(), i = 0; i < n; i++) {
             array.setDimLen(i, shape.getQuick(i));
         }

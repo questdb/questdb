@@ -41,5 +41,9 @@ public interface ArraySink {
 
     void setDimLen(int dimension, int length);
 
-    void setElementType(int elementType);
+    /**
+     * Sets the encoded type of this array. It encodes the element type
+     * and number of dimensions.
+     */
+    void setType(int encodedType);
 }

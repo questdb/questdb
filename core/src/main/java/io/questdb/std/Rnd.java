@@ -114,7 +114,7 @@ public class Rnd {
 
     public void nextDoubleArray(int dimCount, ArraySink sink, int nanRate, int maxDimLen, int errorPosition) {
 
-        sink.setElementType(ColumnType.encodeArrayType(ColumnType.DOUBLE, dimCount));
+        sink.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, dimCount));
 
         int size = 1;
         for (int i = 0; i < dimCount; i++) {
@@ -132,7 +132,7 @@ public class Rnd {
 
         assert dimLens.size() == dimCount;
 
-        sink.setElementType(ColumnType.encodeArrayType(ColumnType.DOUBLE, dimCount));
+        sink.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, dimCount));
 
         int size = 1;
         for (int i = 0; i < dimCount; i++) {
@@ -211,7 +211,7 @@ public class Rnd {
 
     public void nextLongArray(int dimCount, ArraySink sink, int nanRate, int maxDimLen, int errorPosition) {
 
-        sink.setElementType(ColumnType.encodeArrayType(ColumnType.LONG, dimCount));
+        sink.setType(ColumnType.encodeArrayType(ColumnType.LONG, dimCount));
 
         int size = 1;
         for (int i = 0; i < dimCount; i++) {
