@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.test.tools.TestUtils;
 
 public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
     private static final long MAX_TABLE_ROWS_TO_CONVERT_TO_SYMBOL = 60_000;
@@ -56,8 +57,8 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
     private final int newColumnType;
     private final int symbolCapacity;
 
-    public FuzzChangeColumnTypeOperation(String columName, int newColumnType, int symbolCapacity, boolean indexFlag, int indexValueBlockCapacity, boolean cacheSymbolMap) {
-        this.columName = columName;
+    public FuzzChangeColumnTypeOperation(Rnd rnd, String columName, int newColumnType, int symbolCapacity, boolean indexFlag, int indexValueBlockCapacity, boolean cacheSymbolMap) {
+        this.columName = TestUtils.randomiseCase(rnd, columName);
         this.newColumnType = newColumnType;
         this.indexFlag = indexFlag;
         this.indexValueBlockCapacity = indexValueBlockCapacity;
@@ -139,7 +140,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
                 boolean indexFlag = ColumnType.isSymbol(newColType) && (columnType == ColumnType.BOOLEAN || columnType == ColumnType.BYTE);
                 int indexValueBlockCapacity = (columnType == ColumnType.BOOLEAN) ? 4 : 128;
                 boolean cacheSymbolMap = ColumnType.isSymbol(newColType) && rnd.nextBoolean();
-                transaction.operationList.add(new FuzzChangeColumnTypeOperation(columnName, newColType, capacity, indexFlag, indexValueBlockCapacity, cacheSymbolMap));
+                transaction.operationList.add(new FuzzChangeColumnTypeOperation(rnd, columnName, newColType, capacity, indexFlag, indexValueBlockCapacity, cacheSymbolMap));
                 transaction.structureVersion = metadataVersion;
                 transaction.waitBarrierVersion = waitBarrierVersion;
                 transactionList.add(transaction);
