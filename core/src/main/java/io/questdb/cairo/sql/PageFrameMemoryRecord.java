@@ -28,8 +28,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
-import io.questdb.cairo.arr.ArrayMmapBuffer;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.MmappedArrayView;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCR;
@@ -60,7 +60,7 @@ import org.jetbrains.annotations.Nullable;
 public class PageFrameMemoryRecord implements Record, StableStringSource, QuietCloseable, Mutable {
     public static final byte RECORD_A_LETTER = 0;
     public static final byte RECORD_B_LETTER = 1;
-    private final ObjList<ArrayMmapBuffer> arrayBuffers = new ObjList<>();
+    private final ObjList<MmappedArrayView> arrayBuffers = new ObjList<>();
     private final ObjList<MemoryCR.ByteSequenceView> bsViews = new ObjList<>();
     private final ObjList<DirectString> csViewsA = new ObjList<>();
     private final ObjList<DirectString> csViewsB = new ObjList<>();
@@ -126,15 +126,15 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             final long auxPageLim = auxPageAddress + auxPageSizes.getQuick(columnIndex);
             final long dataPageAddress = pageAddresses.getQuick(columnIndex);
             final long dataPageLim = dataPageAddress + pageSizes.getQuick(columnIndex);
-            final ArrayMmapBuffer buffer = ensureArrayMmapBuffer(arrayBuffers, columnIndex);
-            return buffer.of(
+            final MmappedArrayView array = ensureMmappedArray(arrayBuffers, columnIndex);
+            return array.of(
                     columnType,
                     auxPageAddress,
                     auxPageLim,
                     dataPageAddress,
                     dataPageLim,
                     rowIndex
-            ).getView();
+            );
         }
         return null;
     }
@@ -482,13 +482,13 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.rowIndex = rowIndex;
     }
 
-    private static @NotNull ArrayMmapBuffer ensureArrayMmapBuffer(ObjList<ArrayMmapBuffer> buffers, int columnIndex) {
-        ArrayMmapBuffer buffer = buffers.getQuiet(columnIndex);
-        if (buffer == null) {
-            buffer = new ArrayMmapBuffer();
-            buffers.extendAndSet(columnIndex, buffer);
+    private static @NotNull MmappedArrayView ensureMmappedArray(ObjList<MmappedArrayView> arrays, int columnIndex) {
+        MmappedArrayView array = arrays.getQuiet(columnIndex);
+        if (array == null) {
+            array = new MmappedArrayView();
+            arrays.extendAndSet(columnIndex, array);
         }
-        return buffer;
+        return array;
     }
 
     private MemoryCR.ByteSequenceView bsView(int columnIndex) {
