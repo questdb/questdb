@@ -377,6 +377,14 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTransposeArray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4], [5, 6]] arr FROM long_sequence(1))");
+            assertSql("transposed\n[[1.0,3.0,5.0],[2.0,4.0,6.0]]\n", "SELECT t(arr) transposed FROM tango");
+        });
+    }
+
+    @Test
     public void testTypeCast() {
         for (int i = 1; i < ColumnType.ARRAY_NDIMS_LIMIT; i++) {
             for (short j = ColumnType.BOOLEAN; j <= ColumnType.IPv4; j++) {

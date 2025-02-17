@@ -44,8 +44,8 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
     private static final int MEM_TAG = MemoryTag.NATIVE_ND_ARRAY;
     private final CairoConfiguration configuration;
     private final BorrowedFlatArrayView flatView = new BorrowedFlatArrayView();
-    private int byteSize = 0;
     private long capacity;
+    private int flatElemCount = 0;
     private long ptr = 0;
     private int[] shape;
     private int[] strides;
@@ -74,7 +74,7 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
         }
         int byteSize = flatElemCount << ColumnType.pow2SizeOf(ColumnType.decodeArrayElementType(type));
         ensureCapacity(byteSize);
-        this.byteSize = byteSize;
+        this.flatElemCount = flatElemCount;
         flatView.of(ptr, byteSize);
 
         int stride = 1;
@@ -86,7 +86,7 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
 
     @Override
     public void clear() {
-        byteSize = 0;
+        flatElemCount = 0;
         flatView.reset();
         if (shape != null) {
             Arrays.fill(shape, 0);
@@ -98,7 +98,7 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
     public void close() {
         type = ColumnType.UNDEFINED;
         ptr = Unsafe.free(ptr, capacity, MEM_TAG);
-        byteSize = 0;
+        flatElemCount = 0;
         capacity = 0;
         shape = null;
         strides = null;
@@ -122,7 +122,7 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
 
     @Override
     public int getFlatElemCount() {
-        return byteSize >> ColumnType.pow2SizeOf(ColumnType.decodeArrayElementType(type));
+        return flatElemCount;
     }
 
     public int[] getShape() {
@@ -140,7 +140,7 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
     }
 
     public void ofNull() {
-        byteSize = 0;
+        flatElemCount = 0;
         type = ColumnType.UNDEFINED;
         flatView.reset();
         shape = EMPTY_INTS;

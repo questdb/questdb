@@ -27,6 +27,7 @@ package io.questdb.cairo.arr;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 
 /**
  * A view over a native-memory array. Does not own the backing native memory.
@@ -34,15 +35,20 @@ import io.questdb.std.MemoryTag;
  * You can change what slice of the underlying flat array it represents, as well as
  * transpose it.
  */
-public class BorrowedArrayView implements ArrayView {
-    private final BorrowedFlatArrayView flatView = new BorrowedFlatArrayView();
-    private final DirectIntList shape = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG1);
-    private final DirectIntList strides = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG1);
-    private int flatElementCount;
+public class BorrowedArrayView implements ArrayView, AutoCloseable {
+    private int flatElemCount;
+    private FlatArrayView flatView;
+    private int flatViewOffset;
+    private DirectIntList shape = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG1);
+    private DirectIntList strides = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG1);
     // Encoded array type, contains element type class, type precision, and dimensionality
     private int type = ColumnType.UNDEFINED;
-    private int valuesOffset;
 
+    @Override
+    public void close() {
+        this.shape = Misc.free(shape);
+        this.strides = Misc.free(strides);
+    }
 
     @Override
     public FlatArrayView flatView() {
@@ -61,7 +67,12 @@ public class BorrowedArrayView implements ArrayView {
 
     @Override
     public int getFlatElemCount() {
-        return flatElementCount;
+        return flatElemCount;
+    }
+
+    @Override
+    public int getFlatViewOffset() {
+        return flatViewOffset;
     }
 
     @Override
@@ -75,18 +86,6 @@ public class BorrowedArrayView implements ArrayView {
     }
 
     /**
-     * Number of values to skip before applying the strides logic to access
-     * the dense array.
-     * <p>
-     * This is exposed (rather than being a part of the Values object)
-     * because of densely packed datatypes, such as boolean bit arrays,
-     * where this might mean slicing across the byte boundary.
-     */
-    public int getValuesOffset() {
-        return valuesOffset;
-    }
-
-    /**
      * The array is a typeless zero-dimensional array.
      * <p>
      * This maps to the <code>NULL</code> value in an array column.
@@ -95,8 +94,18 @@ public class BorrowedArrayView implements ArrayView {
         return type == ColumnType.NULL;
     }
 
-    public void of(BorrowedArrayView other) {
-        this.type = other.type;
+    public void of(ArrayView view) {
+        this.type = view.getType();
+        this.flatView = view.flatView();
+        this.flatViewOffset = view.getFlatViewOffset();
+        this.flatElemCount = view.getFlatElemCount();
+        shape.clear();
+        strides.clear();
+        int nDims = view.getDimCount();
+        for (int i = 0; i < nDims; i++) {
+            shape.add(view.getDimLen(i));
+            strides.add(view.getStride(i));
+        }
     }
 
     /**
@@ -114,8 +123,13 @@ public class BorrowedArrayView implements ArrayView {
         this.type = ColumnType.UNDEFINED;
         this.shape.clear();
         this.strides.clear();
-        this.flatView.reset();
-        this.valuesOffset = 0;
+        this.flatViewOffset = 0;
+        this.flatElemCount = 0;
+    }
+
+    public void transpose() {
+        strides.reverse();
+        shape.reverse();
     }
 
     private static void validateValuesSize(int type, int valuesOffset, int valuesLength, int valuesSize) {

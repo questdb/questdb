@@ -49,16 +49,20 @@ public interface ArrayView extends ArrayShape {
      */
     int getFlatElemCount();
 
+    /**
+     * Returns the index of the underlying flat array at which the first element
+     * of this array view is located.
+     */
+    default int getFlatViewOffset() {
+        return 0;
+    }
+
     int getStride(int dimension);
 
     /**
      * Returns the encoded array type, as specified in {@link ColumnType#encodeArrayType(short, int)}.
      */
     int getType();
-
-    default int getValuesOffset() {
-        return 0;
-    }
 
     /**
      * If the underling array has default strides, 0 values offset and is aligned, we

@@ -35,16 +35,16 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 
 final class PgNonNullBinaryArrayView implements ArrayView, FlatArrayView, Mutable {
-    private final IntList dimSizes = new IntList();
+    private final IntList dimLens = new IntList();
     private final IntList strides = new IntList();
+    private int flatElemCount = 1;
     private long hi;
     private long lo;
-    private int size = 1;
     private int type;
 
     @Override
     public void appendToMem(MemoryA mem) {
-        int size = this.size;
+        int size = this.flatElemCount;
         switch (ColumnType.decodeArrayElementType(type)) {
             case ColumnType.LONG:
                 for (int i = 0; i < size; i++) {
@@ -63,9 +63,9 @@ final class PgNonNullBinaryArrayView implements ArrayView, FlatArrayView, Mutabl
 
     @Override
     public void clear() {
-        dimSizes.clear();
+        dimLens.clear();
         strides.clear();
-        size = 1;
+        flatElemCount = 1;
         lo = 0;
         hi = 0;
         type = ColumnType.UNDEFINED;
@@ -78,12 +78,12 @@ final class PgNonNullBinaryArrayView implements ArrayView, FlatArrayView, Mutabl
 
     @Override
     public int getDimCount() {
-        return dimSizes.size();
+        return dimLens.size();
     }
 
     @Override
     public int getDimLen(int dimension) {
-        return dimSizes.getQuick(dimension);
+        return dimLens.getQuick(dimension);
     }
 
     @Override
@@ -96,7 +96,7 @@ final class PgNonNullBinaryArrayView implements ArrayView, FlatArrayView, Mutabl
 
     @Override
     public int getFlatElemCount() {
-        return size;
+        return flatElemCount;
     }
 
     @Override
@@ -117,9 +117,9 @@ final class PgNonNullBinaryArrayView implements ArrayView, FlatArrayView, Mutabl
         return type;
     }
 
-    void addDimSize(int size) {
-        dimSizes.add(size);
-        this.size *= size;
+    void addDimLen(int dimLen) {
+        dimLens.add(dimLen);
+        flatElemCount *= dimLen;
     }
 
     void setPtrAndCalculateStrides(long lo, long hi, int pgOidType) {
@@ -137,13 +137,13 @@ final class PgNonNullBinaryArrayView implements ArrayView, FlatArrayView, Mutabl
 
         strides.clear();
         int stride = 1;
-        for (int i = dimSizes.size() - 1; i > 0; i--) {
+        for (int i = dimLens.size() - 1; i > 0; i--) {
             strides.add(stride);
-            stride *= dimSizes.getQuick(i);
+            stride *= dimLens.getQuick(i);
         }
         strides.add(stride);
         this.lo = lo;
         this.hi = hi;
-        this.type = ColumnType.encodeArrayType(componentNativeType, dimSizes.size());
+        this.type = ColumnType.encodeArrayType(componentNativeType, dimLens.size());
     }
 }

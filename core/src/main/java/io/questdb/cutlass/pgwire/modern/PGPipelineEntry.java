@@ -2581,7 +2581,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         IntList dimensionSizes = new IntList();
         for (int j = 0; j < dimensions; j++) {
             int dimensionSize = getInt(lo, msgLimit, "malformed array dimension size");
-            arrayView.addDimSize(dimensionSize);
+            arrayView.addDimLen(dimensionSize);
             dimensionSizes.add(dimensionSize);
             lo += Integer.BYTES;
             valueSize -= Integer.BYTES;
