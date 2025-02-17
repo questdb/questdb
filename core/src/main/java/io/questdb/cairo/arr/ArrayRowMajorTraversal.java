@@ -57,7 +57,7 @@ import java.io.Closeable;
 public class ArrayRowMajorTraversal implements QuietCloseable {
     public static final io.questdb.std.ThreadLocal<ArrayRowMajorTraversal> LOCAL = new io.questdb.std.ThreadLocal<>(ArrayRowMajorTraversal::new);
     public static final Closeable THREAD_LOCAL_CLEANER = ArrayRowMajorTraversal::clearThreadLocals;
-    private final DirectIntList coordinates = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG4);
+    private final DirectIntList coordinates = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG2);
     private ArrayView arrayView;
     private boolean done = false;
     private int in = 0;
