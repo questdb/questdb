@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -75,6 +76,11 @@ public class DoubleArrayTransposeFunctionFactory implements FunctionFactory {
             borrowedView.of(array);
             borrowedView.transpose();
             return borrowedView;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("t(").val(arrayFunc).val(')');
         }
     }
 }
