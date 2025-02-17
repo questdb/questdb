@@ -41,8 +41,10 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.tasks.TelemetryWalTask;
@@ -101,6 +103,33 @@ public class TelemetryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTelemetryDoesNotScanDirsWhenScanTimeIsLow() throws Exception {
+        assertMemoryLeak(() -> {
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
+                    return new DefaultTelemetryConfiguration() {
+                        @Override
+                        public long getMaxDbSizeEstimateTime() {
+                            return 0;
+                        }
+                    };
+                }
+            };
+
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    TelemetryJob ignored = new TelemetryJob(engine)
+            ) {
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    TestUtils.printSql(compiler, new SqlExecutionContextImpl(engine, 1), TELEMETRY, sink);
+                    TestUtils.assertContains(sink, "\t1\n");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testTelemetryDoesntCreateTableWhenDisabled() throws Exception {
         final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
@@ -127,6 +156,34 @@ public class TelemetryTest extends AbstractCairoTest {
             }
         });
     }
+
+    @Test
+    public void testTelemetryScanDirsWhenScanTimeIsHigh() throws Exception {
+        assertMemoryLeak(() -> {
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
+                    return new DefaultTelemetryConfiguration() {
+                        @Override
+                        public long getMaxDbSizeEstimateTime() {
+                            return Timestamps.HOUR_MICROS;
+                        }
+                    };
+                }
+            };
+
+            try (
+                    CairoEngine engine = new CairoEngine(configuration);
+                    TelemetryJob ignored = new TelemetryJob(engine)
+            ) {
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    TestUtils.printSql(compiler, new SqlExecutionContextImpl(engine, 1), TELEMETRY, sink);
+                    TestUtils.assertContains(sink, "\t1\n");
+                }
+            }
+        });
+    }
+
 
     @Test
     public void testTelemetryStoresNonEvents() throws Exception {

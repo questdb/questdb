@@ -24,6 +24,8 @@
 
 package io.questdb;
 
+import io.questdb.std.datetime.microtime.Timestamps;
+
 public class DefaultTelemetryConfiguration implements TelemetryConfiguration {
     @Override
     public boolean getDisableCompletely() {
@@ -43,5 +45,10 @@ public class DefaultTelemetryConfiguration implements TelemetryConfiguration {
     @Override
     public boolean hideTables() {
         return false;
+    }
+
+    @Override
+    public long getMaxDbSizeEstimateTime() {
+        return Timestamps.SECOND_MILLIS / 2;
     }
 }

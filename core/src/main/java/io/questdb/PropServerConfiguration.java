@@ -438,6 +438,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean telemetryDisableCompletely;
     private final boolean telemetryEnabled;
     private final boolean telemetryHideTables;
+    private final long telemetryMaxDbSizeEstimateTime;
     private final int telemetryQueueCapacity;
     private final CharSequence tempRenamePendingTablePrefix;
     private final int textAnalysisMaxLines;
@@ -1446,6 +1447,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.telemetryDisableCompletely = getBoolean(properties, env, PropertyKey.TELEMETRY_DISABLE_COMPLETELY, false);
             this.telemetryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.TELEMETRY_QUEUE_CAPACITY, 512));
             this.telemetryHideTables = getBoolean(properties, env, PropertyKey.TELEMETRY_HIDE_TABLES, true);
+            this.telemetryMaxDbSizeEstimateTime = getLong(properties, env, PropertyKey.TELEMETRY_MAX_SIZE_SCAN_TIME, Timestamps.SECOND_MILLIS / 2);
             this.o3PartitionPurgeListCapacity = getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY, 1);
             this.ioURingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_IO_URING_ENABLED, true);
             this.cairoMaxCrashFiles = getInt(properties, env, PropertyKey.CAIRO_MAX_CRASH_FILES, 100);
@@ -5174,6 +5176,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getEnabled() {
             return telemetryEnabled;
+        }
+
+        @Override
+        public long getMaxDbSizeEstimateTime() {
+            return telemetryMaxDbSizeEstimateTime;
         }
 
         @Override

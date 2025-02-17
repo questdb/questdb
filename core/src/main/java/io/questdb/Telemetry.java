@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.QueryBuilder;
@@ -41,6 +42,7 @@ import io.questdb.mp.QueueConsumer;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -48,31 +50,42 @@ import io.questdb.std.ObjectFactory;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.AbstractTelemetryTask;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
+import java.io.IOException;
+import java.nio.file.Paths;
+
+import static io.questdb.cairo.TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+import static io.questdb.std.Files.notDots;
 
 public final class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
     private static final Log LOG = LogFactory.getLog(Telemetry.class);
 
     private final boolean enabled;
+    private final int maxFileNameLen;
+    private long maxDbSizeEstimateTime;
+    private long startDbSizeEstimateTimestamp;
     private MicrosecondClock clock;
     private MPSequence telemetryPubSeq;
     private RingQueue<T> telemetryQueue;
     private SCSequence telemetrySubSeq;
     private TelemetryType<T> telemetryType;
     private TableWriter writer;
-
     private final QueueConsumer<T> taskConsumer = this::consume;
 
     public Telemetry(TelemetryTypeBuilder<T> builder, CairoConfiguration configuration) {
         TelemetryType<T> type = builder.build(configuration);
         final TelemetryConfiguration telemetryConfiguration = type.getTelemetryConfiguration(configuration);
         enabled = telemetryConfiguration.getEnabled();
+        maxFileNameLen = configuration.getMaxFileNameLength();
         if (enabled) {
             telemetryType = type;
             clock = configuration.getMicrosecondClock();
+            maxDbSizeEstimateTime = telemetryConfiguration.getMaxDbSizeEstimateTime() * 1000;
             telemetryQueue = new RingQueue<>(type.getTaskFactory(), telemetryConfiguration.getQueueCapacity());
             telemetryPubSeq = new MPSequence(telemetryQueue.getCycle());
             telemetrySubSeq = new SCSequence();
@@ -101,6 +114,60 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         if (enabled && telemetrySubSeq.consumeAll(telemetryQueue, taskConsumer)) {
             writer.commit();
         }
+    }
+
+    public long getDirSize(FilesFacade ff, Path path, boolean topLevel, StringSink sink) {
+        if (topLevel) {
+            startDbSizeEstimateTimestamp = clock.getTicks();
+        }
+
+        long pFind = ff.findFirst(path.$());
+        long totalSize = 0L;
+
+        if (pFind > 0L) {
+            int len = path.size();
+            try {
+                do {
+                    if (clock.getTicks() - startDbSizeEstimateTimestamp > maxDbSizeEstimateTime) {
+                        break;
+                    }
+
+                    long nameUtf8Ptr = ff.findName(pFind);
+                    path.trimTo(len).concat(nameUtf8Ptr).$();
+                    if (ff.findType(pFind) == Files.DT_FILE) {
+                        totalSize += ff.length(path.$());
+                    } else if (notDots(nameUtf8Ptr)) {
+                        if (topLevel) {
+                            sink.clear();
+                            Utf8s.utf8ToUtf16(path, len + 1, path.size(), sink);
+                            int tableNameLen = Chars.indexOf(sink, SYSTEM_TABLE_NAME_SUFFIX);
+                            if (tableNameLen > -1) {
+                                sink.trimTo(tableNameLen);
+                            }
+                            if (!TableUtils.isValidTableName(sink, maxFileNameLen)) {
+                                // This is not a table, skip
+                                continue;
+                            }
+                        }
+                        totalSize += getDirSize(ff, path, false, sink);
+                    }
+                }
+                while (ff.findNext(pFind) > 0);
+            } finally {
+                ff.findClose(pFind);
+                path.trimTo(len);
+            }
+        }
+
+        if (topLevel && clock.getTicks() - startDbSizeEstimateTimestamp > maxDbSizeEstimateTime) {
+            try {
+                var store = java.nio.file.Files.getFileStore(Paths.get(path.toString()));
+                return store.getTotalSpace() - store.getUnallocatedSpace();
+            } catch (IOException e) {
+                return totalSize;
+            }
+        }
+        return 0L;
     }
 
     public void init(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -189,32 +256,6 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         return TelemetrySystemEvent.SYSTEM_CPU_CLASS_BASE - 5;
     }
 
-    private static short getDBSizeClass(CairoConfiguration configuration) {
-        final FilesFacade ff = configuration.getFilesFacade();
-        final CharSequence root = configuration.getDbRoot();
-        final Path path = Path.PATH.get();
-        path.of(root).$();
-
-        final long dbSize = ff.getDirSize(path);
-        if (dbSize <= 10 * Numbers.SIZE_1GB) {          // 0 - <10GB
-            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE;
-        } else if (dbSize <= 50 * Numbers.SIZE_1GB) {   // 1 - (10GB,50GB]
-            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 1;
-        } else if (dbSize <= 100 * Numbers.SIZE_1GB) {  // 2 - (50GB,100GB]
-            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 2;
-        } else if (dbSize <= 500 * Numbers.SIZE_1GB) {  // 3 - (100GB,500GB]
-            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 3;
-        } else if (dbSize <= Numbers.SIZE_1TB) {        // 4 - (500GB,1TB]
-            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 4;
-        } else if (dbSize <= 5 * Numbers.SIZE_1TB) {    // 5 - (1TB,5TB]
-            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 5;
-        } else if (dbSize <= 10 * Numbers.SIZE_1TB) {   // 6 - (5TB,10TB]
-            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 6;
-        }
-        // 7 - >10TB
-        return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 7;
-    }
-
     private static short getEnvTypeClass() {
         final int type = Os.getEnvironmentType();
         return (short) (TelemetrySystemEvent.SYSTEM_ENV_TYPE_BASE - type);
@@ -249,6 +290,32 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         }
         // 6 - 1001+ tables
         return TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE - 6;
+    }
+
+    private short getDBSizeClass(CairoConfiguration configuration) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final CharSequence root = configuration.getDbRoot();
+        final Path path = Path.PATH.get();
+        path.of(root).$();
+
+        final long dbSize = getDirSize(ff, path, true, Misc.getThreadLocalSink());
+        if (dbSize <= 10 * Numbers.SIZE_1GB) {          // 0 - <10GB
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE;
+        } else if (dbSize <= 50 * Numbers.SIZE_1GB) {   // 1 - (10GB,50GB]
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 1;
+        } else if (dbSize <= 100 * Numbers.SIZE_1GB) {  // 2 - (50GB,100GB]
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 2;
+        } else if (dbSize <= 500 * Numbers.SIZE_1GB) {  // 3 - (100GB,500GB]
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 3;
+        } else if (dbSize <= Numbers.SIZE_1TB) {        // 4 - (500GB,1TB]
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 4;
+        } else if (dbSize <= 5 * Numbers.SIZE_1TB) {    // 5 - (1TB,5TB]
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 5;
+        } else if (dbSize <= 10 * Numbers.SIZE_1TB) {   // 6 - (5TB,10TB]
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 6;
+        }
+        // 7 - >10TB
+        return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 7;
     }
 
     public interface TelemetryType<T extends AbstractTelemetryTask> {
