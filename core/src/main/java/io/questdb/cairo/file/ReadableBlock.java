@@ -37,8 +37,6 @@ public interface ReadableBlock {
 
     long addressOf(long offset);
 
-    byte flags();
-
     BinarySequence getBin(long offset);
 
     boolean getBool(long offset);
@@ -63,7 +61,5 @@ public interface ReadableBlock {
 
     long length();
 
-    short type();
-
-    byte version();
+    int type();
 }

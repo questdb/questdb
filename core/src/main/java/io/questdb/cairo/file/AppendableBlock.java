@@ -36,7 +36,7 @@ import org.jetbrains.annotations.Nullable;
  */
 public interface AppendableBlock {
 
-    void commit(short type, byte version, byte flags);
+    void commit(int type);
 
     int length();
 

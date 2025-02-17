@@ -180,11 +180,9 @@ public class BlockFileReader implements Closeable {
 
         public ReadableBlock next() {
             final int blockLength = memory.getInt(currentBlockOffset + BLOCK_LENGTH_OFFSET);
-            final short type = memory.getShort(currentBlockOffset + BLOCK_TYPE_OFFSET);
-            final byte version = memory.getByte(currentBlockOffset + BLOCK_VERSION_OFFSET);
-            final byte flags = memory.getByte(currentBlockOffset + BLOCK_FLAGS_OFFSET);
+            final int type = memory.getInt(currentBlockOffset + BLOCK_TYPE_OFFSET);
 
-            block.of(blockLength, version, flags, type, currentBlockOffset);
+            block.of(blockLength, type, currentBlockOffset);
             currentBlockOffset += blockLength;
             blockCount -= 1;
 
@@ -199,20 +197,13 @@ public class BlockFileReader implements Closeable {
         }
 
         private class Block implements ReadableBlock {
-            private byte flags;
             private int length;
             private long payloadOffset;
-            private short type;
-            private byte version;
+            private int type;
 
             @Override
             public long addressOf(long offset) {
                 return memory.addressOf(payloadOffset + offset);
-            }
-
-            @Override
-            public byte flags() {
-                return flags;
             }
 
             @Override
@@ -275,22 +266,15 @@ public class BlockFileReader implements Closeable {
                 return length;
             }
 
-            public void of(int length, byte version, byte flags, short type, long blockOffset) {
+            public void of(int length, int type, long blockOffset) {
                 this.length = length;
-                this.version = version;
-                this.flags = flags;
                 this.type = type;
                 this.payloadOffset = blockOffset + BLOCK_HEADER_SIZE;
             }
 
             @Override
-            public short type() {
+            public int type() {
                 return type;
-            }
-
-            @Override
-            public byte version() {
-                return version;
             }
         }
     }

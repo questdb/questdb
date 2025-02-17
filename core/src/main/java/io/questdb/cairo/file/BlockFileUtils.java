@@ -31,16 +31,14 @@ public class BlockFileUtils {
      * +---------------------------------------------------------------------+
      * |                        Block Length (4 bytes)                       |
      * +---------------------------------------------------------------------+
-     * |        Type (2 bytes)       | Version(1 byte)   | Flags (1 byte)    |
+     * |                        Type (4 bytes)                               |
      * +-------------+---------------+---------------------------------------+
      * |                  Depends on Type ...                                |
      * +---------------------------------------------------------------------+
      */
     public static final int BLOCK_LENGTH_OFFSET = 0;
     public static final int BLOCK_TYPE_OFFSET = BLOCK_LENGTH_OFFSET + Integer.BYTES;
-    public static final int BLOCK_VERSION_OFFSET = BLOCK_TYPE_OFFSET + Short.BYTES;
-    public static final int BLOCK_FLAGS_OFFSET = BLOCK_VERSION_OFFSET + Byte.BYTES;
-    public static final int BLOCK_HEADER_SIZE = BLOCK_FLAGS_OFFSET + Byte.BYTES;
+    public static final int BLOCK_HEADER_SIZE = BLOCK_TYPE_OFFSET + Integer.BYTES;
     /**
      * +---------------------------------------------------------------+
      * |                Version (8 bytes)                              |

@@ -174,17 +174,14 @@ public class BlockFileWriter implements Closeable {
         private long payloadOffset;
 
         @Override
-        public void commit(short type, byte version, byte flags) {
+        public void commit(int type) {
             if (isCommitted) {
                 throw CairoException.critical(0).put("duplicate block commit call");
             }
 
             final int blockLength = length() + BLOCK_HEADER_SIZE;
-
-            memory.putShort(blockOffset + BLOCK_TYPE_OFFSET, type);
-            memory.putByte(blockOffset + BLOCK_VERSION_OFFSET, version);
-            memory.putByte(blockOffset + BLOCK_FLAGS_OFFSET, flags);
             memory.putInt(blockOffset + BLOCK_LENGTH_OFFSET, blockLength);
+            memory.putInt(blockOffset + BLOCK_TYPE_OFFSET, type);
 
             blockOffset += blockLength;
             blockCount += 1;

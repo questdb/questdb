@@ -33,16 +33,12 @@ import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshState;
 import io.questdb.cairo.sql.TableMetadata;
-import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.test.AbstractCairoTest;
@@ -50,7 +46,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
@@ -276,7 +271,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             sink.clear();
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 final ExecutionModel model = compiler.testCompileModel(sql, sqlExecutionContext);
-                assertEquals(model.getModelType(), ExecutionModel.CREATE_MAT_VIEW);
+                assertEquals(ExecutionModel.CREATE_MAT_VIEW, model.getModelType());
                 ((Sinkable) model).toSink(sink);
                 TestUtils.assertEquals(
                         "create materialized view test with base table1 as (" + query +
@@ -814,19 +809,11 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     // Add unknown block.
                     AppendableBlock block = writer.append();
                     block.putStr("foobar");
-                    block.commit(
-                            (short) (MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE + 1),
-                            (byte) (MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_VERSION + 1),
-                            MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_FLAGS
-                    );
+                    block.commit(MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE + 1);
                     // Then write mat view definition.
                     block = writer.append();
                     MatViewDefinition.writeTo(block, matViewDefinition);
-                    block.commit(
-                            MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE,
-                            MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_VERSION,
-                            MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_FLAGS
-                    );
+                    block.commit(MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE);
                     writer.commit();
                 }
 
@@ -872,19 +859,11 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     // Add unknown block.
                     AppendableBlock block = writer.append();
                     block.putStr("foobar");
-                    block.commit(
-                            (short) (MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_TYPE + 1),
-                            (byte) (MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_VERSION + 1),
-                            MatViewRefreshState.MAT_VIEW_STATE_FORMAT_FLAGS
-                    );
+                    block.commit(MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_TYPE + 1);
                     // Then write mat view state.
                     block = writer.append();
                     MatViewRefreshState.writeTo(block, matViewRefreshState);
-                    block.commit(
-                            MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_TYPE,
-                            MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_VERSION,
-                            MatViewRefreshState.MAT_VIEW_STATE_FORMAT_FLAGS
-                    );
+                    block.commit(MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_TYPE);
                     writer.commit();
                 }
 
@@ -972,19 +951,6 @@ public class CreateMatViewTest extends AbstractCairoTest {
             return null;
         }
         return engine.getMatViewGraph().getViewDefinition(matViewToken);
-    }
-
-    private static long mapRO(FilesFacade ff, Path path, MemoryCMR mem, String fileName) {
-        path.concat(fileName);
-        final LPSZ $path = path.$();
-        final long fd = ff.openRO($path);
-        if (fd < 1) {
-            fail("unable to open query file [path=" + path + "]");
-        }
-
-        final long fileLen = ff.length(fd);
-        mem.of(ff, $path, fileLen, fileLen, MemoryTag.MMAP_DEFAULT);
-        return fd;
     }
 
     private void createTable(String tableName) throws SqlException {

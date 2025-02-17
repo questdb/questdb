@@ -48,9 +48,7 @@ import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
 
 public class MatViewDefinition {
     public static final String MAT_VIEW_DEFINITION_FILE_NAME = "_mv";
-    public static final byte MAT_VIEW_DEFINITION_FORMAT_FLAGS = 0;
-    public static final short MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE = 0;
-    public static final byte MAT_VIEW_DEFINITION_FORMAT_MSG_VERSION = 0;
+    public static final int MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE = 0;
 
     private final String baseTableName;
     // is not persisted, parsed from timeZoneOffset
@@ -119,11 +117,7 @@ public class MatViewDefinition {
     public static void commitTo(@NotNull BlockFileWriter writer, @NotNull MatViewDefinition matViewDefinition) {
         final AppendableBlock mem = writer.append();
         writeTo(mem, matViewDefinition);
-        mem.commit(
-                MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE,
-                MAT_VIEW_DEFINITION_FORMAT_MSG_VERSION,
-                MAT_VIEW_DEFINITION_FORMAT_FLAGS
-        );
+        mem.commit(MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE);
         writer.commit();
     }
 
@@ -193,7 +187,7 @@ public class MatViewDefinition {
     }
 
     private static MatViewDefinition loadMatViewDefinition(final ReadableBlock mem, final TableToken matViewToken) {
-        if (mem.version() != MAT_VIEW_DEFINITION_FORMAT_MSG_VERSION || mem.type() != MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE) {
+        if (mem.type() != MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE) {
             // Unknown block.
             return null;
         }

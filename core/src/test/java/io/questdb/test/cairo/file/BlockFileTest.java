@@ -64,15 +64,11 @@ import static io.questdb.cairo.vm.Vm.STRING_LENGTH_BYTES;
 @RunWith(Parameterized.class)
 public class BlockFileTest extends AbstractCairoTest {
     protected final static Log LOG = LogFactory.getLog(BlockFileTest.class);
-    private static final short MSG_TYPE_A = 1;
-    private static final short MSG_TYPE_ALL = 4;
-    private static final byte MSG_TYPE_ALL_VERSION_1 = 1;
-    private static final byte MSG_TYPE_A_VERSION_1 = 1;
-    private static final byte MSG_TYPE_A_VERSION_2 = 2;
-    private static final short MSG_TYPE_B = 2;
-    private static final byte MSG_TYPE_B_VERSION_1 = 1;
-    private static final short MSG_TYPE_C = 3;
-    private static final byte MSG_TYPE_C_VERSION_1 = 1;
+    private static final byte MSG_TYPE_A1 = 1;
+    private static final byte MSG_TYPE_A2 = 2;
+    private static final short MSG_TYPE_ALL = 5;
+    private static final short MSG_TYPE_B = 3;
+    private static final short MSG_TYPE_C = 4;
     protected static int commitMode = CommitMode.NOSYNC;
 
     public BlockFileTest(int commitMode) {
@@ -170,9 +166,9 @@ public class BlockFileTest extends AbstractCairoTest {
                 try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
                     writer.of(path.$());
                     int regionLength = BlockFileUtils.REGION_HEADER_SIZE;
-                    regionLength += commitMsgAVersion1(writer.append(), 1);
+                    regionLength += commitMsgA1(writer.append(), 1);
                     regionLength += BlockFileUtils.BLOCK_HEADER_SIZE;
-                    regionLength += commitMsgAVersion2(writer.append(), 1);
+                    regionLength += commitMsgA2(writer.append(), 1);
                     regionLength += BlockFileUtils.BLOCK_HEADER_SIZE;
                     writer.commit();
                     assertRegionOffset(writer, 1, regionLength, 0);
@@ -183,7 +179,7 @@ public class BlockFileTest extends AbstractCairoTest {
                 try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
                     writer.of(path.$());
                     int regionLength = BlockFileUtils.REGION_HEADER_SIZE;
-                    regionLength += commitMsgAVersion1(writer.append(), 2);
+                    regionLength += commitMsgA1(writer.append(), 2);
                     regionLength += BlockFileUtils.BLOCK_HEADER_SIZE;
                     writer.commit();
                     assertRegionOffset(writer, 2, regionLength, prevRegionOffset + prevRegionLength);
@@ -204,9 +200,9 @@ public class BlockFileTest extends AbstractCairoTest {
                 try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
                     writer.of(path.$());
                     int regionLength = BlockFileUtils.REGION_HEADER_SIZE;
-                    regionLength += commitMsgAVersion1(writer.append(), 1);
+                    regionLength += commitMsgA1(writer.append(), 1);
                     regionLength += BlockFileUtils.BLOCK_HEADER_SIZE;
-                    regionLength += commitMsgAVersion2(writer.append(), 1);
+                    regionLength += commitMsgA2(writer.append(), 1);
                     regionLength += BlockFileUtils.BLOCK_HEADER_SIZE;
                     writer.commit();
                     assertRegionOffset(writer, 1, regionLength, 0);
@@ -217,7 +213,7 @@ public class BlockFileTest extends AbstractCairoTest {
                 try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
                     writer.of(path.$());
                     int regionLength = BlockFileUtils.REGION_HEADER_SIZE;
-                    regionLength += commitMsgAVersion1(writer.append(), 2);
+                    regionLength += commitMsgA1(writer.append(), 2);
                     regionLength += BlockFileUtils.BLOCK_HEADER_SIZE;
                     writer.commit();
                     assertRegionOffset(writer, 2, regionLength, prevRegionOffset + prevRegionLength);
@@ -229,7 +225,7 @@ public class BlockFileTest extends AbstractCairoTest {
                 try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
                     writer.of(path.$());
                     int regionLength = BlockFileUtils.REGION_HEADER_SIZE;
-                    regionLength += commitMsgCVersion1(writer.append());
+                    regionLength += commitMsgC(writer.append());
                     regionLength += BlockFileUtils.BLOCK_HEADER_SIZE;
                     writer.commit();
                     assertRegionOffset(writer, 3, regionLength, prevRegionOffset + prevRegionLength);
@@ -248,7 +244,7 @@ public class BlockFileTest extends AbstractCairoTest {
                 try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
                     writer.of(path.$());
                     AppendableBlock memory1 = writer.append();
-                    commitMsgAVersion1(memory1, 1);
+                    commitMsgA1(memory1, 1);
                     writer.commit();
                 }
                 readAllBlocks(path, 1, 1);
@@ -295,16 +291,16 @@ public class BlockFileTest extends AbstractCairoTest {
                             }
                             switch (msg) {
                                 case 0:
-                                    commitMsgAVersion1(writer.append(), i + 1);
+                                    commitMsgA1(writer.append(), i + 1);
                                     break;
                                 case 1:
-                                    commitMsgAVersion2(writer.append(), i + 1);
+                                    commitMsgA2(writer.append(), i + 1);
                                     break;
                                 case 2:
-                                    commitMsgBVersion1(writer.append());
+                                    commitMsgB(writer.append());
                                     break;
                                 case 3:
-                                    commitMsgCVersion1(writer.append());
+                                    commitMsgC(writer.append());
                                     break;
                             }
                             writer.commit();
@@ -357,9 +353,9 @@ public class BlockFileTest extends AbstractCairoTest {
                 try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
                     writer.of(path.$());
                     int regionLength = BlockFileUtils.REGION_HEADER_SIZE;
-                    regionLength += commitMsgAVersion1(writer.append(), 1);
+                    regionLength += commitMsgA1(writer.append(), 1);
                     regionLength += BlockFileUtils.BLOCK_HEADER_SIZE;
-                    regionLength += commitMsgAVersion2(writer.append(), 1);
+                    regionLength += commitMsgA2(writer.append(), 1);
                     regionLength += BlockFileUtils.BLOCK_HEADER_SIZE;
                     writer.commit();
                     assertRegionOffset(writer, 1, regionLength, 0);
@@ -370,7 +366,7 @@ public class BlockFileTest extends AbstractCairoTest {
                 try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
                     writer.of(path.$());
                     int regionLength = BlockFileUtils.REGION_HEADER_SIZE;
-                    regionLength += commitMsgAVersion1(writer.append(), 2);
+                    regionLength += commitMsgA1(writer.append(), 2);
                     regionLength += BlockFileUtils.BLOCK_HEADER_SIZE;
                     writer.commit();
                     assertRegionOffset(writer, 2, regionLength, prevRegionOffset + prevRegionLength);
@@ -380,7 +376,7 @@ public class BlockFileTest extends AbstractCairoTest {
                 try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
                     writer.of(path.$());
                     int regionLength = BlockFileUtils.REGION_HEADER_SIZE;
-                    regionLength += commitMsgBVersion1(writer.append());
+                    regionLength += commitMsgB(writer.append());
                     regionLength += BlockFileUtils.BLOCK_HEADER_SIZE;
                     writer.commit();
                     assertRegionOffset(writer, 3, regionLength, 0);
@@ -400,15 +396,15 @@ public class BlockFileTest extends AbstractCairoTest {
                     writer.of(path.$());
 
                     AppendableBlock memory1 = writer.append();
-                    commitMsgAVersion1(memory1, 1);
+                    commitMsgA1(memory1, 1);
                     final int commitedLength = memory1.length();
 
                     WritableBlock memory2 = writer.reserve(commitedLength);
                     Assert.assertEquals(commitedLength, memory2.length());
-                    commitMsgAVersion1RW(memory2, 1);
+                    commitMsgA1RW(memory2, 1);
 
                     AppendableBlock memory3 = writer.append();
-                    commitMsgAVersion2(memory3, 1);
+                    commitMsgA2(memory3, 1);
 
                     writer.commit();
                 }
@@ -492,9 +488,9 @@ public class BlockFileTest extends AbstractCairoTest {
         memory.putShort((short) 12345);
         memory.putStr("Hello, World!");
         memory.putVarchar(new GcUtf8String("Hello, UTF-8 World!"));
-        memory.commit(MSG_TYPE_ALL, MSG_TYPE_ALL_VERSION_1, (byte) 0);
+        memory.commit(MSG_TYPE_ALL);
         try {
-            memory.commit(MSG_TYPE_ALL, MSG_TYPE_ALL_VERSION_1, (byte) 0);
+            memory.commit(MSG_TYPE_ALL);
             Assert.fail();
         } catch (CairoException ignored) {
         }
@@ -537,62 +533,62 @@ public class BlockFileTest extends AbstractCairoTest {
         offset += Vm.getStorageLength("Hello, World!");
         memory.putVarchar(offset, new GcUtf8String("Hello, UTF-8 World!"));
 
-        memory.commit(MSG_TYPE_ALL, MSG_TYPE_ALL_VERSION_1, (byte) 0);
+        memory.commit(MSG_TYPE_ALL);
         try {
-            memory.commit(MSG_TYPE_ALL, MSG_TYPE_ALL_VERSION_1, (byte) 0);
+            memory.commit(MSG_TYPE_ALL);
             Assert.fail();
         } catch (CairoException ignored) {
         }
         return memory.length();
     }
 
-    private static int commitMsgAVersion1(AppendableBlock memory, int regionVersion) {
+    private static int commitMsgA1(AppendableBlock memory, long regionVersion) {
         memory.putStr("Hello");
-        memory.putInt(regionVersion);
+        memory.putLong(regionVersion);
         memory.putVarchar(new GcUtf8String("World"));
         memory.putInt(456);
-        memory.commit(MSG_TYPE_A, MSG_TYPE_A_VERSION_1, (byte) 0);
+        memory.commit(MSG_TYPE_A1);
         return memory.length();
     }
 
-    private static void commitMsgAVersion1RW(WritableBlock memory, int regionVersion) {
+    private static void commitMsgA1RW(WritableBlock memory, long regionVersion) {
         String hello = "Hello";
         Utf8Sequence worldUtf8 = new GcUtf8String("World");
         int offset = 0;
         memory.putStr(offset, hello);
         offset += Vm.getStorageLength(hello);
-        memory.putInt(offset, regionVersion);
-        offset += Integer.BYTES;
+        memory.putLong(offset, regionVersion);
+        offset += Long.BYTES;
         memory.putVarchar(offset, worldUtf8);
         offset += STRING_LENGTH_BYTES + worldUtf8.size();
         memory.putInt(offset, 456);
-        memory.commit(MSG_TYPE_A, MSG_TYPE_A_VERSION_1, (byte) 0);
+        memory.commit(MSG_TYPE_A1);
     }
 
-    private static int commitMsgAVersion2(AppendableBlock memory, int regionVersion) {
-        memory.putInt(regionVersion);
+    private static int commitMsgA2(AppendableBlock memory, long regionVersion) {
+        memory.putLong(regionVersion);
         memory.putStr("Hello");
         memory.putInt(456);
         memory.putStr("World");
-        memory.commit(MSG_TYPE_A, MSG_TYPE_A_VERSION_2, (byte) 0);
+        memory.commit(MSG_TYPE_A2);
         return memory.length();
     }
 
-    private static int commitMsgBVersion1(AppendableBlock memory) {
+    private static int commitMsgB(AppendableBlock memory) {
         memory.putStr("Hello");
         memory.putStr("World");
-        memory.commit(MSG_TYPE_B, MSG_TYPE_B_VERSION_1, (byte) 0);
+        memory.commit(MSG_TYPE_B);
         return memory.length();
     }
 
-    private static int commitMsgCVersion1(AppendableBlock memory) {
+    private static int commitMsgC(AppendableBlock memory) {
         memory.putStr("Hello");
         final int count = 10;
         for (int i = 0; i < count; i++) {
             memory.putInt(i);
             memory.putStr("World");
         }
-        memory.commit(MSG_TYPE_C, MSG_TYPE_C_VERSION_1, (byte) 0);
+        memory.commit(MSG_TYPE_C);
         return memory.length();
     }
 
@@ -618,45 +614,24 @@ public class BlockFileTest extends AbstractCairoTest {
             final long regionVersion = cursor.getRegionVersion();
             while (cursor.hasNext()) {
                 ReadableBlock block = cursor.next();
-                final short type = block.type();
-                final byte version = block.version();
-                final byte flags = block.flags();
+                final int type = block.type();
                 final long msgLen = block.length() - BlockFileUtils.BLOCK_HEADER_SIZE;
-                Assert.assertEquals(0, flags);
                 switch (type) {
-                    case MSG_TYPE_A:
-                        switch (version) {
-                            case MSG_TYPE_A_VERSION_1:
-                                readMsgAVersion1(block, (int) regionVersion);
-                                break;
-                            case MSG_TYPE_A_VERSION_2:
-                                readMsgAVersion2(block, (int) regionVersion);
-                                break;
-                            default:
-                                Assert.fail("Unexpected version");
-                        }
+                    case MSG_TYPE_A1:
+                        readMsgA1(block, regionVersion);
+                        break;
+                    case MSG_TYPE_A2:
+                        readMsgA2(block, regionVersion);
                         break;
                     case MSG_TYPE_B:
-                        if (version == MSG_TYPE_B_VERSION_1) {
-                            readMsgBVersion1(block);
-                        } else {
-                            Assert.fail("Unexpected version");
-                        }
+                        readMsgB(block);
                         break;
                     case MSG_TYPE_C:
-                        if (version == MSG_TYPE_C_VERSION_1) {
-                            readMsgCVersion1(block);
-                        } else {
-                            Assert.fail("Unexpected version");
-                        }
+                        readMsgC(block);
                         break;
                     case MSG_TYPE_ALL:
-                        if (version == MSG_TYPE_ALL_VERSION_1) {
-                            long len = readAllTypesMsg(block);
-                            Assert.assertEquals(msgLen, len);
-                        } else {
-                            Assert.fail("Unexpected version");
-                        }
+                        long len = readAllTypesMsg(block);
+                        Assert.assertEquals(msgLen, len);
                         break;
                     default:
                         Assert.fail("Unexpected type");
@@ -709,29 +684,25 @@ public class BlockFileTest extends AbstractCairoTest {
         return offset + STRING_LENGTH_BYTES + readUtf8Sequence.size();
     }
 
-    private static void readMsgAVersion1(ReadableBlock memory, int regionVersion) {
-        Assert.assertEquals(MSG_TYPE_A, memory.type());
-        Assert.assertEquals(MSG_TYPE_A_VERSION_1, memory.version());
-        Assert.assertEquals(0, memory.flags());
+    private static void readMsgA1(ReadableBlock memory, long regionVersion) {
+        Assert.assertEquals(MSG_TYPE_A1, memory.type());
         long offset = 0;
         CharSequence str = memory.getStr(offset);
         Assert.assertEquals("Hello", str.toString());
         offset += Vm.getStorageLength(str);
-        Assert.assertEquals(regionVersion, memory.getInt(offset));
-        offset += Integer.BYTES;
+        Assert.assertEquals(regionVersion, memory.getLong(offset));
+        offset += Long.BYTES;
         Utf8Sequence var = memory.getVarchar(offset);
         Assert.assertEquals("World", var.toString());
         offset += (STRING_LENGTH_BYTES + var.size());
         Assert.assertEquals(456, memory.getInt(offset));
     }
 
-    private static void readMsgAVersion2(ReadableBlock memory, int regionVersion) {
-        Assert.assertEquals(MSG_TYPE_A, memory.type());
-        Assert.assertEquals(MSG_TYPE_A_VERSION_2, memory.version());
-        Assert.assertEquals(0, memory.flags());
+    private static void readMsgA2(ReadableBlock memory, long regionVersion) {
+        Assert.assertEquals(MSG_TYPE_A2, memory.type());
         long offset = 0;
-        Assert.assertEquals(regionVersion, memory.getInt(offset));
-        offset += Integer.BYTES;
+        Assert.assertEquals(regionVersion, memory.getLong(offset));
+        offset += Long.BYTES;
         CharSequence str = memory.getStr(offset);
         Assert.assertEquals("Hello", str.toString());
         offset += Vm.getStorageLength(str);
@@ -741,10 +712,8 @@ public class BlockFileTest extends AbstractCairoTest {
         Assert.assertEquals("World", str.toString());
     }
 
-    private static void readMsgBVersion1(ReadableBlock memory) {
+    private static void readMsgB(ReadableBlock memory) {
         Assert.assertEquals(MSG_TYPE_B, memory.type());
-        Assert.assertEquals(MSG_TYPE_B_VERSION_1, memory.version());
-        Assert.assertEquals(0, memory.flags());
         long offset = 0;
         CharSequence str = memory.getStr(offset);
         Assert.assertEquals("Hello", str.toString());
@@ -753,10 +722,8 @@ public class BlockFileTest extends AbstractCairoTest {
         Assert.assertEquals("World", str.toString());
     }
 
-    private static void readMsgCVersion1(ReadableBlock memory) {
+    private static void readMsgC(ReadableBlock memory) {
         Assert.assertEquals(MSG_TYPE_C, memory.type());
-        Assert.assertEquals(MSG_TYPE_C_VERSION_1, memory.version());
-        Assert.assertEquals(0, memory.flags());
         long offset = 0;
         CharSequence str = memory.getStr(offset);
         Assert.assertEquals("Hello", str.toString());

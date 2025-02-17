@@ -46,9 +46,7 @@ import static io.questdb.TelemetrySystemEvent.*;
 
 public class MatViewRefreshState implements QuietCloseable {
     public static final String MAT_VIEW_STATE_FILE_NAME = "_mv.s";
-    public static final byte MAT_VIEW_STATE_FORMAT_FLAGS = 0;
-    public static final short MAT_VIEW_STATE_FORMAT_MSG_TYPE = 0;
-    public static final byte MAT_VIEW_STATE_FORMAT_MSG_VERSION = 0;
+    public static final int MAT_VIEW_STATE_FORMAT_MSG_TYPE = 0;
 
     // used to avoid concurrent refresh runs
     private final AtomicBoolean latch = new AtomicBoolean(false);
@@ -78,11 +76,7 @@ public class MatViewRefreshState implements QuietCloseable {
     public static void commitTo(@NotNull BlockFileWriter writer, @Nullable MatViewRefreshState refreshState) {
         final AppendableBlock mem = writer.append();
         writeTo(mem, refreshState);
-        mem.commit(
-                MAT_VIEW_STATE_FORMAT_MSG_TYPE,
-                MAT_VIEW_STATE_FORMAT_MSG_VERSION,
-                MAT_VIEW_STATE_FORMAT_FLAGS
-        );
+        mem.commit(MAT_VIEW_STATE_FORMAT_MSG_TYPE);
         writer.commit();
     }
 
@@ -92,7 +86,7 @@ public class MatViewRefreshState implements QuietCloseable {
         boolean found = false;
         while (cursor.hasNext()) {
             final ReadableBlock mem = cursor.next();
-            if (mem.version() != MAT_VIEW_STATE_FORMAT_MSG_VERSION || mem.type() != MAT_VIEW_STATE_FORMAT_MSG_TYPE) {
+            if (mem.type() != MAT_VIEW_STATE_FORMAT_MSG_TYPE) {
                 // Unknown block, skip.
                 continue;
             }
