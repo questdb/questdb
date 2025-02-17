@@ -77,13 +77,6 @@ public class BlockFileTest extends AbstractCairoTest {
         BlockFileTest.commitMode = commitMode;
     }
 
-    @Before
-    public void setUp() {
-        super.setUp();
-        FilesFacade ff = configuration.getFilesFacade();
-        ff.remove(getDefinitionFilePath().$());
-    }
-
     @Parameterized.Parameters(name = "mode={0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
@@ -91,6 +84,13 @@ public class BlockFileTest extends AbstractCairoTest {
                 {CommitMode.SYNC},
                 {CommitMode.ASYNC}
         });
+    }
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        FilesFacade ff = configuration.getFilesFacade();
+        ff.remove(getDefinitionFilePath().$());
     }
 
     @Test
@@ -317,8 +317,8 @@ public class BlockFileTest extends AbstractCairoTest {
                                     break;
                                 case 5:
                                     // generate several pages of longs
-                                    int bound = (int)pageSize/Long.BYTES;
-                                    int numLongs = bound/2 + rnd.nextInt(bound);
+                                    int bound = (int) pageSize / Long.BYTES;
+                                    int numLongs = bound / 2 + rnd.nextInt(bound);
                                     commitLongsMsgAppendAPI(writer.append(), numLongs);
                                     break;
                             }
@@ -343,7 +343,7 @@ public class BlockFileTest extends AbstractCairoTest {
                     // A truly random data file can grow if Size(v) > Size(v-2) + Size(v-3) + ... + Size(1), where v is the version.
                     // In this test, we generate a maximum of 2 pages of data per commit,
                     // so the file should not grow beyond 3 versions of the maximum size.
-                    Assert.assertTrue(fileSize <= 3*actualSize);
+                    Assert.assertTrue(fileSize < 3 * actualSize);
                 } catch (Throwable th) {
                     LOG.error().$("Error in writer thread: ").$(th).$();
                     errorCounter.incrementAndGet();
