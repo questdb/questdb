@@ -229,6 +229,24 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     break;
                                 }
 
+                                // For mat views, copy view definition and state before copying the underlying table.
+                                // This way, the state copy will never hold a txn number that is newer than what's
+                                // in the table copy (otherwise, such situation may lead to lost view refresh data).
+                                if (tableToken.isMatView()) {
+                                    final MatViewGraph graph = engine.getMatViewGraph();
+                                    final MatViewRefreshState state = graph.getViewRefreshState(tableToken);
+                                    writer.of(path.trimTo(rootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                                    MatViewRefreshState.commitTo(writer, state);
+                                    final MatViewDefinition matViewDefinition = (state != null)
+                                            ? state.getViewDefinition() : graph.getViewDefinition(tableToken);
+                                    if (matViewDefinition != null) {
+                                        writer.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                                        MatViewDefinition.commitTo(writer, matViewDefinition);
+                                    } else {
+                                        LOG.info().$("materialized view definition not found [view=").$(tableToken).I$();
+                                    }
+                                }
+
                                 TableReader reader = null;
                                 try {
                                     try {
@@ -278,21 +296,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         mem.smallFile(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
                                         mem.putLong(lastTxn); // write lastTxn to checkpoint's "db/tableName/txn_seq/_txn"
                                         mem.close(true, Vm.TRUNCATE_TO_POINTER);
-                                    }
-
-                                    if (tableToken.isMatView()) {
-                                        MatViewGraph graph = engine.getMatViewGraph();
-                                        MatViewRefreshState state = graph.getViewRefreshState(tableToken);
-                                        writer.of(path.trimTo(rootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                                        MatViewRefreshState.commitTo(writer, state);
-                                        MatViewDefinition matViewDefinition = (state != null) ?
-                                                state.getViewDefinition() : graph.getViewDefinition(tableToken);
-                                        if (matViewDefinition != null) {
-                                            writer.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
-                                            MatViewDefinition.commitTo(writer, matViewDefinition);
-                                        } else {
-                                            LOG.info().$("materialized view definition not found [view=").$(tableToken).I$();
-                                        }
                                     }
 
                                     LOG.info().$("table included in the checkpoint [table=").$(tableToken).I$();
