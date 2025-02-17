@@ -69,6 +69,7 @@ public class MatViewRefreshList {
         // Flip the sign bit in the last notified base table txn number.
         lastNotifiedBaseTableTxn.compareAndSet(seqTxn, -seqTxn);
         long lastNotified = lastNotifiedBaseTableTxn.get();
+        // No need to notify if the view was just invalidated or there is no newer txn.
         return lastNotified != Long.MIN_VALUE && lastNotified != -seqTxn;
     }
 

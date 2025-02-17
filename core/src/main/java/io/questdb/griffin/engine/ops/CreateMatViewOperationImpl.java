@@ -36,9 +36,9 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
-import io.questdb.std.Misc;
 import org.jetbrains.annotations.Nullable;
 
 public class CreateMatViewOperationImpl implements CreateMatViewOperation {
@@ -199,8 +199,13 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     @Override
     public void init(TableToken matViewToken) {
         matViewDefinition = new MatViewDefinition(
-                matViewToken, viewSql, baseTableName, samplingInterval, samplingIntervalUnit,
-                timeZone, timeZoneOffset
+                matViewToken,
+                viewSql,
+                baseTableName,
+                samplingInterval,
+                samplingIntervalUnit,
+                timeZone,
+                timeZoneOffset
         );
     }
 

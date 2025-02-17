@@ -59,20 +59,20 @@ public class MatViewDefinition {
     private final @Nullable TimeZoneRules rules;
     private final long samplingInterval;
     private final char samplingIntervalUnit;
-    private final String timeZone;
-    private final String timeZoneOffset;
+    private final @Nullable String timeZone;
+    private final @Nullable String timeZoneOffset;
     // is not persisted, parsed from samplingInterval and samplingIntervalUnit;
     // access must be synchronized as this object is not thread-safe
     private final TimestampSampler timestampSampler;
 
     public MatViewDefinition(
-            TableToken matViewToken,
-            String matViewSql,
-            String baseTableName,
+            @NotNull TableToken matViewToken,
+            @NotNull String matViewSql,
+            @NotNull String baseTableName,
             long samplingInterval,
             char samplingIntervalUnit,
-            String timeZone,
-            String timeZoneOffset
+            @Nullable String timeZone,
+            @Nullable String timeZoneOffset
     ) {
         this.matViewToken = matViewToken;
         this.matViewSql = matViewSql;
