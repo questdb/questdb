@@ -42,7 +42,7 @@ import io.questdb.std.ObjList;
 public class DoubleArraySliceFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "[](D[]Δ)";
+        return "[](D[]ΔV)";
     }
 
     @Override
@@ -53,44 +53,49 @@ public class DoubleArraySliceFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new SliceDoubleArrayFunction(args.getQuick(0), args.getQuick(1));
+        Function arrayFunc = args.getQuick(0);
+        args.remove(0);
+        return new SliceDoubleArrayFunction(arrayFunc, args);
     }
 
     private static class SliceDoubleArrayFunction extends ArrayFunction {
 
-        private final Function arrayFunc;
+        private final Function arrayFn;
         private final BorrowedArrayView borrowedView = new BorrowedArrayView();
-        private final Function rangeFunc;
+        private final ObjList<Function> rangeFns;
 
-        public SliceDoubleArrayFunction(Function arrayFunc, Function rangeFunc) {
-            this.arrayFunc = arrayFunc;
-            this.rangeFunc = rangeFunc;
+        public SliceDoubleArrayFunction(Function arrayFn, ObjList<Function> rangeFns) {
+            this.arrayFn = arrayFn;
+            this.rangeFns = rangeFns;
             this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
         }
 
         @Override
         public void close() {
-            arrayFunc.close();
+            arrayFn.close();
             borrowedView.close();
         }
 
         @Override
         public ArrayView getArray(Record rec) {
-            ArrayView array = arrayFunc.getArray(rec);
+            ArrayView array = arrayFn.getArray(rec);
             borrowedView.of(array);
-            Interval range = rangeFunc.getInterval(rec);
-            long loLong = range.getLo();
-            long hiLong = range.getHi();
-            int lo = (int) loLong;
-            int hi = (int) hiLong;
-            assert lo == loLong && hi == hiLong : "int overflow on interval bounds";
-            borrowedView.sliceOneDim(0, lo, hi);
+            for (int n = rangeFns.size(), i = 0; i < n; i++) {
+                Function rangeFn = rangeFns.getQuick(i);
+                Interval range = rangeFn.getInterval(rec);
+                long loLong = range.getLo();
+                long hiLong = range.getHi();
+                int lo = (int) loLong;
+                int hi = (int) hiLong;
+                assert lo == loLong && hi == hiLong : "int overflow on interval bounds: " + loLong + ", " + hiLong;
+                borrowedView.sliceOneDim(i, lo, hi);
+            }
             return borrowedView;
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("[:](").val(arrayFunc).val(')');
+            sink.val("[:](").val(arrayFn).val(')');
         }
     }
 }
