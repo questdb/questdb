@@ -621,7 +621,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.context.export\tQDB_HTTP_CONTEXT_EXPORT\t\tdefault\tfalse\tfalse\n" +
                                     "http.context.ilp.ping\tQDB_HTTP_CONTEXT_ILP_PING\t\tdefault\tfalse\tfalse\n" +
                                     "http.context.settings\tQDB_HTTP_CONTEXT_SETTINGS\t\tdefault\tfalse\tfalse\n" +
-                                    "http.context.warnings\tQDB_HTTP_CONTEXT_WARNINGS\t\tdefault\tfalse\tfalse\n"
+                                    "http.context.warnings\tQDB_HTTP_CONTEXT_WARNINGS\t\tdefault\tfalse\tfalse\n" +
+                                    "telemetry.max.size.scan.time\tQDB_TELEMETRY_MAX_SIZE_SCAN_TIME\t500\tdefault\tfalse\tfalse\n"
                             )
                                     .split("\n");
 
