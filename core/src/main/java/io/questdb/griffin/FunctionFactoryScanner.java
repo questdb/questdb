@@ -197,6 +197,8 @@ public class FunctionFactoryScanner {
                         map.put(line.trim(), order++);
                     }
                 }
+            } else {
+                throw new CairoError("functions order file " + functionListFileName + " not found");
             }
         } catch (IOException e) {
             // return empty map
