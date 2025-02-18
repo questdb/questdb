@@ -38,7 +38,7 @@ import io.questdb.std.ObjList;
 public class IntRangeFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return ":(II)";
+        return "!(II)";
     }
 
     @Override
@@ -72,8 +72,18 @@ public class IntRangeFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return "!";
+        }
+
+        @Override
         public Function getRight() {
             return right;
+        }
+
+        @Override
+        public boolean isOperator() {
+            return true;
         }
     }
 }

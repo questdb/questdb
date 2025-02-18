@@ -383,8 +383,8 @@ public class ArrayTest extends AbstractCairoTest {
     public void testSliceArray1d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[1.0,2.0,3.0] arr FROM long_sequence(1))");
-            assertSql("slice\n[1.0]\n", "SELECT arr[0:1] slice from tango");
-            assertSql("slice\n[1.0,2.0]\n", "SELECT arr[0:2] slice from tango");
+            assertSql("slice\n[1.0]\n", "SELECT arr[0!1] slice from tango");
+            assertSql("slice\n[1.0,2.0]\n", "SELECT arr[0!2] slice from tango");
         });
     }
 
@@ -392,8 +392,8 @@ public class ArrayTest extends AbstractCairoTest {
     public void testSliceArray2d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4], [5, 6]] arr FROM long_sequence(1))");
-            assertSql("slice\n[[1.0,2.0]]\n", "SELECT arr[0:1] slice from tango");
-            assertSql("slice\n[[1.0,2.0],[3.0,4.0]]\n", "SELECT arr[0:2] slice from tango");
+            assertSql("slice\n[[1.0,2.0]]\n", "SELECT arr[0!1] slice from tango");
+            assertSql("slice\n[[1.0,2.0],[3.0,4.0]]\n", "SELECT arr[0!2] slice from tango");
         });
     }
 

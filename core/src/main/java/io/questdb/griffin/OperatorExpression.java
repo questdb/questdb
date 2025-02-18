@@ -83,7 +83,7 @@ public final class OperatorExpression {
                 add(new OperatorExpression(Operator.UnaryComplement, 3, false, UNARY));
                 add(new OperatorExpression(Operator.UnarySetNegation, 11, false, UNARY));
                 add(new OperatorExpression(Operator.Dot, 1, false, BINARY));
-                add(new OperatorExpression(Operator.Colon, 1, true, BINARY));
+                add(new OperatorExpression(Operator.Exclamation, 1, true, BINARY));
                 add(new OperatorExpression(Operator.DoubleColon, 2, true, BINARY));
                 // arithmetic operators, UnaryMinus and UnaryComplement defined above are strongest from this block
                 add(new OperatorExpression(Operator.Multiplication, 4, true, BINARY));
@@ -171,7 +171,7 @@ public final class OperatorExpression {
         UnaryComplement("~"),
         UnarySetNegation("not"),
         Dot("."),
-        Colon(":"),
+        Exclamation("!"),
         DoubleColon("::"),
         Multiplication("*"),
         Division("/"),
