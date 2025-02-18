@@ -98,7 +98,11 @@ public class DoubleArraySliceFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("[:](").val(arrayFn).val(')');
+            sink.val("[](").val(arrayFn);
+            for (int n = rangeFns.size(), i = 0; i < n; i++) {
+                sink.val(',').val(rangeFns.getQuick(i));
+            }
+            sink.val(')');
         }
     }
 }
