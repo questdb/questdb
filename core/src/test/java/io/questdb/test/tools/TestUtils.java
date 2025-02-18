@@ -1054,7 +1054,7 @@ public final class TestUtils {
         if (token == null) {
             throw new RuntimeException("table already exists: " + tableName);
         }
-        path.of(engine.getConfiguration().getRoot()).concat(token);
+        path.of(engine.getConfiguration().getDbRoot()).concat(token);
         TableUtils.createTable(engine.getConfiguration(), memory, path, structure, ColumnType.VERSION, tableId, token.getDirName());
         engine.registerTableToken(token);
         if (structure.isWalEnabled()) {
@@ -1410,7 +1410,7 @@ public final class TestUtils {
                 messageBus,
                 true,
                 DefaultLifecycleManager.INSTANCE,
-                configuration.getRoot(),
+                configuration.getDbRoot(),
                 DefaultDdlListener.INSTANCE,
                 () -> Numbers.LONG_NULL,
                 engine
@@ -1506,6 +1506,26 @@ public final class TestUtils {
         return seq;
     }
 
+    public static String randomiseCase(Rnd rnd, String columName) {
+        int changeCase = rnd.nextInt(3);
+        if (changeCase == 0) {
+            return columName;
+        }
+        StringSink sink = Misc.getThreadLocalSink();
+        sink.put(columName);
+
+        for (int i = 0; i < changeCase; i++) {
+            int pos = rnd.nextInt(columName.length());
+            char ch = columName.charAt(pos);
+            if (Character.isLowerCase(ch)) {
+                sink.setCharAt(pos, Character.toUpperCase(ch));
+            } else {
+                sink.setCharAt(pos, Character.toLowerCase(ch));
+            }
+        }
+        return sink.toString();
+    }
+
     public static String readStringFromFile(File file) {
         try {
             try (FileInputStream fis = new FileInputStream(file)) {
@@ -1544,7 +1564,7 @@ public final class TestUtils {
 
     public static String replaceSizeToMatchOS(String expected, String tableName,
                                               CairoConfiguration configuration, CairoEngine engine, StringSink sink) {
-        return replaceSizeToMatchOS(expected, new Utf8String(configuration.getRoot()), tableName, engine, sink);
+        return replaceSizeToMatchOS(expected, new Utf8String(configuration.getDbRoot()), tableName, engine, sink);
     }
 
     public static String replaceSizeToMatchOS(

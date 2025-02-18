@@ -1853,7 +1853,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 try (WalWriter insertedWriter = engine.getWalWriter(tableName)) {
                     try (Path path = new Path()) {
                         String columnName = "sym";
-                        path.of(engine.getConfiguration().getRoot()).concat(tableName).put(Files.SEPARATOR).put(WAL_NAME_BASE).put(insertedWriter.getWalId());
+                        path.of(engine.getConfiguration().getDbRoot()).concat(tableName).put(Files.SEPARATOR).put(WAL_NAME_BASE).put(insertedWriter.getWalId());
                         int trimTo = path.size();
 
                         if (Os.type != Os.WINDOWS) {

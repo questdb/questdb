@@ -22,30 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.fuzz;
+package io.questdb.test;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableWriterAPI;
-import io.questdb.griffin.engine.ops.AlterOperation;
-import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.std.Rnd;
-import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Test;
 
-public class FuzzDropColumnOperation implements FuzzTransactionOperation {
-    private final String columnName;
+import java.io.File;
 
-    public FuzzDropColumnOperation(Rnd rnd, String columnName) {
-        this.columnName = TestUtils.randomiseCase(rnd, columnName);
-    }
-
-    @Override
-    public boolean apply(Rnd tempRnd, CairoEngine engine, TableWriterAPI wApi, int virtualTimestampIndex) {
-        AlterOperation alterOp = new AlterOperationBuilder().ofDropColumn(
-                0,
-                wApi.getTableToken(),
-                wApi.getMetadata().getTableId()
-        ).ofDropColumn(columnName).build();
-        wApi.apply(alterOp, true);
-        return true;
+public class TestServerConfigurationTest extends AbstractTest {
+    @Test
+    public void testNew() {
+        final File dbRoot = new File(root, "db");
+        Assert.assertTrue(dbRoot.mkdirs());
+        new TestServerConfiguration(
+                dbRoot.getAbsolutePath(),
+                root,
+                true,
+                true,
+                true,
+                4,
+                4,
+                4,
+                4,
+                null);
     }
 }

@@ -107,7 +107,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Override
     @Before
     public void setUp() {
-        path = new Path().of(configuration.getRoot());
+        path = new Path().of(configuration.getDbRoot());
         plen = path.size();
         super.setUp();
     }
@@ -240,7 +240,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
                 try (MemoryMARW mem = Vm.getCMARWInstance()) {
                     try (Path path = new Path()) {
-                        path.of(configuration.getRoot()).concat("x").put(".k");
+                        path.of(configuration.getDbRoot()).concat("x").put(".k");
                         mem.wholeFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
                     }
                     mem.putLong(BitmapIndexUtils.getKeyEntryOffset(0) + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, 10);
@@ -889,7 +889,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
                 try (MemoryMARW mem = Vm.getCMARWInstance()) {
                     try (Path path = new Path()) {
-                        path.of(configuration.getRoot()).concat("x").put(".k");
+                        path.of(configuration.getDbRoot()).concat("x").put(".k");
                         mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
                     }
 
@@ -1490,7 +1490,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             try (Path path = new Path()) {
-                path.of(configuration.getRoot()).concat("x").put(".k");
+                path.of(configuration.getDbRoot()).concat("x").put(".k");
                 long fd = TableUtils.openFileRWOrFail(ff, path.$(), configuration.getWriterFileOpenOpts());
                 try {
                     ff.truncate(fd, 64);
@@ -1629,7 +1629,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             MemoryMA mem = Vm.getSmallCMARWInstance(
                     configuration.getFilesFacade(),
-                    path.of(configuration.getRoot()).concat("x").put(".k").$(),
+                    path.of(configuration.getDbRoot()).concat("x").put(".k").$(),
                     MemoryTag.MMAP_DEFAULT,
                     configuration.getWriterFileOpenOpts()
             );
@@ -1680,7 +1680,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             new Thread(() -> {
                 try {
                     startBarrier.await();
-                    try (Path path = new Path().of(configuration.getRoot())) {
+                    try (Path path = new Path().of(configuration.getDbRoot())) {
                         try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE)) {
                             int pass = 0;
                             while (true) {
@@ -1713,7 +1713,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 public void run() {
                     try {
                         startBarrier.await();
-                        try (Path path = new Path().of(configuration.getRoot())) {
+                        try (Path path = new Path().of(configuration.getDbRoot())) {
                             try (BitmapIndexBwdReader reader1 = new BitmapIndexBwdReader(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0)) {
                                 LongList tmp = new LongList();
                                 while (true) {
@@ -1790,7 +1790,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             create(configuration, path.trimTo(plen), "x", 1024);
 
             // write a zero value per each key; note that it won't be in the model
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
                 try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE)) {
                     for (int i = 0, n = keys.size(); i < n; i++) {
                         int key = keys.getQuick(i);
@@ -1802,7 +1802,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             // init the reader
             final ConcurrentBitmapIndexFwdReader reader = new ConcurrentBitmapIndexFwdReader(
                     configuration,
-                    path.of(configuration.getRoot()),
+                    path.of(configuration.getDbRoot()),
                     "x",
                     COLUMN_NAME_TXN_NONE,
                     0
@@ -1811,7 +1811,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             new Thread(() -> {
                 try {
                     startBarrier.await();
-                    try (Path path = new Path().of(configuration.getRoot())) {
+                    try (Path path = new Path().of(configuration.getDbRoot())) {
                         try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE)) {
                             int pass = 0;
                             while (true) {
@@ -1925,7 +1925,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             new Thread(() -> {
                 try {
                     startBarrier.await();
-                    try (Path path = new Path().of(configuration.getRoot())) {
+                    try (Path path = new Path().of(configuration.getDbRoot())) {
                         try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE)) {
                             int pass = 0;
                             while (true) {
@@ -1958,7 +1958,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 public void run() {
                     try {
                         startBarrier.await();
-                        try (Path path = new Path().of(configuration.getRoot())) {
+                        try (Path path = new Path().of(configuration.getDbRoot())) {
                             try (BitmapIndexFwdReader reader1 = new BitmapIndexFwdReader(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0)) {
                                 LongList tmp = new LongList();
                                 while (true) {

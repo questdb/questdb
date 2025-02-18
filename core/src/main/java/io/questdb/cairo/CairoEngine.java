@@ -405,7 +405,7 @@ public class CairoEngine implements Closeable, WriterSource {
             CharSequence lockedReason = lockAll(tableToken, "removeTable", false);
             if (lockedReason == null) {
                 try {
-                    path.of(configuration.getRoot()).concat(tableToken).$();
+                    path.of(configuration.getDbRoot()).concat(tableToken).$();
                     if (!configuration.getFilesFacade().unlinkOrRemove(path, LOG)) {
                         throw CairoException.critical(configuration.getFilesFacade().errno()).put("could not remove table [name=").put(tableToken.getTableName())
                                 .put(", dirName=").put(tableToken.getDirName()).put(']');
@@ -702,7 +702,7 @@ public class CairoEngine implements Closeable, WriterSource {
         if (tableToken == null || !tableToken.equals(tableNameRegistry.getTableToken(tableToken.getTableName()))) {
             return TableUtils.TABLE_DOES_NOT_EXIST;
         }
-        return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableToken.getDirName());
+        return TableUtils.exists(configuration.getFilesFacade(), path, configuration.getDbRoot(), tableToken.getDirName());
     }
 
     public int getTableStatus(Path path, CharSequence tableName) {
@@ -715,7 +715,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @TestOnly
     public int getTableStatus(CharSequence tableName) {
-        return getTableStatus(Path.getThreadLocal(configuration.getRoot()), tableName);
+        return getTableStatus(Path.getThreadLocal(configuration.getDbRoot()), tableName);
     }
 
     public TableToken getTableTokenByDirName(String dirName) {
@@ -1093,7 +1093,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             renamed = true;
                         }
                         TableUtils.overwriteTableNameFile(
-                                fromPath.of(configuration.getRoot()).concat(toTableToken),
+                                fromPath.of(configuration.getDbRoot()).concat(toTableToken),
                                 memory,
                                 configuration.getFilesFacade(),
                                 toTableToken.getTableName()
@@ -1122,7 +1122,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     try {
                         toTableToken = rename0(fromPath, fromTableToken, toPath, toTableName);
                         TableUtils.overwriteTableNameFile(
-                                fromPath.of(configuration.getRoot()).concat(toTableToken),
+                                fromPath.of(configuration.getDbRoot()).concat(toTableToken),
                                 memory,
                                 configuration.getFilesFacade(),
                                 toTableToken.getTableName()
@@ -1311,7 +1311,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // only create the table after it has been registered
         TableUtils.createTableInVolume(
                 configuration.getFilesFacade(),
-                configuration.getRoot(),
+                configuration.getDbRoot(),
                 configuration.getMkDirMode(),
                 mem,
                 path,
@@ -1324,14 +1324,14 @@ public class CairoEngine implements Closeable, WriterSource {
 
     // caller has to acquire the lock before this method is called and release the lock after the call
     private void createTableUnsafe(MemoryMARW mem, Path path, TableStructure struct, TableToken tableToken) {
-        if (TableUtils.TABLE_DOES_NOT_EXIST != TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableToken.getDirName())) {
+        if (TableUtils.TABLE_DOES_NOT_EXIST != TableUtils.exists(configuration.getFilesFacade(), path, configuration.getDbRoot(), tableToken.getDirName())) {
             throw CairoException.nonCritical().put("name is reserved [table=").put(tableToken.getTableName()).put(']');
         }
 
         // only create the table after it has been registered
         TableUtils.createTable(
                 configuration.getFilesFacade(),
-                configuration.getRoot(),
+                configuration.getDbRoot(),
                 configuration.getMkDirMode(),
                 mem,
                 path,
@@ -1426,7 +1426,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
         // !!! we do not care what is inside the path1 & path2, we will reset them anyway
         final FilesFacade ff = configuration.getFilesFacade();
-        final CharSequence root = configuration.getRoot();
+        final CharSequence root = configuration.getDbRoot();
 
         fromPath.of(root).concat(fromTableToken).$();
 

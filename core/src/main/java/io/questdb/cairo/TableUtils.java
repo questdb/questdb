@@ -380,7 +380,7 @@ public final class TableUtils {
             CharSequence dirName
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
-        final CharSequence root = configuration.getRoot();
+        final CharSequence root = configuration.getDbRoot();
         final int mkDirMode = configuration.getMkDirMode();
         createTable(ff, root, mkDirMode, memory, path, structure, tableVersion, tableId, dirName);
     }

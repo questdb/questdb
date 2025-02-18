@@ -28,6 +28,7 @@ import io.questdb.Bootstrap;
 import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -105,6 +106,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
         assertMemoryLeak(() -> {
             try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
                 Assert.assertNotNull(serverMain.getConfiguration());
+                final CairoConfiguration cairoConf = serverMain.getConfiguration().getCairoConfiguration();
+                Assert.assertEquals(cairoConf.getInstallRoot(), root);
+                Assert.assertEquals(cairoConf.getDbRoot(), new java.io.File(root, "db").getAbsolutePath());
                 Assert.assertNotNull(serverMain.getEngine());
                 Assert.assertNull(serverMain.getWorkerPoolManager());
                 Assert.assertFalse(serverMain.hasStarted());

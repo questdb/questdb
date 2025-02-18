@@ -108,7 +108,7 @@ public class TableWriterBenchmark {
                 new MessageBusImpl(configuration),
                 true,
                 DefaultLifecycleManager.INSTANCE,
-                configuration.getRoot(),
+                configuration.getDbRoot(),
                 DefaultDdlListener.INSTANCE,
                 () -> Numbers.LONG_NULL,
                 cairoEngine
@@ -120,7 +120,7 @@ public class TableWriterBenchmark {
                 new MessageBusImpl(configuration),
                 true,
                 DefaultLifecycleManager.INSTANCE,
-                configuration.getRoot(),
+                configuration.getDbRoot(),
                 DefaultDdlListener.INSTANCE,
                 () -> Numbers.LONG_NULL,
                 cairoEngine
@@ -132,7 +132,7 @@ public class TableWriterBenchmark {
                 new MessageBusImpl(configuration),
                 true,
                 DefaultLifecycleManager.INSTANCE,
-                configuration.getRoot(),
+                configuration.getDbRoot(),
                 DefaultDdlListener.INSTANCE,
                 () -> Numbers.LONG_NULL,
                 cairoEngine

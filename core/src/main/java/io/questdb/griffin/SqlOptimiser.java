@@ -121,6 +121,7 @@ public class SqlOptimiser implements Mutable {
     private final CharSequenceObjHashMap<CharSequence> constNameToToken = new CharSequenceObjHashMap<>();
     private final ObjectPool<JoinContext> contextPool;
     private final IntHashSet deletedContexts = new IntHashSet();
+    private final CharSequenceHashSet existsDependedTokens = new CharSequenceHashSet();
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final FunctionParser functionParser;
     //list of group-by-model-level expressions with prefixes
@@ -138,6 +139,7 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<CharSequence> literalCollectorBNames = new ObjList<>();
     private final LiteralRewritingVisitor literalRewritingVisitor = new LiteralRewritingVisitor();
     private final int maxRecursion;
+    private final CharSequenceHashSet missingDependedTokens = new CharSequenceHashSet();
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntPriorityQueue orderingStack = new IntPriorityQueue();
     private final Path path;
@@ -149,12 +151,10 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<RecordCursorFactory> tableFactoriesInFlight = new ObjList<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
     private final IntHashSet tablesSoFar = new IntHashSet();
+    private final ObjList<QueryColumn> tempColumns = new ObjList<>();
     private final IntList tempCrossIndexes = new IntList();
     private final IntList tempCrosses = new IntList();
     private final IntList tempList = new IntList();
-    private final ObjList<QueryColumn> tempColumns = new ObjList<>();
-    private final CharSequenceHashSet existsDependedTokens = new CharSequenceHashSet();
-    private final CharSequenceHashSet missingDependedTokens = new CharSequenceHashSet();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> tmpCursorAliases = new LowerCaseCharSequenceObjHashMap<>();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private int defaultAliasCount = 0;
@@ -300,6 +300,34 @@ public class SqlOptimiser implements Mutable {
 
     private static void unlinkDependencies(QueryModel model, int parent, int child) {
         model.getJoinModels().getQuick(parent).removeDependency(child);
+    }
+
+    private void addColumnToSelectModel(QueryModel model, IntList insertColumnIndexes, ObjList<QueryColumn> insertColumnAliases, CharSequence timestampAlias) {
+        tempColumns.clear();
+        tempColumns.addAll(model.getBottomUpColumns());
+        model.clearColumnMapStructs();
+
+        // These are merged columns, the assumption is that the insetColumnIndexes are ordered.
+        // This loop will fail miserably in indexes are unordered.
+        int src1ColumnCount = tempColumns.size();
+        int src2ColumnCount = insertColumnIndexes.size();
+        for (int i = 0, k = 0, m = 0; i < src1ColumnCount || k < src2ColumnCount; m++) {
+            if (k < src2ColumnCount && insertColumnIndexes.getQuick(k) == m) {
+                QueryColumn column = insertColumnAliases.get(k);
+                // insert column at this position, this column must reference our timestamp, that
+                // comes out of the group-by result set, but with user-provided aliases.
+                if (column.getAst().type == LITERAL) {
+                    model.addBottomUpColumnIfNotExists(nextColumn(column.getAlias(), timestampAlias));
+                } else {
+                    model.addBottomUpColumnIfNotExists(column);
+                }
+                k++;
+            } else {
+                QueryColumn qcFrom = tempColumns.getQuick(i);
+                model.addBottomUpColumnIfNotExists(nextColumn(qcFrom.getAlias()));
+                i++;
+            }
+        }
     }
 
     /*
@@ -2190,6 +2218,42 @@ public class SqlOptimiser implements Mutable {
         return null;
     }
 
+    private void fixAndCollectExprToken(ExpressionNode node, CharSequence old, CharSequence newToken, CharSequenceHashSet set, CharSequenceHashSet set2) {
+        sqlNodeStack.clear();
+        while (node != null) {
+            if (node.type == LITERAL) {
+                if (Chars.equalsIgnoreCase(node.token, old)) {
+                    node.token = newToken;
+                } else if (!set.contains(node.token)) {
+                    set2.add(node.token);
+                }
+            }
+
+            if (node.paramCount < 3) {
+                if (node.lhs != null) {
+                    sqlNodeStack.push(node.lhs);
+                }
+
+                if (node.rhs != null) {
+                    node = node.rhs;
+                    continue;
+                }
+            } else {
+                for (int i = 1, k = node.paramCount; i < k; i++) {
+                    sqlNodeStack.push(node.args.getQuick(i));
+                }
+                node = node.args.getQuick(0);
+                continue;
+            }
+
+            if (!sqlNodeStack.isEmpty()) {
+                node = this.sqlNodeStack.poll();
+            } else {
+                node = null;
+            }
+        }
+    }
+
     private Function getLoFunction(ExpressionNode limit, SqlExecutionContext executionContext) throws SqlException {
         final Function func = functionParser.parseFunction(limit, EmptyRecordMetadata.INSTANCE, executionContext);
         final int type = func.getType();
@@ -2848,42 +2912,6 @@ public class SqlOptimiser implements Mutable {
         }
 
         return false;
-    }
-
-    private void fixAndCollectExprToken(ExpressionNode node, CharSequence old, CharSequence newToken, CharSequenceHashSet set, CharSequenceHashSet set2) {
-        sqlNodeStack.clear();
-        while (node != null) {
-            if (node.type == LITERAL) {
-                if (Chars.equalsIgnoreCase(node.token, old)) {
-                    node.token = newToken;
-                } else if (!set.contains(node.token)) {
-                    set2.add(node.token);
-                }
-            }
-
-            if (node.paramCount < 3) {
-                if (node.lhs != null) {
-                    sqlNodeStack.push(node.lhs);
-                }
-
-                if (node.rhs != null) {
-                    node = node.rhs;
-                    continue;
-                }
-            } else {
-                for (int i = 1, k = node.paramCount; i < k; i++) {
-                    sqlNodeStack.push(node.args.getQuick(i));
-                }
-                node = node.args.getQuick(0);
-                continue;
-            }
-
-            if (!sqlNodeStack.isEmpty()) {
-                node = this.sqlNodeStack.poll();
-            } else {
-                node = null;
-            }
-        }
     }
 
     private void openReaderAndEnumerateColumns(
@@ -4742,7 +4770,6 @@ public class SqlOptimiser implements Mutable {
      * model into a sub-query, to select all the intended columns but the artificial timestamp.
      */
     private QueryModel rewriteSampleBy(@Nullable QueryModel model) throws SqlException {
-
         if (model == null) {
             return null;
         }
@@ -4759,6 +4786,11 @@ public class SqlOptimiser implements Mutable {
             final int sampleByFillSize = sampleByFill.size();
             ExpressionNode sampleByFrom = nested.getSampleByFrom();
             ExpressionNode sampleByTo = nested.getSampleByTo();
+
+            final ObjList<ExpressionNode> groupBy = nested.getGroupBy();
+            if (sampleBy != null && groupBy != null && groupBy.size() > 0) {
+                throw SqlException.$(groupBy.getQuick(0).position, "SELECT query must not contain both GROUP BY and SAMPLE BY");
+            }
 
             if (
                     sampleBy != null
@@ -4868,7 +4900,6 @@ public class SqlOptimiser implements Mutable {
                                 break;
                         }
                     }
-
 
                     if (isKeyed) {
                         // drop out early, since we don't handle keyed
@@ -6151,7 +6182,6 @@ public class SqlOptimiser implements Mutable {
             if (index == -1) {
                 throw SqlException.invalidColumn(position, columnName);
             }
-
         } else {
             index = model.getModelAliasIndex(columnName, 0, dot);
 
@@ -6162,7 +6192,6 @@ public class SqlOptimiser implements Mutable {
             if (joinModels.getQuick(index).getAliasToColumnMap().excludes(columnName, dot + 1, columnName.length())) {
                 throw SqlException.invalidColumn(position, columnName);
             }
-
         }
         return index;
     }
@@ -6315,34 +6344,6 @@ public class SqlOptimiser implements Mutable {
         }
 
         return _model;
-    }
-
-    private void addColumnToSelectModel(QueryModel model, IntList insertColumnIndexes, ObjList<QueryColumn> insertColumnAliases, CharSequence timestampAlias) {
-        tempColumns.clear();
-        tempColumns.addAll(model.getBottomUpColumns());
-        model.clearColumnMapStructs();
-
-        // These are merged columns, the assumption is that the insetColumnIndexes are ordered.
-        // This loop will fail miserably in indexes are unordered.
-        int src1ColumnCount = tempColumns.size();
-        int src2ColumnCount = insertColumnIndexes.size();
-        for (int i = 0, k = 0, m = 0; i < src1ColumnCount || k < src2ColumnCount; m++) {
-            if (k < src2ColumnCount && insertColumnIndexes.getQuick(k) == m) {
-                QueryColumn column = insertColumnAliases.get(k);
-                // insert column at this position, this column must reference our timestamp, that
-                // comes out of the group-by result set, but with user-provided aliases.
-                if (column.getAst().type == LITERAL) {
-                    model.addBottomUpColumnIfNotExists(nextColumn(column.getAlias(), timestampAlias));
-                } else {
-                    model.addBottomUpColumnIfNotExists(column);
-                }
-                k++;
-            } else {
-                QueryColumn qcFrom = tempColumns.getQuick(i);
-                model.addBottomUpColumnIfNotExists(nextColumn(qcFrom.getAlias()));
-                i++;
-            }
-        }
     }
 
     @SuppressWarnings("unused")
