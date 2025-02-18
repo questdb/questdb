@@ -232,9 +232,17 @@ public class MatViewGraphImpl implements MatViewGraph {
             if (task.operation != MatViewRefreshTask.REFRESH || list.notifyOnBaseTableCommitNoLock(seqTxn)) {
                 task.refreshTriggeredTimestamp = microsecondClock.getTicks();
                 refreshTaskQueue.enqueue(task);
-                LOG.debug().$("refresh job notified [table=").$(task.baseTableToken.getTableName()).I$();
+                if (task.operation == MatViewRefreshTask.INVALIDATE) {
+                    LOG.info().$("notified refresh job to invalidate dependent materialized views [baseTable=").$(task.baseTableToken)
+                            .$(", reason=").$(task.invalidationReason)
+                            .I$();
+                } else {
+                    LOG.debug().$("refresh job notified [baseTable=").$(task.baseTableToken)
+                            .$(", op=").$(task.operation)
+                            .I$();
+                }
             } else {
-                LOG.debug().$("no need to notify to refresh job [table=").$(task.baseTableToken.getTableName()).I$();
+                LOG.debug().$("no need to notify to refresh job [baseTable=").$(task.baseTableToken).I$();
             }
         }
     }
