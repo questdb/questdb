@@ -246,6 +246,26 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiplyArrayMore() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT" +
+                    " ARRAY[[1.0, 1, 1], [2, 2, 2]] left, ARRAY[[3.0], [5], [7]] right" +
+                    " FROM long_sequence(1))");
+            assertSql("product\n[[15.0],[30.0]]\n", "SELECT left * right AS product from tango");
+        });
+    }
+
+    @Test
+    public void testMultiplyArraySimple() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT" +
+                    " ARRAY[[1.0, 3]] left, ARRAY[[5.0], [7]] right" +
+                    " FROM long_sequence(1))");
+            assertSql("product\n[[26.0]]\n", "SELECT left * right AS product from tango");
+        });
+    }
+
+    @Test
     public void testRndDoubleFunctionEdgeCases() throws Exception {
         assertMemoryLeak(() -> {
             assertExceptionNoLeakCheck(
