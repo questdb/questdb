@@ -85,7 +85,7 @@ public class FunctionFactoryScanner {
             functionFactories.sort((f1, f2) -> compareFactories(f1, f2, orderMap));
 
             if (log != null) {
-                log.advisory().$("loaded ").$(functionFactories.size()).$(" functions").$();
+                log.advisory().$("loaded ").$(functionFactories.size() - initialSize).$(" functions").$();
             }
         } catch (Exception e) {
             throw new RuntimeException(e);
