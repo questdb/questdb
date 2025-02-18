@@ -161,6 +161,11 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.array.ArrayCreateFunctionFactory,
             io.questdb.griffin.engine.functions.array.DoubleArrayAccessFunctionFactory,
             io.questdb.griffin.engine.functions.array.DoubleArrayTransposeFunctionFactory,
+            io.questdb.griffin.engine.functions.array.DoubleArraySliceFunctionFactory,
+
+            // range operator :
+            io.questdb.griffin.engine.functions.array.IntRangeFunctionFactory,
+
             // '=' operators
             io.questdb.griffin.engine.functions.eq.EqStrFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqIntervalFunctionFactory,

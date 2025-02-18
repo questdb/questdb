@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.arr;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.MemoryTag;
@@ -125,6 +126,21 @@ public class BorrowedArrayView implements ArrayView, AutoCloseable {
         this.strides.clear();
         this.flatViewOffset = 0;
         this.flatElemCount = 0;
+    }
+
+    public void sliceOneDim(int dim, int left, int right) {
+        if (dim < 0 || dim >= getDimCount()) {
+            throw CairoException.nonCritical().put("array slice dim out of range. dimCount ").put(getDimCount())
+                    .put(" dim ").put(dim);
+        }
+        int dimLen = getDimLen(dim);
+        if (left < 0 || left >= dimLen || right < 1 || right > dimLen) {
+            throw CairoException.nonCritical().put(
+                            "array slice range out of range. dimLen ").put(dimLen)
+                    .put(" left ").put(left).put(" right ").put(right);
+        }
+        flatViewOffset += left * getStride(dim);
+        shape.set(dim, right - left);
     }
 
     public void transpose() {
