@@ -62,11 +62,12 @@ public class DoubleArrayTransposeFunctionFactory implements FunctionFactory {
 
         public TransposeDoubleArrayFunction(Function arrayFunc) {
             this.arrayFunc = arrayFunc;
-            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
+            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
         }
 
         @Override
         public void close() {
+            arrayFunc.close();
             borrowedView.close();
         }
 
