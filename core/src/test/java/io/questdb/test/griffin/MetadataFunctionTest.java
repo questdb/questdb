@@ -24,7 +24,7 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.FunctionFactoryScanner;
+import io.questdb.griffin.FunctionFactoryCacheBuilder;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.BeforeClass;
@@ -37,7 +37,7 @@ public class MetadataFunctionTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        FunctionFactoryScanner.clearCache();
+        FunctionFactoryCacheBuilder.clearCache();
         AbstractCairoTest.setUpStatic();
     }
 

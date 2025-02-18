@@ -32,6 +32,8 @@
 # d8'          `8b  88            88       88888888888  88      `888       88       88    `"Y8888Y"'    88      `888
 
 # THERE IS NOT NEED TO ADD ALL FUNCTIONS in the list unless it is required to pin the overload priority
+# Only add the new functions here when there are overloads with the same name and different parameter types
+# and the compilation chooses an unexpected overload
 
 
 # logical operations
@@ -909,4 +911,6 @@ io.questdb.griffin.engine.functions.math.IPv4VarcharNetmaskFunctionFactory
 # d8'          `8b  88            88       88888888888  88      `888       88       88    `"Y8888Y"'    88      `888
 
 # THERE IS NOT NEED TO ADD ALL FUNCTIONS in the list unless it is required to pin the overload priority
+# Only add the new functions here when there are overloads with the same name and different parameter types
+# and the compilation chooses an unexpected overload
 

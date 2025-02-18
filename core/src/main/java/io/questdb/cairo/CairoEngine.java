@@ -62,8 +62,9 @@ import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.CopyContext;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
-import io.questdb.griffin.FunctionFactoryScanner;
+import io.questdb.griffin.FunctionFactoryCacheBuilder;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerFactory;
@@ -150,7 +151,7 @@ public class CairoEngine implements Closeable, WriterSource {
         try {
             ffCache = new FunctionFactoryCache(
                     configuration,
-                    FunctionFactoryScanner.scan(LOG)
+                    getFunctionFactories()
             );
             this.tableFlagResolver = newTableFlagResolver(configuration);
             this.configuration = configuration;
@@ -1421,7 +1422,6 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-
     private TableToken rename0(Path fromPath, TableToken fromTableToken, Path toPath, CharSequence toTableName) {
 
         // !!! we do not care what is inside the path1 & path2, we will reset them anyway
@@ -1526,6 +1526,10 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.tableDoesNotExist(tableName);
         }
         return token;
+    }
+
+    protected Iterable<FunctionFactory> getFunctionFactories() {
+        return new FunctionFactoryCacheBuilder().scan(LOG).build();
     }
 
     protected TableFlagResolver newTableFlagResolver(CairoConfiguration configuration) {

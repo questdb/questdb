@@ -6,7 +6,6 @@ import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
 
 import java.io.File;
 import java.io.IOException;
@@ -36,33 +35,23 @@ import java.util.zip.ZipFile;
 // Loading when QuestDB runs as a directory, that happens when running tests from maven, IDEs
 public class FunctionFactoryScanner {
 
-    private static final String FUNCTION_LIST_FILE_NAME = "function_list.txt";
-    private static ArrayList<FunctionFactory> functionFactoriesCache;
-
-    @TestOnly
-    public static void clearCache() {
-        functionFactoriesCache = null;
-    }
-
-    public static Iterable<FunctionFactory> scan(String packageName, @Nullable Log log) {
-        if (functionFactoriesCache != null) {
-            return functionFactoriesCache;
-        }
-
+    public static void scan(ArrayList<FunctionFactory> functionFactories, String packageName, String functionListFileName, Class<?> clazz, @Nullable Log log) {
         try {
+            int initialSize = functionFactories.size();
             // Load function factories in case the code is built as modules file
             // This is usually the case when binaries are build with JDK baked in
-            ArrayList<FunctionFactory> functionFactories = findAllClassesFromModules(packageName, log);
+            var classLoader = clazz.getClassLoader();
+            findAllClassesFromModules(functionFactories, packageName, classLoader, log);
 
 
             // In case the previous load failed (returned an empty list)
             // there are 2 more options:
             // 1. The code is built as a directory, usually the case when running from IDE
             // 2. The code is built as a single JAR file, the case of binaries built as No JRE
-            if (functionFactories.isEmpty()) {
+            if (functionFactories.size() == initialSize) {
                 // Get the JAR or directory path from the current class's code source
                 String locationPath;
-                URL url = FunctionFactoryScanner.class.getProtectionDomain().getCodeSource().getLocation();
+                URL url = clazz.getProtectionDomain().getCodeSource().getLocation();
                 if (url != null) {
                     locationPath = url.getPath().replace("file:", "");
                 } else {
@@ -77,19 +66,20 @@ public class FunctionFactoryScanner {
                 // Check if the location is a JAR file or a directory
                 if (locationPath.endsWith(".jar")) {
                     // If it's a JAR file, scan it
-                    scanJar(functionFactories, locationPath, packageName, log);
+                    scanJar(functionFactories, locationPath, packageName, classLoader, log);
                 } else {
                     // If it's a directory, scan for class files
-                    scanDirectory(functionFactories, locationPath, packageName, log);
+                    scanDirectory(functionFactories, locationPath, packageName, classLoader, log);
                 }
             }
 
-            if (functionFactories.isEmpty()) {
+            if (functionFactories.size() == initialSize) {
                 throw new CairoError("no functions found in " + packageName);
             }
 
 
-            var orderMap = loadFunctionOrderMap();
+            var orderMap = new CharSequenceIntHashMap();
+            loadFunctionOrderMap(functionListFileName, classLoader, orderMap);
             // Function factories sometimes have conflict and have to be loaded in a specific order
             // For example RndSymbolFunctionFactory has to be before RndSymbolListFunctionFactory
             functionFactories.sort((f1, f2) -> compareFactories(f1, f2, orderMap));
@@ -97,15 +87,9 @@ public class FunctionFactoryScanner {
             if (log != null) {
                 log.advisory().$("loaded ").$(functionFactories.size()).$(" functions").$();
             }
-            functionFactoriesCache = functionFactories;
-            return functionFactories;
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
-    }
-
-    public static Iterable<FunctionFactory> scan(@Nullable Log log) {
-        return scan("io.questdb.griffin.engine.functions", log);
     }
 
     private static int compareFactories(FunctionFactory f1, FunctionFactory f2, CharSequenceIntHashMap orderMap) {
@@ -114,8 +98,7 @@ public class FunctionFactoryScanner {
         return Integer.compare(o1, o2);
     }
 
-    private static ArrayList<FunctionFactory> findAllClassesFromModules(String packageName, @Nullable Log log) {
-        var factories = new ArrayList<FunctionFactory>();
+    private static void findAllClassesFromModules(ArrayList<FunctionFactory> factories, String packageName, ClassLoader classLoader, @Nullable Log log) {
         var loader = ClassLoader.getSystemClassLoader();
         try {
             try (var fs = FileSystems.newFileSystem(URI.create("jrt:/"), Collections.emptyMap(), loader)) {
@@ -141,7 +124,7 @@ public class FunctionFactoryScanner {
                                                     }
                                                     sink.replace('/', '.');
 
-                                                    FunctionFactory factory = getClass(sink, log);
+                                                    FunctionFactory factory = getClass(sink, classLoader, log);
                                                     if (factory != null) {
                                                         factories.add(factory);
                                                     }
@@ -161,14 +144,13 @@ public class FunctionFactoryScanner {
             // It's ok, if it's not a module
         }
 
-        return factories;
     }
 
     @Nullable
-    private static FunctionFactory getClass(CharSequence className, @Nullable Log log) {
+    private static FunctionFactory getClass(CharSequence className, ClassLoader classLoader, @Nullable Log log) {
         Class<?> clazz;
         try {
-            clazz = FunctionFactoryScanner.class.getClassLoader().loadClass(className.toString());
+            clazz = classLoader.loadClass(className.toString());
         } catch (ClassNotFoundException e) {
             return null;
         }
@@ -204,9 +186,8 @@ public class FunctionFactoryScanner {
         return orderMap.size() + Math.abs(10000 - f1.getSignature().length());
     }
 
-    private static CharSequenceIntHashMap loadFunctionOrderMap() {
-        var map = new CharSequenceIntHashMap();
-        try (var inputStream = FunctionFactoryScanner.class.getClassLoader().getResourceAsStream(FUNCTION_LIST_FILE_NAME)) {
+    private static void loadFunctionOrderMap(String functionListFileName, ClassLoader classLoader, CharSequenceIntHashMap map) {
+        try (var inputStream = classLoader.getResourceAsStream(functionListFileName)) {
             if (inputStream != null) {
                 var lines = new String(inputStream.readAllBytes()).split("\n");
 
@@ -221,11 +202,10 @@ public class FunctionFactoryScanner {
         } catch (IOException e) {
             // return empty map
         }
-        return map;
     }
 
     // Scan for class files in a directory, including subdirectories
-    private static void scanDirectory(ArrayList<FunctionFactory> functionFactories, String dirPath, String packageName, @Nullable Log log) {
+    private static void scanDirectory(ArrayList<FunctionFactory> functionFactories, String dirPath, String packageName, ClassLoader classLoader, @Nullable Log log) {
         String packagePath = packageName.replace('.', '/');
 
         // Java File supports both \ and / as file separators on all platforms, this will work on windows and linux:
@@ -235,14 +215,14 @@ public class FunctionFactoryScanner {
             StringSink packageNameSink = new StringSink();
             packageNameSink.put(packageName);
             // Start recursive directory scan
-            scanDirectoryRecursively(functionFactories, dir, packageNameSink, log);
+            scanDirectoryRecursively(functionFactories, dir, packageNameSink, classLoader, log);
         } else {
-            throw new UnsupportedOperationException("cannot load functions, directory not found: " + dirPath);
+            throw new UnsupportedOperationException("cannot load functions, directory not found: " + dir);
         }
     }
 
     // Recursive method to scan a directory and its subdirectories
-    private static void scanDirectoryRecursively(ArrayList<FunctionFactory> functionFactories, File dir, StringSink packageName, @Nullable Log log) {
+    private static void scanDirectoryRecursively(ArrayList<FunctionFactory> functionFactories, File dir, StringSink packageName, ClassLoader classLoader, @Nullable Log log) {
         File[] files = dir.listFiles();
 
         int len = packageName.length();
@@ -253,7 +233,7 @@ public class FunctionFactoryScanner {
                     // Get the class name from the file path
                     packageName.trimTo(len);
                     packageName.put('.').put(fileName, 0, fileName.length() - ".class".length());
-                    FunctionFactory factory = getClass(packageName, log);
+                    FunctionFactory factory = getClass(packageName, classLoader, log);
                     if (factory != null) {
                         functionFactories.add(factory);
                     }
@@ -261,14 +241,14 @@ public class FunctionFactoryScanner {
                     // Recursively scan subdirectories
                     packageName.trimTo(len);
                     packageName.put('.').put(fileName);
-                    scanDirectoryRecursively(functionFactories, file, packageName, log);
+                    scanDirectoryRecursively(functionFactories, file, packageName, classLoader, log);
                 }
             }
         }
     }
 
     // Scan for classes inside a JAR file
-    private static void scanJar(ArrayList<FunctionFactory> functionFactories, String jarPath, String packageName, @Nullable Log log) {
+    private static void scanJar(ArrayList<FunctionFactory> functionFactories, String jarPath, String packageName, ClassLoader classLoader, @Nullable Log log) {
         try {
             // Get the package path from the package name
             // Jar file separators are always '/' on all platforms
@@ -288,7 +268,7 @@ public class FunctionFactoryScanner {
                                     sink.clear();
                                     sink.put(entryName, 0, entryName.length() - ".class".length());
                                     sink.replace('/', '.');
-                                    FunctionFactory factory = getClass(sink, log);
+                                    FunctionFactory factory = getClass(sink, classLoader, log);
                                     if (factory != null) {
                                         functionFactories.add(factory);
                                     }

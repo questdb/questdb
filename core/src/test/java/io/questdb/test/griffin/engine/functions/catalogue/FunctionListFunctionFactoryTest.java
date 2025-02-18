@@ -25,8 +25,8 @@
 package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.FunctionFactoryCacheBuilder;
 import io.questdb.griffin.FunctionFactoryDescriptor;
-import io.questdb.griffin.FunctionFactoryScanner;
 import io.questdb.griffin.engine.functions.catalogue.FunctionListFunctionFactory;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -58,7 +58,7 @@ public class FunctionListFunctionFactoryTest extends AbstractCairoTest {
 
     private static Set<String> expectedFunctionNames() {
         Set<String> names = new HashSet<>();
-        for (FunctionFactory factory : FunctionFactoryScanner.scan(LOG)) {
+        for (FunctionFactory factory : new FunctionFactoryCacheBuilder().scan(LOG).build()) {
             String signature = factory.getSignature();
             String name = signature.substring(0, signature.indexOf('('));
             if (isExcluded(name)) {
@@ -72,7 +72,7 @@ public class FunctionListFunctionFactoryTest extends AbstractCairoTest {
     private static Set<String> expectedFunctions() {
         Set<String> lines = new HashSet<>();
         StringSink sink2 = new StringSink();
-        for (FunctionFactory factory : FunctionFactoryScanner.scan(LOG)) {
+        for (FunctionFactory factory : new FunctionFactoryCacheBuilder().scan(LOG).build()) {
             String signature = factory.getSignature();
             String name = signature.substring(0, signature.indexOf('('));
             if (isExcluded(name)) {
