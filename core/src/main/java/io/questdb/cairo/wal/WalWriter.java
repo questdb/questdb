@@ -1959,7 +1959,7 @@ public class WalWriter implements TableWriterAPI {
 
         @Override
         public void changeColumnType(
-                CharSequence columnName,
+                CharSequence columnNameSeq,
                 int newType,
                 int symbolCapacity,
                 boolean symbolCacheFlag,
@@ -1968,8 +1968,9 @@ public class WalWriter implements TableWriterAPI {
                 boolean isSequential,
                 SecurityContext securityContext
         ) {
-            final int existingColumnIndex = metadata.getColumnIndexQuiet(columnName);
+            final int existingColumnIndex = metadata.getColumnIndexQuiet(columnNameSeq);
             if (existingColumnIndex > -1) {
+                String columnName = metadata.getColumnName(existingColumnIndex);
                 int existingColumnType = metadata.getColumnType(existingColumnIndex);
                 if (existingColumnType > 0) {
                     if (existingColumnType != newType) {
@@ -2031,7 +2032,7 @@ public class WalWriter implements TableWriterAPI {
                     }
                 }
             } else {
-                throw CairoException.nonCritical().put("column '").put(columnName).put("' does not exists");
+                throw CairoException.nonCritical().put("column '").put(columnNameSeq).put("' does not exists");
             }
         }
 
@@ -2056,9 +2057,10 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void removeColumn(@NotNull CharSequence columnName) {
-            final int columnIndex = metadata.getColumnIndexQuiet(columnName);
+        public void removeColumn(@NotNull CharSequence columnNameSeq) {
+            final int columnIndex = metadata.getColumnIndexQuiet(columnNameSeq);
             if (columnIndex > -1) {
+                String columnName = metadata.getColumnName(columnIndex);
                 int type = metadata.getColumnType(columnIndex);
                 if (type > 0) {
                     if (currentTxnStartRowNum > 0) {
@@ -2092,18 +2094,19 @@ public class WalWriter implements TableWriterAPI {
                     }
                 }
             } else {
-                throw CairoException.nonCritical().put("column '").put(columnName).put("' does not exists");
+                throw CairoException.nonCritical().put("column '").put(columnNameSeq).put("' does not exists");
             }
         }
 
         @Override
         public void renameColumn(
-                @NotNull CharSequence columnName,
+                @NotNull CharSequence columnNameSeq,
                 @NotNull CharSequence newColumnName,
                 SecurityContext securityContext
         ) {
-            final int columnIndex = metadata.getColumnIndexQuiet(columnName);
+            final int columnIndex = metadata.getColumnIndexQuiet(columnNameSeq);
             if (columnIndex > -1) {
+                String columnName = metadata.getColumnName(columnIndex);
                 int columnType = metadata.getColumnType(columnIndex);
                 if (columnType > 0) {
                     if (currentTxnStartRowNum > 0) {
@@ -2145,7 +2148,7 @@ public class WalWriter implements TableWriterAPI {
                     }
                 }
             } else {
-                throw CairoException.nonCritical().put("column '").put(columnName).put("' does not exists");
+                throw CairoException.nonCritical().put("column '").put(columnNameSeq).put("' does not exists");
             }
         }
 
