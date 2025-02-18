@@ -98,3 +98,30 @@ if [[ $CLIENTS == 'ALL' || $CLIENTS == *'csharp'* ]]; then
 else
   echo "skipping csharp tests"
 fi
+
+if [[ $CLIENTS == 'ALL' || $CLIENTS == *'php'* ]]; then
+  echo "starting php tests"
+
+  # check if php is installed
+  if ! command -v php &> /dev/null
+  then
+      echo "php could not be found! Please install PHP or exclude PHP tests"
+      exit 1
+  fi
+
+  echo "$base_dir/compat/src/test/php"
+  cd "$base_dir/compat/src/test/php" || exit
+
+  # install deps
+  composer install
+
+  # run
+  php runner.php ../resources/test_cases.yaml
+  if [ $? -ne 0 ]; then
+      echo "php tests failed"
+      exit 1
+  fi
+  echo "php tests finished"
+else
+  echo "skipping php tests"
+fi
