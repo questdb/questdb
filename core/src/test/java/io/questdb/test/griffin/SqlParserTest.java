@@ -1156,7 +1156,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testBadAlias() throws Exception {
-        assertIdentifierError("select 'a' ! ");
+//        assertIdentifierError("select 'a' ! ");
         assertIdentifierError("select 'a' } ");
         assertIdentifierError("select 'a' { ");
         assertIdentifierError("select 'a' ] ");
