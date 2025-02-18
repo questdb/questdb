@@ -106,7 +106,7 @@ public class FunctionFactoryScanner {
                     var sink = new StringSink();
                     questdbPathFiles.forEach(
                             mdl -> {
-                                String pathPattern = "modules/" + moduleName +  "/" + packageName.replace('.', '/');
+                                String pathPattern = "modules/" + moduleName + "/" + packageName.replace('.', '/');
                                 int replaceLen = "modules/".length() + moduleName.length() + 1;
                                 if (log != null) {
                                     log.advisory().$("loading functions from ").$(moduleName).$();
