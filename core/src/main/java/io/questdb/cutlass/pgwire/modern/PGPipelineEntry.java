@@ -56,6 +56,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.QueryPausedException;
@@ -102,6 +104,8 @@ import static io.questdb.cutlass.pgwire.modern.PGUtils.estimateColumnTxtSize;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
 
 public class PGPipelineEntry implements QuietCloseable, Mutable {
+    private static final Log LOG = LogFactory.getLog(PGPipelineEntry.class);
+
     // SYNC_DESC_ constants describe the state of the "describe" message
     // they have no relation to the state of SYNC message processing as such
     public static final int SYNC_DESC_NONE = 0;
@@ -244,10 +248,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     @Override
     public void clear() {
-        // paranoid mode: if there is dirty entry in entry pool, we want to make sure it is clean before
-        // we return it to the pool
+        // this is expected to be called from a pool only
+
+        // Paranoia mode: Safety check before returning this entry from the object pool.
+        // While entries should already be clean when returned to the pool,
+        // this serves as a safeguard against potential bugs where an entry
+        // wasn't properly cleaned up. If a dirty entry is detected (sqlType != NONE),
+        // we clear it to prevent unexpected behaviour.
         if (sqlType != CompiledQuery.NONE) {
-            //todo: consider logging
+            LOG.error().$("Object Pool contains dirty PGPipeline entries. This is likely a bug, please report it to https://github.com/questdb/questdb/issues/new?template=bug_report.yaml").$();
             close();
         }
     }
