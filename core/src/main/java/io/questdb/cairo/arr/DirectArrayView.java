@@ -199,6 +199,9 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
         if (shape == null || shape.length != nDims) {
             shape = new int[nDims];
             strides = new int[nDims];
+        } else {
+            Arrays.fill(shape, 0);
+            Arrays.fill(strides, 0);
         }
     }
 
