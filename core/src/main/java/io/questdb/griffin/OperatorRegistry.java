@@ -41,8 +41,9 @@ public class OperatorRegistry {
         for (int i = 0, k = operators.size(); i < k; i++) {
             OperatorExpression op = operators.getQuick(i);
             switch (op.operator) {
-                // note, that we want to skip (so use continue instead of break) only unary operators because their token clashes with binary operators
-                // for binary operators (like dot) - we don't want to skip them
+                // `continue` -- skip adding to registry; `break` -- proceed to add to registry.
+                // Skip the unary operators because their token clashes with binary operators.
+                // Binary operators (like dot) -- add them to the registry
                 case UnaryMinus:
                     unaryMinus = op;
                     continue;
@@ -84,18 +85,14 @@ public class OperatorRegistry {
     }
 
     /*
-     * Gets operator taking into account current registry structure:
-     * there are only 3 unary operators that have duplicate token representation: '~', '-', 'not'.
+     * Returns the operator expression singleton (if it exists), after adjusting for duplicate unary operator tokens.
+     * There are 3 unary operators that have duplicate token representation: '~', '-', 'not'.
      */
     public OperatorExpression tryGetOperator(OperatorExpression.Operator operator) {
-        if (unaryMinus.operator == operator) {
-            return unaryMinus;
-        } else if (unaryComplement.operator == operator) {
-            return unaryComplement;
-        } else if (unarySetNegation.operator == operator) {
-            return unarySetNegation;
-        }
-        return map.get(operator.token);
+        return operator == unaryMinus.operator ? unaryMinus
+                : operator == unaryComplement.operator ? unaryComplement
+                : operator == unarySetNegation.operator ? unarySetNegation
+                : map.get(operator.token);
     }
 
     /*
