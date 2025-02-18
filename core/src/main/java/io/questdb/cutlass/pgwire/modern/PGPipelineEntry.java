@@ -244,7 +244,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     @Override
     public void clear() {
-        // no-op, we clear entries before returning them to the pool
+        // paranoid mode: if there is dirty entry in entry pool, we want to make sure it is clean before
+        // we return it to the pool
+        if (sqlType != CompiledQuery.NONE) {
+            //todo: consider logging
+            close();
+        }
     }
 
     @Override
