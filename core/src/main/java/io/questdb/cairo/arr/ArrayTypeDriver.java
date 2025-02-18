@@ -120,6 +120,20 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     private static final ArrayValueAppender VALUE_APPENDER_DOUBLE = ArrayTypeDriver::appendDoubleFromArrayToSink;
     private static final ArrayValueAppender VALUE_APPENDER_LONG = ArrayTypeDriver::appendLongFromArrayToSink;
 
+    public static void appendDoubleFromArrayToSink(
+            @NotNull ArrayView view,
+            int index,
+            @NotNull CharSink<?> sink,
+            @NotNull String nullLiteral
+    ) {
+        double d = view.flatView().getDouble(index);
+        if (!Numbers.isNull(d)) {
+            sink.put(d);
+        } else {
+            sink.putAscii(nullLiteral);
+        }
+    }
+
     public static void appendValue(
             @NotNull MemoryA auxMem,
             @NotNull MemoryA dataMem,
@@ -137,6 +151,15 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         writeAuxEntry(auxMem, beginOffset, size);
     }
 
+    public static void arrayToJson(
+            @NotNull ArrayView array,
+            @NotNull CharSink<?> sink,
+            @NotNull ArrayValueAppender appender,
+            ArrayState arrayState
+    ) {
+        arrayToText(array, sink, appender, '[', ']', "null", arrayState);
+    }
+
     /**
      * Appends a JSON representation of the provided array to the provided character sink.
      */
@@ -150,15 +173,6 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         } else {
             arrayToJson(arrayView, sink, resolveAppender(arrayView), arrayState);
         }
-    }
-
-    public static void arrayToJson(
-            @NotNull ArrayView array,
-            @NotNull CharSink<?> sink,
-            @NotNull ArrayValueAppender appender,
-            ArrayState arrayState
-    ) {
-        arrayToText(array, sink, appender, '[', ']', "null", arrayState);
     }
 
     /**
@@ -688,20 +702,6 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         final long offset = mem.getLong(auxOffset) & OFFSET_MAX;
         final int size = mem.getInt(auxOffset + Long.BYTES);
         return offset + size;
-    }
-
-    static void appendDoubleFromArrayToSink(
-            @NotNull ArrayView view,
-            int index,
-            @NotNull CharSink<?> sink,
-            @NotNull String nullLiteral
-    ) {
-        double d = view.flatView().getDouble(index);
-        if (!Numbers.isNull(d)) {
-            sink.put(d);
-        } else {
-            sink.putAscii(nullLiteral);
-        }
     }
 
     static void appendLongFromArrayToSink(
