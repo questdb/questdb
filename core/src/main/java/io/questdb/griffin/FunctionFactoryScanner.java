@@ -35,13 +35,13 @@ import java.util.zip.ZipFile;
 // Loading when QuestDB runs as a directory, that happens when running tests from maven, IDEs
 public class FunctionFactoryScanner {
 
-    public static void scan(ArrayList<FunctionFactory> functionFactories, String packageName, String functionListFileName, Class<?> clazz, @Nullable Log log) {
+    public static void scan(ArrayList<FunctionFactory> functionFactories, String packageName, String functionListFileName, Class<?> clazz, String moduleName, @Nullable Log log) {
         try {
             int initialSize = functionFactories.size();
             // Load function factories in case the code is built as modules file
             // This is usually the case when binaries are build with JDK baked in
             var classLoader = clazz.getClassLoader();
-            findAllClassesFromModules(functionFactories, packageName, classLoader, log);
+            findAllClassesFromModules(functionFactories, packageName, classLoader, moduleName, log);
 
 
             // In case the previous load failed (returned an empty list)
@@ -98,19 +98,18 @@ public class FunctionFactoryScanner {
         return Integer.compare(o1, o2);
     }
 
-    private static void findAllClassesFromModules(ArrayList<FunctionFactory> factories, String packageName, ClassLoader classLoader, @Nullable Log log) {
-        var loader = ClassLoader.getSystemClassLoader();
+    private static void findAllClassesFromModules(ArrayList<FunctionFactory> factories, String packageName, ClassLoader classLoader, String moduleName, @Nullable Log log) {
         try {
-            try (var fs = FileSystems.newFileSystem(URI.create("jrt:/"), Collections.emptyMap(), loader)) {
-
-                Path questdbPath = fs.getPath("modules", "io.questdb", "io");
+            try (var fs = FileSystems.newFileSystem(URI.create("jrt:/"), Collections.emptyMap(), classLoader)) {
+                Path questdbPath = fs.getPath("modules", moduleName, moduleName.substring(0, moduleName.indexOf('.')));
                 try (var questdbPathFiles = Files.list(questdbPath)) {
                     var sink = new StringSink();
                     questdbPathFiles.forEach(
                             mdl -> {
-                                String pathPattern = "modules/io.questdb/" + packageName.replace('.', '/');
+                                String pathPattern = "modules/" + moduleName +  "/" + packageName.replace('.', '/');
+                                int replaceLen = "modules/".length() + moduleName.length() + 1;
                                 if (log != null) {
-                                    log.advisory().$("loading functions from ").$(mdl.getFileName()).$();
+                                    log.advisory().$("loading functions from ").$(moduleName).$();
                                 }
                                 try (var walk = Files.walk(mdl)) {
                                     walk.forEach(
@@ -118,7 +117,7 @@ public class FunctionFactoryScanner {
                                                 if (classFile.startsWith(pathPattern)) {
                                                     sink.clear();
                                                     String classNameStr = classFile.toString();
-                                                    sink.put(classNameStr, "modules/io.questdb/".length(), classNameStr.length());
+                                                    sink.put(classNameStr, replaceLen, classNameStr.length());
                                                     if (Chars.endsWith(sink, ".class")) {
                                                         sink.trimTo(sink.length() - ".class".length());
                                                     }

@@ -718,7 +718,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         boolean isWindowContext = !sqlExecutionContext.getWindowContext().isEmpty();
 
 
-        if (SqlKeywords.isCastKeyword(node.token) && argCount == 2) skipAssigningType:{
+        if (SqlKeywords.isCastKeyword(node.token) && argCount == 2
+                && args.getQuick(1).isConstant()) skipAssigningType:{
             // If this the cast into same type, return the first argument
             if (args.getQuick(0).getType() == args.getQuick(1).getType()) {
                 return args.getQuick(0);
@@ -730,7 +731,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             // whatever happens to be the first cast function in the traversal order, and force
             // the bind variable to that type. This will then fail when an actual value is bound
             // to the variable, and it's most likely not that arbitrary type.
-            if (args.getQuick(0).isUndefined() && args.getQuick(1).isConstant()) {
+            if (args.getQuick(0).isUndefined()) {
                 final Function undefinedArg = args.getQuick(0);
                 final int castToType = args.getQuick(1).getType();
                 final int assignType;
@@ -752,6 +753,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         break skipAssigningType;
                 }
                 undefinedArg.assignType(assignType, sqlExecutionContext.getBindVariableService());
+                // Now that that type is assigned, we can return the first argument, no additional cast needed
+                return undefinedArg;
             }
         }
 

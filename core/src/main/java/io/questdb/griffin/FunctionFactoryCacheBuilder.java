@@ -17,10 +17,10 @@ public class FunctionFactoryCacheBuilder {
     }
 
     public FunctionFactoryCacheBuilder scan(@Nullable Log log) {
-        return scan("io.questdb.griffin.engine.functions", FUNCTION_LIST_FILE_NAME, FunctionFactoryCacheBuilder.class, log);
+        return scan("io.questdb.griffin.engine.functions", FUNCTION_LIST_FILE_NAME, FunctionFactoryCacheBuilder.class, "io.questdb", log);
     }
 
-    public FunctionFactoryCacheBuilder scan(String packageName, String functionListFileName, Class<?> clazz, @Nullable Log log) {
+    public FunctionFactoryCacheBuilder scan(String packageName, String functionListFileName, Class<?> clazz, String moduleName, @Nullable Log log) {
         if (functionFactoriesCache != null) {
             return this;
         }
@@ -29,7 +29,7 @@ public class FunctionFactoryCacheBuilder {
             functionFactories = new ArrayList<>();
         }
 
-        FunctionFactoryScanner.scan(functionFactories, packageName, functionListFileName, clazz, log);
+        FunctionFactoryScanner.scan(functionFactories, packageName, functionListFileName, clazz, moduleName, log);
         return this;
     }
 
