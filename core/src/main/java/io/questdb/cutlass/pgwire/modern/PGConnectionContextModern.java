@@ -892,8 +892,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         }
 
         pipelineCurrentEntry.setStateClosed(true, isStatementClose);
-        // return the factory back to global cache in case of a select
-        pipelineCurrentEntry.cacheIfPossible(tasCache, null);
     }
 
     private void msgDescribe(long lo, long msgLimit) throws BadProtocolException {
