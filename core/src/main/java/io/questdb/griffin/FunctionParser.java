@@ -719,6 +719,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
 
         if (SqlKeywords.isCastKeyword(node.token) && argCount == 2) skipAssigningType:{
+            // If this the cast into same type, return the first argument
+            if (args.getQuick(0).getType() == args.getQuick(1).getType()) {
+                return args.getQuick(0);
+            }
+
             // If a bind variable of unknown type appears inside a cast expression, we should
             // assign a default type to it. Otherwise, since casting is a heavily overloaded
             // operation (can cast lots of things to a string/number), we'll end up picking
@@ -747,11 +752,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         break skipAssigningType;
                 }
                 undefinedArg.assignType(assignType, sqlExecutionContext.getBindVariableService());
-            }
-
-            // If this the cast into same type, return the first argument
-            if (args.getQuick(0).getType() == args.getQuick(1).getType()) {
-                return args.getQuick(0);
             }
         }
 
