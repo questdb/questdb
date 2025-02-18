@@ -31,11 +31,13 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.IntervalFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
-public class IntRangeFunctionFactory implements FunctionFactory {
+public class IntIntervalFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "!(II)";
@@ -49,26 +51,28 @@ public class IntRangeFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new IntRangeFunction(args.getQuick(0), args.getQuick(1));
+        return new IntIntervalFunction(args.getQuick(0), args.getQuick(1));
     }
 
-    static class IntRangeFunction extends LongFunction implements BinaryFunction {
+    static class IntIntervalFunction extends IntervalFunction implements BinaryFunction {
+        private final Interval interval = new Interval();
         private final Function left;
         private final Function right;
 
-        public IntRangeFunction(Function left, Function right) {
+        public IntIntervalFunction(Function left, Function right) {
             this.left = left;
             this.right = right;
         }
 
         @Override
-        public Function getLeft() {
-            return left;
+        public @NotNull Interval getInterval(Record rec) {
+            interval.of(left.getInt(rec), right.getInt(rec));
+            return interval;
         }
 
         @Override
-        public long getLong(Record rec) {
-            return ((long) left.getInt(rec) << 32) | right.getInt(rec);
+        public Function getLeft() {
+            return left;
         }
 
         @Override

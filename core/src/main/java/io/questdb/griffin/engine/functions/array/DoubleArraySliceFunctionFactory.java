@@ -36,13 +36,13 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
+import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
 
 public class DoubleArraySliceFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "[](D[]L)";
+        return "[](D[]Δ)";
     }
 
     @Override
@@ -78,10 +78,13 @@ public class DoubleArraySliceFunctionFactory implements FunctionFactory {
         public ArrayView getArray(Record rec) {
             ArrayView array = arrayFunc.getArray(rec);
             borrowedView.of(array);
-            long range = rangeFunc.getLong(rec);
-            int rangeLeft = Numbers.decodeHighInt(range);
-            int rangeRight = Numbers.decodeLowInt(range);
-            borrowedView.sliceOneDim(0, rangeLeft, rangeRight);
+            Interval range = rangeFunc.getInterval(rec);
+            long loLong = range.getLo();
+            long hiLong = range.getHi();
+            int lo = (int) loLong;
+            int hi = (int) hiLong;
+            assert lo == loLong && hi == hiLong : "int overflow on interval bounds";
+            borrowedView.sliceOneDim(0, lo, hi);
             return borrowedView;
         }
 
