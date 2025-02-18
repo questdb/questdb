@@ -239,7 +239,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.math.AddDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.AddLong256FunctionFactory,
             io.questdb.griffin.engine.functions.date.AddLongToTimestampFunctionFactory,
-//                     '-' operator,
+//                     '-' operator
             io.questdb.griffin.engine.functions.math.NegIntFunctionFactory,
             io.questdb.griffin.engine.functions.math.NegDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.NegFloatFunctionFactory,
@@ -251,17 +251,17 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.math.SubIntFunctionFactory,
             io.questdb.griffin.engine.functions.math.SubLongFunctionFactory,
             io.questdb.griffin.engine.functions.math.SubTimestampFunctionFactory,
-//                     '/' operator,
+//                     '/' operator
             io.questdb.griffin.engine.functions.math.DivDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.DivFloatFunctionFactory,
             io.questdb.griffin.engine.functions.math.DivLongFunctionFactory,
             io.questdb.griffin.engine.functions.math.DivIntFunctionFactory,
-//                     '%' operator,
+//                     '%' operator
             io.questdb.griffin.engine.functions.math.RemIntFunctionFactory,
             io.questdb.griffin.engine.functions.math.RemLongFunctionFactory,
             io.questdb.griffin.engine.functions.math.RemDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.RemFloatFunctionFactory,
-//                     '*' operator,
+//                     '*' operator
             io.questdb.griffin.engine.functions.math.MulFloatFunctionFactory,
             io.questdb.griffin.engine.functions.math.MulDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.MulLongFunctionFactory,
@@ -285,7 +285,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.math.PIDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.RadiansDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.math.DegreesDoubleFunctionFactory,
-//                     '~=',
+//                     '~='
             io.questdb.griffin.engine.functions.regex.MatchStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.MatchCharFunctionFactory,
             io.questdb.griffin.engine.functions.regex.MatchVarcharFunctionFactory,
@@ -300,20 +300,20 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.regex.ILikeStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.ILikeVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.regex.ILikeSymbolFunctionFactory,
-//                     '!~',
+//                     '!~'
             io.questdb.griffin.engine.functions.regex.NotMatchStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.NotMatchVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.regex.NotMatchCharFunctionFactory,
-//                     'to_char',
+//                     'to_char'
             io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory,
             io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.str.ToCharBinFunctionFactory,
-//                     'length',
+//                     'length'
             io.questdb.griffin.engine.functions.str.LengthStrFunctionFactory,
             io.questdb.griffin.engine.functions.str.LengthVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.str.LengthSymbolFunctionFactory,
             io.questdb.griffin.engine.functions.str.LengthBinFunctionFactory,
-//                     random generator functions,
+//                     random generator functions
             io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndBooleanFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndIntFunctionFactory,
@@ -353,7 +353,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.rnd.RndGeoHashFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndLogFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndIntervalFunctionFactory,
-//                  date conversion functions,
+//                  date conversion functions
             io.questdb.griffin.engine.functions.date.TimestampShuffleFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampFloorOffsetFunctionFactory,
@@ -398,8 +398,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.date.VarcharToPgDateFunctionFactory,
             io.questdb.griffin.engine.functions.date.PgPostmasterStartTimeFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampSequenceFunctionFactory,
-//                  cast functions,
-//                  cast double to ...,
+//                  cast functions
+//                  cast double to ...
             io.questdb.griffin.engine.functions.cast.CastDoubleToBooleanFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastDoubleToIntFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastDoubleToDoubleFunctionFactory,
@@ -414,7 +414,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastDoubleToCharFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastDoubleToDateFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastDoubleToTimestampFunctionFactory,
-//                  cast float to ...,
+//                  cast float to ...
             io.questdb.griffin.engine.functions.cast.CastFloatToBooleanFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastFloatToIntFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastFloatToDoubleFunctionFactory,
@@ -429,7 +429,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastFloatToCharFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastFloatToDateFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastFloatToTimestampFunctionFactory,
-//                  cast short to ...,
+//                  cast short to ...
             io.questdb.griffin.engine.functions.cast.CastShortToShortFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastShortToByteFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastShortToCharFunctionFactory,
@@ -444,7 +444,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastShortToSymbolFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastShortToLong256FunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastShortToBooleanFunctionFactory,
-//                  cast int to ...,
+//                  cast int to ...
             io.questdb.griffin.engine.functions.cast.CastIntToShortFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastIntToByteFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastIntToCharFunctionFactory,
@@ -464,7 +464,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastIPv4ToStrFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastIPv4ToVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastIPv4ToIntFunctionFactory,
-//                  cast long to ...,
+//                  cast long to ...
             io.questdb.griffin.engine.functions.cast.CastLongToShortFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToByteFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToCharFunctionFactory,
@@ -481,7 +481,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastLongToLong256FunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToBooleanFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLongToGeoHashFunctionFactory,
-//                  cast long256 to ...,
+//                  cast long256 to ...
             io.questdb.griffin.engine.functions.cast.CastLong256ToShortFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLong256ToByteFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLong256ToCharFunctionFactory,
@@ -496,7 +496,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastLong256ToSymbolFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLong256ToLong256FunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastLong256ToBooleanFunctionFactory,
-//                  cast date to ...,
+//                  cast date to ...
             io.questdb.griffin.engine.functions.cast.CastDateToShortFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastDateToByteFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastDateToCharFunctionFactory,
@@ -511,7 +511,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastDateToSymbolFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastDateToLong256FunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastDateToBooleanFunctionFactory,
-//                  cast timestamp to ...,
+//                  cast timestamp to ...
             io.questdb.griffin.engine.functions.cast.CastTimestampToShortFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastTimestampToByteFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastTimestampToCharFunctionFactory,
@@ -526,7 +526,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastTimestampToSymbolFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastTimestampToLong256FunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastTimestampToBooleanFunctionFactory,
-//                  cast byte to ...,
+//                  cast byte to ...
             io.questdb.griffin.engine.functions.cast.CastByteToShortFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastByteToByteFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastByteToCharFunctionFactory,
@@ -541,7 +541,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastByteToSymbolFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastByteToLong256FunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastByteToBooleanFunctionFactory,
-//                  cast boolean to ...,
+//                  cast boolean to ...
             io.questdb.griffin.engine.functions.cast.CastBooleanToShortFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastBooleanToByteFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastBooleanToCharFunctionFactory,
@@ -556,7 +556,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastBooleanToSymbolFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastBooleanToLong256FunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastBooleanToBooleanFunctionFactory,
-//                  cast char to ...,
+//                  cast char to ...
             io.questdb.griffin.engine.functions.cast.CastCharToShortFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastCharToByteFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastCharToCharFunctionFactory,
@@ -570,7 +570,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastCharToSymbolFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastCharToLong256FunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastCharToTimestampFunctionFactory,
-//                  cast str to ...,
+//                  cast str to ...
             io.questdb.griffin.engine.functions.cast.CastStrToIntFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToIPv4FunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToDoubleFunctionFactory,
@@ -593,7 +593,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastStrToBinaryFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToUuidFunctionFactory,
-//                  cast varchar to ...,
+//                  cast varchar to ...
             io.questdb.griffin.engine.functions.cast.CastVarcharToVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastVarcharToStrFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastVarcharToBooleanFunctionFactory,
