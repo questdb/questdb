@@ -27,9 +27,9 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.DirectArrayView;
+import io.questdb.cairo.arr.NoopArrayState;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.arr.NoopArrayState;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cutlass.line.tcp.ArrayParser;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -335,6 +335,9 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    // TODO: The code should throw a SqlException, before executing the query
+    // currently it throws CairoException because it validates the array
+    // against the coordinates only during function evaluation
     public void testSelectArrayElementsNotEnoughCoords() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4]] arr FROM long_sequence(1))");
