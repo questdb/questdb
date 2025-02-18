@@ -163,7 +163,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             execute("rename table base_price to base_price2");
-            execute("refresh materialized view 'price_1h';");
+            execute("refresh materialized view 'price_1h' full;");
             currentMicros = parseFloorPartialTimestamp("2024-10-24T18");
             drainQueues();
 
@@ -180,7 +180,7 @@ public class MatViewTest extends AbstractCairoTest {
                             "sym varchar, price double, ts timestamp" +
                             ") timestamp(ts) partition by DAY BYPASS WAL"
             );
-            execute("refresh materialized view 'price_1h';");
+            execute("refresh materialized view 'price_1h' full;");
             currentMicros = parseFloorPartialTimestamp("2024-10-24T19");
             drainQueues();
 
@@ -471,8 +471,102 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullRefresh() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp, extra_col long" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute(
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+
+            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
+            drainQueues();
+
+            assertSql(
+                    "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
+                            "price_1h\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tfalse\t1\t1\n",
+                    "mat_views"
+            );
+
+            final String expected = "sym\tprice\tts\n" +
+                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n";
+            assertSql(expected, "price_1h order by sym");
+
+            execute("alter table base_price drop column extra_col");
+            drainQueues();
+
+            assertSql(
+                    "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
+                            "price_1h\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tdrop column operation\ttrue\t1\t2\n",
+                    "mat_views"
+            );
+
+            execute("refresh materialized view price_1h full");
+            drainQueues();
+
+            assertSql(
+                    "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
+                            "price_1h\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tfalse\t2\t2\n",
+                    "mat_views"
+            );
+            assertSql(expected, "price_1h order by sym");
+        });
+    }
+
+    @Test
     public void testIncrementalRefresh() throws Exception {
         testIncrementalRefresh0("select sym, last(price) as price, ts from base_price sample by 1h");
+    }
+
+    @Test
+    public void testIncrementalRefreshStatement() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp, extra_col long" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute(
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+
+            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
+            // this statement will notify refresh job before the WAL apply job,
+            // but technically that's redundant
+            execute("refresh materialized view price_1h incremental");
+            drainQueues();
+
+            assertSql(
+                    "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
+                            "price_1h\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tfalse\t1\t1\n",
+                    "mat_views"
+            );
+
+            assertSql(
+                    "sym\tprice\tts\n" +
+                            "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
+                            "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
+                            "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    "price_1h order by sym"
+            );
+        });
     }
 
     @Test
@@ -844,60 +938,6 @@ public class MatViewTest extends AbstractCairoTest {
                             "price_1h\tbase_price\ttrue\t[-1] unexpected filter error\n",
                     "select name, baseTableName, invalid, invalidationReason from mat_views"
             );
-        });
-    }
-
-    @Test
-    public void testRebuild() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    "create table base_price (" +
-                            "sym varchar, price double, ts timestamp, extra_col long" +
-                            ") timestamp(ts) partition by DAY WAL"
-            );
-
-            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
-
-            execute(
-                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
-                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
-                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
-                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
-            );
-
-            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
-            drainQueues();
-
-            assertSql(
-                    "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
-                            "price_1h\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tfalse\t1\t1\n",
-                    "mat_views"
-            );
-
-            final String expected = "sym\tprice\tts\n" +
-                    "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
-                    "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
-                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n";
-            assertSql(expected, "price_1h order by sym");
-
-            execute("alter table base_price drop column extra_col");
-            drainQueues();
-
-            assertSql(
-                    "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
-                            "price_1h\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tdrop column operation\ttrue\t1\t2\n",
-                    "mat_views"
-            );
-
-            execute("refresh materialized view price_1h");
-            drainQueues();
-
-            assertSql(
-                    "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
-                            "price_1h\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tfalse\t2\t2\n",
-                    "mat_views"
-            );
-            assertSql(expected, "price_1h order by sym");
         });
     }
 

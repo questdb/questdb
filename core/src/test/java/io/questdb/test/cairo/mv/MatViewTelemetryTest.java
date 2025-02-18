@@ -159,7 +159,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
 
                     execute("2024-10-24T17:00:33.000000Z", refreshJob, telemetryJob,
                             "rename table base_price to base_price2",
-                            "refresh materialized view 'price_1h';"
+                            "refresh materialized view 'price_1h' full;"
                     );
                 }
 

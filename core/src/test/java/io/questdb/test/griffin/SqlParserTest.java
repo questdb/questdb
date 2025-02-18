@@ -7710,12 +7710,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "REFRESH MATERIALIZED VIEW",
                 25,
-                "view name expected"
+                "materialized view name expected"
         );
         assertSyntaxError(
                 "REFRESH MATERIALIZED VIEW",
                 25,
-                "view name expected"
+                "materialized view name expected"
         );
     }
 
@@ -7740,7 +7740,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
             assertException(
                     "REFRESH MATERIALIZED VIEW base_table",
                     26,
-                    "materialized view expected"
+                    "materialized view name expected, got table name"
             );
         });
     }
@@ -7753,6 +7753,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
             assertException(
                     "REFRESH MATERIALIZED VIEW 'x_view' foobar",
                     35,
+                    "'full' or 'incremental' expected"
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshMatView6() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertException(
+                    "REFRESH MATERIALIZED VIEW 'x_view' INCREMENTAL foobar",
+                    47,
                     "unexpected token"
             );
         });

@@ -1936,19 +1936,25 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "'view' expected'");
         }
 
-        tok = expectToken(lexer, "view name");
+        tok = expectToken(lexer, "materialized view name");
         if (isSemicolon(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "view name expected'");
+            throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected");
         }
         assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
         final CharSequence matViewName = GenericLexer.unquote(tok);
-        final TableToken tableToken = executionContext.getTableTokenIfExists(matViewName);
-        if (tableToken == null) {
+        final TableToken matViewToken = executionContext.getTableTokenIfExists(matViewName);
+        if (matViewToken == null) {
             throw SqlException.matViewDoesNotExist(lexer.lastTokenPosition(), matViewName);
         }
-        if (!tableToken.isMatView()) {
-            throw SqlException.$(lexer.lastTokenPosition(), "materialized view expected");
+        if (!matViewToken.isMatView()) {
+            throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected, got table name");
+        }
+
+        tok = expectToken(lexer, "'full' or 'incremental'");
+        final boolean incremental = isIncrementalKeyword(tok);
+        if (!incremental && !isFullKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'full' or 'incremental' expected");
         }
 
         tok = SqlUtil.fetchNext(lexer);
@@ -1957,8 +1963,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         final MatViewGraph matViewGraph = engine.getMatViewGraph();
-        executionContext.getSecurityContext().authorizeMatViewRefresh(tableToken);
-        matViewGraph.enqueueRebuild(tableToken);
+        executionContext.getSecurityContext().authorizeMatViewRefresh(matViewToken);
+        if (incremental) {
+            matViewGraph.enqueueRefresh(matViewToken);
+        } else {
+            matViewGraph.enqueueRebuild(matViewToken);
+        }
         compiledQuery.ofRefreshMatView();
     }
 
@@ -2860,7 +2870,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.matViewDoesNotExist(op.getEntityNamePosition(), op.getEntityName());
         }
         if (!tableToken.isMatView()) {
-            throw SqlException.$(op.getEntityNamePosition(), "materialized view name expected, got table name: ").put(op.getEntityName());
+            throw SqlException.$(op.getEntityNamePosition(), "materialized view name expected, got table name");
         }
         sqlExecutionContext.getSecurityContext().authorizeMatViewDrop(tableToken);
 

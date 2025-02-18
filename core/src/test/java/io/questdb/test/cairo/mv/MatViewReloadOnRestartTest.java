@@ -384,7 +384,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                         "select name, invalid, invalidationReason from mat_views()"
                 );
 
-                execute(main2, "refresh materialized view price_1h");
+                execute(main2, "refresh materialized view price_1h full;");
                 drainWalQueue(main2.getEngine());
                 try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine())) {
                     refreshJob.run(0);

@@ -249,7 +249,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 final String viewSql = viewSqls.getQuick(i);
                 final String mvName = testTableName + "_" + i + "_mv";
 
-                execute("refresh materialized view '" + mvName + "';");
+                execute("refresh materialized view '" + mvName + "' full;");
                 runRefreshJobAndDrainWalQueue();
 
                 LOG.info().$("asserting view ").$(mvName).$(" against ").$(viewSql).$();
