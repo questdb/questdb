@@ -25,12 +25,20 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor;
+import io.questdb.griffin.engine.table.PageFrameRecordCursor;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.Nullable;
 
 public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -191,6 +199,13 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
             this.base = base;
             loFunction.init(base, executionContext);
+            long lo = loFunction.getLong(null);
+
+            if (lo != Numbers.LONG_NULL && loFunction.isRuntimeConstant()) {
+                if (lo < 0 && base instanceof PageFrameRecordCursor && ((PageFrameRecordCursor) base).getPageFrameCursor() instanceof FwdTableReaderPageFrameCursor) {
+                    throw TableReferenceOutOfDateException.of("shizzle");
+                }
+            }
             if (hiFunction != null) {
                 hiFunction.init(base, executionContext);
             }

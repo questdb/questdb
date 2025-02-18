@@ -2255,11 +2255,13 @@ public class SqlOptimiser implements Mutable {
     }
 
     private Function getLoFunction(ExpressionNode limit, SqlExecutionContext executionContext) throws SqlException {
+        // todo: this need not be a function (waste of resources)
         final Function func = functionParser.parseFunction(limit, EmptyRecordMetadata.INSTANCE, executionContext);
         final int type = func.getType();
         if (limitTypes.excludes(type)) {
             return null;
         }
+        func.init(null, executionContext);
         return func;
     }
 
@@ -3694,7 +3696,7 @@ public class SqlOptimiser implements Mutable {
                         && Chars.equalsIgnoreCase(nested.getTimestamp().token, nested.getOrderBy().get(0).token)
                         && nested.getOrderByDirection().get(0) == ORDER_DIRECTION_DESCENDING
                         && (loFunction = getLoFunction(model.getLimitLo(), executionContext)) != null
-                        && loFunction.isConstant()
+                        && (loFunction.isConstant() || loFunction.isRuntimeConstant())
                         && (limitValue = loFunction.getLong(null)) > 0
                         && (limitValue >= -executionContext.getCairoEngine().getConfiguration().getSqlMaxNegativeLimit())) {
 
@@ -4316,7 +4318,7 @@ public class SqlOptimiser implements Mutable {
                         && nested.getTimestamp() != null
                         && nested.getWhereClause() == null
                         && (loFunction = getLoFunction(model.getLimitLo(), executionContext)) != null
-                        && loFunction.isConstant()
+                        && (loFunction.isConstant() || loFunction.isRuntimeConstant())
                         && (limitValue = loFunction.getLong(null)) < 0
                         && (limitValue >= -executionContext.getCairoEngine().getConfiguration().getSqlMaxNegativeLimit())
                         && ((orderBy = nested.getOrderBy()).size() == 0 ||

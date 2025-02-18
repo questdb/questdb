@@ -36,9 +36,9 @@ import io.questdb.std.Misc;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
-import java.io.IOException;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -94,11 +94,88 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                 createTable(serverMain, 100);
                 try (Connection connection = getConnection(serverMain)) {
                     final String sql = "SELECT col1, sum(status) as sum, last(ts) as last FROM tab ORDER BY 2 DESC LIMIT ?,?";
-                    runQueryWithParamsTwice(connection, sql, 1, 3, 1, 2, "col1[VARCHAR],sum[BIGINT],last[TIMESTAMP]\n" +
+                    try (final PreparedStatement stmt = connection.prepareStatement(sql)) {
+                        stmt.setInt(1, 1);
+                        stmt.setInt(2, 3);
+                        try (final ResultSet resultSet = stmt.executeQuery()) {
+                            assertResultSet("col1[VARCHAR],sum[BIGINT],last[TIMESTAMP]\n" +
                                     "Sym2,50,1970-01-01 00:00:29.7\n" +
-                                    "Sym1,49,1970-01-01 00:00:29.9\n",
-                            "col1[VARCHAR],sum[BIGINT],last[TIMESTAMP]\n" +
-                                    "Sym2,50,1970-01-01 00:00:29.7\n");
+                                    "Sym1,49,1970-01-01 00:00:29.9\n", Misc.getThreadLocalSink(), resultSet);
+                        }
+                        //                 "select * from a order by ts  limit -5",
+                        //                     "select * from a limit -10+2",
+                        // "select * from a order by ts desc limit -10"
+                        stmt.clearParameters();
+                        stmt.setInt(1, 1);
+                        stmt.setInt(2, 2);
+                        try (final ResultSet resultSet = stmt.executeQuery()) {
+                            assertResultSet("col1[VARCHAR],sum[BIGINT],last[TIMESTAMP]\n" +
+                                    "Sym2,50,1970-01-01 00:00:29.7\n", Misc.getThreadLocalSink(), resultSet);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    @Ignore
+    public void testBindVariableLimitSignChange() throws Exception {
+        assertMemoryLeak(() -> {
+            createDummyConfiguration("pg.select.cache.enabled=true");
+            try (final ServerMain serverMain = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
+                serverMain.start();
+                createTable(serverMain, 100);
+                try (Connection connection = getConnection(serverMain)) {
+                    try (final PreparedStatement stmt = connection.prepareStatement("explain SELECT * FROM tab LIMIT ?")) {
+                        stmt.setInt(1, 1);
+                        try (final ResultSet resultSet = stmt.executeQuery()) {
+                            assertResultSet(
+                                    "QUERY PLAN[VARCHAR]\n" +
+                                            "Limit lo: $0::int\n" +
+                                            "    PageFrame\n" +
+                                            "        Row forward scan\n" +
+                                            "        Frame forward scan on: tab\n",
+                                    Misc.getThreadLocalSink(),
+                                    resultSet
+                            );
+                        }
+                        stmt.clearParameters();
+                        stmt.setInt(1, -1);
+                        try (final ResultSet resultSet = stmt.executeQuery()) {
+                            assertResultSet(
+                                    "QUERY PLAN[VARCHAR]\n" +
+                                            "Limit lo: 1\n" +
+                                            "    PageFrame\n" +
+                                            "        Row backward scan\n" +
+                                            "        Frame backward scan on: tab\n",
+                                    Misc.getThreadLocalSink(),
+                                    resultSet
+                            );
+                        }
+                    }
+
+                    try (final PreparedStatement stmt = connection.prepareStatement("SELECT * FROM tab LIMIT ?")) {
+                        stmt.setInt(1, 1);
+                        try (final ResultSet resultSet = stmt.executeQuery()) {
+                            assertResultSet(
+                                    "col1[VARCHAR],status[BIGINT],ts[TIMESTAMP]\n" +
+                                            "Sym1,1,1970-01-01 00:00:20.0\n",
+                                    Misc.getThreadLocalSink(),
+                                    resultSet
+                            );
+                        }
+                        stmt.clearParameters();
+                        stmt.setInt(1, -1);
+                        try (final ResultSet resultSet = stmt.executeQuery()) {
+                            assertResultSet(
+                                    "col1[VARCHAR],status[BIGINT],ts[TIMESTAMP]\n" +
+                                            "Sym1,0,1970-01-01 00:00:29.9\n",
+                                    Misc.getThreadLocalSink(),
+                                    resultSet
+                            );
+                        }
+                    }
                 }
             }
         });
@@ -190,11 +267,11 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
         return DriverManager.getConnection(url, properties);
     }
 
-    private static void runQueryWithParams(Connection connection, String sql, int status, int limitLow, String expected) throws SQLException, IOException {
+    private static void runQueryWithParams(Connection connection, String sql, int status, int limitLow, String expected) throws SQLException {
         runQueryWithParams(connection, sql, status, limitLow, 0, expected);
     }
 
-    private static void runQueryWithParams(Connection connection, String sql, int status, int limitLow, int limitHigh, String expected) throws SQLException, IOException {
+    private static void runQueryWithParams(Connection connection, String sql, int status, int limitLow, int limitHigh, String expected) throws SQLException {
         final PreparedStatement stmt = connection.prepareStatement(sql);
         stmt.setInt(1, status);
         stmt.setInt(2, limitLow);
@@ -206,21 +283,4 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
         stmt.close();
     }
 
-    private static void runQueryWithParamsTwice(Connection connection, String sql, int limitLow, int limitHigh, int limitLow2, int limitHigh2, String expected, String expected2) throws SQLException, IOException {
-        final PreparedStatement stmt = connection.prepareStatement(sql);
-        stmt.setInt(1, limitLow);
-        if (limitHigh != 0) {
-            stmt.setInt(2, limitHigh);
-        }
-        final ResultSet resultSet = stmt.executeQuery();
-        assertResultSet(expected, Misc.getThreadLocalSink(), resultSet);
-        stmt.clearParameters();
-        stmt.setInt(1, limitLow2);
-        if (limitHigh != 0) {
-            stmt.setInt(2, limitHigh2);
-        }
-        final ResultSet resultSet2 = stmt.executeQuery();
-        assertResultSet(expected2, Misc.getThreadLocalSink(), resultSet2);
-        stmt.close();
-    }
 }

@@ -792,7 +792,8 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                                 pipelineCurrentEntry.getSqlText(),
                                 engine,
                                 sqlExecutionContext,
-                                taiPool
+                                taiPool,
+                                false
                         );
                     }
 
@@ -1093,7 +1094,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             // When parameter types are not supplied we will assume that the types are STRING
             // this is done by default, when CairoEngine compiles the SQL text. Assuming we're
             // compiling the SQL from scratch.
-            pipelineCurrentEntry.compileNewSQL(utf16SqlText, engine, sqlExecutionContext, taiPool);
+            pipelineCurrentEntry.compileNewSQL(utf16SqlText, engine, sqlExecutionContext, taiPool, false);
         }
         msgParseCreateTargetStatement(targetStatementName);
     }

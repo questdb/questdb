@@ -37,7 +37,7 @@ import org.junit.Test;
 
 public class LimitTest extends AbstractCairoTest {
 
-    private static String createTableDdl = "create table y as (" +
+    private static final String createTableDdl = "create table y as (" +
             "select" +
             " cast(x as int) i," +
             " rnd_symbol('msft','ibm', 'googl') sym2," +
@@ -58,7 +58,7 @@ public class LimitTest extends AbstractCairoTest {
             " from long_sequence(30)" +
             ") timestamp(timestamp)";
 
-    private static String createTableDml = "insert into y select * from " +
+    private static final String createTableDml = "insert into y select * from " +
             "(select" +
             " cast(x + 30 as int) i," +
             " rnd_symbol('msft','ibm', 'googl') sym2," +
@@ -301,9 +301,9 @@ public class LimitTest extends AbstractCairoTest {
             execute(createTableDdl);
             execute(createTableDml);
 
-            String query = "select * from y limit :lo;";
+            String query = "select * from y limit $1;";
 
-            bindVariableService.setLong("lo", 2L);
+            bindVariableService.setLong(0, 2L);
 
             assertQueryAndCache(
                     "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
@@ -315,17 +315,34 @@ public class LimitTest extends AbstractCairoTest {
                     false
             );
 
-            assertPlanNoLeakCheck(query, "Limit lo: :lo::long\n" +
+            assertPlanNoLeakCheck(
+                    query,
+                    "Limit lo: $0::long\n" +
                     "    PageFrame\n" +
                     "        Row forward scan\n" +
-                    "        Frame forward scan on: y\n");
+                    "        Frame forward scan on: y\n"
+            );
 
-            bindVariableService.setLong("lo", -2L);
+            assertPlanNoLeakCheck(
+                    "select * from y limit -2",
+                    "Radix sort light\n" +
+                            "  keys: [timestamp]\n" +
+                            "    Limit lo: 2\n" +
+                            "        PageFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: y\n"
+            );
 
-            assertPlanNoLeakCheck(query, "Limit lo: :lo::long\n" +
-                    "    PageFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Frame forward scan on: y\n");
+            bindVariableService.setLong(0, -2L);
+
+            assertPlanNoLeakCheck(
+                    query,
+                    "Radix sort light\n" +
+                            "  keys: [timestamp]\n" +
+                            "    Limit lo: 2\n" +
+                            "        PageFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: y\n");
 
             assertQuery(
                     "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
@@ -334,7 +351,7 @@ public class LimitTest extends AbstractCairoTest {
                     query,
                     "timestamp",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -582,47 +599,106 @@ public class LimitTest extends AbstractCairoTest {
             execute(createTableDdl);
             execute(createTableDml);
 
-            String query = "select * from y order by timestamp desc, c limit :lo; :hi";
+            String query = "select * from y order by timestamp desc, c limit $1, $2";
 
-            bindVariableService.setLong("lo", 2L);
-            bindVariableService.setLong("hi", 5L);
+            bindVariableService.setLong(0, 2L);
+            bindVariableService.setLong(1, 5L);
 
             assertQueryAndCache(
                     "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
-                            "60\tgoogl\t0.852\t2018-01-01T02:00:00.000000Z\ttrue\tKZZ\tnull\tnull\t834\t2015-07-15T04:34:51.645Z\tLMSR\t-4834150290387342806\t1970-01-01T08:03:20.000000Z\t23\t00000000 dd 02 98 ad a8 82 73 a6 7f db d6 20\tFDRPHNGTNJJPT\n" +
-                            "59\tgoogl\t0.778\t2018-01-01T01:58:00.000000Z\tfalse\tKZZ\t0.7741801422529707\t0.1870\t586\t2015-05-27T15:12:16.295Z\t\t-7715437488835448247\t1970-01-01T07:46:40.000000Z\t10\t\tEPLWDUWIWJTLCP\n",
+                            "58\tibm\t0.445\t2018-01-01T01:56:00.000000Z\ttrue\tCDE\t0.7613115945849444\tnull\t118\t\tHGKR\t-5065534156372441821\t1970-01-01T07:30:00.000000Z\t4\t00000000 cd 98 7d ba 9d 68 2a 79 76 fc\tBGCKOSB\n" +
+                            "57\tgoogl\t0.756\t2018-01-01T01:54:00.000000Z\tfalse\tKZZ\t0.8925723033175609\t0.9925\t416\t2015-11-08T09:45:16.753Z\tLVSY\t7173713836788833462\t1970-01-01T07:13:20.000000Z\t29\t00000000 4d 0d d7 44 2d f1 57 ea aa 41 c5 55 ef 19 d9 0f\n" +
+                            "00000010 61 2d\tEYDNMIOCCVV\n" +
+                            "56\tmsft\t0.061\t2018-01-01T01:52:00.000000Z\ttrue\tCDE\t0.7792511437604662\t0.3966\t341\t2015-03-04T08:18:06.265Z\tLVSY\t5320837171213814710\t1970-01-01T06:56:40.000000Z\t16\t\tJCUBBMQSRHLWSX\n",
                     query,
                     "timestamp###DESC",
                     true,
                     true
             );
 
-            assertPlanNoLeakCheck(query, "Sort light lo: :lo::long\n" +
+            assertPlanNoLeakCheck(
+                    query,
+                    "Sort light lo: $0::long hi: $1::long\n" +
                     "  keys: [timestamp desc, c]\n" +
                     "    PageFrame\n" +
                     "        Row forward scan\n" +
-                    "        Frame forward scan on: y\n");
+                    "        Frame forward scan on: y\n"
+            );
 
-            bindVariableService.setLong("lo", 8L);
-            bindVariableService.setLong("hi", 13L);
+            bindVariableService.setLong(0, 8L);
+            bindVariableService.setLong(1, 13L);
 
-            assertPlanNoLeakCheck(query, "Sort light lo: :lo::long\n" +
-                    "  keys: [timestamp desc, c]\n" +
-                    "    PageFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Frame forward scan on: y\n");
+            assertPlanNoLeakCheck(
+                    query,
+                    "Sort light lo: $0::long hi: $1::long\n" +
+                            "  keys: [timestamp desc, c]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: y\n"
+            );
 
             assertQuery(
                     "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
-                            "60\tgoogl\t0.852\t2018-01-01T02:00:00.000000Z\ttrue\tKZZ\tnull\tnull\t834\t2015-07-15T04:34:51.645Z\tLMSR\t-4834150290387342806\t1970-01-01T08:03:20.000000Z\t23\t00000000 dd 02 98 ad a8 82 73 a6 7f db d6 20\tFDRPHNGTNJJPT\n" +
-                            "59\tgoogl\t0.778\t2018-01-01T01:58:00.000000Z\tfalse\tKZZ\t0.7741801422529707\t0.1870\t586\t2015-05-27T15:12:16.295Z\t\t-7715437488835448247\t1970-01-01T07:46:40.000000Z\t10\t\tEPLWDUWIWJTLCP\n" +
-                            "58\tibm\t0.445\t2018-01-01T01:56:00.000000Z\ttrue\tCDE\t0.7613115945849444\tnull\t118\t\tHGKR\t-5065534156372441821\t1970-01-01T07:30:00.000000Z\t4\t00000000 cd 98 7d ba 9d 68 2a 79 76 fc\tBGCKOSB\n" +
-                            "57\tgoogl\t0.756\t2018-01-01T01:54:00.000000Z\tfalse\tKZZ\t0.8925723033175609\t0.9925\t416\t2015-11-08T09:45:16.753Z\tLVSY\t7173713836788833462\t1970-01-01T07:13:20.000000Z\t29\t00000000 4d 0d d7 44 2d f1 57 ea aa 41 c5 55 ef 19 d9 0f\n" +
-                            "00000010 61 2d\tEYDNMIOCCVV\n" +
-                            "56\tmsft\t0.061\t2018-01-01T01:52:00.000000Z\ttrue\tCDE\t0.7792511437604662\t0.3966\t341\t2015-03-04T08:18:06.265Z\tLVSY\t5320837171213814710\t1970-01-01T06:56:40.000000Z\t16\t\tJCUBBMQSRHLWSX\n" +
-                            "55\tibm\t0.213\t2018-01-01T01:50:00.000000Z\tfalse\tKZZ\tnull\t0.0379\t503\t2015-08-25T16:59:46.151Z\tKKUS\t8510474930626176160\t1970-01-01T06:40:00.000000Z\t13\t\t\n" +
-                            "54\tmsft\t0.266\t2018-01-01T01:48:00.000000Z\tfalse\t\t0.26652004252953776\t0.0911\t937\t\t\t-7761587678997431446\t1970-01-01T06:23:20.000000Z\t39\t00000000 53 28 c0 93 b2 7b c7 55 0c dd fd c1\t\n" +
-                            "53\tgoogl\t0.106\t2018-01-01T01:46:00.000000Z\ttrue\tABC\t0.5869842992348637\t0.4215\t762\t2015-03-07T03:16:06.453Z\tHGKR\t-7872707389967331757\t1970-01-01T06:06:40.000000Z\t3\t00000000 8d ca 1d d0 b2 eb 54 3f 32 82\tQQDOZFIDQTYO\n",
+                            "52\tgoogl\t0.512\t2018-01-01T01:44:00.000000Z\tfalse\tABC\t0.4112208369860437\t0.2756\t740\t2015-02-23T09:03:19.389Z\tHGKR\t1930705357282501293\t1970-01-01T05:50:00.000000Z\t19\t\t\n" +
+                            "51\tgoogl\t0.761\t2018-01-01T01:42:00.000000Z\ttrue\tABC\t0.25251288918411996\tnull\t719\t2015-05-22T06:14:06.815Z\tHGKR\t7822359916932392178\t1970-01-01T05:33:20.000000Z\t2\t00000000 26 4f e4 51 37 85 e1 e4 6e 75 fc f4 57 0e 7b 09\n" +
+                            "00000010 de 09 5e d7\tWCDVPWCYCTDDNJ\n" +
+                            "50\tibm\t0.706\t2018-01-01T01:40:00.000000Z\tfalse\tKZZ\t0.4743479290495217\t0.5190\t864\t2015-04-26T09:59:33.624Z\tKKUS\t2808899229016932370\t1970-01-01T05:16:40.000000Z\t5\t00000000 39 dc 8c 6c 6b ac 60 aa bc f4 27 61 78\tPGHPS\n" +
+                            "49\tibm\t0.048\t2018-01-01T01:38:00.000000Z\ttrue\t\t0.3744661371925302\t0.1264\t28\t2015-09-06T14:09:17.223Z\tHGKR\t-7172806426401245043\t1970-01-01T05:00:00.000000Z\t29\t00000000 42 9e 8a 86 17 89 6b c0 cd a4 21 12 b7 e3\tRPYKHPMBMDR\n" +
+                            "48\tgoogl\t0.164\t2018-01-01T01:36:00.000000Z\ttrue\tABC\t0.18100042286604445\t0.5756\t415\t2015-04-28T21:13:18.568Z\t\t7970442953226983551\t1970-01-01T04:43:20.000000Z\t19\t\t\n",
+                    query,
+                    "timestamp###DESC",
+                    true,
+                    true
+            );
+
+            // non-parameterized query
+            assertQuery(
+                    "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
+                            "10\tmsft\t0.509\t2018-01-01T00:20:00.000000Z\ttrue\tI\t0.49153268154777974\t0.0024\t195\t2015-10-15T17:45:21.025Z\t\t3987576220753016999\t1970-01-01T02:30:00.000000Z\t20\t00000000 96 37 08 dd 98 ef 54 88 2a a2\t\n" +
+                            "9\tmsft\t0.623\t2018-01-01T00:18:00.000000Z\tfalse\tI\t0.8786111112537701\t0.9966\t403\t2015-08-19T00:36:24.375Z\tCPSW\t-8506266080452644687\t1970-01-01T02:13:20.000000Z\t6\t00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t\n" +
+                            "8\tibm\t0.543\t2018-01-01T00:16:00.000000Z\ttrue\tO\t0.4835256202036067\t0.8688\t355\t2015-09-06T20:21:06.672Z\t\t-9219078548506735248\t1970-01-01T01:56:40.000000Z\t33\t00000000 b3 14 cd 47 0b 0c 39 12 f7 05 10 f4 6d f1\tXUKLGMXSLUQ\n" +
+                            "7\tgoogl\t0.076\t2018-01-01T00:14:00.000000Z\ttrue\tE\t0.7606252634124595\t0.0658\t1018\t2015-02-23T07:09:35.550Z\tPEHN\t7797019568426198829\t1970-01-01T01:40:00.000000Z\t10\t00000000 80 c9 eb a3 67 7a 1a 79 e4 35 e4 3a dc 5c 65 ff\tIGYVFZ\n" +
+                            "6\tmsft\t0.297\t2018-01-01T00:12:00.000000Z\tfalse\tY\t0.2672120489216767\t0.1326\t215\t\t\t-8534688874718947140\t1970-01-01T01:23:20.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n" +
+                            "5\tgoogl\t0.868\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.4274704286353759\t0.0212\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH\n" +
+                            "4\tibm\t0.148\t2018-01-01T00:08:00.000000Z\ttrue\tI\t0.3456897991538844\t0.2401\t775\t2015-08-03T15:58:03.335Z\tVTJW\t-8910603140262731534\t1970-01-01T00:50:00.000000Z\t24\t00000000 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69 38 e1 77 9a\n" +
+                            "00000010 e7 0c 89\tLJUMLGLHMLLEO\n",
+                    "select * from y order by timestamp desc, c limit -10, -3",
+                    "timestamp###DESC",
+                    true,
+                    true
+            );
+
+            assertPlanNoLeakCheck(
+                    "select * from y order by timestamp desc, c limit -10, -3",
+                    "Sort light lo: -10 hi: -3\n" +
+                            "  keys: [timestamp desc, c]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: y\n"
+            );
+
+            bindVariableService.setLong(0, -10);
+            bindVariableService.setLong(1, -3);
+
+            assertPlanNoLeakCheck(
+                    query,
+                    "Sort light lo: $0::long hi: $1::long\n" +
+                            "  keys: [timestamp desc, c]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: y\n"
+            );
+
+            assertQuery(
+                    "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
+                            "10\tmsft\t0.509\t2018-01-01T00:20:00.000000Z\ttrue\tI\t0.49153268154777974\t0.0024\t195\t2015-10-15T17:45:21.025Z\t\t3987576220753016999\t1970-01-01T02:30:00.000000Z\t20\t00000000 96 37 08 dd 98 ef 54 88 2a a2\t\n" +
+                            "9\tmsft\t0.623\t2018-01-01T00:18:00.000000Z\tfalse\tI\t0.8786111112537701\t0.9966\t403\t2015-08-19T00:36:24.375Z\tCPSW\t-8506266080452644687\t1970-01-01T02:13:20.000000Z\t6\t00000000 9a ef 88 cb 4b a1 cf cf 41 7d a6\t\n" +
+                            "8\tibm\t0.543\t2018-01-01T00:16:00.000000Z\ttrue\tO\t0.4835256202036067\t0.8688\t355\t2015-09-06T20:21:06.672Z\t\t-9219078548506735248\t1970-01-01T01:56:40.000000Z\t33\t00000000 b3 14 cd 47 0b 0c 39 12 f7 05 10 f4 6d f1\tXUKLGMXSLUQ\n" +
+                            "7\tgoogl\t0.076\t2018-01-01T00:14:00.000000Z\ttrue\tE\t0.7606252634124595\t0.0658\t1018\t2015-02-23T07:09:35.550Z\tPEHN\t7797019568426198829\t1970-01-01T01:40:00.000000Z\t10\t00000000 80 c9 eb a3 67 7a 1a 79 e4 35 e4 3a dc 5c 65 ff\tIGYVFZ\n" +
+                            "6\tmsft\t0.297\t2018-01-01T00:12:00.000000Z\tfalse\tY\t0.2672120489216767\t0.1326\t215\t\t\t-8534688874718947140\t1970-01-01T01:23:20.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n" +
+                            "5\tgoogl\t0.868\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.4274704286353759\t0.0212\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH\n" +
+                            "4\tibm\t0.148\t2018-01-01T00:08:00.000000Z\ttrue\tI\t0.3456897991538844\t0.2401\t775\t2015-08-03T15:58:03.335Z\tVTJW\t-8910603140262731534\t1970-01-01T00:50:00.000000Z\t24\t00000000 ac a8 3b a6 dc 3b 7d 2b e3 92 fe 69 38 e1 77 9a\n" +
+                            "00000010 e7 0c 89\tLJUMLGLHMLLEO\n",
                     query,
                     "timestamp###DESC",
                     true,

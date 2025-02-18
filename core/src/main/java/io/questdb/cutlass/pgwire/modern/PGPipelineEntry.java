@@ -343,7 +343,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             CharSequence sqlText,
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
-            WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
+            WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool,
+            boolean recompile
     ) throws BadProtocolException {
         // pipeline entries begin life as anonymous, typical pipeline length is 1-3 entries
         // we do not need to create new objects until we know we're caching the entry
@@ -358,10 +359,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         try {
             sqlExecutionContext.setCacheHit(cacheHit = false);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                // Define the provided PostgresSQL types on the BindVariableService. The compilation
-                // below will use these types to build the plan, and it will also define any missing bind
-                // variables.
-                msgParseDefineBindVariableTypes(sqlExecutionContext.getBindVariableService());
+                if (!recompile) {
+                    // Define the provided PostgresSQL types on the BindVariableService. The compilation
+                    // below will use these types to build the plan, and it will also define any missing bind
+                    // variables.
+                    msgParseDefineBindVariableTypes(sqlExecutionContext.getBindVariableService());
+                }
                 CompiledQuery cq = compiler.compile(this.sqlText, sqlExecutionContext);
                 // copy actual bind variable types as supplied by the client + defined by the SQL compiler
                 msgParseCopyOutTypeDescriptionTypeOIDs(sqlExecutionContext.getBindVariableService());
@@ -1390,7 +1393,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         if (attempt == maxRecompileAttempts) {
                             throw e;
                         }
-                        compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
+                        compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
                     }
                 }
             } finally {
@@ -1444,7 +1447,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             if (attempt == maxRecompileAttempts) {
                                 throw e;
                             }
-                            compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
+                            compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
                         }
                     }
                 } finally {
@@ -1518,7 +1521,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         }
                         factory = Misc.free(factory);
                     }
-                    compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
+                    compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
                 }
             } catch (Throwable e) {
                 // un-cache the erroneous SQL
@@ -1574,7 +1577,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         if (attempt == maxRecompileAttempts) {
                             throw e;
                         }
-                        compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
+                        compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
                     }
                 }
             } finally {

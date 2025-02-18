@@ -1425,12 +1425,12 @@ public final class Numbers {
 
     public static long parseLongQuiet(CharSequence sequence) {
         if (sequence == null) {
-            return Long.MIN_VALUE;
+            return LONG_NULL;
         }
         try {
             return parseLong0(sequence, 0, sequence.length());
         } catch (NumericException e) {
-            return Long.MIN_VALUE;
+            return LONG_NULL;
         }
     }
 
