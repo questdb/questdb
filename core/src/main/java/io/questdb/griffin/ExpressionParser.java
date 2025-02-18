@@ -1091,7 +1091,8 @@ public class ExpressionParser {
                         }
 
                         if (thisChar == '-' || thisChar == '~') {
-                            assert prevBranch != BRANCH_BETWEEN_START; // BRANCH_BETWEEN_START will be processed as default branch, so prevBranch must be BRANCH_OPERATOR in this case
+                            // BRANCH_BETWEEN_START will be processed as default branch, so prevBranch must be BRANCH_OPERATOR in this case
+                            assert prevBranch != BRANCH_BETWEEN_START;
                             switch (prevBranch) {
                                 case BRANCH_OPERATOR:
                                 case BRANCH_LEFT_PARENTHESIS:
@@ -1137,7 +1138,9 @@ public class ExpressionParser {
                         // push o1 onto the operator stack.
                         while ((other = opStack.peek()) != null) {
                             boolean greaterPrecedence = op.greaterPrecedence(other.precedence);
-                            // NOT unary infix operator can't pop binary operator from the left, although it has very high precedence (that's to allow usage of subexpressions like `y = FALSE AND NOT x = TRUE`)
+                            // the unary prefix NOT operator can't pop binary operator from the left,
+                            // although it has very high precedence (that's to allow usage of subexpressions
+                            // like `y = FALSE AND NOT x = TRUE`)
                             if (unaryOperator && other.paramCount > 0) {
                                 break;
                             }
@@ -1145,14 +1148,16 @@ public class ExpressionParser {
                             /*
                                 Validate consistency of query parsing with active & shadow precedence tables
                                 On the high level, process looks like following:
-                                1. We need to find "op" operator in the shadow registry: shadowOp
-                                2. We need to find "other" operator in the shadow registry: shadowOther
-                                3. Then we need to compare precedence of shadowOp & shadowOther (taking into account associativity rules)
-                                4. If comparison differs from greaterPrecedence result from above - there is a mismatch in parsing
+                                1. Find the "op" operator in the shadow registry: shadowOp
+                                2. Find the "other" operator in the shadow registry: shadowOther
+                                3. Compare precedence of shadowOp & shadowOther (taking into account associativity rules)
+                                4. If comparison differs from greaterPrecedence result from above, there is a mismatch in parsing
 
-                                The procedure is not that straightforward because we don't have exact operator type for other op.
-                                This is only a problem for ambiguous operators like minus('-'), complement('~') and set negation(e.g. 'not within')
-                                In order to partially resolve this issue we "guess" operator by its token and precedence - this helps to distinguish between minus and complement, but not for set negation
+                                The procedure is not that straightforward because we don't have exact operator type for
+                                the other op. This is only a problem for ambiguous operators like minus('-'),
+                                complement('~') and set negation(e.g. 'not within'). In order to partially resolve this
+                                issue, we "guess" operator by its token and precedence - this helps to distinguish
+                                between minus and complement, but not for set negation.
                              */
                             if (shadowRegistry != null) {
                                 OperatorExpression activeOtherGuess = activeRegistry.tryGuessOperator(other.token, other.precedence);
@@ -1224,17 +1229,20 @@ public class ExpressionParser {
                                         }
 
                                         // If the token is a right parenthesis:
-                                        // Until the token at the top of the stack is a left parenthesis, pop operators off the stack onto the output queue.
+                                        // Until the token at the top of the stack is a left parenthesis, pop operators
+                                        // off the stack onto the output queue.
                                         // Pop the left parenthesis from the stack, but not onto the output queue.
-                                        //        If the token at the top of the stack is a function token, pop it onto the output queue.
-                                        //        If the stack runs out without finding a left parenthesis, then there are mismatched parentheses.
+                                        //   - If the token at the top of the stack is a function token, pop it onto the
+                                        //     output queue.
+                                        //   - If the stack runs out without finding a left parenthesis, then there are
+                                        //     mismatched parentheses.
                                         while ((node = opStack.pop()) != null && !SqlKeywords.isCaseKeyword(node.token)) {
                                             argStackDepth = onNode(listener, node, argStackDepth, false);
                                         }
 
-                                        // 'when/else' have been clearing argStackDepth to ensure
-                                        // expressions between 'when' and 'when' do not pick up arguments outside of scope
-                                        // now we need to restore stack depth before 'case' entry
+                                        // 'when/else' have been clearing argStackDepth to ensure expressions between
+                                        // 'when' and 'when' do not pick up arguments outside of scope now we need to
+                                        // restore stack depth before 'case' entry
                                         if (argStackDepthStack.notEmpty()) {
                                             argStackDepth += argStackDepthStack.pop();
                                         }
@@ -1275,8 +1283,10 @@ public class ExpressionParser {
 
                                         if (paramCount == 0) {
                                             if (argCount == 0) {
-                                                // this is 'case when', we will indicate that this is regular 'case' to the rewrite logic
-                                                onNode(listener, expressionNodePool.next().of(ExpressionNode.LITERAL, null, Integer.MIN_VALUE, -1), argStackDepth, false);
+                                                // this is 'case when', we will indicate that this is regular 'case'
+                                                // to the rewrite logic
+                                                onNode(listener, expressionNodePool.next().of(ExpressionNode.LITERAL,
+                                                        null, Integer.MIN_VALUE, -1), argStackDepth, false);
                                             }
                                             paramCount++;
                                         }
@@ -1334,7 +1344,8 @@ public class ExpressionParser {
                                 CharacterStoreEntry cse = characterStore.newEntry();
                                 SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, en.position);
                                 cse.put(en.token).put(GenericLexer.unquoteIfNoDots(tok));
-                                opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, cse.toImmutable(), Integer.MIN_VALUE, en.position));
+                                opStack.push(expressionNodePool.next().of(
+                                        ExpressionNode.LITERAL, cse.toImmutable(), Integer.MIN_VALUE, en.position));
                             } else {
                                 final GenericLexer.FloatingSequence fsA = (GenericLexer.FloatingSequence) en.token;
                                 // vanilla 'a.b', just concat tokens efficiently
@@ -1342,10 +1353,13 @@ public class ExpressionParser {
                             }
                         } else if (prevBranch == BRANCH_DOT_DEREFERENCE) {
                             argStackDepth++;
-                            final ExpressionNode dotDereference = expressionNodePool.next().of(ExpressionNode.OPERATION, activeRegistry.dot.operator.token, activeRegistry.dot.precedence, lastPos);
+                            final ExpressionNode dotDereference = expressionNodePool.next().of(
+                                    ExpressionNode.OPERATION, activeRegistry.dot.operator.token,
+                                    activeRegistry.dot.precedence, lastPos);
                             dotDereference.paramCount = 2;
                             opStack.push(dotDereference);
-                            opStack.push(expressionNodePool.next().of(ExpressionNode.MEMBER_ACCESS, GenericLexer.immutableOf(tok), Integer.MIN_VALUE, lastPos));
+                            opStack.push(expressionNodePool.next().of(
+                                    ExpressionNode.MEMBER_ACCESS, GenericLexer.immutableOf(tok), Integer.MIN_VALUE, lastPos));
                         } else {
                             // this also could be syntax error such as extract(from x), when it should have been
                             // extract(something from x)
@@ -1387,7 +1401,8 @@ public class ExpressionParser {
                                                 continue;
                                             }
                                         }
-                                        throw SqlException.$(zoneTokPosition, "String literal expected after 'timestamp with time zone'");
+                                        throw SqlException.$(zoneTokPosition,
+                                                "String literal expected after 'timestamp with time zone'");
                                     }
                                 }
                                 lexer.backTo(withTokPosition, withTok);
@@ -1416,7 +1431,8 @@ public class ExpressionParser {
                                                     thisBranch = BRANCH_COMMA;
                                                     continue;
                                                 } else {
-                                                    throw SqlException.$(member.position, "unsupported timestamp part: ").put(member.token);
+                                                    throw SqlException.$(member.position,
+                                                            "unsupported timestamp part: ").put(member.token);
                                                 }
                                             } else {
                                                 extractError = false;
@@ -1431,8 +1447,9 @@ public class ExpressionParser {
 
                                 }
                             } else if (SqlKeywords.isOrderKeyword(tok) && opStack.size() > 2) {
-                                // PostgreSQL supports an optional ORDER BY for string_distinct_agg(), e.g.: string_distinct_agg('a', ',' ORDER BY 'b')
-                                // We do not support it and this branch exists to give a meaningful error message in this case
+                                // PostgreSQL supports an optional ORDER BY for string_distinct_agg(), e.g.:
+                                // string_distinct_agg('a', ',' ORDER BY 'b'). We do not support it and this branch
+                                // exists to give a meaningful error message in this case
                                 ExpressionNode en = opStack.peek();
                                 if (en.type == ExpressionNode.CONSTANT) {
                                     en = opStack.peek(1);
