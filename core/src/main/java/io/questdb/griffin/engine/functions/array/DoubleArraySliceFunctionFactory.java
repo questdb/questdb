@@ -74,6 +74,9 @@ public class DoubleArraySliceFunctionFactory implements FunctionFactory {
         public void close() {
             arrayFn.close();
             borrowedView.close();
+            for (int n = rangeFns.size(), i = 0; i < n; i++) {
+                rangeFns.getQuick(i).close();
+            }
         }
 
         @Override
