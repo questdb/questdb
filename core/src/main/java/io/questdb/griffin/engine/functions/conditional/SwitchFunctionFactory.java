@@ -31,8 +31,13 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.constants.Constants;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.IntList;
+import io.questdb.std.IntObjHashMap;
+import io.questdb.std.LongObjHashMap;
+import io.questdb.std.ObjList;
 
 public class SwitchFunctionFactory implements FunctionFactory {
 
@@ -171,7 +176,11 @@ public class SwitchFunctionFactory implements FunctionFactory {
     }
 
     private static byte getByte(Function function, Record record) {
-        return function.getByte(record);
+        if (ColumnType.isToSameOrWider(function.getType(), ColumnType.BYTE)) {
+            return function.getByte(record);
+        } else {
+            return SqlUtil.implicitCastAsByte(function.getLong(record), function.getType());
+        }
     }
 
     private static char getChar(Function function, Record record) {
@@ -199,7 +208,11 @@ public class SwitchFunctionFactory implements FunctionFactory {
     }
 
     private static short getShort(Function function, Record record) {
-        return function.getShort(record);
+        if (ColumnType.isToSameOrWider(function.getType(), ColumnType.SHORT)) {
+            return function.getShort(record);
+        } else {
+            return SqlUtil.implicitCastAsShort(function.getLong(record), function.getType());
+        }
     }
 
     private static CharSequence getString(Function function, Record record) {

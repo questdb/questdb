@@ -29,6 +29,7 @@ import org.junit.Test;
 
 public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
+
     @Test
     public void testBindVar() throws Exception {
         assertException(
@@ -1269,6 +1270,50 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testIntToByteCast() throws Exception {
+        assertQuery("id\tstatus\n" +
+                        "1\t\n" +
+                        "2\t\n" +
+                        "3\tactive\n" +
+                        "4\tactive\n" +
+                        "5\tactive\n",
+                "select id, case when status = 1 then 'active' end as status from foo;",
+                "create table foo as (select x as id, rnd_byte(0, 1) as status from long_sequence(5));",
+                null,
+                true,
+                true);
+    }
+
+    @Test
+    public void testIntToByteCastFails() throws Exception {
+        assertException("select id, case when status = 10182391 then 'active' end as status from foo;",
+                "create table foo as (select x as id, rnd_byte(0, 1) as status from long_sequence(5));",
+                0, "inconvertible value");
+    }
+
+    @Test
+    public void testIntToShortCast() throws Exception {
+        assertQuery("id\tstatus\n" +
+                        "1\t\n" +
+                        "2\t\n" +
+                        "3\tactive\n" +
+                        "4\tactive\n" +
+                        "5\tactive\n",
+                "select id, case when status = 1 then 'active' end as status from foo;",
+                "create table foo as (select x as id, rnd_short(0, 1) as status from long_sequence(5));",
+                null,
+                true,
+                true);
+    }
+
+    @Test
+    public void testIntToShortCastFails() throws Exception {
+        assertException("select id, case when status = 10182391 then 'active' end as status from foo;",
+                "create table foo as (select x as id, rnd_short(0, 1) as status from long_sequence(5));",
+                0, "inconvertible value");
     }
 
     @Test

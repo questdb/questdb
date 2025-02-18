@@ -38,6 +38,7 @@ import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.FullBwdPartitionFrameCursorFactory;
 import io.questdb.cairo.FullFwdPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.IntervalBwdPartitionFrameCursorFactory;
 import io.questdb.cairo.IntervalFwdPartitionFrameCursorFactory;
 import io.questdb.cairo.ListColumnFilter;
@@ -550,6 +551,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return new ExplainPlanFactory(recordCursorFactory, format);
     }
 
+    public BytecodeAssembler getAsm() {
+        return asm;
+    }
+
+    public EntityColumnFilter getEntityColumnFilter() {
+        return entityColumnFilter;
+    }
+
+    public ListColumnFilter getIndexColumnFilter() {
+        return listColumnFilterA;
+    }
+
+    public RecordComparatorCompiler getRecordComparatorCompiler() {
+        return recordComparatorCompiler;
+    }
+
     public IntList toOrderIndices(RecordMetadata m, ObjList<ExpressionNode> orderBy, IntList orderByDirection) throws SqlException {
         final IntList indices = intListPool.next();
         for (int i = 0, n = orderBy.size(); i < n; i++) {
@@ -570,22 +587,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             indices.add(index);
         }
         return indices;
-    }
-
-    public BytecodeAssembler getAsm() {
-        return asm;
-    }
-
-    public EntityColumnFilter getEntityColumnFilter() {
-        return entityColumnFilter;
-    }
-
-    public ListColumnFilter getIndexColumnFilter() {
-        return listColumnFilterA;
-    }
-
-    public RecordComparatorCompiler getRecordComparatorCompiler() {
-        return recordComparatorCompiler;
     }
 
     private static boolean allGroupsFirstLastWithSingleSymbolFilter(QueryModel model, RecordMetadata metadata) {
@@ -4569,7 +4570,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
             return new VirtualRecordCursorFactory(virtualMetadata, functions, factory);
-        } catch (SqlException | CairoException e) {
+        } catch (SqlException | CairoException | ImplicitCastException e) {
             Misc.freeObjList(functions);
             factory.close();
             throw e;
