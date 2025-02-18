@@ -121,7 +121,7 @@ public class MmappedArrayView implements ArrayView, QuietCloseable {
         final int valuesSize = flatLength * ColumnType.sizeOf(elementSize);
         assert valuesPtr + valuesSize <= dataLim;
         final int flatElemCout = validateShapeAndGetFlatElemCount(shapeView);
-        validateValuesSize(columnType, 0, flatElemCout, valuesSize);
+        validateValuesSize(columnType, flatElemCout, valuesSize);
         flatView.of(valuesPtr, valuesSize);
         return this;
     }
@@ -144,10 +144,9 @@ public class MmappedArrayView implements ArrayView, QuietCloseable {
         this.flatView.reset();
     }
 
-    private static void validateValuesSize(int type, int valuesOffset, int valuesLength, int valuesSize) {
+    private static void validateValuesSize(int type, int valuesLength, int valuesSize) {
         assert ColumnType.isArray(type) : "type class is not Array";
-        final int totExpectedElementCapacity = valuesOffset + valuesLength;
-        final int expectedByteSize = totExpectedElementCapacity * ColumnType.sizeOf(ColumnType.decodeArrayElementType(type));
+        final int expectedByteSize = valuesLength * ColumnType.sizeOf(ColumnType.decodeArrayElementType(type));
         if (valuesSize != expectedByteSize) {
             throw new AssertionError(String.format("invalid valuesSize, expected %,d actual %,d", expectedByteSize, valuesSize));
         }

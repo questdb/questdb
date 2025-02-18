@@ -147,13 +147,4 @@ public class BorrowedArrayView implements ArrayView, AutoCloseable {
         strides.reverse();
         shape.reverse();
     }
-
-    private static void validateValuesSize(int type, int valuesOffset, int valuesLength, int valuesSize) {
-        assert ColumnType.isArray(type) : "type class is not Array";
-        final int totExpectedElementCapacity = valuesOffset + valuesLength;
-        final int expectedByteSize = totExpectedElementCapacity * ColumnType.sizeOf(ColumnType.decodeArrayElementType(type));
-        if (valuesSize != expectedByteSize) {
-            throw new AssertionError(String.format("invalid valuesSize, expected %,d actual %,d", expectedByteSize, valuesSize));
-        }
-    }
 }
