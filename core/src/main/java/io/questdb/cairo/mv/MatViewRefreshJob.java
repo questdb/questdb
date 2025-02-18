@@ -66,6 +66,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final long batchSize;
     private final BlockFileWriter blockFileWriter;
     private final ObjList<TableToken> childViewSink = new ObjList<>();
+    private final ObjList<TableToken> childViewSink2 = new ObjList<>();
     private final EntityColumnFilter columnFilter = new EntityColumnFilter();
     private final Path dbRoot;
     private final int dbRootLen;
@@ -322,6 +323,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
             } finally {
                 state.unlock();
+            }
+
+            // Invalidate dependent views recursively.
+            childViewSink2.clear();
+            viewGraph.getDependentMatViews(viewToken, childViewSink2);
+            for (int v = 0, n = childViewSink2.size(); v < n; v++) {
+                viewGraph.enqueueInvalidate(childViewSink2.get(v), invalidationReason);
             }
         }
     }

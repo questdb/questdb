@@ -942,6 +942,97 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRecursiveInvalidation() throws Exception {
+        assertMemoryLeak(() -> {
+            long startTs = TimestampFormatUtils.parseUTCTimestamp("2025-02-18T00:00:00.000000Z");
+            long step = 100000000L;
+            final int N = 100;
+
+            String tableName = "base";
+            String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s, ";
+            execute(createTableSql(tableName, columns, null, startTs, step, N));
+            drainQueues();
+
+            String view1Name = "v1_base";
+            String view1Query = "select k, s, first(lat) lat, last(lon) lon from " + tableName + " sample by 1h";
+            createMatView(view1Name, view1Query);
+            drainQueues();
+
+            String view2Name = "v2_v1";
+            String view2Query = "select k, s, first(lat) lat, last(lon) lon from " + view1Name + " sample by 2h";
+            createMatView(view2Name, view2Query);
+            drainQueues();
+
+            String view3Name = "v3_v1";
+            String view3Query = "select k, s, first(lat) lat, last(lon) lon from " + view1Name + " sample by 2h";
+            createMatView(view3Name, view3Query);
+            drainQueues();
+
+            String view4Name = "v4_v3";
+            String view4Query = "select k, s, first(lat) lat, last(lon) lon from " + view3Name + " sample by 4h";
+            createMatView(view4Name, view4Query);
+
+            drainQueues();
+
+            assertSql(
+                    "name\tbaseTableName\tinvalid\tinvalidationReason\n" +
+                            "v1_base\tbase\tfalse\t\n" +
+                            "v2_v1\tv1_base\tfalse\t\n" +
+                            "v3_v1\tv1_base\tfalse\t\n" +
+                            "v4_v3\tv3_v1\tfalse\t\n",
+                    "select name, baseTableName, invalid, invalidationReason from mat_views order by name"
+            );
+
+            execute("truncate table " + tableName);
+            long ts = TimestampFormatUtils.parseUTCTimestamp("2025-05-17T00:00:00.000000Z");
+            execute("insert into " + tableName + " " + generateSelectSql(columns, ts, step, N, N));
+
+            drainQueues();
+
+            // all views should be invalid
+            assertSql(
+                    "name\tbaseTableName\tinvalid\tinvalidationReason\n" +
+                            "v1_base\tbase\ttrue\ttruncate operation\n" +
+                            "v2_v1\tv1_base\ttrue\ttruncate operation\n" +
+                            "v3_v1\tv1_base\ttrue\ttruncate operation\n" +
+                            "v4_v3\tv3_v1\ttrue\ttruncate operation\n",
+                    "select name, baseTableName, invalid, invalidationReason from mat_views order by name"
+            );
+
+            execute("refresh materialized view " + view1Name + " full");
+            drainQueues();
+
+            assertSql(
+                    "name\tbaseTableName\tinvalid\tinvalidationReason\n" +
+                            "v1_base\tbase\tfalse\t\n" +
+                            "v2_v1\tv1_base\ttrue\ttruncate operation\n" +
+                            "v3_v1\tv1_base\ttrue\ttruncate operation\n" +
+                            "v4_v3\tv3_v1\ttrue\ttruncate operation\n",
+                    "select name, baseTableName, invalid, invalidationReason from mat_views order by name"
+            );
+
+
+            // Refresh the rest
+            execute("refresh materialized view " + view2Name + " full");
+            drainQueues();
+            execute("refresh materialized view " + view3Name + " full");
+            drainQueues();
+            execute("refresh materialized view " + view4Name + " full");
+            drainQueues();
+
+            assertSql(
+                    "name\tbaseTableName\tinvalid\tinvalidationReason\n" +
+                            "v1_base\tbase\tfalse\t\n" +
+                            "v2_v1\tv1_base\tfalse\t\n" +
+                            "v3_v1\tv1_base\tfalse\t\n" +
+                            "v4_v3\tv3_v1\tfalse\t\n",
+                    "select name, baseTableName, invalid, invalidationReason from mat_views order by name"
+            );
+
+        });
+    }
+
+    @Test
     public void testResumeSuspendMatView() throws Exception {
         assertMemoryLeak(() -> {
             // create table and mat view
