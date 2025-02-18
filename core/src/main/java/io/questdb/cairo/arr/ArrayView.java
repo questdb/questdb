@@ -47,7 +47,7 @@ public interface ArrayView extends ArrayShape {
     /**
      * Returns the total number of data points (leaf values) in this array.
      */
-    int getFlatElemCount();
+    int getFlatViewLength();
 
     /**
      * Returns the index of the underlying flat array at which the first element

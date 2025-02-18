@@ -63,9 +63,9 @@ public class MmappedArrayView implements ArrayView, QuietCloseable {
     }
 
     @Override
-    public int getFlatElemCount() {
-        // valuesView is element type-agnostic, so it doesn't know the element count.
-        // Therefore, compute the element count from the array shape.
+    public int getFlatViewLength() {
+        // flatView is element type-agnostic, so it doesn't know its length in elements.
+        // Therefore, compute the length from the array shape.
         return getDimLen(0) * getStride(0);
     }
 

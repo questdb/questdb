@@ -52,7 +52,7 @@ public class FunctionArray implements ArrayView, FlatArrayView, Closeable {
     public void appendToMem(MemoryA mem) {
         final short elemType = ColumnType.decodeArrayElementType(type);
         final Function[] functions = functions();
-        int elemCount = getFlatElemCount();
+        int elemCount = getFlatViewLength();
         switch (elemType) {
             case ColumnType.BYTE:
                 for (int i = 0; i < elemCount; i++) {
@@ -159,7 +159,7 @@ public class FunctionArray implements ArrayView, FlatArrayView, Closeable {
     }
 
     @Override
-    public int getFlatElemCount() {
+    public int getFlatViewLength() {
         return functions().length;
     }
 

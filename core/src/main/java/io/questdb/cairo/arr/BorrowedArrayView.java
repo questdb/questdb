@@ -37,8 +37,8 @@ import io.questdb.std.Misc;
  * transpose it.
  */
 public class BorrowedArrayView implements ArrayView, AutoCloseable {
-    private int flatElemCount;
     private FlatArrayView flatView;
+    private int flatViewLength;
     private int flatViewOffset;
     private DirectIntList shape = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG1);
     private DirectIntList strides = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG1);
@@ -67,8 +67,8 @@ public class BorrowedArrayView implements ArrayView, AutoCloseable {
     }
 
     @Override
-    public int getFlatElemCount() {
-        return flatElemCount;
+    public int getFlatViewLength() {
+        return flatViewLength;
     }
 
     @Override
@@ -95,17 +95,17 @@ public class BorrowedArrayView implements ArrayView, AutoCloseable {
         return type == ColumnType.NULL;
     }
 
-    public void of(ArrayView view) {
-        this.type = view.getType();
-        this.flatView = view.flatView();
-        this.flatViewOffset = view.getFlatViewOffset();
-        this.flatElemCount = view.getFlatElemCount();
+    public void of(ArrayView other) {
+        this.type = other.getType();
+        this.flatView = other.flatView();
+        this.flatViewOffset = other.getFlatViewOffset();
+        this.flatViewLength = other.getFlatViewLength();
         shape.clear();
         strides.clear();
-        int nDims = view.getDimCount();
+        int nDims = other.getDimCount();
         for (int i = 0; i < nDims; i++) {
-            shape.add(view.getDimLen(i));
-            strides.add(view.getStride(i));
+            shape.add(other.getDimLen(i));
+            strides.add(other.getStride(i));
         }
     }
 
@@ -125,7 +125,7 @@ public class BorrowedArrayView implements ArrayView, AutoCloseable {
         this.shape.clear();
         this.strides.clear();
         this.flatViewOffset = 0;
-        this.flatElemCount = 0;
+        this.flatViewLength = 0;
     }
 
     public void sliceOneDim(int dim, int left, int right) {

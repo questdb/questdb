@@ -121,7 +121,7 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
     }
 
     @Override
-    public int getFlatElemCount() {
+    public int getFlatViewLength() {
         return flatElemCount;
     }
 

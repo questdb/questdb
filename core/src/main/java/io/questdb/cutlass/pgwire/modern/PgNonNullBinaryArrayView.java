@@ -95,7 +95,7 @@ final class PgNonNullBinaryArrayView implements ArrayView, FlatArrayView, Mutabl
     }
 
     @Override
-    public int getFlatElemCount() {
+    public int getFlatViewLength() {
         return flatElemCount;
     }
 
