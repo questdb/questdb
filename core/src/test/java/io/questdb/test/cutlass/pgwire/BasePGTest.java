@@ -54,9 +54,6 @@ import io.questdb.std.str.Utf16Sink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
-import io.r2dbc.postgresql.PostgresqlConnectionConfiguration;
-import io.r2dbc.postgresql.PostgresqlConnectionFactory;
-import io.r2dbc.spi.ConnectionFactory;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -417,33 +414,6 @@ public abstract class BasePGTest extends AbstractCairoTest {
                     try (final Connection connection = getConnection(mode, server.getPort(), binary, prepareThreshold)) {
                         runnable.run(connection, binary, mode, server.getPort());
                     }
-                }
-            });
-        } finally {
-            super.tearDown();
-        }
-    }
-
-    protected void assertWithR2RDBC(PGJobContextTest.AsyncConnectionAwareRunnable runnable) throws Exception {
-        LOG.info().$("asserting R2DBC server").$();
-        super.setUp();
-        try {
-            assertMemoryLeak(() -> {
-                try (
-                        final IPGWireServer server = createPGServer(2);
-                        WorkerPool workerPool = server.getWorkerPool()
-                ) {
-                    ConnectionFactory connectionFactory = new PostgresqlConnectionFactory(
-                            PostgresqlConnectionConfiguration.builder()
-                                    .host("localhost")
-                                    .port(server.getPort())
-                                    .database("qdb")
-                                    .username("admin")
-                                    .password("quest")
-                                    .build()
-                    );
-                    workerPool.start(LOG);
-                    runnable.run(connectionFactory.create());
                 }
             });
         } finally {
