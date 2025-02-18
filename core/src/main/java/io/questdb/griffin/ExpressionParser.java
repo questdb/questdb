@@ -134,10 +134,10 @@ public class ExpressionParser {
         return len <= 1 || tok.charAt(1) != '#';
     }
 
-    private static boolean isCastTargetType(int typeTag, boolean isFromNull) {
-        return typeTag >= ColumnType.BOOLEAN && typeTag <= ColumnType.LONG256 ||
-                isFromNull && (typeTag == ColumnType.BINARY || typeTag == ColumnType.INTERVAL) ||
-                moreCastTargetTypes.contains(typeTag);
+    private static boolean cannotCastTo(int targetTag, boolean isFromNull) {
+        return (targetTag < ColumnType.BOOLEAN || targetTag > ColumnType.LONG256) &&
+                (!isFromNull || (targetTag != ColumnType.BINARY && targetTag != ColumnType.INTERVAL)) &&
+                !moreCastTargetTypes.contains(targetTag);
     }
 
     private static SqlException missingArgs(int position) {
@@ -649,7 +649,7 @@ public class ExpressionParser {
                             if (thisWasCast && prevBranch != BRANCH_GEOHASH) {
                                 // validate type
                                 final short castAsTag = ColumnType.tagOf(node.token);
-                                if ((!isCastTargetType(castAsTag, isCastingNull)) ||
+                                if ((cannotCastTo(castAsTag, isCastingNull)) ||
                                         (castAsTag == ColumnType.GEOHASH && node.type == ExpressionNode.LITERAL)
                                 ) {
                                     throw SqlException.$(node.position, "unsupported cast");
@@ -956,7 +956,7 @@ public class ExpressionParser {
 
                                     // validate type
                                     final short columnType = ColumnType.tagOf(prevNode.token);
-                                    if (!isCastTargetType(columnType, isCastingNull)) {
+                                    if (cannotCastTo(columnType, isCastingNull)) {
                                         throw SqlException.$(prevNode.position, "impossible type cast, invalid type");
                                     }
                                     ExpressionNode stringLiteral = SqlUtil.nextConstant(expressionNodePool, GenericLexer.immutableOf(tok), lastPos);
