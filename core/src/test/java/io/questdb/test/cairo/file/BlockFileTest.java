@@ -530,7 +530,6 @@ public class BlockFileTest extends AbstractCairoTest {
             Assert.fail();
         } catch (CairoException ignored) {
         }
-        memory.length();
     }
 
     private static void commitAllTypesMsgWriteAPI(WritableBlock memory) {
@@ -575,7 +574,6 @@ public class BlockFileTest extends AbstractCairoTest {
             Assert.fail();
         } catch (CairoException ignored) {
         }
-        memory.length();
     }
 
     private static void commitLongsMsgAppendAPI(AppendableBlock memory, int numLongs) {
@@ -589,7 +587,6 @@ public class BlockFileTest extends AbstractCairoTest {
             Assert.fail();
         } catch (CairoException ignored) {
         }
-        memory.length();
     }
 
     private static int commitMsgA1(AppendableBlock memory, long regionVersion) {
