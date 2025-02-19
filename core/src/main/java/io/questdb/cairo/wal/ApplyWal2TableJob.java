@@ -268,7 +268,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         long initialSeqTxn = writer.getSeqTxn();
         // Default to incremental mat view refresh.
         mvRefreshTask.clear();
-        mvRefreshTask.operation = MatViewRefreshTask.REFRESH;
+        mvRefreshTask.operation = MatViewRefreshTask.INCREMENTAL_REFRESH;
         mvRefreshTask.baseTableToken = writer.getTableToken();
 
         try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, writer.getAppliedSeqTxn())) {

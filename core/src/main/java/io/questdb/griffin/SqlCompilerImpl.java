@@ -1965,9 +1965,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final MatViewGraph matViewGraph = engine.getMatViewGraph();
         executionContext.getSecurityContext().authorizeMatViewRefresh(matViewToken);
         if (incremental) {
-            matViewGraph.enqueueRefresh(matViewToken);
+            matViewGraph.enqueueIncrementalRefresh(matViewToken);
         } else {
-            matViewGraph.enqueueRebuild(matViewToken);
+            matViewGraph.enqueueFullRefresh(matViewToken);
         }
         compiledQuery.ofRefreshMatView();
     }
