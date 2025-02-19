@@ -144,6 +144,14 @@ public class ExpressionParser {
         return SqlException.$(position, "missing arguments");
     }
 
+    private boolean isCompletedOperand(int branchTag) {
+        return branchTag == BRANCH_LITERAL
+                || branchTag == BRANCH_CONSTANT
+                || branchTag == BRANCH_GEOHASH
+                || branchTag == BRANCH_RIGHT_BRACKET
+                || branchTag == BRANCH_RIGHT_PARENTHESIS;
+    }
+
     private boolean isCount() {
         return opStack.size() == 2 && Chars.equals(opStack.peek().token, '(') && SqlKeywords.isCountKeyword(opStack.peek(1).token);
     }
@@ -348,6 +356,22 @@ public class ExpressionParser {
                         paramCount++;
                         break;
                     }
+                    case ':': {
+                        processDefaultBranch = true;
+                        if (isCompletedOperand(prevBranch)) {
+                            break;
+                        }
+                        CharSequence content = lexer.getContent();
+                        int posAfterColon = lastPos + 1;
+                        if (content.length() <= posAfterColon) {
+                            break;
+                        }
+                        if (!Character.isWhitespace(content.charAt(posAfterColon))) {
+                            CharSequence nextToken = lexer.next();
+                            tok = (String) tok + nextToken;
+                        }
+                        break;
+                    }
                     case '[': {
                         if (isTypeQualifier() || scopeStack.peek(1) == Scope.CAST_AS) {
                             ExpressionNode en = opStack.peek();
@@ -355,10 +379,7 @@ public class ExpressionParser {
                             break;
                         }
                         thisBranch = BRANCH_LEFT_BRACKET;
-                        boolean isArrayConstructor = withinArrayConstructor()
-                                && prevBranch != BRANCH_LITERAL
-                                && prevBranch != BRANCH_RIGHT_BRACKET
-                                && prevBranch != BRANCH_RIGHT_PARENTHESIS;
+                        boolean isArrayConstructor = withinArrayConstructor() && !isCompletedOperand(prevBranch);
 
                         // entering bracketed context, push stuff onto the stacks
                         paramCountStack.push(paramCount);

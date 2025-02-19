@@ -40,7 +40,7 @@ import org.jetbrains.annotations.NotNull;
 public class IntIntervalFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "!(II)";
+        return ":(II)";
     }
 
     @Override
@@ -77,7 +77,7 @@ public class IntIntervalFunctionFactory implements FunctionFactory {
 
         @Override
         public String getName() {
-            return "!";
+            return ":";
         }
 
         @Override

@@ -1156,11 +1156,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testBadAlias() throws Exception {
-//        assertIdentifierError("select 'a' ! ");
+        assertIdentifierError("select 'a' ! ");
         assertIdentifierError("select 'a' } ");
         assertIdentifierError("select 'a' { ");
         assertIdentifierError("select 'a' ] ");
-        assertIdentifierError("select 'a' : ");
+        assertSyntaxError("select 'a' : ", 11, "too few arguments for ':'");
         assertIdentifierError("select 'a' ? ");
         assertIdentifierError("select 'a' @ ");
         assertSyntaxError("select 'a' ) ", 11, "unexpected token [)]");
