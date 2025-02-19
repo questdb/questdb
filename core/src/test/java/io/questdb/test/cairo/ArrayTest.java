@@ -28,8 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.DirectArrayView;
 import io.questdb.cairo.arr.NoopArrayState;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cutlass.line.tcp.ArrayParser;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -39,7 +37,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.fail;
 
 public class ArrayTest extends AbstractCairoTest {
 
@@ -246,22 +243,29 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMultiplyArrayMore() throws Exception {
+    public void testMultiplyArray() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango AS (SELECT" +
-                    " ARRAY[[1.0, 1, 1], [2, 2, 2]] left, ARRAY[[3.0], [5], [7]] right" +
-                    " FROM long_sequence(1))");
-            assertSql("product\n[[15.0],[30.0]]\n", "SELECT left * right AS product from tango");
+            execute("CREATE TABLE tango (left DOUBLE[][], right DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[1.0, 3]], ARRAY[[5.0], [7]]), " +
+                    "(ARRAY[[1.0, 1, 1], [2, 2, 2]], ARRAY[[3.0], [5], [7]])");
+            assertSql("product\n[[26.0]]\n[[15.0],[30.0]]\n", "SELECT left * right AS product from tango");
         });
     }
 
     @Test
-    public void testMultiplyArraySimple() throws Exception {
+    public void testMultiplyArrayInvalid() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango AS (SELECT" +
-                    " ARRAY[[1.0, 3]] left, ARRAY[[5.0], [7]] right" +
-                    " FROM long_sequence(1))");
-            assertSql("product\n[[26.0]]\n", "SELECT left * right AS product from tango");
+            execute("CREATE TABLE tango AS (SELECT " +
+                    "ARRAY[[1.0, 2.0]] left2d, ARRAY[1.0] left1d, " +
+                    "ARRAY[[1.0]] right2d, ARRAY[1.0] right1d "
+                    + "FROM long_sequence(1))");
+            assertExceptionNoLeakCheck("SELECT left1d * right1d FROM tango",
+                    7, "left array is not two-dimensional");
+            assertExceptionNoLeakCheck("SELECT left2d * right1d FROM tango",
+                    16, "right array is not two-dimensional");
+            assertExceptionNoLeakCheck("SELECT left2d * right2d FROM tango",
+                    7, "left array row length doesn't match right array column length");
         });
     }
 
@@ -363,37 +367,21 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    // TODO: The code should throw a SqlException, before executing the query
-    // currently it throws CairoException because it validates the array
-    // against the coordinates only during function evaluation
-    public void testSelectArrayElementsNotEnoughCoords() throws Exception {
+    public void testSelectArrayElementsInvalid() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4]] arr FROM long_sequence(1))");
-            try (RecordCursorFactory fac = select("SELECT arr[1] x FROM tango");
-                 RecordCursor cursor = fac.getCursor(sqlExecutionContext)
-            ) {
-                cursor.hasNext();
-                cursor.getRecord().getDouble(0);
-                fail("Accessing array with wrong dimension count was allowed");
-            } catch (Exception e) {
-                assertEquals("[-1] array has 2 dimensions, but provided 1 coordinates", e.getMessage());
-            }
-        });
-    }
-
-    @Test
-    public void testSelectArrayElementsTooManyCoords() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4]] arr FROM long_sequence(1))");
-            try (RecordCursorFactory fac = select("SELECT arr[1, 2, 3] x FROM tango");
-                 RecordCursor cursor = fac.getCursor(sqlExecutionContext)
-            ) {
-                cursor.hasNext();
-                cursor.getRecord().getDouble(0);
-                fail("Accessing array with wrong dimension count was allowed");
-            } catch (Exception e) {
-                assertEquals("[-1] array has 2 dimensions, but provided 3 coordinates", e.getMessage());
-            }
+            assertExceptionNoLeakCheck("SELECT arr[0] FROM tango",
+                    11, "wrong number of array coordinates [accessDims=1, arrayDims=2]");
+            assertExceptionNoLeakCheck("SELECT arr[0, 0, 0] FROM tango",
+                    17, "wrong number of array coordinates [accessDims=3, arrayDims=2]");
+            assertExceptionNoLeakCheck("SELECT arr[-1, 0] FROM tango",
+                    11, "array index out of range [dim=0, index=-1, dimLen=2]");
+            assertExceptionNoLeakCheck("SELECT arr[2, 0] FROM tango",
+                    11, "array index out of range [dim=0, index=2, dimLen=2]");
+            assertExceptionNoLeakCheck("SELECT arr[0, -1] FROM tango",
+                    14, "array index out of range [dim=1, index=-1, dimLen=2]");
+            assertExceptionNoLeakCheck("SELECT arr[0, 2] FROM tango",
+                    14, "array index out of range [dim=1, index=2, dimLen=2]");
         });
     }
 
@@ -404,6 +392,29 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES (1.0, 2.0)");
             assertSql("ARRAY\n[1.0,2.0]\n", "SELECT ARRAY[a, b] FROM tango");
             assertSql("ARRAY\n[[1.0],[2.0]]\n", "SELECT ARRAY[[a], [b]] FROM tango");
+        });
+    }
+
+    @Test
+    public void testSelectLiteralInvalid() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE, b DOUBLE)");
+            assertExceptionNoLeakCheck("SELECT ARRAY[a FROM tango",
+                    15, "dangling literal");
+            assertExceptionNoLeakCheck("SELECT ARRAY[a, [a] FROM tango",
+                    20, "dangling literal");
+            assertExceptionNoLeakCheck("SELECT ARRAY[a, [a]] FROM tango",
+                    16, "mixed array and non-array elements");
+            assertExceptionNoLeakCheck("SELECT ARRAY[[a], a] FROM tango",
+                    18, "mixed array and non-array elements");
+            assertExceptionNoLeakCheck("SELECT ARRAY[[a], [a, a]] FROM tango",
+                    18, "element counts in sub-arrays don't match");
+            assertExceptionNoLeakCheck("SELECT ARRAY[[a, a], [a]] FROM tango",
+                    21, "element counts in sub-arrays don't match");
+            assertExceptionNoLeakCheck("SELECT ARRAY[[[a], [a]], [a]] FROM tango",
+                    25, "mismatched array shape");
+            assertExceptionNoLeakCheck("SELECT ARRAY[[[a], [a]], [a, a]] FROM tango",
+                    25, "mismatched array shape");
         });
     }
 
@@ -420,9 +431,11 @@ public class ArrayTest extends AbstractCairoTest {
     public void testSliceArray2d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4], [5, 6]] arr FROM long_sequence(1))");
-            assertSql("slice\n[[1.0,2.0]]\n", "SELECT arr[0:1] slice from tango");
-            assertSql("slice\n[[1.0,2.0],[3.0,4.0]]\n", "SELECT arr[0:2] slice from tango");
-            assertSql("slice\n[[1.0],[3.0]]\n", "SELECT arr[0:2, 0:1] slice from tango");
+            assertSql("slice\n[[1.0,2.0]]\n", "SELECT arr[0:1] slice FROM tango");
+            assertSql("slice\n[[1.0,2.0],[3.0,4.0]]\n", "SELECT arr[0:2] slice FROM tango");
+            assertSql("slice\n[[1.0],[3.0]]\n", "SELECT arr[0:2, 0:1] slice FROM tango");
+        });
+    }
         });
     }
 

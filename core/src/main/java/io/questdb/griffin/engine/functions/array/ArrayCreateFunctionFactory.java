@@ -80,15 +80,18 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                     for (int n = args.size(), i = 1; i < n; i++) {
                         Function argI = args.getQuick(i);
                         int typeI = argI.getType();
+                        int argPos = argPositions.getQuick(i);
                         if (!ColumnType.isArray(typeI)) {
-                            throw SqlException.$(argPositions.getQuick(i), "mixed array and non-array elements");
+                            throw SqlException.$(argPos, "mixed array and non-array elements");
                         }
                         commonElemType = commonWideningType(commonElemType, decodeArrayElementType(typeI));
                         ArrayView arrayI = argI.getArray(null);
                         if (arrayI.getDimCount() != nestedNDims) {
-                            throw SqlException.$(argPositions.getQuick(i), "mismatched array shape");
+                            throw SqlException.$(argPos, "mismatched array shape");
                         }
-                        assert arrayI.getFlatViewLength() == nestedElemCount : "flat element counts don't match";
+                        if (arrayI.getFlatViewLength() != nestedElemCount) {
+                            throw SqlException.$(argPos, "element counts in sub-arrays don't match");
+                        }
                     }
                     this.array = new FunctionArray(commonElemType, nestedNDims + 1);
                     array.setDimLen(0, outerDimLen);

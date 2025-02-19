@@ -65,7 +65,7 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
             flatElemCount *= shape[i];
             if (flatElemCount > maxArrayElementCount) {
                 throw CairoException.nonCritical().position(errorPosition)
-                        .put("array is too large [elementCount=").put(flatElemCount)
+                        .put("resulting array is too large [elementCount=").put(flatElemCount)
                         .put(", dimensionsLeft=").put(n - i - 1)
                         .put(", max=").put(maxArrayElementCount)
                         .put(']');

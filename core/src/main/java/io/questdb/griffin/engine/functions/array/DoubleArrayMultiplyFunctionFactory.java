@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArrayView;
+import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -53,19 +54,31 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new MultiplyDoubleArrayFunction(configuration, args.getQuick(0), args.getQuick(1));
+        return new MultiplyDoubleArrayFunction(configuration,
+                args.getQuick(0), args.getQuick(1),
+                argPositions.getQuick(0), argPositions.getQuick(1));
     }
 
     private static class MultiplyDoubleArrayFunction extends ArrayFunction implements BinaryFunction {
 
         private final DirectArrayView arrayOut;
+        private final int leftArgPos;
         private final Function leftFn;
+        private final int rightArgPos;
         private final Function rightFn;
 
-        public MultiplyDoubleArrayFunction(CairoConfiguration configuration, Function leftFn, Function rightFn) {
+        public MultiplyDoubleArrayFunction(
+                CairoConfiguration configuration,
+                Function leftFn,
+                Function rightFn,
+                int leftArgPos,
+                int rightArgPos
+        ) {
             this.leftFn = leftFn;
             this.rightFn = rightFn;
             this.arrayOut = new DirectArrayView(configuration);
+            this.leftArgPos = leftArgPos;
+            this.rightArgPos = rightArgPos;
             this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
             arrayOut.setType(type);
         }
@@ -81,33 +94,40 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
         public ArrayView getArray(Record rec) {
             ArrayView left = leftFn.getArray(rec);
             ArrayView right = rightFn.getArray(rec);
-            if (left.getDimCount() != 2 || right.getDimCount() != 2) {
-                throw CairoException.nonCritical().put("arrays are not two-dimensional");
+            if (left.getDimCount() != 2) {
+                throw CairoException.nonCritical().position(leftArgPos).put("left array is not two-dimensional");
+            }
+            if (right.getDimCount() != 2) {
+                throw CairoException.nonCritical().position(rightArgPos).put("right array is not two-dimensional");
             }
             int commonDimLen = left.getDimLen(1);
             if (right.getDimLen(0) != commonDimLen) {
-                throw CairoException.nonCritical().put("left array row length doesn't match right array column length");
+                throw CairoException.nonCritical().position(leftArgPos)
+                        .put("left array row length doesn't match right array column length ")
+                        .put("[leftRowLen=").put(commonDimLen)
+                        .put(", rightColLen=").put(right.getDimLen(0))
+                        .put(']');
             }
-            int dimLen0 = left.getDimLen(0);
-            int dimLen1 = right.getDimLen(1);
+            int outRowCount = left.getDimLen(0);
+            int outColCount = right.getDimLen(1);
             int leftStride0 = left.getStride(0);
             int leftStride1 = left.getStride(1);
             int rightStride0 = right.getStride(0);
             int rightStride1 = right.getStride(1);
+            FlatArrayView leftFlatView = left.flatView();
+            FlatArrayView rightFlatView = right.flatView();
             arrayOut.clear();
-            arrayOut.setDimLen(0, dimLen0);
-            arrayOut.setDimLen(1, dimLen1);
-            arrayOut.applyShape(0);
+            arrayOut.setDimLen(0, outRowCount);
+            arrayOut.setDimLen(1, outColCount);
+            arrayOut.applyShape(leftArgPos);
             int flatIndexOut = 0;
-            for (int rowOut = 0; rowOut < dimLen0; rowOut++) {
-                for (int colOut = 0; colOut < dimLen1; colOut++) {
+            for (int rowOut = 0; rowOut < outRowCount; rowOut++) {
+                for (int colOut = 0; colOut < outColCount; colOut++) {
                     double sum = 0;
                     for (int commonDim = 0; commonDim < commonDimLen; commonDim++) {
-                        int flatIndexLeft = leftStride1 * commonDim + leftStride0 * rowOut;
-                        int flatIndexRight = rightStride0 * commonDim + rightStride1 * colOut;
-                        double elemLeft = left.flatView().getDouble(flatIndexLeft);
-                        double elemRight = right.flatView().getDouble(flatIndexRight);
-                        sum += elemLeft * elemRight;
+                        int leftFlatIndex = leftStride0 * rowOut + leftStride1 * commonDim;
+                        int rightFlatIndex = rightStride0 * commonDim + rightStride1 * colOut;
+                        sum += leftFlatView.getDouble(leftFlatIndex) * rightFlatView.getDouble(rightFlatIndex);
                     }
                     arrayOut.putDouble(flatIndexOut++, sum);
                 }

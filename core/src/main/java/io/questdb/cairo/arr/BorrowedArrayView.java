@@ -128,16 +128,21 @@ public class BorrowedArrayView implements ArrayView, AutoCloseable {
         this.flatViewLength = 0;
     }
 
-    public void sliceOneDim(int dim, int left, int right) {
+    public void sliceOneDim(int dim, int left, int right, int argPos) {
         if (dim < 0 || dim >= getDimCount()) {
-            throw CairoException.nonCritical().put("array slice dim out of range. dimCount ").put(getDimCount())
-                    .put(" dim ").put(dim);
+            throw CairoException.nonCritical().position(argPos)
+                    .put("array dimension doesn't exist [dim=").put(dim)
+                    .put(", nDims=").put(getDimCount()).put(']');
         }
         int dimLen = getDimLen(dim);
         if (left < 0 || left >= dimLen || right < 1 || right > dimLen) {
-            throw CairoException.nonCritical().put(
-                            "array slice range out of range. dimLen ").put(dimLen)
-                    .put(" left ").put(left).put(" right ").put(right);
+            throw CairoException.nonCritical()
+                    .position(argPos)
+                    .put("array slice bounds out of range [dim=").put(dim)
+                    .put(", dimLen=").put(dimLen)
+                    .put(", lowerBound=").put(left)
+                    .put(", upperBound=").put(right)
+                    .put(']');
         }
         flatViewOffset += left * getStride(dim);
         shape.set(dim, right - left);

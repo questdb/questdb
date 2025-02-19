@@ -53,17 +53,20 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         Function arrayArg = args.getQuick(0);
         args.remove(0);
-        return new DoubleArrayAccessFunction(arrayArg, args);
+        argPositions.removeIndex(0);
+        return new DoubleArrayAccessFunction(arrayArg, args, argPositions);
     }
 
     private static class DoubleArrayAccessFunction extends DoubleFunction {
 
         private final Function arrayArg;
+        private final IntList indexArgPositions;
         private final ObjList<Function> indexArgs;
 
-        DoubleArrayAccessFunction(Function arrayArg, ObjList<Function> indexArgs) {
+        DoubleArrayAccessFunction(Function arrayArg, ObjList<Function> indexArgs, IntList indexArgPositions) {
             this.arrayArg = arrayArg;
             this.indexArgs = indexArgs;
+            this.indexArgPositions = indexArgPositions;
         }
 
         @Override
@@ -72,14 +75,25 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             int accessDimCount = indexArgs.size();
             int arrayDimCount = array.getDimCount();
             if (accessDimCount != arrayDimCount) {
+                int errPos = indexArgPositions.get(accessDimCount > arrayDimCount ? arrayDimCount : accessDimCount - 1);
                 throw CairoException.nonCritical()
-                        .put("array has ").put(arrayDimCount).put(" dimensions, but provided ")
-                        .put(accessDimCount).put(" coordinates");
+                        .position(errPos)
+                        .put("wrong number of array coordinates [accessDims=").put(accessDimCount)
+                        .put(", arrayDims=").put(arrayDimCount)
+                        .put(']');
             }
             int flatIndex = 0;
             for (int dim = 0; dim < accessDimCount; dim++) {
                 int indexAtDim = indexArgs.getQuick(dim).getInt(rec);
                 int strideAtDim = array.getStride(dim);
+                int dimLen = array.getDimLen(dim);
+                if (indexAtDim < 0 || indexAtDim >= dimLen) {
+                    throw CairoException.nonCritical()
+                            .position(indexArgPositions.get(dim))
+                            .put("array index out of range [dim=").put(dim)
+                            .put(", index=").put(indexAtDim)
+                            .put(", dimLen=").put(dimLen).put(']');
+                }
                 flatIndex += strideAtDim * indexAtDim;
             }
             return array.flatView().getDouble(flatIndex);

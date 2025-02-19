@@ -1117,6 +1117,7 @@ public class ExpressionParser {
                             switch (prevBranch) {
                                 case BRANCH_OPERATOR:
                                 case BRANCH_LEFT_PARENTHESIS:
+                                case BRANCH_LEFT_BRACKET:
                                 case BRANCH_COMMA:
                                 case BRANCH_NONE:
                                 case BRANCH_CASE_CONTROL:

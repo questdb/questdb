@@ -55,18 +55,21 @@ public class DoubleArraySliceFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         Function arrayFunc = args.getQuick(0);
         args.remove(0);
-        return new SliceDoubleArrayFunction(arrayFunc, args);
+        argPositions.remove(0);
+        return new SliceDoubleArrayFunction(arrayFunc, args, argPositions);
     }
 
     private static class SliceDoubleArrayFunction extends ArrayFunction {
 
+        private final IntList argPositions;
         private final Function arrayFn;
         private final BorrowedArrayView borrowedView = new BorrowedArrayView();
         private final ObjList<Function> rangeFns;
 
-        public SliceDoubleArrayFunction(Function arrayFn, ObjList<Function> rangeFns) {
+        public SliceDoubleArrayFunction(Function arrayFn, ObjList<Function> rangeFns, IntList argPositions) {
             this.arrayFn = arrayFn;
             this.rangeFns = rangeFns;
+            this.argPositions = argPositions;
             this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
         }
 
@@ -91,7 +94,7 @@ public class DoubleArraySliceFunctionFactory implements FunctionFactory {
                 int lo = (int) loLong;
                 int hi = (int) hiLong;
                 assert lo == loLong && hi == hiLong : "int overflow on interval bounds: " + loLong + ", " + hiLong;
-                borrowedView.sliceOneDim(i, lo, hi);
+                borrowedView.sliceOneDim(i, lo, hi, argPositions.get(i));
             }
             return borrowedView;
         }
