@@ -183,6 +183,54 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotNoGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            String pivotQuery =
+                    "SELECT *\n" +
+                            "FROM cities\n" +
+                            "PIVOT (\n" +
+                            "    SUM(population)\n" +
+                            "    FOR\n" +
+                            "        year IN (2000, 2010, 2020)\n" +
+                            ");\n";
+
+
+            String result = "2000\t2010\t2020\n" +
+                    "9584\t9848\t10668\n";
+
+            assertSql(result, pivotQuery);
+        });
+    }
+
+    @Test
+    public void testPivotNoGroupByWithOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            String pivotQuery =
+                    "SELECT *\n" +
+                            "FROM cities\n" +
+                            "PIVOT (\n" +
+                            "    SUM(population)\n" +
+                            "    FOR\n" +
+                            "        year IN (2000, 2010, 2020)\n" +
+                            "    ORDER BY \"2000\"\n" +
+                            ");\n";
+
+
+            String result = "2000\t2010\t2020\n" +
+                    "9584\t9848\t10668\n";
+
+            assertSql(result, pivotQuery);
+        });
+    }
+
+
+    @Test
     public void testPivotWithAliasedAggregate() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlCities);
@@ -567,17 +615,6 @@ public class PivotTest extends AbstractSqlParserTest {
                             ") )\n" +
                             "SELECT * FROM P;");
         });
-    }
-
-    @Test
-    public void testPivotWithoutExplicitGroupBy() throws Exception {
-        assertException("SELECT *\n" +
-                "FROM cities\n" +
-                "PIVOT (\n" +
-                "    SUM(population) as total\n" +
-                "    FOR\n" +
-                "        year IN (2000, 2010, 2020)\n" +
-                ");\n", 101, "expected `GROUP`");
     }
 
 }

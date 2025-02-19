@@ -6482,8 +6482,6 @@ public class SqlOptimiser implements Mutable {
                 && nested.getSelectModelType() == SELECT_MODEL_NONE
                 && nested.getPivotColumns() != null
                 && nested.getPivotFor() != null
-                && nested.getGroupBy() != null
-                && nested.getGroupBy().size() == 1
                 && model.getBottomUpColumns().size() == 1
                 && Chars.equals(model.getBottomUpColumns().getQuick(0).getAst().token, "*")) {
 

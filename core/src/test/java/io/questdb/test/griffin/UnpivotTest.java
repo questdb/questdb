@@ -206,7 +206,6 @@ public class UnpivotTest extends AbstractSqlParserTest {
                     "        year IN (2000, 2010, 2020)\n" +
                     ")\n";
 
-
             assertPlanNoLeakCheck(pivotUnpivot,
                     "Unpivot\n" +
                             "  into: population\n" +

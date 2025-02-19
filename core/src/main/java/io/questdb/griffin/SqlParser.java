@@ -2384,9 +2384,10 @@ public class SqlParser {
 
             model.addPivotFor(expr);
 
-            tok = tok(lexer, "'GROUP' or ','");
+            tok = tok(lexer, "'')' or 'GROUP' or 'ORDER' or 'LIMIT' or ','");
 
-            if (isGroupKeyword(tok)) {
+            if (isGroupKeyword(tok) || Chars.equals(tok, ';') || Chars.equals(tok, ')')
+                    || isOrderKeyword(tok) || isLimitKeyword(tok)) {
                 break;
             } else if (Chars.equals(tok, ",")) {
                 tok = tok(lexer, "'FOR-IN'");
@@ -2395,24 +2396,23 @@ public class SqlParser {
             }
         }
 
-        if (!isGroupKeyword(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "expected `GROUP`");
-        }
-
         // parseGroupBy
-        expectBy(lexer);
-        do {
-            tokIncludingLocalBrace(lexer, "literal");
-            lexer.unparseLast();
-            ExpressionNode n = expr(lexer, model, sqlParserCallback, model.getDecls());
-            if (n == null || (n.type != ExpressionNode.LITERAL && n.type != ExpressionNode.CONSTANT && n.type != ExpressionNode.FUNCTION && n.type != ExpressionNode.OPERATION)) {
-                throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "literal expected");
-            }
+        if (isGroupKeyword(tok)) {
+            expectBy(lexer);
 
-            model.addGroupBy(n);
+            do {
+                tokIncludingLocalBrace(lexer, "literal");
+                lexer.unparseLast();
+                ExpressionNode n = expr(lexer, model, sqlParserCallback, model.getDecls());
+                if (n == null || (n.type != ExpressionNode.LITERAL && n.type != ExpressionNode.CONSTANT && n.type != ExpressionNode.FUNCTION && n.type != ExpressionNode.OPERATION)) {
+                    throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "literal expected");
+                }
 
-            tok = SqlUtil.fetchNext(lexer);
-        } while (tok != null && !Chars.equals(tok, ')') && Chars.equals(tok, ','));
+                model.addGroupBy(n);
+
+                tok = SqlUtil.fetchNext(lexer);
+            } while (tok != null && !Chars.equals(tok, ')') && Chars.equals(tok, ','));
+        }
 
         if (tok == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "missing ')'");
