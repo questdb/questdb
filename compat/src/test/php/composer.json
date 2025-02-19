@@ -1,0 +1,5 @@
+{
+  "require": {
+    "symfony/yaml": "^6.0"
+  }
+}
