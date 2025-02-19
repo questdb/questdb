@@ -114,10 +114,19 @@ public class MatViewDefinition {
         }
     }
 
-    public static void commitTo(@NotNull BlockFileWriter writer, @NotNull MatViewDefinition matViewDefinition) {
-        final AppendableBlock mem = writer.append();
-        writeTo(mem, matViewDefinition);
-        mem.commit(MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE);
+    public static void append(@NotNull MatViewDefinition matViewDefinition, @NotNull AppendableBlock block) {
+        block.putStr(matViewDefinition.getBaseTableName());
+        block.putLong(matViewDefinition.getSamplingInterval());
+        block.putChar(matViewDefinition.getSamplingIntervalUnit());
+        block.putStr(matViewDefinition.getTimeZone());
+        block.putStr(matViewDefinition.getTimeZoneOffset());
+        block.putStr(matViewDefinition.getMatViewSql());
+    }
+
+    public static void append(@NotNull MatViewDefinition matViewDefinition, @NotNull BlockFileWriter writer) {
+        final AppendableBlock block = writer.append();
+        append(matViewDefinition, block);
+        block.commit(MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE);
         writer.commit();
     }
 
@@ -135,15 +144,6 @@ public class MatViewDefinition {
         throw CairoException.critical(0)
                 .put("cannot read materialized view definition, block not found [path=").put(path)
                 .put(']');
-    }
-
-    public static void writeTo(@NotNull AppendableBlock mem, @NotNull MatViewDefinition matViewDefinition) {
-        mem.putStr(matViewDefinition.getBaseTableName());
-        mem.putLong(matViewDefinition.getSamplingInterval());
-        mem.putChar(matViewDefinition.getSamplingIntervalUnit());
-        mem.putStr(matViewDefinition.getTimeZone());
-        mem.putStr(matViewDefinition.getTimeZoneOffset());
-        mem.putStr(matViewDefinition.getMatViewSql());
     }
 
     public String getBaseTableName() {
@@ -170,11 +170,11 @@ public class MatViewDefinition {
         return samplingIntervalUnit;
     }
 
-    public String getTimeZone() {
+    public @Nullable String getTimeZone() {
         return timeZone;
     }
 
-    public String getTimeZoneOffset() {
+    public @Nullable String getTimeZoneOffset() {
         return timeZoneOffset;
     }
 
@@ -186,14 +186,14 @@ public class MatViewDefinition {
         return rules;
     }
 
-    private static MatViewDefinition loadMatViewDefinition(final ReadableBlock mem, final TableToken matViewToken) {
-        if (mem.type() != MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE) {
+    private static MatViewDefinition loadMatViewDefinition(final ReadableBlock block, final TableToken matViewToken) {
+        if (block.type() != MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE) {
             // Unknown block.
             return null;
         }
 
         long offset = 0;
-        final CharSequence baseTableName = mem.getStr(offset);
+        final CharSequence baseTableName = block.getStr(offset);
         if (baseTableName == null || baseTableName.length() == 0) {
             throw CairoException.critical(0)
                     .put("base table name for materialized view is empty [view=")
@@ -203,21 +203,21 @@ public class MatViewDefinition {
         offset += Vm.getStorageLength(baseTableName);
         final String baseTableNameStr = Chars.toString(baseTableName);
 
-        final long samplingInterval = mem.getLong(offset);
+        final long samplingInterval = block.getLong(offset);
         offset += Long.BYTES;
 
-        final char samplingIntervalUnit = mem.getChar(offset);
+        final char samplingIntervalUnit = block.getChar(offset);
         offset += Character.BYTES;
 
-        final CharSequence timeZone = mem.getStr(offset);
+        final CharSequence timeZone = block.getStr(offset);
         offset += Vm.getStorageLength(timeZone);
         final String timeZoneStr = Chars.toString(timeZone);
 
-        final CharSequence timeZoneOffset = mem.getStr(offset);
+        final CharSequence timeZoneOffset = block.getStr(offset);
         offset += Vm.getStorageLength(timeZoneOffset);
         final String timeZoneOffsetStr = Chars.toString(timeZoneOffset);
 
-        final CharSequence matViewSql = mem.getStr(offset);
+        final CharSequence matViewSql = block.getStr(offset);
         if (matViewSql == null || matViewSql.length() == 0) {
             throw CairoException.critical(0)
                     .put("materialized view SQL is empty [view=")

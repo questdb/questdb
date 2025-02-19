@@ -3886,12 +3886,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 MatViewGraph graph = engine.getMatViewGraph();
                                 MatViewRefreshState state = graph.getViewRefreshState(tableToken);
                                 writer.of(auxPath.trimTo(tableRootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                                MatViewRefreshState.commitTo(writer, state);
+                                MatViewRefreshState.append(state, writer);
                                 MatViewDefinition matViewDefinition = (state != null)
                                         ? state.getViewDefinition() : graph.getViewDefinition(tableToken);
                                 if (matViewDefinition != null) {
                                     writer.of(auxPath.trimTo(tableRootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
-                                    MatViewDefinition.commitTo(writer, matViewDefinition);
+                                    MatViewDefinition.append(matViewDefinition, writer);
                                 } else {
                                     LOG.info().$("materialized view definition for backup not found [view=").$(tableToken).I$();
                                 }

@@ -90,7 +90,7 @@ public class BlockFileWriter implements Closeable {
         final long checksumAddress = memoryBaseAddress + REGION_HEADER_SIZE + REGION_BLOCK_COUNT_OFFSET;
         final long checksumSize = blockOffset - REGION_HEADER_SIZE - REGION_BLOCK_COUNT_OFFSET;
         // Write checksum to detect file corruption on reads.
-        final int checksum = getChecksum(checksumAddress, checksumSize);
+        final int checksum = checksum(checksumAddress, checksumSize);
 
         memory.putInt(REGION_CHECKSUM_OFFSET, checksum);
         memory.putInt(REGION_BLOCK_COUNT_OFFSET, blockCount);
@@ -176,14 +176,14 @@ public class BlockFileWriter implements Closeable {
         private long payloadOffset;
 
         @Override
-        public void commit(int type) {
+        public void commit(int blockType) {
             if (isCommitted) {
                 throw CairoException.critical(0).put("duplicate block commit call");
             }
 
             final int blockLength = length() + BLOCK_HEADER_SIZE;
             memory.putInt(blockOffset + BLOCK_LENGTH_OFFSET, blockLength);
-            memory.putInt(blockOffset + BLOCK_TYPE_OFFSET, type);
+            memory.putInt(blockOffset + BLOCK_TYPE_OFFSET, blockType);
 
             blockOffset += blockLength;
             blockCount += 1;

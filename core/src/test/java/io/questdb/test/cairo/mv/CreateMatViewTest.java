@@ -812,7 +812,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     block.commit(MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE + 1);
                     // Then write mat view definition.
                     block = writer.append();
-                    MatViewDefinition.writeTo(block, matViewDefinition);
+                    MatViewDefinition.append(matViewDefinition, block);
                     block.commit(MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE);
                     writer.commit();
                 }
@@ -862,7 +862,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     block.commit(MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_TYPE + 1);
                     // Then write mat view state.
                     block = writer.append();
-                    MatViewRefreshState.writeTo(block, matViewRefreshState);
+                    MatViewRefreshState.append(matViewRefreshState, block);
                     block.commit(MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_TYPE);
                     writer.commit();
                 }

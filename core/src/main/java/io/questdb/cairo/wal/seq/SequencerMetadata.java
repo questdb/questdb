@@ -142,9 +142,9 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             assert tableStruct.getMatViewDefinition() != null;
             try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
                 writer.of(path.trimTo(pathLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
-                MatViewDefinition.commitTo(writer, tableStruct.getMatViewDefinition());
+                MatViewDefinition.append(tableStruct.getMatViewDefinition(), writer);
                 writer.of(path.trimTo(pathLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                MatViewRefreshState.commitTo(writer, null);
+                MatViewRefreshState.append(null, writer);
             }
             path.trimTo(pathLen);
         }

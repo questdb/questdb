@@ -69,7 +69,7 @@ public class BlockFileUtils {
     public static final int REGION_BLOCK_COUNT_OFFSET = REGION_CHECKSUM_OFFSET + Integer.BYTES;
     public static final int REGION_HEADER_SIZE = REGION_BLOCK_COUNT_OFFSET + Integer.BYTES;
 
-    public static int getChecksum(long checksumAddress, long checksumSize) {
+    public static int checksum(long checksumAddress, long checksumSize) {
         int checksum = 0;
         while (checksumSize > 0) {
             int chunkSize = (int) Math.min(Integer.MAX_VALUE, checksumSize);
