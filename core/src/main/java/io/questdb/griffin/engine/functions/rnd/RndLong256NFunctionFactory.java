@@ -83,6 +83,11 @@ public class RndLong256NFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_long256(").val(values.length / 4).val(')');
         }

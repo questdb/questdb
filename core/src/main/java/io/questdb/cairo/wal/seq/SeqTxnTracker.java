@@ -42,7 +42,7 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
     private volatile long dirtyWriterTxn;
     private volatile String errorMessage = "";
     private volatile ErrorTag errorTag = ErrorTag.NONE;
-    private int maxRecordedInflightPartitions = 1;
+    private int maxRecordedInFlightPartitions = 1;
     // positive int: holds max parallelism
     // negative int: holds backoff counter
     private int memoryPressureRegulationValue = Integer.MAX_VALUE;
@@ -52,7 +52,7 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
     // 0 unknown
     // 1 not suspended
     private volatile int suspendedState = 0;
-    private long walBackoffUntil = -1;
+    private volatile long walBackoffUntil = -1;
     private volatile long writerTxn = UNINITIALIZED_TXN;
 
     public String getErrorMessage() {
@@ -92,7 +92,7 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
     }
 
     public void hadEnoughMemory(CharSequence tableName, Rnd rnd) {
-        maxRecordedInflightPartitions = 1;
+        maxRecordedInFlightPartitions = 1;
         walBackoffUntil = -1;
         if (memoryPressureRegulationValue == Integer.MAX_VALUE) {
             // already at max parallelism, can't go more optimistic
@@ -169,7 +169,7 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
      * If all measures were exhausted, returns false → the operation should now fail.
      */
     public boolean onOutOfMemory(long nowMicros, CharSequence tableName, Rnd rnd) {
-        if (maxRecordedInflightPartitions == 1) {
+        if (maxRecordedInFlightPartitions == 1) {
             // There was no parallelism
             if (memoryPressureRegulationValue <= -5) {
                 // Maximum backoff already tried => fail
@@ -184,14 +184,17 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
                 memoryPressureRegulationValue--;
             }
             int delayMicros = rnd.nextInt(4_000_000);
-            LOG.info().$("Memory pressure is high [table=").$(tableName).$(", backoffCounter=").$(-memoryPressureRegulationValue).$(", delay=").$(delayMicros).$(" us]").$();
+            LOG.info().$("memory pressure is high [table=").utf8(tableName)
+                    .$(", backoffCounter=").$(-memoryPressureRegulationValue)
+                    .$(", delay=").$(delayMicros).$(" us]")
+                    .$();
             walBackoffUntil = nowMicros + delayMicros;
             return true;
         }
         // There was some parallelism, halve max parallelism
         walBackoffUntil = -1;
-        memoryPressureRegulationValue = maxRecordedInflightPartitions / 2;
-        maxRecordedInflightPartitions = 1;
+        memoryPressureRegulationValue = maxRecordedInFlightPartitions / 2;
+        maxRecordedInFlightPartitions = 1;
         LOG.info().$("Memory pressure is high [table=").$(tableName).$(", maxParallelism=").$(memoryPressureRegulationValue).I$();
 
         return true;
@@ -221,7 +224,7 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
 
     @Override
     public void updateInflightPartitions(int count) {
-        maxRecordedInflightPartitions = Math.max(maxRecordedInflightPartitions, count);
+        maxRecordedInFlightPartitions = Math.max(maxRecordedInFlightPartitions, count);
     }
 
     /**
@@ -236,7 +239,7 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
         // This is only called under TableWriter lock inside Apply2Wal job
         // with no threads race
         // TODO: remove other calls and make the call non-synchronized. The calls to reset txn
-        // when queue is full seems like redundant after all the changes in CheckWalTransactionsJob
+        //       when queue is full seems like redundant after all the changes in CheckWalTransactionsJob
         long prevWriterTxn = this.writerTxn;
         long prevDirtyWriterTxn = this.dirtyWriterTxn;
         this.writerTxn = writerTxn;

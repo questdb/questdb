@@ -2384,6 +2384,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 queryContainsSecret = sqlExecutionContext.containsSecret();
                 break;
             case CompiledQuery.CREATE_TABLE:
+            case CompiledQuery.CREATE_MAT_VIEW:
             case CompiledQuery.DROP:
                 try (
                         Operation op = cq.getOperation();
