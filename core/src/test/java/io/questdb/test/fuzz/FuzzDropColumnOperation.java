@@ -29,12 +29,13 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.std.Rnd;
+import io.questdb.test.tools.TestUtils;
 
 public class FuzzDropColumnOperation implements FuzzTransactionOperation {
     private final String columnName;
 
-    public FuzzDropColumnOperation(String columnName) {
-        this.columnName = columnName;
+    public FuzzDropColumnOperation(Rnd rnd, String columnName) {
+        this.columnName = TestUtils.randomiseCase(rnd, columnName);
     }
 
     @Override

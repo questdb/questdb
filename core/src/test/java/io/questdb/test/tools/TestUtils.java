@@ -1506,6 +1506,26 @@ public final class TestUtils {
         return seq;
     }
 
+    public static String randomiseCase(Rnd rnd, String columName) {
+        int changeCase = rnd.nextInt(3);
+        if (changeCase == 0) {
+            return columName;
+        }
+        StringSink sink = Misc.getThreadLocalSink();
+        sink.put(columName);
+
+        for (int i = 0; i < changeCase; i++) {
+            int pos = rnd.nextInt(columName.length());
+            char ch = columName.charAt(pos);
+            if (Character.isLowerCase(ch)) {
+                sink.setCharAt(pos, Character.toUpperCase(ch));
+            } else {
+                sink.setCharAt(pos, Character.toLowerCase(ch));
+            }
+        }
+        return sink.toString();
+    }
+
     public static String readStringFromFile(File file) {
         try {
             try (FileInputStream fis = new FileInputStream(file)) {
