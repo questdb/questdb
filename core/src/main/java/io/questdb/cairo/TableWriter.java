@@ -1866,11 +1866,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+    public boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
         assert txWriter.getLagRowCount() == 0;
         checkDistressed();
         LogRecord logRec = LOG.info().$("enabling row deduplication [table=").utf8(tableToken.getTableName()).$(", columns=[");
 
+        boolean isSubsetOfOldKeys = true;
         try {
             int upsertKeyColumn = columnsIndexes.size();
             for (int i = 0; i < upsertKeyColumn; i++) {
@@ -1885,6 +1886,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     throw CairoException.critical(0).put("Invalid column used as deduplicate key, column is dropped [table=")
                             .put(tableToken.getTableName()).put(", columnIndex=").put(dedupColIndex);
                 }
+
+                isSubsetOfOldKeys &= metadata.isDedupKey(dedupColIndex);
+
                 if (i > 0) {
                     logRec.$(',');
                 }
@@ -1916,6 +1920,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
         }
+        return isSubsetOfOldKeys;
     }
 
     public void enforceTtl() {

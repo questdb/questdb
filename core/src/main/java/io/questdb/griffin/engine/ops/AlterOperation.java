@@ -81,6 +81,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     private CharSequenceList activeExtraStrInfo;
     private short command;
     private MemoryFCRImpl deserializeMem;
+    private boolean keepMatViewsValid;
 
     public AlterOperation() {
         this(new LongList(), new ObjList<>());
@@ -131,7 +132,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     // todo: supply bitset to indicate which ops are supported and which arent
     //     "structural changes" doesn't cover is as "add column" is supported
     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-        QueryRegistry queryRegistry = sqlExecutionContext != null ? sqlExecutionContext.getCairoEngine().getQueryRegistry() : null;
+        final QueryRegistry queryRegistry = sqlExecutionContext != null ? sqlExecutionContext.getCairoEngine().getQueryRegistry() : null;
+        keepMatViewsValid = false;
         long queryId = -1;
         try {
             if (queryRegistry != null) {
@@ -199,7 +201,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     squashPartitions(svc);
                     break;
                 case SET_DEDUP_ENABLE:
-                    enableDeduplication(svc);
+                    keepMatViewsValid = enableDeduplication(svc);
                     break;
                 case SET_DEDUP_DISABLE:
                     svc.disableDeduplication();
@@ -244,6 +246,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         directExtraStrInfo.clear();
         activeExtraStrInfo = extraStrInfo;
         extraInfo.clear();
+        keepMatViewsValid = false;
         clearCommandCorrelationId();
     }
 
@@ -325,6 +328,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     @Override
     public String matViewInvalidationReason() {
+        // Don't invalidate mat views in case when the operation was "harmless".
+        if (keepMatViewsValid) {
+            return null;
+        }
         switch (command) {
             case RENAME_TABLE:
                 return "table rename operation";
@@ -653,9 +660,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void enableDeduplication(MetadataService svc) {
+    private boolean enableDeduplication(MetadataService svc) {
         assert extraInfo.size() > 0;
-        svc.enableDeduplicationWithUpsertKeys(extraInfo);
+        return svc.enableDeduplicationWithUpsertKeys(extraInfo);
     }
 
     private void squashPartitions(MetadataService svc) {

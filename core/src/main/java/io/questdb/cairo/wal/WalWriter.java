@@ -1801,15 +1801,18 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+        public boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+            boolean isSubsetOfOldKeys = true;
             for (int i = 0, n = columnsIndexes.size(); i < n; i++) {
                 int columnIndex = (int) columnsIndexes.get(i);
                 int columnType = metadata.getColumnType(columnIndex);
                 if (columnType < 0) {
                     throw CairoException.nonCritical().put("cannot use dropped column for deduplication [column=").put(metadata.getColumnName(columnIndex)).put(']');
                 }
+                isSubsetOfOldKeys &= metadata.isDedupKey(columnIndex);
             }
             structureVersion++;
+            return isSubsetOfOldKeys;
         }
 
         @Override
@@ -2043,8 +2046,8 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
-            metadata.enableDeduplicationWithUpsertKeys();
+        public boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+            return metadata.enableDeduplicationWithUpsertKeys();
         }
 
         @Override

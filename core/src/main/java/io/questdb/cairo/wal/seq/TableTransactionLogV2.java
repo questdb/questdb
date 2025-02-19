@@ -61,7 +61,7 @@ import static io.questdb.cairo.wal.WalUtils.*;
  * To calculate the partition one can use the following formula:
  * {@code (txn - 1) / partTransactionCount}
  * <p>
- * Header and record is described in @link TableTransactionLogFile
+ * Header and record is described in {@link TableTransactionLogFile}
  * <p>
  * Transaction record: 60 bytes
  */

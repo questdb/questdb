@@ -471,44 +471,13 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEnableDedupWithFewerKeysDoesNotInvalidateMatViews() throws Exception {
+        testEnableDedupWithSubsetKeysDoesNotInvalidateMatViews("alter table base_price dedup enable upsert keys(ts);");
+    }
+
+    @Test
     public void testEnableDedupWithSameKeysDoesNotInvalidateMatViews() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    "CREATE TABLE base_price (" +
-                            "  sym VARCHAR, price DOUBLE, amount INT, ts TIMESTAMP" +
-                            ") TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym);"
-            );
-
-            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
-
-            execute(
-                    "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
-                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
-                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
-                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
-            );
-            drainQueues();
-
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
-            drainQueues();
-
-            assertSql(
-                    "name\tbaseTableName\tinvalid\n" +
-                            "price_1h\tbase_price\tfalse\n",
-                    "select name, baseTableName, invalid from mat_views"
-            );
-
-            // These dedup enable should be ignored.
-            execute("alter table base_price dedup enable upsert keys(ts, sym);"); // same keys
-            execute("alter table base_price dedup enable upsert keys(ts);"); // fewer keys
-            drainQueues();
-
-            assertSql(
-                    "name\tbaseTableName\tinvalid\n" +
-                            "price_1h\tbase_price\tfalse\n",
-                    "select name, baseTableName, invalid from mat_views"
-            );
-        });
+        testEnableDedupWithSubsetKeysDoesNotInvalidateMatViews("alter table base_price dedup enable upsert keys(ts, sym);");
     }
 
     @Test
@@ -1781,6 +1750,45 @@ public class MatViewTest extends AbstractCairoTest {
                     "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
                             "price_1h\tbase_price\t2024-10-24T19:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\ttable rename operation\ttrue\t1\t3\n",
                     "mat_views"
+            );
+        });
+    }
+
+    private void testEnableDedupWithSubsetKeysDoesNotInvalidateMatViews(String enableDedupSql) throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE base_price (" +
+                            "  sym VARCHAR, price DOUBLE, amount INT, ts TIMESTAMP" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym);"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute(
+                    "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+            drainQueues();
+
+            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            drainQueues();
+
+            assertSql(
+                    "name\tbaseTableName\tinvalid\n" +
+                            "price_1h\tbase_price\tfalse\n",
+                    "select name, baseTableName, invalid from mat_views"
+            );
+
+            // The dedup enable command should be ignored.
+            execute(enableDedupSql);
+            drainQueues();
+
+            assertSql(
+                    "name\tbaseTableName\tinvalid\n" +
+                            "price_1h\tbase_price\tfalse\n",
+                    "select name, baseTableName, invalid from mat_views"
             );
         });
     }
