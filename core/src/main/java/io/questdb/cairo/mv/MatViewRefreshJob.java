@@ -500,9 +500,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // - apply resulting commit
         // - update applied to txn in MatViewGraph
         try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
-            mvRefreshExecutionContext.of(baseTableReader);
             // Operate SQL on a fixed reader that has known max transaction visible.
+            // The reader is returned from mvRefreshExecutionContext.getReader() call,
+            // so if we don't detach it, it may get closed prematurely and/or multiple times.
             engine.detachReader(baseTableReader);
+            mvRefreshExecutionContext.of(baseTableReader);
             try {
                 final long toBaseTxn = baseTableReader.getSeqTxn();
                 // Make time interval filter no-op as we're querying all partitions.
