@@ -37,7 +37,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class TimestampSamplerFactoryTest {
-    private static final long[] micros = {1, Timestamps.SECOND_MICROS, Timestamps.MINUTE_MICROS, Timestamps.HOUR_MICROS, Timestamps.DAY_MICROS};
     private static final char[] units = {'U', 's', 'm', 'h', 'd'};
 
     @Test
@@ -76,8 +75,9 @@ public class TimestampSamplerFactoryTest {
                 long actualTs = sampler.round(expectedTs + i);
                 if (expectedTs != actualTs) {
                     Assert.fail(String.format(
-                            "Failed at: %s, i: %d. Expected: %s, actual: %s",
-                            sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs))
+                                    "Failed at: %s, i: %d. Expected: %s, actual: %s",
+                                    sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs)
+                            )
                     );
                 }
             }
@@ -96,8 +96,9 @@ public class TimestampSamplerFactoryTest {
                 long actualTs = sampler.round(expectedTs + i);
                 if (expectedTs != actualTs) {
                     Assert.fail(String.format(
-                            "Failed at: %s, i: %d. Expected: %s, actual: %s",
-                            sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs))
+                                    "Failed at: %s, i: %d. Expected: %s, actual: %s",
+                                    sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs)
+                            )
                     );
                 }
             }
@@ -116,8 +117,9 @@ public class TimestampSamplerFactoryTest {
                 long actualTs = sampler.round(expectedTs + i * Timestamps.SECOND_MICROS);
                 if (expectedTs != actualTs) {
                     Assert.fail(String.format(
-                            "Failed at: %s, i: %d. Expected: %s, actual: %s",
-                            sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs))
+                                    "Failed at: %s, i: %d. Expected: %s, actual: %s",
+                                    sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs)
+                            )
                     );
                 }
             }
@@ -170,8 +172,9 @@ public class TimestampSamplerFactoryTest {
                 long actualTs = sampler.round(expectedTs + i * Timestamps.SECOND_MICROS);
                 if (expectedTs != actualTs) {
                     Assert.fail(String.format(
-                            "Failed at: %s, i: %d. Expected: %s, actual: %s",
-                            sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs))
+                                    "Failed at: %s, i: %d. Expected: %s, actual: %s",
+                                    sink, i, Timestamps.toString(expectedTs), Timestamps.toString(actualTs)
+                            )
                     );
                 }
             }

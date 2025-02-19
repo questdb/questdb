@@ -64,15 +64,15 @@ public interface MultiArgFunction extends Function {
     }
 
     @Override
-    default boolean isThreadSafe() {
+    default boolean isNonDeterministic() {
         final ObjList<Function> args = getArgs();
         for (int i = 0, n = args.size(); i < n; i++) {
             final Function function = args.getQuick(i);
-            if (!function.isThreadSafe()) {
-                return false;
+            if (function.isNonDeterministic()) {
+                return true;
             }
         }
-        return true;
+        return false;
     }
 
     @Override
@@ -81,6 +81,18 @@ public interface MultiArgFunction extends Function {
         for (int i = 0, n = args.size(); i < n; i++) {
             final Function function = args.getQuick(i);
             if (!function.isRuntimeConstant() && !function.isConstant()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
+    default boolean isThreadSafe() {
+        final ObjList<Function> args = getArgs();
+        for (int i = 0, n = args.size(); i < n; i++) {
+            final Function function = args.getQuick(i);
+            if (!function.isThreadSafe()) {
                 return false;
             }
         }

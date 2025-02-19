@@ -68,9 +68,9 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
 
     @Before
     public void setUp() {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, String.valueOf(parallel));
         super.setUp();
         inputRoot = root;
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, parallel);
     }
 
     @Test

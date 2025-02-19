@@ -25,14 +25,15 @@
 package io.questdb.griffin.model;
 
 public interface ExecutionModel {
-    int COPY = 5;
-    int CREATE_TABLE = 2;
-    int EXPLAIN = 7;
-    int INSERT = 4;
-    int MAX = EXPLAIN + 1;
-    int QUERY = 1;
-    int RENAME_TABLE = 3;
-    int UPDATE = 6;
+    int QUERY = 1;                          // 1
+    int CREATE_TABLE = QUERY + 1;           // 2
+    int RENAME_TABLE = CREATE_TABLE + 1;    // 3
+    int INSERT = RENAME_TABLE + 1;          // 4
+    int COPY = INSERT + 1;                  // 5
+    int UPDATE = COPY + 1;                  // 6
+    int EXPLAIN = UPDATE + 1;               // 7
+    int CREATE_MAT_VIEW = EXPLAIN + 1;      // 8
+    int MAX = CREATE_MAT_VIEW + 1;
 
     int getModelType();
 
@@ -63,6 +64,7 @@ public interface ExecutionModel {
             typeNameMap[ExecutionModel.COPY] = "Copy";
             typeNameMap[ExecutionModel.UPDATE] = "Update";
             typeNameMap[ExecutionModel.EXPLAIN] = "Explain";
+            typeNameMap[ExecutionModel.CREATE_MAT_VIEW] = "Create materialized";
         }
     }
 }

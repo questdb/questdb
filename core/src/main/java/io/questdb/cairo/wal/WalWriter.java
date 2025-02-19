@@ -174,7 +174,8 @@ public class WalWriter implements TableWriterAPI {
         final int walId = tableSequencerAPI.getNextWalId(tableToken);
         this.walName = WAL_NAME_BASE + walId;
         this.walId = walId;
-        this.path = new Path().of(configuration.getDbRoot());
+        this.path = new Path();
+        path.of(configuration.getDbRoot());
         this.pathRootSize = path.size();
         this.path.concat(tableToken).concat(walName);
         this.pathSize = path.size();
@@ -1800,15 +1801,18 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+        public boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+            boolean isSubsetOfOldKeys = true;
             for (int i = 0, n = columnsIndexes.size(); i < n; i++) {
                 int columnIndex = (int) columnsIndexes.get(i);
                 int columnType = metadata.getColumnType(columnIndex);
                 if (columnType < 0) {
                     throw CairoException.nonCritical().put("cannot use dropped column for deduplication [column=").put(metadata.getColumnName(columnIndex)).put(']');
                 }
+                isSubsetOfOldKeys &= metadata.isDedupKey(columnIndex);
             }
             structureVersion++;
+            return isSubsetOfOldKeys;
         }
 
         @Override
@@ -2042,8 +2046,8 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
-            metadata.enableDeduplicationWithUpsertKeys();
+        public boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+            return metadata.enableDeduplicationWithUpsertKeys();
         }
 
         @Override
