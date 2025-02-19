@@ -355,7 +355,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                     }
                     throw ex;
                 }
-                final long safeToPurgeTxn = getSafeToPurgeTxn(txReader.getSeqTxn());
+                final long safeToPurgeTxn = getSafeToPurgeUpToTxn(txReader.getSeqTxn());
 
                 TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
                 try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, safeToPurgeTxn)) {
@@ -386,7 +386,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         // No need to do anything, all discovered segments / wals will be deleted
     }
 
-    private long getSafeToPurgeTxn(long readerSeqTxn) {
+    // Segments that are considered safe to delete by PurgeJob may still be used by dependent materialized views.
+    // This method is used to determine the safe txn to purge up to.
+    private long getSafeToPurgeUpToTxn(long readerSeqTxn) {
         long safeToPurgeTxn = readerSeqTxn;
         childViewSink.clear();
         engine.getMatViewGraph().getDependentMatViews(tableToken, childViewSink);
