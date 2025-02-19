@@ -179,7 +179,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
         if (ColumnType.isToSameOrWider(function.getType(), ColumnType.BYTE)) {
             return function.getByte(record);
         } else {
-            return SqlUtil.implicitCastAsByte(function.getLong(record), function.getType());
+            return SqlUtil.implicitCastDoubleAsByte(function.getDouble(record), function.getType());
         }
     }
 
@@ -211,7 +211,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
         if (ColumnType.isToSameOrWider(function.getType(), ColumnType.SHORT)) {
             return function.getShort(record);
         } else {
-            return SqlUtil.implicitCastAsShort(function.getLong(record), function.getType());
+            return SqlUtil.implicitCastDoubleAsShort(function.getDouble(record), function.getType());
         }
     }
 

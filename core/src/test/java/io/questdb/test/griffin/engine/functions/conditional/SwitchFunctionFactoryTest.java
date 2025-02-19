@@ -840,6 +840,36 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDoubleToByteCast() throws Exception {
+        assertQuery("id\tstatus\n" +
+                        "1\t\n" +
+                        "2\t\n" +
+                        "3\tactive\n" +
+                        "4\tactive\n" +
+                        "5\tactive\n",
+                "select id, case when status = 1.0 then 'active' end as status from foo;",
+                "create table foo as (select x as id, rnd_byte(0, 1) as status from long_sequence(5));",
+                null,
+                true,
+                true);
+    }
+
+    @Test
+    public void testDoubleToShortCast() throws Exception {
+        assertQuery("id\tstatus\n" +
+                        "1\t\n" +
+                        "2\t\n" +
+                        "3\tactive\n" +
+                        "4\tactive\n" +
+                        "5\tactive\n",
+                "select id, case when status = 1.0 then 'active' end as status from foo;",
+                "create table foo as (select x as id, rnd_short(0, 1) as status from long_sequence(5));",
+                null,
+                true,
+                true);
+    }
+
+    @Test
     public void testDuplicateBranchStringToLongCast() throws Exception {
         assertException(
                 "select \n" +
