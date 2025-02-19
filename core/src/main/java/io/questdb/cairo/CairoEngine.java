@@ -1418,7 +1418,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         }
 
                         if (!state.isInvalid()) {
-                            matViewGraph.enqueueRefresh(tableToken);
+                            matViewGraph.enqueueIncrementalRefresh(tableToken);
                         }
                     } catch (CairoException e) {
                         LOG.error().$("could not load materialized view definition [view=").utf8(tableToken.getTableName())

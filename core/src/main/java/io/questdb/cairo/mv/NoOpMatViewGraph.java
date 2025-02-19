@@ -55,15 +55,15 @@ public class NoOpMatViewGraph implements MatViewGraph {
     }
 
     @Override
+    public void enqueueFullRefresh(TableToken matViewToken) {
+    }
+
+    @Override
+    public void enqueueIncrementalRefresh(TableToken matViewToken) {
+    }
+
+    @Override
     public void enqueueInvalidate(TableToken matViewToken, String invalidationReason) {
-    }
-
-    @Override
-    public void enqueueRebuild(TableToken matViewToken) {
-    }
-
-    @Override
-    public void enqueueRefresh(TableToken matViewToken) {
     }
 
     @Override

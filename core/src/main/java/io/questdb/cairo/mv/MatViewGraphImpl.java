@@ -114,7 +114,7 @@ public class MatViewGraphImpl implements MatViewGraph {
     @Override
     public void createView(MatViewDefinition viewDefinition) {
         addView(viewDefinition).init();
-        enqueueMatViewTask(viewDefinition.getMatViewToken(), MatViewRefreshTask.REFRESH, null);
+        enqueueMatViewTask(viewDefinition.getMatViewToken(), MatViewRefreshTask.INCREMENTAL_REFRESH, null);
     }
 
     @Override
@@ -144,18 +144,18 @@ public class MatViewGraphImpl implements MatViewGraph {
     }
 
     @Override
+    public void enqueueFullRefresh(TableToken matViewToken) {
+        enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.FULL_REFRESH, null);
+    }
+
+    @Override
+    public void enqueueIncrementalRefresh(TableToken matViewToken) {
+        enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.INCREMENTAL_REFRESH, null);
+    }
+
+    @Override
     public void enqueueInvalidate(TableToken matViewToken, String invalidationReason) {
         enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.INVALIDATE, invalidationReason);
-    }
-
-    @Override
-    public void enqueueRebuild(TableToken matViewToken) {
-        enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.REBUILD, null);
-    }
-
-    @Override
-    public void enqueueRefresh(TableToken matViewToken) {
-        enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.REFRESH, null);
     }
 
     public void enqueueRefreshTaskIfStateExists(TableToken matViewToken, int operation, String invalidationReason) {
@@ -227,9 +227,9 @@ public class MatViewGraphImpl implements MatViewGraph {
     public void notifyTxnApplied(MatViewRefreshTask task, long seqTxn) {
         final MatViewRefreshList list = dependentViewsByTableName.get(task.baseTableToken.getTableName());
         if (list != null) {
-            // Always notify refresh job in case of mat view invalidation or rebuild.
+            // Always notify refresh job in case of mat view invalidation or full refresh.
             // For incremental refresh we check if we haven't already notified on the given txn.
-            if (task.operation != MatViewRefreshTask.REFRESH || list.notifyOnBaseTableCommitNoLock(seqTxn)) {
+            if (task.operation != MatViewRefreshTask.INCREMENTAL_REFRESH || list.notifyOnBaseTableCommitNoLock(seqTxn)) {
                 task.refreshTriggeredTimestamp = microsecondClock.getTicks();
                 refreshTaskQueue.enqueue(task);
                 if (task.operation == MatViewRefreshTask.INVALIDATE) {
@@ -271,7 +271,7 @@ public class MatViewGraphImpl implements MatViewGraph {
         task.matViewToken = matViewToken;
         task.operation = operation;
         task.invalidationReason = invalidationReason;
-        if (operation == MatViewRefreshTask.REFRESH || operation == MatViewRefreshTask.REBUILD) {
+        if (operation == MatViewRefreshTask.INCREMENTAL_REFRESH || operation == MatViewRefreshTask.FULL_REFRESH) {
             task.refreshTriggeredTimestamp = microsecondClock.getTicks();
         }
         refreshTaskQueue.enqueue(task);

@@ -115,7 +115,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     public boolean run(int workerId, @NotNull RunStatus runStatus) {
         // there is job instance per thread, the worker id must never change for this job
         assert this.workerId == workerId;
-        return refreshNotifiedViews();
+        return processNotifications();
     }
 
     private boolean findCommitTimestampRanges(
@@ -275,7 +275,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         LOG.info().$("base table is under heavy DDL changes, will reattempt refresh later [view=").$(viewDef.getMatViewToken())
                                 .$(", recompileAttempts=").$(maxRecompileAttempts)
                                 .I$();
-                        engine.getMatViewGraph().enqueueRefresh(viewDef.getMatViewToken());
+                        engine.getMatViewGraph().enqueueIncrementalRefresh(viewDef.getMatViewToken());
                         return false;
                     }
                 } catch (Throwable th) {
@@ -334,7 +334,100 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
-    private boolean rebuildView(@NotNull TableToken viewToken, MatViewGraph viewGraph, long refreshTriggeredTimestamp) {
+    private boolean processNotifications() {
+        final MatViewGraph matViewGraph = engine.getMatViewGraph();
+        boolean refreshed = false;
+        while (matViewGraph.tryDequeueRefreshTask(mvRefreshTask)) {
+            final int operation = mvRefreshTask.operation;
+            final TableToken baseTableToken = mvRefreshTask.baseTableToken;
+            final TableToken matViewToken = mvRefreshTask.matViewToken;
+            final long refreshTriggeredTimestamp = mvRefreshTask.refreshTriggeredTimestamp;
+            final String invalidationReason = mvRefreshTask.invalidationReason;
+
+            if (matViewToken == null) {
+                try {
+                    engine.verifyTableToken(baseTableToken);
+                } catch (CairoException | TableReferenceOutOfDateException e) {
+                    LOG.info().$("base table is dropped or renamed [table=").$(baseTableToken)
+                            .$(", error=").$(e.getFlyweightMessage())
+                            .I$();
+                    invalidateDependentViews(baseTableToken, matViewGraph, "base table is dropped or renamed");
+                    continue;
+                }
+            }
+
+            switch (operation) {
+                case MatViewRefreshTask.INCREMENTAL_REFRESH:
+                    if (matViewToken == null) {
+                        refreshed |= refreshDependentViewsIncremental(baseTableToken, matViewGraph, refreshTriggeredTimestamp);
+                    } else {
+                        refreshed |= refreshIncremental(matViewToken, matViewGraph, refreshTriggeredTimestamp);
+                    }
+                    break;
+                case MatViewRefreshTask.FULL_REFRESH:
+                    assert matViewToken != null;
+                    refreshed |= refreshFull(matViewToken, matViewGraph, refreshTriggeredTimestamp);
+                    break;
+                case MatViewRefreshTask.INVALIDATE:
+                    if (matViewToken == null) {
+                        invalidateDependentViews(baseTableToken, matViewGraph, invalidationReason);
+                    } else {
+                        invalidateView(matViewToken, matViewGraph, invalidationReason);
+                    }
+                    break;
+                default:
+                    throw new RuntimeException("unexpected operation: " + operation);
+            }
+        }
+        return refreshed;
+    }
+
+    private boolean refreshDependentViewsIncremental(TableToken baseTableToken, MatViewGraph viewGraph, long refreshTriggeredTimestamp) {
+        if (!baseTableToken.isWal()) {
+            LOG.error().$("found materialized views dependent on non-WAL table that will not be refreshed [parent=").utf8(baseTableToken.getTableName()).I$();
+            return false;
+        }
+
+        boolean refreshed = false;
+        childViewSink.clear();
+        viewGraph.getDependentMatViews(baseTableToken, childViewSink);
+        final SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseTableToken);
+        final long minRefreshToTxn = baseSeqTracker.getWriterTxn();
+
+        for (int v = 0, n = childViewSink.size(); v < n; v++) {
+            final TableToken viewToken = childViewSink.get(v);
+            final MatViewRefreshState state = viewGraph.getViewRefreshState(viewToken);
+            if (state != null && !state.isPendingInvalidation() && !state.isInvalid() && !state.isDropped()) {
+                if (!state.tryLock()) {
+                    LOG.debug().$("skipping materialized view refresh, locked by another refresh run [view=").$(viewToken).I$();
+                    continue;
+                }
+
+                try {
+                    refreshed = refreshIncremental(state, baseTableToken, viewToken, refreshTriggeredTimestamp);
+                } catch (Throwable th) {
+                    refreshFailState(state, microsecondClock.getTicks(), th.getMessage());
+                } finally {
+                    state.unlock();
+                }
+            }
+        }
+        mvRefreshTask.clear();
+        mvRefreshTask.baseTableToken = baseTableToken;
+        mvRefreshTask.operation = MatViewRefreshTask.INCREMENTAL_REFRESH;
+        viewGraph.notifyBaseRefreshed(mvRefreshTask, minRefreshToTxn);
+
+        if (refreshed) {
+            LOG.info().$("refreshed materialized views dependent on [table=").$(baseTableToken).I$();
+        }
+        return refreshed;
+    }
+
+    private void refreshFailState(MatViewRefreshState state, long refreshTimestamp, CharSequence errorMessage) {
+        state.refreshFail(blockFileWriter, dbRoot.trimTo(dbRootLen), refreshTimestamp, errorMessage);
+    }
+
+    private boolean refreshFull(@NotNull TableToken viewToken, MatViewGraph viewGraph, long refreshTriggeredTimestamp) {
         final MatViewRefreshState state = viewGraph.getViewRefreshState(viewToken);
         if (state == null || state.isDropped()) {
             return false;
@@ -343,9 +436,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         if (!state.tryLock()) {
             // Someone is refreshing the view, so we're going for another attempt.
             // Just mark the view invalid to prevent intermediate incremental refreshes and republish the task.
-            LOG.info().$("delaying materialized view rebuild, locked by another refresh run [view=").$(viewToken).I$();
+            LOG.info().$("delaying full refresh of materialized view, locked by another refresh run [view=").$(viewToken).I$();
             state.markAsPendingInvalidation();
-            viewGraph.enqueueRebuild(viewToken);
+            viewGraph.enqueueFullRefresh(viewToken);
             return false;
         }
 
@@ -355,7 +448,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             try {
                 baseTableToken = engine.verifyTableName(state.getViewDefinition().getBaseTableName());
             } catch (CairoException th) {
-                LOG.error().$("error rebuilding materialized view, cannot resolve base table [view=").$(viewToken)
+                LOG.error().$("full refresh error, cannot resolve base table [view=").$(viewToken)
                         .$(", error=").$(th.getFlyweightMessage())
                         .I$();
                 refreshFailState(state, microsecondClock.getTicks(), th.getFlyweightMessage());
@@ -367,9 +460,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 return false;
             }
 
-            rebuilt = rebuildView(state, baseTableToken, viewToken, refreshTriggeredTimestamp);
+            rebuilt = refreshFull(state, baseTableToken, viewToken, refreshTriggeredTimestamp);
         } catch (Throwable th) {
-            LOG.error().$("error rebuilding materialized view [view=").$(viewToken).$(", error=").$(th).I$();
+            LOG.error().$("full refresh error [view=").$(viewToken).$(", error=").$(th).I$();
             refreshFailState(state, microsecondClock.getTicks(), th.getMessage());
             return false;
         } finally {
@@ -378,12 +471,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         // Kickstart incremental refresh.
         if (rebuilt) {
-            viewGraph.enqueueRefresh(viewToken);
+            viewGraph.enqueueIncrementalRefresh(viewToken);
         }
         return rebuilt;
     }
 
-    private boolean rebuildView(
+    private boolean refreshFull(
             @NotNull MatViewRefreshState state,
             @NotNull TableToken baseTableToken,
             @NotNull TableToken viewToken,
@@ -394,7 +487,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final MatViewDefinition viewDef = state.getViewDefinition();
         if (viewDef == null) {
             // The view must have been deleted.
-            LOG.info().$("not rebuilding materialized view, new definition does not exist [view=").$(viewToken)
+            LOG.info().$("skipping full refresh for materialized view, new definition does not exist [view=").$(viewToken)
                     .$(", base=").$(baseTableToken)
                     .I$();
             return false;
@@ -415,7 +508,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // Make time interval filter no-op as we're querying all partitions.
                 mvRefreshExecutionContext.setRange(Long.MIN_VALUE + 1, Long.MAX_VALUE);
 
-                try (TableWriterAPI commitWriter = engine.getTableWriterAPI(viewToken, "Mat View rebuild")) {
+                try (TableWriterAPI commitWriter = engine.getTableWriterAPI(viewToken, "mat view full refresh")) {
                     commitWriter.truncateSoft();
                     insertAsSelect(state, viewDef, commitWriter, toBaseTxn, refreshTriggeredTimestamp);
                     resetInvalidState(state);
@@ -441,100 +534,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return false;
     }
 
-    private boolean refreshDependentViews(TableToken baseTableToken, MatViewGraph viewGraph, long refreshTriggeredTimestamp) {
-        if (!baseTableToken.isWal()) {
-            LOG.error().$("found materialized views dependent on non-WAL table that will not be refreshed [parent=").utf8(baseTableToken.getTableName()).I$();
-            return false;
-        }
-
-        boolean refreshed = false;
-        childViewSink.clear();
-        viewGraph.getDependentMatViews(baseTableToken, childViewSink);
-        final SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseTableToken);
-        final long minRefreshToTxn = baseSeqTracker.getWriterTxn();
-
-        for (int v = 0, n = childViewSink.size(); v < n; v++) {
-            final TableToken viewToken = childViewSink.get(v);
-            final MatViewRefreshState state = viewGraph.getViewRefreshState(viewToken);
-            if (state != null && !state.isPendingInvalidation() && !state.isInvalid() && !state.isDropped()) {
-                if (!state.tryLock()) {
-                    LOG.debug().$("skipping materialized view refresh, locked by another refresh run [view=").$(viewToken).I$();
-                    continue;
-                }
-
-                try {
-                    refreshed = refreshView(state, baseTableToken, viewToken, refreshTriggeredTimestamp);
-                } catch (Throwable th) {
-                    refreshFailState(state, microsecondClock.getTicks(), th.getMessage());
-                } finally {
-                    state.unlock();
-                }
-            }
-        }
-        mvRefreshTask.clear();
-        mvRefreshTask.baseTableToken = baseTableToken;
-        mvRefreshTask.operation = MatViewRefreshTask.REFRESH;
-        viewGraph.notifyBaseRefreshed(mvRefreshTask, minRefreshToTxn);
-
-        if (refreshed) {
-            LOG.info().$("refreshed materialized views dependent on [table=").$(baseTableToken).I$();
-        }
-        return refreshed;
-    }
-
-    private void refreshFailState(MatViewRefreshState state, long refreshTimestamp, CharSequence errorMessage) {
-        state.refreshFail(blockFileWriter, dbRoot.trimTo(dbRootLen), refreshTimestamp, errorMessage);
-    }
-
-    private boolean refreshNotifiedViews() {
-        final MatViewGraph matViewGraph = engine.getMatViewGraph();
-        boolean refreshed = false;
-        while (matViewGraph.tryDequeueRefreshTask(mvRefreshTask)) {
-            final int operation = mvRefreshTask.operation;
-            final TableToken baseTableToken = mvRefreshTask.baseTableToken;
-            final TableToken matViewToken = mvRefreshTask.matViewToken;
-            final long refreshTriggeredTimestamp = mvRefreshTask.refreshTriggeredTimestamp;
-            final String invalidationReason = mvRefreshTask.invalidationReason;
-
-            if (matViewToken == null) {
-                try {
-                    engine.verifyTableToken(baseTableToken);
-                } catch (CairoException | TableReferenceOutOfDateException e) {
-                    LOG.info().$("base table is dropped or renamed [table=").$(baseTableToken)
-                            .$(", error=").$(e.getFlyweightMessage())
-                            .I$();
-                    invalidateDependentViews(baseTableToken, matViewGraph, "base table is dropped or renamed");
-                    continue;
-                }
-            }
-
-            switch (operation) {
-                case MatViewRefreshTask.REFRESH:
-                    if (matViewToken == null) {
-                        refreshed |= refreshDependentViews(baseTableToken, matViewGraph, refreshTriggeredTimestamp);
-                    } else {
-                        refreshed |= refreshView(matViewToken, matViewGraph, refreshTriggeredTimestamp);
-                    }
-                    break;
-                case MatViewRefreshTask.REBUILD:
-                    assert matViewToken != null;
-                    refreshed |= rebuildView(matViewToken, matViewGraph, refreshTriggeredTimestamp);
-                    break;
-                case MatViewRefreshTask.INVALIDATE:
-                    if (matViewToken == null) {
-                        invalidateDependentViews(baseTableToken, matViewGraph, invalidationReason);
-                    } else {
-                        invalidateView(matViewToken, matViewGraph, invalidationReason);
-                    }
-                    break;
-                default:
-                    throw new RuntimeException("unexpected operation: " + operation);
-            }
-        }
-        return refreshed;
-    }
-
-    private boolean refreshView(
+    private boolean refreshIncremental(
             @NotNull MatViewRefreshState state,
             @NotNull TableToken baseTableToken,
             @NotNull TableToken viewToken,
@@ -616,7 +616,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return false;
     }
 
-    private boolean refreshView(@NotNull TableToken viewToken, MatViewGraph viewGraph, long refreshTriggeredTimestamp) {
+    private boolean refreshIncremental(@NotNull TableToken viewToken, MatViewGraph viewGraph, long refreshTriggeredTimestamp) {
         final MatViewRefreshState state = viewGraph.getViewRefreshState(viewToken);
         if (state == null || state.isPendingInvalidation() || state.isInvalid() || state.isDropped()) {
             return false;
@@ -644,7 +644,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 return false;
             }
 
-            return refreshView(state, baseTableToken, viewToken, refreshTriggeredTimestamp);
+            return refreshIncremental(state, baseTableToken, viewToken, refreshTriggeredTimestamp);
         } catch (Throwable th) {
             LOG.error().$("error refreshing materialized view [view=").$(viewToken).$(", error=").$(th).I$();
             refreshFailState(state, microsecondClock.getTicks(), th.getMessage());
