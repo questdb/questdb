@@ -546,9 +546,9 @@ public final class TableUtils {
                 assert blockFileWriter != null;
                 try (BlockFileWriter writer = blockFileWriter) {
                     writer.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
-                    MatViewDefinition.commitTo(writer, structure.getMatViewDefinition());
+                    MatViewDefinition.append(structure.getMatViewDefinition(), writer);
                     writer.of(path.trimTo(rootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                    MatViewRefreshState.commitTo(writer, null);
+                    MatViewRefreshState.append(null, writer);
                 }
             }
 

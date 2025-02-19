@@ -102,7 +102,7 @@ public class BlockFileReader implements Closeable {
         final long memoryBaseAddress = memory.getPageAddress(0);
         final long checksumAddress = memoryBaseAddress + REGION_HEADER_SIZE + REGION_BLOCK_COUNT_OFFSET;
         final long checksumSize = regionLength - REGION_HEADER_SIZE - REGION_BLOCK_COUNT_OFFSET;
-        final int checksum = getChecksum(checksumAddress, checksumSize);
+        final int checksum = checksum(checksumAddress, checksumSize);
         final int expectedChecksum = memory.getInt(REGION_CHECKSUM_OFFSET);
 
         // Compare actual checksum with the one from the region header to detect file corruption on reads.

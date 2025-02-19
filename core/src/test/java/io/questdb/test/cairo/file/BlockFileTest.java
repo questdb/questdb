@@ -358,7 +358,7 @@ public class BlockFileTest extends AbstractCairoTest {
                     try (Path path = getDefinitionFilePath()) {
                         start.await();
                         for (int i = 0; i < iterations; i++) {
-                            Os.sleep(1); // interleave reads and writes
+                            Os.pause(); // interleave reads and writes
                             readAllBlocks(path, 1, -1);
                         }
                     } catch (Throwable th) {
@@ -499,7 +499,7 @@ public class BlockFileTest extends AbstractCairoTest {
         Assert.assertEquals(expectedRegionLength, regionLength);
     }
 
-    private static int commitAllTypesMsgAppendAPI(AppendableBlock memory) {
+    private static void commitAllTypesMsgAppendAPI(AppendableBlock memory) {
         BinarySequence binarySequence = new BinarySequence() {
             @Override
             public byte byteAt(long index) {
@@ -530,10 +530,10 @@ public class BlockFileTest extends AbstractCairoTest {
             Assert.fail();
         } catch (CairoException ignored) {
         }
-        return memory.length();
+        memory.length();
     }
 
-    private static int commitAllTypesMsgWriteAPI(WritableBlock memory) {
+    private static void commitAllTypesMsgWriteAPI(WritableBlock memory) {
         BinarySequence binarySequence = new BinarySequence() {
             @Override
             public byte byteAt(long index) {
@@ -575,10 +575,10 @@ public class BlockFileTest extends AbstractCairoTest {
             Assert.fail();
         } catch (CairoException ignored) {
         }
-        return memory.length();
+        memory.length();
     }
 
-    private static int commitLongsMsgAppendAPI(AppendableBlock memory, int numLongs) {
+    private static void commitLongsMsgAppendAPI(AppendableBlock memory, int numLongs) {
         memory.putInt(numLongs);
         for (int i = 0; i < numLongs; i++) {
             memory.putLong(i);
@@ -589,7 +589,7 @@ public class BlockFileTest extends AbstractCairoTest {
             Assert.fail();
         } catch (CairoException ignored) {
         }
-        return memory.length();
+        memory.length();
     }
 
     private static int commitMsgA1(AppendableBlock memory, long regionVersion) {

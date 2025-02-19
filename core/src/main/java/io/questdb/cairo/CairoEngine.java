@@ -1414,7 +1414,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             MatViewRefreshState.readFrom(reader, state);
                         } else {
                             blockFileWriter.of(path.$());
-                            MatViewRefreshState.commitTo(blockFileWriter, state);
+                            MatViewRefreshState.append(state, blockFileWriter);
                         }
 
                         if (!state.isInvalid()) {

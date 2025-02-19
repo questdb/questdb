@@ -73,46 +73,43 @@ public class MatViewRefreshState implements QuietCloseable {
     }
 
     // refreshState can be null, in this case "default" record will be written
-    public static void commitTo(@NotNull BlockFileWriter writer, @Nullable MatViewRefreshState refreshState) {
-        final AppendableBlock mem = writer.append();
-        writeTo(mem, refreshState);
-        mem.commit(MAT_VIEW_STATE_FORMAT_MSG_TYPE);
+    public static void append(@Nullable MatViewRefreshState refreshState, @NotNull BlockFileWriter writer) {
+        final AppendableBlock block = writer.append();
+        append(refreshState, block);
+        block.commit(MAT_VIEW_STATE_FORMAT_MSG_TYPE);
         writer.commit();
     }
 
     public static void readFrom(@NotNull BlockFileReader reader, @NotNull MatViewRefreshState refreshState) {
         final BlockFileReader.BlockCursor cursor = reader.getCursor();
         // Iterate through the block until we find the one we recognize.
-        boolean found = false;
         while (cursor.hasNext()) {
-            final ReadableBlock mem = cursor.next();
-            if (mem.type() != MAT_VIEW_STATE_FORMAT_MSG_TYPE) {
+            final ReadableBlock block = cursor.next();
+            if (block.type() != MAT_VIEW_STATE_FORMAT_MSG_TYPE) {
                 // Unknown block, skip.
                 continue;
             }
-            refreshState.invalid = mem.getBool(0);
-            refreshState.lastRefreshBaseTxn = mem.getLong(Byte.BYTES);
-            refreshState.invalidationReason = Chars.toString(mem.getStr(Long.BYTES + Byte.BYTES));
-            found = true;
-        }
-        if (!found) {
-            final TableToken matViewToken = refreshState.getViewDefinition() != null ? refreshState.getViewDefinition().getMatViewToken() : null;
-            throw CairoException.critical(0).put("cannot read materialized view state, block not found [view=")
-                    .put(matViewToken != null ? matViewToken.getTableName() : "N/A")
-                    .put(']');
-        }
-    }
-
-    public static void writeTo(@NotNull AppendableBlock mem, @Nullable MatViewRefreshState refreshState) {
-        if (refreshState == null) {
-            mem.putBool(false);
-            mem.putLong(-1);
-            mem.putStr(null);
+            refreshState.invalid = block.getBool(0);
+            refreshState.lastRefreshBaseTxn = block.getLong(Byte.BYTES);
+            refreshState.invalidationReason = Chars.toString(block.getStr(Long.BYTES + Byte.BYTES));
             return;
         }
-        mem.putBool(refreshState.isInvalid());
-        mem.putLong(refreshState.lastRefreshBaseTxn);
-        mem.putStr(refreshState.getInvalidationReason());
+        final TableToken matViewToken = refreshState.getViewDefinition() != null ? refreshState.getViewDefinition().getMatViewToken() : null;
+        throw CairoException.critical(0).put("cannot read materialized view state, block not found [view=")
+                .put(matViewToken != null ? matViewToken.getTableName() : "N/A")
+                .put(']');
+    }
+
+    public static void append(@Nullable MatViewRefreshState refreshState, @NotNull AppendableBlock block) {
+        if (refreshState == null) {
+            block.putBool(false);
+            block.putLong(-1);
+            block.putStr(null);
+            return;
+        }
+        block.putBool(refreshState.isInvalid());
+        block.putLong(refreshState.lastRefreshBaseTxn);
+        block.putStr(refreshState.getInvalidationReason());
     }
 
     public RecordCursorFactory acquireRecordFactory() {
@@ -266,7 +263,7 @@ public class MatViewRefreshState implements QuietCloseable {
                     .concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
             try (blockFileWriter) {
                 blockFileWriter.of(dbRoot.$());
-                MatViewRefreshState.commitTo(blockFileWriter, this);
+                MatViewRefreshState.append(this, blockFileWriter);
             }
         }
     }
@@ -277,7 +274,7 @@ public class MatViewRefreshState implements QuietCloseable {
                 .concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
         try (blockFileWriter) {
             blockFileWriter.of(dbRoot.$());
-            MatViewRefreshState.commitTo(blockFileWriter, this);
+            MatViewRefreshState.append(this, blockFileWriter);
         }
     }
 }
