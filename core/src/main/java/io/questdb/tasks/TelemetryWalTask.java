@@ -35,9 +35,9 @@ import org.jetbrains.annotations.NotNull;
 
 public class TelemetryWalTask implements AbstractTelemetryTask {
     public static final String NAME = "WAL TELEMETRY";
-    public static final String TABLE_NAME = "telemetry_wal";
+    public static final String TABLE_NAME = "`telemetry_wal`";
     public static final Telemetry.TelemetryTypeBuilder<TelemetryWalTask> WAL_TELEMETRY = configuration -> {
-        String tableName = configuration.getSystemTableNamePrefix() + TABLE_NAME;
+        final String tableName = configuration.getSystemTableNamePrefix() + TABLE_NAME;
         return new Telemetry.TelemetryType<>() {
             @Override
             public QueryBuilder getCreateSql(QueryBuilder builder) {
@@ -85,7 +85,16 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
     private TelemetryWalTask() {
     }
 
-    public static void store(@NotNull Telemetry<TelemetryWalTask> telemetry, short event, int tableId, int walId, long seqTxn, long rowCount, long physicalRowCount, long latencyUs) {
+    public static void store(
+            @NotNull Telemetry<TelemetryWalTask> telemetry,
+            short event,
+            int tableId,
+            int walId,
+            long seqTxn,
+            long rowCount,
+            long physicalRowCount,
+            long latencyUs
+    ) {
         final TelemetryWalTask task = telemetry.nextTask();
         if (task != null) {
             task.event = event;
