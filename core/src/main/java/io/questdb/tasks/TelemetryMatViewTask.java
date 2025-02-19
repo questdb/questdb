@@ -47,9 +47,9 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
                         .$("' (" +
                                 "created TIMESTAMP, " +
                                 "event SHORT, " +
-                                "viewTableId INT, " +
-                                "baseTableTxn LONG, " +
-                                "invalidationReason VARCHAR, " +
+                                "view_table_id INT, " +
+                                "base_table_txn LONG, " +
+                                "invalidation_reason VARCHAR, " +
                                 "latency FLOAT" +
                                 ") TIMESTAMP(created) PARTITION BY DAY TTL 1 WEEK BYPASS WAL"
                         );

@@ -83,7 +83,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 dropMatView("2024-10-24T17:00:33.000000Z", telemetryJob);
 
                 assertSql(
-                        "created\tevent\tviewTableId\tbaseTableTxn\tinvalidationReason\tlatency\n" +
+                        "created\tevent\tview_table_id\tbase_table_txn\tinvalidation_reason\tlatency\n" +
                                 "2024-10-24T17:00:15.000000Z\t200\t6\tnull\t\t0.0000\n" +
                                 "2024-10-24T17:00:25.000000Z\t204\t6\t1\t\t10000.0000\n" +
                                 "2024-10-24T17:00:33.000000Z\t201\t6\tnull\t\t0.0000\n",
@@ -123,7 +123,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 }
 
                 assertSql(
-                        "created\tevent\tviewTableId\tbaseTableTxn\tinvalidationReason\tlatency\n" +
+                        "created\tevent\tview_table_id\tbase_table_txn\tinvalidation_reason\tlatency\n" +
                                 "2024-10-24T17:00:15.000000Z\t200\t6\tnull\t\t0.0000\n" +
                                 "2024-10-24T17:00:25.000000Z\t204\t6\t1\t\t10000.0000\n" +
                                 "2024-10-24T17:00:41.000000Z\t202\t6\tnull\ttruncate operation\t0.0000\n",
@@ -141,7 +141,6 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 createMatView("2024-10-24T17:00:15.000000Z", telemetryJob);
 
                 try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
-
                     execute("2024-10-24T17:00:25.000000Z", refreshJob, telemetryJob,
                             "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
                                     ",('gbpusd', 1.323, '2024-09-10T12:02')" +
@@ -164,7 +163,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 }
 
                 assertSql(
-                        "created\tevent\tviewTableId\tbaseTableTxn\tinvalidationReason\tlatency\n" +
+                        "created\tevent\tview_table_id\tbase_table_txn\tinvalidation_reason\tlatency\n" +
                                 "2024-10-24T17:00:15.000000Z\t200\t6\tnull\t\t0.0000\n" +
                                 "2024-10-24T17:00:25.000000Z\t204\t6\t1\t\t10000.0000\n" +
                                 "2024-10-24T17:00:33.000000Z\t202\t6\tnull\ttable does not exist [table=base_price]\t0.0000\n" +
@@ -183,7 +182,6 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 createMatView("2024-10-24T17:00:20.000000Z", telemetryJob);
 
                 try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
-
                     execute("2024-10-24T17:01:00.000000Z", refreshJob, telemetryJob,
                             "insert into base_price " +
                                     "select 'gbpusd', 1.320 + x / 1000.0, timestamp_sequence('2024-09-10T12:02', 1000000*60*5) " +
@@ -212,7 +210,7 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 assertViewMatchesSqlOverBaseTable();
 
                 assertSql(
-                        "created\tevent\tviewTableId\tbaseTableTxn\tinvalidationReason\tlatency\n" +
+                        "created\tevent\tview_table_id\tbase_table_txn\tinvalidation_reason\tlatency\n" +
                                 "2024-10-24T17:00:20.000000Z\t200\t6\tnull\t\t0.0000\n" +
                                 "2024-10-24T17:01:00.000000Z\t204\t6\t1\t\t40000.0000\n" +
                                 "2024-10-24T17:01:30.000000Z\t204\t6\t2\t\t30000.0000\n",
