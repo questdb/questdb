@@ -35,7 +35,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class TelemetryWalTask implements AbstractTelemetryTask {
     public static final String NAME = "WAL TELEMETRY";
-    public static final String TABLE_NAME = "`telemetry_wal`";
+    public static final String TABLE_NAME = "telemetry_wal";
     public static final Telemetry.TelemetryTypeBuilder<TelemetryWalTask> WAL_TELEMETRY = configuration -> {
         final String tableName = configuration.getSystemTableNamePrefix() + TABLE_NAME;
         return new Telemetry.TelemetryType<>() {
@@ -49,9 +49,9 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
                                 "tableId INT, " +
                                 "walId INT, " +
                                 "seqTxn LONG, " +
-                                "rowCount LONG," +
-                                "physicalRowCount LONG," +
-                                "latency FLOAT" +
+                                "rowCount LONG, " +
+                                "physicalRowCount LONG, " +
+                                "latency FLOAT " +
                                 ") TIMESTAMP(created) PARTITION BY DAY TTL 1 WEEK BYPASS WAL"
                         );
             }
