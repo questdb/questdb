@@ -71,14 +71,15 @@ public class MatViewsFunctionFactory implements FunctionFactory {
     }
 
     private static class ViewsCursorFactory implements RecordCursorFactory {
-        private static final int COLUMN_NAME = 0;
-        private static final int COLUMN_BASE_TABLE_NAME = COLUMN_NAME + 1;
+        private static final int COLUMN_VIEW_NAME = 0;
+        private static final int COLUMN_REFRESH_TYPE = COLUMN_VIEW_NAME + 1;
+        private static final int COLUMN_BASE_TABLE_NAME = COLUMN_REFRESH_TYPE + 1;
         private static final int COLUMN_LAST_REFRESH_TIMESTAMP = COLUMN_BASE_TABLE_NAME + 1;
         private static final int COLUMN_VIEW_SQL = COLUMN_LAST_REFRESH_TIMESTAMP + 1;
         private static final int COLUMN_TABLE_DIR_NAME = COLUMN_VIEW_SQL + 1;
         private static final int COLUMN_INVALIDATION_REASON = COLUMN_TABLE_DIR_NAME + 1;
-        private static final int COLUMN_INVALID = COLUMN_INVALIDATION_REASON + 1;
-        private static final int COLUMN_LAST_REFRESH_BASE_TABLE_TXN = COLUMN_INVALID + 1;
+        private static final int COLUMN_VIEW_STATUS = COLUMN_INVALIDATION_REASON + 1;
+        private static final int COLUMN_LAST_REFRESH_BASE_TABLE_TXN = COLUMN_VIEW_STATUS + 1;
         private static final int COLUMN_LAST_APPLIED_BASE_TABLE_TXN = COLUMN_LAST_REFRESH_BASE_TABLE_TXN + 1;
         private static final RecordMetadata METADATA;
         private final ViewsListCursor cursor = new ViewsListCursor();
@@ -181,11 +182,6 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 private MatViewDefinition viewDefinition;
 
                 @Override
-                public boolean getBool(int col) {
-                    return col == COLUMN_INVALID && invalid;
-                }
-
-                @Override
                 public long getLong(int col) {
                     switch (col) {
                         case COLUMN_LAST_REFRESH_TIMESTAMP:
@@ -202,14 +198,19 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 @Override
                 public CharSequence getStrA(int col) {
                     switch (col) {
-                        case COLUMN_NAME:
+                        case COLUMN_VIEW_NAME:
                             return viewDefinition.getMatViewToken().getTableName();
+                        case COLUMN_REFRESH_TYPE:
+                            // For now, incremental refresh is the only supported strategy.
+                            return "incremental";
                         case COLUMN_BASE_TABLE_NAME:
                             return viewDefinition.getBaseTableName();
                         case COLUMN_VIEW_SQL:
                             return viewDefinition.getMatViewSql();
                         case COLUMN_TABLE_DIR_NAME:
                             return viewDefinition.getMatViewToken().getDirName();
+                        case COLUMN_VIEW_STATUS:
+                            return invalid ? "invalid" : "valid";
                         case COLUMN_INVALIDATION_REASON:
                             return invalidationReason != null && !invalidationReason.isEmpty() ? invalidationReason : null;
                         default:
@@ -242,15 +243,16 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
         static {
             final GenericRecordMetadata metadata = new GenericRecordMetadata();
-            metadata.add(new TableColumnMetadata("name", ColumnType.STRING));
-            metadata.add(new TableColumnMetadata("baseTableName", ColumnType.STRING));
-            metadata.add(new TableColumnMetadata("lastRefreshTimestamp", ColumnType.TIMESTAMP));
-            metadata.add(new TableColumnMetadata("viewSql", ColumnType.STRING));
-            metadata.add(new TableColumnMetadata("viewTableDirName", ColumnType.STRING));
-            metadata.add(new TableColumnMetadata("invalidationReason", ColumnType.STRING));
-            metadata.add(new TableColumnMetadata("invalid", ColumnType.BOOLEAN));
-            metadata.add(new TableColumnMetadata("baseTableTxn", ColumnType.LONG));
-            metadata.add(new TableColumnMetadata("appliedBaseTableTxn", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("view_name", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("refresh_type", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("base_table_name", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("last_refresh_timestamp", ColumnType.TIMESTAMP));
+            metadata.add(new TableColumnMetadata("view_sql", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("view_table_dir_name", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("invalidation_reason", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("view_status", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("base_table_txn", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("applied_base_table_txn", ColumnType.LONG));
             METADATA = metadata;
         }
     }
