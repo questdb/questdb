@@ -1413,6 +1413,48 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelfJoinQuery() throws Exception {
+        // Here we want to verify that the detached base table reader used by the refresh job
+        // can be safely used in the mat view query multiple times.
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym symbol index, sym2 symbol, price double, ts timestamp, extra_col long" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView(
+                    "select a.sym sym_a, b.sym sym_b, a.sym2 sym2_a, b.sym2 sym2_b, last(b.price) as price, a.ts " +
+                            "from (base_price where sym = 'foobar') a " +
+                            "asof join (base_price where sym = 'barbaz') b on (sym2) " +
+                            "sample by 1h"
+            );
+
+            execute(
+                    "insert into base_price(sym, sym2, price, ts) values('foobar', 's1', 1.320, '2024-09-10T12:01')" +
+                            ",('foobar', 's1', 1.323, '2024-09-10T12:02')" +
+                            ",('barbaz', 's1', 103.21, '2024-09-10T12:02')" +
+                            ",('foobar', 's1', 1.321, '2024-09-10T13:02')"
+            );
+
+            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
+            drainQueues();
+
+            assertSql(
+                    "name\tbaseTableName\tinvalid\n" +
+                            "price_1h\tbase_price\tfalse\n",
+                    "select name, baseTableName, invalid from mat_views"
+            );
+
+            assertSql(
+                    "sym_a\tsym_b\tsym2_a\tsym2_b\tprice\tts\n" +
+                            "foobar\tbarbaz\ts1\ts1\t103.21\t2024-09-10T12:00:00.000000Z\n",
+                    "price_1h"
+            );
+        });
+    }
+
+    @Test
     public void testSimpleCancelRefresh() throws Exception {
         assertMemoryLeak(() -> {
             SOCountDownLatch started = new SOCountDownLatch(1);
