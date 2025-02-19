@@ -72,7 +72,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
     private static class ViewsCursorFactory implements RecordCursorFactory {
         private static final int COLUMN_NAME = 0;
-        private static final int COLUMN_BASE_TABLE_NAME = COLUMN_NAME + 1;
+        private static final int COLUMN_REFRESH_TYPE = COLUMN_NAME + 1;
+        private static final int COLUMN_BASE_TABLE_NAME = COLUMN_REFRESH_TYPE + 1;
         private static final int COLUMN_LAST_REFRESH_TIMESTAMP = COLUMN_BASE_TABLE_NAME + 1;
         private static final int COLUMN_VIEW_SQL = COLUMN_LAST_REFRESH_TIMESTAMP + 1;
         private static final int COLUMN_TABLE_DIR_NAME = COLUMN_VIEW_SQL + 1;
@@ -204,6 +205,9 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     switch (col) {
                         case COLUMN_NAME:
                             return viewDefinition.getMatViewToken().getTableName();
+                        case COLUMN_REFRESH_TYPE:
+                            // For now, incremental refresh is the only supported strategy.
+                            return "incremental";
                         case COLUMN_BASE_TABLE_NAME:
                             return viewDefinition.getBaseTableName();
                         case COLUMN_VIEW_SQL:
@@ -242,15 +246,16 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
         static {
             final GenericRecordMetadata metadata = new GenericRecordMetadata();
-            metadata.add(new TableColumnMetadata("name", ColumnType.STRING));
-            metadata.add(new TableColumnMetadata("baseTableName", ColumnType.STRING));
-            metadata.add(new TableColumnMetadata("lastRefreshTimestamp", ColumnType.TIMESTAMP));
-            metadata.add(new TableColumnMetadata("viewSql", ColumnType.STRING));
-            metadata.add(new TableColumnMetadata("viewTableDirName", ColumnType.STRING));
-            metadata.add(new TableColumnMetadata("invalidationReason", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("view_name", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("refresh_type", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("base_table_name", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("last_refresh_timestamp", ColumnType.TIMESTAMP));
+            metadata.add(new TableColumnMetadata("view_sql", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("view_table_dir_name", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("invalidation_reason", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("invalid", ColumnType.BOOLEAN));
-            metadata.add(new TableColumnMetadata("baseTableTxn", ColumnType.LONG));
-            metadata.add(new TableColumnMetadata("appliedBaseTableTxn", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("base_table_txn", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("applied_base_table_txn", ColumnType.LONG));
             METADATA = metadata;
         }
     }

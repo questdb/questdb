@@ -157,8 +157,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertSql(
-                    "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
-                            "price_1h\tbase_price\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tfalse\t1\t1\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tinvalid\tbase_table_txn\tapplied_base_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tfalse\t1\t1\n",
                     "mat_views"
             );
 
@@ -168,8 +168,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertSql(
-                    "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
-                            "price_1h\tbase_price\t2024-10-24T18:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\ttable does not exist [table=base_price]\ttrue\t1\t-1\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tinvalid\tbase_table_txn\tapplied_base_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-10-24T18:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\ttable does not exist [table=base_price]\ttrue\t1\t-1\n",
                     "mat_views"
             );
 
@@ -185,8 +185,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertSql(
-                    "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
-                            "price_1h\tbase_price\t2024-10-24T19:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tbase table is not a WAL table\ttrue\t1\t-1\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tinvalid\tbase_table_txn\tapplied_base_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-10-24T19:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tbase table is not a WAL table\ttrue\t1\t-1\n",
                     "mat_views"
             );
         });
@@ -229,8 +229,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertSql(
-                    "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
-                            "price_1h\tbase_price\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~3\t\tfalse\t1\t1\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tinvalid\tbase_table_txn\tapplied_base_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~3\t\tfalse\t1\t1\n",
                     "mat_views"
             );
 
@@ -242,8 +242,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertSql(
-                    "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
-                            "price_1h\tbase_price\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~3\ttable rename operation\ttrue\t1\t1\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tinvalid\tbase_table_txn\tapplied_base_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~3\ttable rename operation\ttrue\t1\t1\n",
                     "mat_views"
             );
         });
@@ -265,9 +265,9 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertSql(
-                    "name\tinvalid\n" +
+                    "view_name\tinvalid\n" +
                             "price_1h\tfalse\n",
-                    "select name, invalid from mat_views"
+                    "select view_name, invalid from mat_views"
             );
         });
     }
@@ -507,8 +507,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertSql(
-                    "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
-                            "price_1h\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tfalse\t1\t1\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tinvalid\tbase_table_txn\tapplied_base_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tfalse\t1\t1\n",
                     "mat_views"
             );
 
@@ -522,8 +522,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertSql(
-                    "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
-                            "price_1h\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tdrop column operation\ttrue\t1\t2\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tinvalid\tbase_table_txn\tapplied_base_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tdrop column operation\ttrue\t1\t2\n",
                     "mat_views"
             );
 
@@ -531,8 +531,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertSql(
-                    "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
-                            "price_1h\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tfalse\t2\t2\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tinvalid\tbase_table_txn\tapplied_base_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tfalse\t2\t2\n",
                     "mat_views"
             );
             assertSql(expected, "price_1h order by sym");
@@ -569,8 +569,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertSql(
-                    "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
-                            "price_1h\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tfalse\t1\t1\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tinvalid\tbase_table_txn\tapplied_base_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tfalse\t1\t1\n",
                     "mat_views"
             );
 
@@ -949,9 +949,9 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertSql(
-                    "name\tbaseTableName\tinvalid\tinvalidationReason\n" +
+                    "view_name\tbase_table_name\tinvalid\tinvalidation_reason\n" +
                             "price_1h\tbase_price\ttrue\t[-1] unexpected filter error\n",
-                    "select name, baseTableName, invalid, invalidationReason from mat_views"
+                    "select view_name, base_table_name, invalid, invalidation_reason from mat_views"
             );
         });
     }
@@ -990,12 +990,12 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertSql(
-                    "name\tbaseTableName\tinvalid\tinvalidationReason\n" +
-                            "v1_base\tbase\tfalse\t\n" +
-                            "v2_v1\tv1_base\tfalse\t\n" +
-                            "v3_v1\tv1_base\tfalse\t\n" +
-                            "v4_v3\tv3_v1\tfalse\t\n",
-                    "select name, baseTableName, invalid, invalidationReason from mat_views order by name"
+                    "view_name\trefresh_type\tbase_table_name\tinvalid\tinvalidation_reason\n" +
+                            "v1_base\tincremental\tbase\tfalse\t\n" +
+                            "v2_v1\tincremental\tv1_base\tfalse\t\n" +
+                            "v3_v1\tincremental\tv1_base\tfalse\t\n" +
+                            "v4_v3\tincremental\tv3_v1\tfalse\t\n",
+                    "select view_name, refresh_type, base_table_name, invalid, invalidation_reason from mat_views order by view_name"
             );
 
             execute("truncate table " + tableName);
@@ -1006,26 +1006,25 @@ public class MatViewTest extends AbstractCairoTest {
 
             // all views should be invalid
             assertSql(
-                    "name\tbaseTableName\tinvalid\tinvalidationReason\n" +
-                            "v1_base\tbase\ttrue\ttruncate operation\n" +
-                            "v2_v1\tv1_base\ttrue\ttruncate operation\n" +
-                            "v3_v1\tv1_base\ttrue\ttruncate operation\n" +
-                            "v4_v3\tv3_v1\ttrue\ttruncate operation\n",
-                    "select name, baseTableName, invalid, invalidationReason from mat_views order by name"
+                    "view_name\trefresh_type\tbase_table_name\tinvalid\tinvalidation_reason\n" +
+                            "v1_base\tincremental\tbase\ttrue\ttruncate operation\n" +
+                            "v2_v1\tincremental\tv1_base\ttrue\ttruncate operation\n" +
+                            "v3_v1\tincremental\tv1_base\ttrue\ttruncate operation\n" +
+                            "v4_v3\tincremental\tv3_v1\ttrue\ttruncate operation\n",
+                    "select view_name, refresh_type, base_table_name, invalid, invalidation_reason from mat_views order by view_name"
             );
 
             execute("refresh materialized view " + view1Name + " full");
             drainQueues();
 
             assertSql(
-                    "name\tbaseTableName\tinvalid\tinvalidationReason\n" +
-                            "v1_base\tbase\tfalse\t\n" +
-                            "v2_v1\tv1_base\ttrue\ttruncate operation\n" +
-                            "v3_v1\tv1_base\ttrue\ttruncate operation\n" +
-                            "v4_v3\tv3_v1\ttrue\ttruncate operation\n",
-                    "select name, baseTableName, invalid, invalidationReason from mat_views order by name"
+                    "view_name\trefresh_type\tbase_table_name\tinvalid\tinvalidation_reason\n" +
+                            "v1_base\tincremental\tbase\tfalse\t\n" +
+                            "v2_v1\tincremental\tv1_base\ttrue\ttruncate operation\n" +
+                            "v3_v1\tincremental\tv1_base\ttrue\ttruncate operation\n" +
+                            "v4_v3\tincremental\tv3_v1\ttrue\ttruncate operation\n",
+                    "select view_name, refresh_type, base_table_name, invalid, invalidation_reason from mat_views order by view_name"
             );
-
 
             // Refresh the rest
             execute("refresh materialized view " + view2Name + " full");
@@ -1036,14 +1035,13 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertSql(
-                    "name\tbaseTableName\tinvalid\tinvalidationReason\n" +
-                            "v1_base\tbase\tfalse\t\n" +
-                            "v2_v1\tv1_base\tfalse\t\n" +
-                            "v3_v1\tv1_base\tfalse\t\n" +
-                            "v4_v3\tv3_v1\tfalse\t\n",
-                    "select name, baseTableName, invalid, invalidationReason from mat_views order by name"
+                    "view_name\trefresh_type\tbase_table_name\tinvalid\tinvalidation_reason\n" +
+                            "v1_base\tincremental\tbase\tfalse\t\n" +
+                            "v2_v1\tincremental\tv1_base\tfalse\t\n" +
+                            "v3_v1\tincremental\tv1_base\tfalse\t\n" +
+                            "v4_v3\tincremental\tv3_v1\tfalse\t\n",
+                    "select view_name, refresh_type, base_table_name, invalid, invalidation_reason from mat_views order by view_name"
             );
-
         });
     }
 
@@ -1070,8 +1068,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertSql(
-                    "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
-                            "price_1h\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tfalse\t1\t1\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tinvalid\tbase_table_txn\tapplied_base_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tfalse\t1\t1\n",
                     "mat_views"
             );
 
@@ -1441,9 +1439,9 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertSql(
-                    "name\tbaseTableName\tinvalid\n" +
+                    "view_name\tbase_table_name\tinvalid\n" +
                             "price_1h\tbase_price\tfalse\n",
-                    "select name, baseTableName, invalid from mat_views"
+                    "select view_name, base_table_name, invalid from mat_views"
             );
 
             assertSql(
@@ -1514,9 +1512,9 @@ public class MatViewTest extends AbstractCairoTest {
             stopped.await();
             Assert.assertFalse(refreshed.get());
             assertSql(
-                    "name\tinvalid\n" +
+                    "view_name\tinvalid\n" +
                             "price_1h\ttrue\n",
-                    "select name, invalid from mat_views"
+                    "select view_name, invalid from mat_views"
             );
         });
     }
@@ -1751,18 +1749,18 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertSql(
-                    "name\tbaseTableName\tinvalid\n" +
+                    "view_name\tbase_table_name\tinvalid\n" +
                             "price_1h\tbase_price\tfalse\n",
-                    "select name, baseTableName, invalid from mat_views"
+                    "select view_name, base_table_name, invalid from mat_views"
             );
 
             execute(operationSql);
             drainQueues();
 
             assertSql(
-                    "name\tbaseTableName\tinvalid\tinvalidationReason\n" +
+                    "view_name\tbase_table_name\tinvalid\tinvalidation_reason\n" +
                             "price_1h\tbase_price\ttrue\t" + invalidationReason + "\n",
-                    "select name, baseTableName, invalid, invalidationReason from mat_views"
+                    "select view_name, base_table_name, invalid, invalidation_reason from mat_views"
             );
         });
     }
@@ -1794,8 +1792,8 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertSql(
-                    "name\tbaseTableName\tlastRefreshTimestamp\tviewSql\tviewTableDirName\tinvalidationReason\tinvalid\tbaseTableTxn\tappliedBaseTableTxn\n" +
-                            "price_1h\tbase_price\t2024-10-24T19:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\ttable rename operation\ttrue\t1\t3\n",
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tinvalid\tbase_table_txn\tapplied_base_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-10-24T19:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\ttable rename operation\ttrue\t1\t3\n",
                     "mat_views"
             );
         });
@@ -1823,18 +1821,18 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertSql(
-                    "name\tbaseTableName\tinvalid\n" +
+                    "view_name\tbase_table_name\tinvalid\n" +
                             "price_1h\tbase_price\tfalse\n",
-                    "select name, baseTableName, invalid from mat_views"
+                    "select view_name, base_table_name, invalid from mat_views"
             );
 
             execute(enableDedupSql);
             drainQueues();
 
             assertSql(
-                    "name\tbaseTableName\tinvalid\n" +
+                    "view_name\tbase_table_name\tinvalid\n" +
                             "price_1h\tbase_price\t" + expectInvalid + "\n",
-                    "select name, baseTableName, invalid from mat_views"
+                    "select view_name, base_table_name, invalid from mat_views"
             );
         });
     }
