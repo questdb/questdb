@@ -135,7 +135,15 @@ public class BorrowedArrayView implements ArrayView, AutoCloseable {
                     .put(", nDims=").put(getDimCount()).put(']');
         }
         int dimLen = getDimLen(dim);
-        if (left < 0 || left >= dimLen || right < 1 || right > dimLen) {
+        if (left >= right) {
+            throw CairoException.nonCritical()
+                    .position(argPos)
+                    .put("lower bound is not less than upper bound [dim=").put(dim)
+                    .put(", lowerBound=").put(left)
+                    .put(", upperBound=").put(right)
+                    .put(']');
+        }
+        if (left < 0 || left >= dimLen || right > dimLen) {
             throw CairoException.nonCritical()
                     .position(argPos)
                     .put("array slice bounds out of range [dim=").put(dim)

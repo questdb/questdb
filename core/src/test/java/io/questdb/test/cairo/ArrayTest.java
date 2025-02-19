@@ -436,6 +436,29 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("slice\n[[1.0],[3.0]]\n", "SELECT arr[0:2, 0:1] slice FROM tango");
         });
     }
+
+    @Test
+    public void testSliceArrayInvalid() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4], [5, 6]] arr FROM long_sequence(1))");
+            assertExceptionNoLeakCheck("SELECT arr[0:] FROM tango",
+                    10, "too few arguments for '[]' [found=1,expected=2]"
+            );
+            assertExceptionNoLeakCheck("SELECT arr[:0] FROM tango",
+                    11, "undefined bind variable: :0"
+            );
+            assertExceptionNoLeakCheck("SELECT arr[-1:0] FROM tango",
+                    13, "array slice bounds out of range [dim=0, dimLen=3, lowerBound=-1, upperBound=0]"
+            );
+            assertExceptionNoLeakCheck("SELECT arr[0:4] FROM tango",
+                    12, "array slice bounds out of range [dim=0, dimLen=3, lowerBound=0, upperBound=4"
+            );
+            assertExceptionNoLeakCheck("SELECT arr[3:4] FROM tango",
+                    12, "array slice bounds out of range [dim=0, dimLen=3, lowerBound=3, upperBound=4"
+            );
+            assertExceptionNoLeakCheck("SELECT arr[1:0] FROM tango",
+                    12, "lower bound is not less than upper bound [dim=0, lowerBound=1, upperBound=0]"
+            );
         });
     }
 

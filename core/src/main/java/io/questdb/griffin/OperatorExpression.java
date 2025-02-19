@@ -83,7 +83,6 @@ public final class OperatorExpression {
                 add(new OperatorExpression(Operator.UnaryComplement, 3, false, UNARY));
                 add(new OperatorExpression(Operator.UnarySetNegation, 11, false, UNARY));
                 add(new OperatorExpression(Operator.Dot, 1, false, BINARY));
-                add(new OperatorExpression(Operator.Colon, 1, true, BINARY));
                 add(new OperatorExpression(Operator.DoubleColon, 2, true, BINARY));
                 // arithmetic operators, UnaryMinus and UnaryComplement defined above are strongest from this block
                 add(new OperatorExpression(Operator.Multiplication, 4, true, BINARY));
@@ -122,6 +121,7 @@ public final class OperatorExpression {
                 add(new OperatorExpression(Operator.BinaryNot, 14, false, UNARY, false));
                 add(new OperatorExpression(Operator.BinaryAnd, 15, true, BINARY, false));
                 add(new OperatorExpression(Operator.BinaryOr, 16, true, BINARY, false));
+                add(new OperatorExpression(Operator.Colon, 17, false, BINARY));
             }});
     final boolean leftAssociative;
     final OperatorExpression.Operator operator;

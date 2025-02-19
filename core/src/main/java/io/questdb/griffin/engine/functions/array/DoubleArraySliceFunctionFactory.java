@@ -55,7 +55,7 @@ public class DoubleArraySliceFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         Function arrayFunc = args.getQuick(0);
         args.remove(0);
-        argPositions.remove(0);
+        argPositions.removeIndex(0);
         return new SliceDoubleArrayFunction(arrayFunc, args, argPositions);
     }
 

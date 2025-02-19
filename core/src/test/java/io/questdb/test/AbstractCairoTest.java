@@ -614,7 +614,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 }
             }
         }
-        Assert.fail();
+        Assert.fail("Query should have failed");
     }
 
     private static void assertSymbolColumnThreadSafety(int numberOfIterations, int symbolColumnCount, ObjList<SymbolTable> symbolTables, int[] symbolTableKeySnapshot, String[][] symbolTableValueSnapshot) {
