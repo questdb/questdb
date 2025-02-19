@@ -472,12 +472,17 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testEnableDedupWithFewerKeysDoesNotInvalidateMatViews() throws Exception {
-        testEnableDedupWithSubsetKeysDoesNotInvalidateMatViews("alter table base_price dedup enable upsert keys(ts);");
+        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts);", false);
+    }
+
+    @Test
+    public void testEnableDedupWithMoreKeysInvalidatesMatViews() throws Exception {
+        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts, amount);", true);
     }
 
     @Test
     public void testEnableDedupWithSameKeysDoesNotInvalidateMatViews() throws Exception {
-        testEnableDedupWithSubsetKeysDoesNotInvalidateMatViews("alter table base_price dedup enable upsert keys(ts, sym);");
+        testEnableDedupWithSubsetKeys("alter table base_price dedup enable upsert keys(ts, sym);", false);
     }
 
     @Test
@@ -1754,7 +1759,7 @@ public class MatViewTest extends AbstractCairoTest {
         });
     }
 
-    private void testEnableDedupWithSubsetKeysDoesNotInvalidateMatViews(String enableDedupSql) throws Exception {
+    private void testEnableDedupWithSubsetKeys(String enableDedupSql, boolean expectInvalid) throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE base_price (" +
@@ -1781,13 +1786,12 @@ public class MatViewTest extends AbstractCairoTest {
                     "select name, baseTableName, invalid from mat_views"
             );
 
-            // The dedup enable command should be ignored.
             execute(enableDedupSql);
             drainQueues();
 
             assertSql(
                     "name\tbaseTableName\tinvalid\n" +
-                            "price_1h\tbase_price\tfalse\n",
+                            "price_1h\tbase_price\t" + expectInvalid + "\n",
                     "select name, baseTableName, invalid from mat_views"
             );
         });
