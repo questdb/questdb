@@ -435,10 +435,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long systemWriterDataAppendPageSize;
     private final boolean tableTypeConversionEnabled;
     private final TelemetryConfiguration telemetryConfiguration = new PropTelemetryConfiguration();
+    private final long telemetryDbSizeEstimateTimeout;
     private final boolean telemetryDisableCompletely;
     private final boolean telemetryEnabled;
     private final boolean telemetryHideTables;
-    private final long telemetryMaxDbSizeEstimateTime;
     private final int telemetryQueueCapacity;
     private final CharSequence tempRenamePendingTablePrefix;
     private final int textAnalysisMaxLines;
@@ -1447,7 +1447,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.telemetryDisableCompletely = getBoolean(properties, env, PropertyKey.TELEMETRY_DISABLE_COMPLETELY, false);
             this.telemetryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.TELEMETRY_QUEUE_CAPACITY, 512));
             this.telemetryHideTables = getBoolean(properties, env, PropertyKey.TELEMETRY_HIDE_TABLES, true);
-            this.telemetryMaxDbSizeEstimateTime = getLong(properties, env, PropertyKey.TELEMETRY_MAX_SIZE_SCAN_TIME, Timestamps.SECOND_MILLIS / 2);
+            this.telemetryDbSizeEstimateTimeout = getLong(properties, env, PropertyKey.TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT, Timestamps.SECOND_MILLIS);
             this.o3PartitionPurgeListCapacity = getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY, 1);
             this.ioURingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_IO_URING_ENABLED, true);
             this.cairoMaxCrashFiles = getInt(properties, env, PropertyKey.CAIRO_MAX_CRASH_FILES, 100);
@@ -5169,6 +5169,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropTelemetryConfiguration implements TelemetryConfiguration {
 
         @Override
+        public long getDbSizeEstimateTimeout() {
+            return telemetryDbSizeEstimateTimeout;
+        }
+
+        @Override
         public boolean getDisableCompletely() {
             return telemetryDisableCompletely;
         }
@@ -5176,11 +5181,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getEnabled() {
             return telemetryEnabled;
-        }
-
-        @Override
-        public long getMaxDbSizeEstimateTime() {
-            return telemetryMaxDbSizeEstimateTime;
         }
 
         @Override

@@ -33,5 +33,5 @@ public interface TelemetryConfiguration {
 
     boolean hideTables();
 
-    long getMaxDbSizeEstimateTime();
+    long getDbSizeEstimateTimeout();
 }

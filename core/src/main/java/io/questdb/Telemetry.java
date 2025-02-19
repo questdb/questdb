@@ -42,7 +42,6 @@ import io.questdb.mp.QueueConsumer;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -56,20 +55,19 @@ import io.questdb.tasks.AbstractTelemetryTask;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
-import java.io.IOException;
-import java.nio.file.Paths;
 
 import static io.questdb.cairo.TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
+import static io.questdb.std.Files.DT_FILE;
 import static io.questdb.std.Files.notDots;
 
-public final class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
+public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
     private static final Log LOG = LogFactory.getLog(Telemetry.class);
 
     private final boolean enabled;
     private final int maxFileNameLen;
-    private long maxDbSizeEstimateTime;
-    private long startDbSizeEstimateTimestamp;
     private MicrosecondClock clock;
+    private long dbSizeEstimateStartTimestamp;
+    private long dbSizeEstimateTimeout; //micros
     private MPSequence telemetryPubSeq;
     private RingQueue<T> telemetryQueue;
     private SCSequence telemetrySubSeq;
@@ -85,7 +83,7 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         if (enabled) {
             telemetryType = type;
             clock = configuration.getMicrosecondClock();
-            maxDbSizeEstimateTime = telemetryConfiguration.getMaxDbSizeEstimateTime() * 1000;
+            dbSizeEstimateTimeout = telemetryConfiguration.getDbSizeEstimateTimeout() * 1000;
             telemetryQueue = new RingQueue<>(type.getTaskFactory(), telemetryConfiguration.getQueueCapacity());
             telemetryPubSeq = new MPSequence(telemetryQueue.getCycle());
             telemetrySubSeq = new SCSequence();
@@ -114,60 +112,6 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         if (enabled && telemetrySubSeq.consumeAll(telemetryQueue, taskConsumer)) {
             writer.commit();
         }
-    }
-
-    public long getDirSize(FilesFacade ff, Path path, boolean topLevel, StringSink sink) {
-        if (topLevel) {
-            startDbSizeEstimateTimestamp = clock.getTicks();
-        }
-
-        long pFind = ff.findFirst(path.$());
-        long totalSize = 0L;
-
-        if (pFind > 0L) {
-            int len = path.size();
-            try {
-                do {
-                    if (clock.getTicks() - startDbSizeEstimateTimestamp > maxDbSizeEstimateTime) {
-                        break;
-                    }
-
-                    long nameUtf8Ptr = ff.findName(pFind);
-                    path.trimTo(len).concat(nameUtf8Ptr).$();
-                    if (ff.findType(pFind) == Files.DT_FILE) {
-                        totalSize += ff.length(path.$());
-                    } else if (notDots(nameUtf8Ptr)) {
-                        if (topLevel) {
-                            sink.clear();
-                            Utf8s.utf8ToUtf16(path, len + 1, path.size(), sink);
-                            int tableNameLen = Chars.indexOf(sink, SYSTEM_TABLE_NAME_SUFFIX);
-                            if (tableNameLen > -1) {
-                                sink.trimTo(tableNameLen);
-                            }
-                            if (!TableUtils.isValidTableName(sink, maxFileNameLen)) {
-                                // This is not a table, skip
-                                continue;
-                            }
-                        }
-                        totalSize += getDirSize(ff, path, false, sink);
-                    }
-                }
-                while (ff.findNext(pFind) > 0);
-            } finally {
-                ff.findClose(pFind);
-                path.trimTo(len);
-            }
-        }
-
-        if (topLevel && clock.getTicks() - startDbSizeEstimateTimestamp > maxDbSizeEstimateTime) {
-            try {
-                var store = java.nio.file.Files.getFileStore(Paths.get(path.toString()));
-                return store.getTotalSpace() - store.getUnallocatedSpace();
-            } catch (IOException e) {
-                return totalSize;
-            }
-        }
-        return 0L;
     }
 
     public void init(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -293,12 +237,21 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
     }
 
     private short getDBSizeClass(CairoConfiguration configuration) {
-        final FilesFacade ff = configuration.getFilesFacade();
-        final CharSequence root = configuration.getDbRoot();
-        final Path path = Path.PATH.get();
-        path.of(root).$();
+        dbSizeEstimateStartTimestamp = clock.getTicks();
 
-        final long dbSize = getDirSize(ff, path, true, Misc.getThreadLocalSink());
+        final long dbSize;
+        try {
+            final Path path = Path.PATH.get().of(configuration.getDbRoot());
+            dbSize = getDirSize(configuration.getFilesFacade(), path, true, Misc.getThreadLocalSink());
+            if (hasTimedOut()) {
+                LOG.info().$("Unable to estimate DB size, disk scanning timed out").$();
+                return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_UNKNOWN;
+            }
+        } catch (Throwable e) {
+            LOG.info().$("Unable to estimate DB size, error=").$(e).$();
+            return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_UNKNOWN;
+        }
+
         if (dbSize <= 10 * Numbers.SIZE_1GB) {          // 0 - <10GB
             return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE;
         } else if (dbSize <= 50 * Numbers.SIZE_1GB) {   // 1 - (10GB,50GB]
@@ -316,6 +269,51 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
         }
         // 7 - >10TB
         return TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE - 7;
+    }
+
+    private long getDirSize(FilesFacade ff, Path path, boolean topLevel, StringSink sink) {
+        long totalSize = 0L;
+
+        final long pFind = ff.findFirst(path.$());
+        if (pFind > 0L) {
+            final int len = path.size();
+            try {
+                do {
+                    if (hasTimedOut()) {
+                        return 0L;
+                    }
+
+                    final long nameUtf8Ptr = ff.findName(pFind);
+                    path.trimTo(len).concat(nameUtf8Ptr).$();
+                    if (ff.findType(pFind) == DT_FILE) {
+                        totalSize += ff.length(path.$());
+                    } else if (notDots(nameUtf8Ptr)) {
+                        if (topLevel) {
+                            sink.clear();
+                            Utf8s.utf8ToUtf16(path, len + 1, path.size(), sink);
+                            final int tableNameLen = Chars.indexOf(sink, SYSTEM_TABLE_NAME_SUFFIX);
+                            if (tableNameLen > -1) {
+                                sink.trimTo(tableNameLen);
+                            }
+                            if (!TableUtils.isValidTableName(sink, maxFileNameLen)) {
+                                // This is not a table, skip
+                                continue;
+                            }
+                        }
+                        totalSize += getDirSize(ff, path, false, sink);
+                    }
+                }
+                while (ff.findNext(pFind) > 0);
+            } finally {
+                ff.findClose(pFind);
+                path.trimTo(len);
+            }
+        }
+        return totalSize;
+    }
+
+    protected boolean hasTimedOut() {
+        return clock.getTicks() - dbSizeEstimateStartTimestamp > dbSizeEstimateTimeout;
     }
 
     public interface TelemetryType<T extends AbstractTelemetryTask> {

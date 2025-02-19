@@ -26,6 +26,7 @@ package io.questdb.test;
 
 import io.questdb.BuildInformation;
 import io.questdb.DefaultTelemetryConfiguration;
+import io.questdb.Telemetry;
 import io.questdb.TelemetryConfigLogger;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.TelemetryJob;
@@ -44,8 +45,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.AbstractTelemetryTask;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.tasks.TelemetryWalTask;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -58,6 +59,10 @@ import org.junit.Test;
 
 import java.util.HashSet;
 import java.util.concurrent.atomic.AtomicReference;
+
+import static io.questdb.TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_BASE;
+import static io.questdb.TelemetrySystemEvent.SYSTEM_DB_SIZE_CLASS_UNKNOWN;
+import static io.questdb.test.TelemetryTest.DBSizeTestType.*;
 
 public class TelemetryTest extends AbstractCairoTest {
     private static final FilesFacade FF = TestFilesFacadeImpl.INSTANCE;
@@ -103,30 +108,18 @@ public class TelemetryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTelemetryDoesNotScanDirsWhenScanTimeIsLow() throws Exception {
-        assertMemoryLeak(() -> {
-            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                @Override
-                public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
-                    return new DefaultTelemetryConfiguration() {
-                        @Override
-                        public long getMaxDbSizeEstimateTime() {
-                            return 0;
-                        }
-                    };
-                }
-            };
+    public void testTelemetryDBSize() throws Exception {
+        testTelemetryDBSize(SUCCESS);
+    }
 
-            try (
-                    CairoEngine engine = new CairoEngine(configuration);
-                    TelemetryJob ignored = new TelemetryJob(engine)
-            ) {
-                try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    TestUtils.printSql(compiler, new SqlExecutionContextImpl(engine, 1), TELEMETRY, sink);
-                    TestUtils.assertContains(sink, "\t1\n");
-                }
-            }
-        });
+    @Test
+    public void testTelemetryDBSizeError() throws Exception {
+        testTelemetryDBSize(ERROR);
+    }
+
+    @Test
+    public void testTelemetryDBSizeTimeout() throws Exception {
+        testTelemetryDBSize(TIMEOUT);
     }
 
     @Test
@@ -156,34 +149,6 @@ public class TelemetryTest extends AbstractCairoTest {
             }
         });
     }
-
-    @Test
-    public void testTelemetryScanDirsWhenScanTimeIsHigh() throws Exception {
-        assertMemoryLeak(() -> {
-            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                @Override
-                public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
-                    return new DefaultTelemetryConfiguration() {
-                        @Override
-                        public long getMaxDbSizeEstimateTime() {
-                            return Timestamps.HOUR_MICROS;
-                        }
-                    };
-                }
-            };
-
-            try (
-                    CairoEngine engine = new CairoEngine(configuration);
-                    TelemetryJob ignored = new TelemetryJob(engine)
-            ) {
-                try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    TestUtils.printSql(compiler, new SqlExecutionContextImpl(engine, 1), TELEMETRY, sink);
-                    TestUtils.assertContains(sink, "\t1\n");
-                }
-            }
-        });
-    }
-
 
     @Test
     public void testTelemetryStoresNonEvents() throws Exception {
@@ -392,5 +357,42 @@ public class TelemetryTest extends AbstractCairoTest {
             CursorPrinter.printColumn(record, metadata, 2, sink, false);
             sink.put('\n');
         }
+    }
+
+    private void testTelemetryDBSize(DBSizeTestType type) throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    CairoEngine engine = new CairoEngine(configuration) {
+                        @Override
+                        protected @NotNull <T extends AbstractTelemetryTask> Telemetry<T> createTelemetry(
+                                Telemetry.TelemetryTypeBuilder<T> builder, CairoConfiguration configuration
+                        ) {
+                            return new Telemetry<>(builder, configuration) {
+                                @Override
+                                protected boolean hasTimedOut() {
+                                    if (type == ERROR) {
+                                        throw new RuntimeException("test");
+                                    } else {
+                                        return type == TIMEOUT;
+                                    }
+                                }
+                            };
+                        }
+                    };
+                    TelemetryJob ignored = new TelemetryJob(engine);
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1)
+            ) {
+                TestUtils.printSql(compiler, context, "select event, origin from " + TELEMETRY, sink);
+                TestUtils.assertContains(
+                        sink,
+                        (type == SUCCESS ? SYSTEM_DB_SIZE_CLASS_BASE : SYSTEM_DB_SIZE_CLASS_UNKNOWN) + "\t1\n"
+                );
+            }
+        });
+    }
+
+    enum DBSizeTestType {
+        SUCCESS, TIMEOUT, ERROR
     }
 }

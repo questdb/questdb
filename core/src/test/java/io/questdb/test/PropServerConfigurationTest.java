@@ -728,6 +728,9 @@ public class PropServerConfigurationTest {
         properties.setProperty("http.ilp.connection.limit", "4");
         env.put("QDB_HTTP_ILP_CONNECTION_LIMIT", "8");
 
+        properties.setProperty("telemetry.db.size.estimate.timeout", "2000");
+        env.put("QDB_TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT", "3000");
+
         PropServerConfiguration configuration = newPropServerConfiguration(root, properties, env, new BuildInformationHolder());
         Assert.assertEquals(1.5, configuration.getCairoConfiguration().getTextConfiguration().getMaxRequiredDelimiterStdDev(), 0.000001);
         Assert.assertEquals(3000, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionStringPoolCapacity());
@@ -742,6 +745,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(9663676416L, configuration.getCairoConfiguration().getDataAppendPageSize());
         Assert.assertEquals(60_000, configuration.getCairoConfiguration().getO3MaxLag());
         Assert.assertTrue(configuration.getCairoConfiguration().getTextConfiguration().isUseLegacyStringDefault());
+        Assert.assertEquals(3000, configuration.getCairoConfiguration().getTelemetryConfiguration().getDbSizeEstimateTimeout());
     }
 
     @Test(expected = ServerConfigurationException.class)
@@ -1816,6 +1820,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertTrue(configuration.getTelemetryConfiguration().getEnabled());
         Assert.assertEquals(512, configuration.getTelemetryConfiguration().getQueueCapacity());
+        Assert.assertEquals(1000, configuration.getTelemetryConfiguration().getDbSizeEstimateTimeout());
 
         Assert.assertEquals(1048576, configuration.getDataAppendPageSize());
         Assert.assertEquals(131072, configuration.getSystemDataAppendPageSize());

@@ -93,6 +93,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.tasks.AbstractTelemetryTask;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.tasks.TelemetryWalTask;
 import io.questdb.tasks.WalTxnNotificationTask;
@@ -166,8 +167,8 @@ public class CairoEngine implements Closeable, WriterSource {
             this.tableMetadataPool = new TableMetadataPool(configuration);
             this.walWriterPool = new WalWriterPool(configuration, this);
             this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
-            this.telemetry = new Telemetry<>(TelemetryTask.TELEMETRY, configuration);
-            this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMETRY, configuration);
+            this.telemetry = createTelemetry(TelemetryTask.TELEMETRY, configuration);
+            this.telemetryWal = createTelemetry(TelemetryWalTask.WAL_TELEMETRY, configuration);
             this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
             this.checkpointAgent = new DatabaseCheckpointAgent(this);
             this.queryRegistry = new QueryRegistry(configuration);
@@ -1422,7 +1423,6 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-
     private TableToken rename0(Path fromPath, TableToken fromTableToken, Path toPath, CharSequence toTableName) {
 
         // !!! we do not care what is inside the path1 & path2, we will reset them anyway
@@ -1527,6 +1527,12 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.tableDoesNotExist(tableName);
         }
         return token;
+    }
+
+    protected @NotNull <T extends AbstractTelemetryTask> Telemetry<T> createTelemetry(
+            Telemetry.TelemetryTypeBuilder<T> builder, CairoConfiguration configuration
+    ) {
+        return new Telemetry<>(builder, configuration);
     }
 
     protected TableFlagResolver newTableFlagResolver(CairoConfiguration configuration) {
