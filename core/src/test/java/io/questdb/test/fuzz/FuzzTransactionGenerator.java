@@ -323,7 +323,7 @@ public class FuzzTransactionGenerator {
                     }
                 }
 
-                transaction.operationList.add(new FuzzRenameColumnOperation(columnName, newColName));
+                transaction.operationList.add(new FuzzRenameColumnOperation(rnd, columnName, newColName));
                 transaction.structureVersion = metadataVersion;
                 transaction.waitBarrierVersion = waitBarrierVersion;
                 transactionList.add(transaction);
@@ -477,7 +477,7 @@ public class FuzzTransactionGenerator {
             int type = tableMetadata.getColumnType(columnIndex);
             if (type > 0 && columnIndex != tableMetadata.getTimestampIndex()) {
                 String columnName = tableMetadata.getColumnName(columnIndex);
-                transaction.operationList.add(new FuzzDropColumnOperation(columnName));
+                transaction.operationList.add(new FuzzDropColumnOperation(rnd, columnName));
                 transaction.structureVersion = metadataVersion;
                 transaction.waitBarrierVersion = waitBarrierVersion;
                 transactionList.add(transaction);

@@ -29,11 +29,13 @@ import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -56,6 +58,25 @@ public class ServerMainTest extends AbstractBootstrapTest {
         super.setUp();
         unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
+    }
+
+    @Test
+    public void testPgWirePort() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+
+                try {
+                    serverMain.getPgWireServerPort();
+                    Assert.fail();
+                } catch (CairoException ex) {
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "pgwire server is not running");
+                }
+
+                serverMain.start();
+                int port = serverMain.getPgWireServerPort();
+                Assert.assertTrue(port > 0);
+            }
+        });
     }
 
     @Test

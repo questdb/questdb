@@ -248,6 +248,13 @@ public class ServerMain implements Closeable {
         throw CairoException.nonCritical().put("http server is not running");
     }
 
+    public int getPgWireServerPort() {
+        if (pgWireServer != null) {
+            return pgWireServer.getPort();
+        }
+        throw CairoException.nonCritical().put("pgwire server is not running");
+    }
+
     public WorkerPoolManager getWorkerPoolManager() {
         if (closed.get()) {
             throw new IllegalStateException("close was called");
