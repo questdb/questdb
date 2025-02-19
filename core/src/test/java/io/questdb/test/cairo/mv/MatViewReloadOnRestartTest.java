@@ -366,9 +366,9 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     refreshJob.run(0);
                     assertSql(
                             main1,
-                            "view_name\tinvalid\tinvalidation_reason\n" +
-                                    "price_1h\ttrue\ttruncate operation\n",
-                            "select view_name, invalid, invalidation_reason from mat_views()"
+                            "view_name\tview_status\tinvalidation_reason\n" +
+                                    "price_1h\tinvalid\ttruncate operation\n",
+                            "select view_name, view_status, invalidation_reason from mat_views()"
                     );
                 }
             }
@@ -379,9 +379,9 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
             )) {
                 assertSql(
                         main2,
-                        "view_name\tinvalid\tinvalidation_reason\n" +
-                                "price_1h\ttrue\ttruncate operation\n",
-                        "select view_name, invalid, invalidation_reason from mat_views()"
+                        "view_name\tview_status\tinvalidation_reason\n" +
+                                "price_1h\tinvalid\ttruncate operation\n",
+                        "select view_name, view_status, invalidation_reason from mat_views()"
                 );
 
                 execute(main2, "refresh materialized view price_1h full;");
@@ -393,9 +393,9 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
                 assertSql(
                         main2,
-                        "view_name\tinvalid\tinvalidation_reason\n" +
-                                "price_1h\tfalse\t\n",
-                        "select view_name, invalid, invalidation_reason from mat_views()"
+                        "view_name\tview_status\tinvalidation_reason\n" +
+                                "price_1h\tvalid\t\n",
+                        "select view_name, view_status, invalidation_reason from mat_views()"
                 );
             }
 
@@ -405,9 +405,9 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
             )) {
                 assertSql(
                         main3,
-                        "view_name\tinvalid\tinvalidation_reason\n" +
-                                "price_1h\tfalse\t\n",
-                        "select view_name, invalid, invalidation_reason from mat_views()"
+                        "view_name\tview_status\tinvalidation_reason\n" +
+                                "price_1h\tvalid\t\n",
+                        "select view_name, view_status, invalidation_reason from mat_views()"
                 );
             }
         });
@@ -468,9 +468,9 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 // The mat view should be loaded, but left in invalid state.
                 assertSql(
                         main2,
-                        "view_name\tinvalid\n" +
-                                "price_1h\ttrue\n",
-                        "select view_name, invalid from mat_views();"
+                        "view_name\tview_status\n" +
+                                "price_1h\tinvalid\n",
+                        "select view_name, view_status from mat_views();"
                 );
             }
         });
@@ -531,9 +531,9 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 // The mat view should be loaded, but marked as invalid after refresh.
                 assertSql(
                         main2,
-                        "view_name\tinvalid\n" +
-                                "price_1h\ttrue\n",
-                        "select view_name, invalid from mat_views();"
+                        "view_name\tview_status\n" +
+                                "price_1h\tinvalid\n",
+                        "select view_name, view_status from mat_views();"
                 );
             }
         });
