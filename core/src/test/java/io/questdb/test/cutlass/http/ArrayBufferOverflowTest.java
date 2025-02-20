@@ -184,11 +184,12 @@ public class ArrayBufferOverflowTest extends AbstractTest {
                     .withHttpServerConfigBuilder(httpServerConfigurationBuilder)
                     .withTelemetry(false).run(configuration, (engine, sqlExecutionContext) -> {
                         try (TestHttpClient testHttpClient = new TestHttpClient()) {
-                            // It is important that the array is not the first column, there is ',' state that has to be dealt with.
-                            // It is also important that other columns in the select statement are not "rnd", this is due to the
-                            // the fact that column value is re-requested from the record in case it could not be sent due to
-                            // send buffer being full. Array values are cached in the state, they are not re-requested from the record,
-                            // whereas every primitive value is re-requested and it move the random seeds.
+                            // It is important that the array is not the first column, there is ',' state that has to be
+                            // dealt with. It is also important that other columns in the select statement are not
+                            // "rnd", this is due to the fact that column value is re-requested from the record in case
+                            // it could not be sent due to send buffer being full. Array values are cached in the state,
+                            // they are not re-requested from the record, whereas every primitive value is re-requested,
+                            // and it moves the random seeds.
                             testHttpClient.assertGet(
                                     "/exp",
                                     "\"i\",\"a\"\r\n" +
