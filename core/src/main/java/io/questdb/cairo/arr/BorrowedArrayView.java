@@ -26,6 +26,7 @@ package io.questdb.cairo.arr;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -44,6 +45,11 @@ public class BorrowedArrayView implements ArrayView, AutoCloseable {
     private DirectIntList strides = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG1);
     // Encoded array type, contains element type class, type precision, and dimensionality
     private int type = ColumnType.UNDEFINED;
+
+    @Override
+    public void appendToMem(MemoryA mem) {
+        appendToMemRecursive(0, 0, mem);
+    }
 
     @Override
     public void close() {
@@ -164,5 +170,22 @@ public class BorrowedArrayView implements ArrayView, AutoCloseable {
     public void transpose() {
         strides.reverse();
         shape.reverse();
+    }
+
+    private void appendToMemRecursive(int dim, int flatIndex, MemoryA mem) {
+        final int count = getDimLen(dim);
+        final int stride = getStride(dim);
+        final boolean atDeepestDim = dim == getDimCount() - 1;
+        if (atDeepestDim) {
+            for (int i = 0; i < count; i++) {
+                mem.putDouble(flatView.getDouble(flatIndex));
+                flatIndex += stride;
+            }
+        } else {
+            for (int i = 0; i < count; i++) {
+                appendToMemRecursive(dim + 1, flatIndex, mem);
+                flatIndex += stride;
+            }
+        }
     }
 }

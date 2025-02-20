@@ -25,8 +25,16 @@
 package io.questdb.cairo.arr;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.vm.api.MemoryA;
 
 public interface ArrayView {
+
+    default void appendToMem(MemoryA mem) {
+        if (!isVanilla()) {
+            throw new UnsupportedOperationException("non-vanilla array must override appendToMem()");
+        }
+        flatView().appendToMem(mem);
+    }
 
     /**
      * Returns a flat view over the elements of the N-dimensional array. It contains

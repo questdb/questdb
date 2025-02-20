@@ -243,6 +243,17 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertTransposedArray() throws Exception {
+        assertMemoryLeak(() -> {
+            String original = "[[1.0,2.0],[3.0,4.0],[5.0,6.0]]";
+            String transposed = "[[1.0,3.0,5.0],[2.0,4.0,6.0]]";
+            execute("CREATE TABLE tango AS (SELECT ARRAY" + original + " arr FROM long_sequence(1))");
+            execute("INSERT INTO tango SELECT t(arr) FROM tango");
+            assertSql("arr\n" + original + '\n' + transposed + '\n', "SELECT arr FROM tango");
+        });
+    }
+
+    @Test
     public void testMultiplyArray() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (left DOUBLE[][], right DOUBLE[][])");
