@@ -396,14 +396,14 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                                 stmt,
                                 1,
                                 "col1[VARCHAR],status[BIGINT],ts[TIMESTAMP]\n" +
-                                "Sym0,0,1970-01-01 00:16:59.9\n"
+                                        "Sym0,0,1970-01-01 00:16:59.9\n"
                         );
 
                         assertLo(
                                 stmt,
                                 -1,
                                 "col1[VARCHAR],status[BIGINT],ts[TIMESTAMP]\n" +
-                                "Sym1,1,1970-01-01 00:00:20.0\n"
+                                        "Sym1,1,1970-01-01 00:00:20.0\n"
                         );
 
                         assertLo(
@@ -431,10 +431,10 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                                 stmt,
                                 1,
                                 "QUERY PLAN[VARCHAR]\n" +
-                                "Limit lo: $0::int\n" +
-                                "    PageFrame\n" +
-                                "        Row backward scan\n" +
-                                "        Frame backward scan on: tab\n"
+                                        "Limit lo: $0::int\n" +
+                                        "    PageFrame\n" +
+                                        "        Row backward scan\n" +
+                                        "        Frame backward scan on: tab\n"
                         );
 
                         // same as the negative constant limit
@@ -461,18 +461,6 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                 }
             }
         });
-    }
-
-    private static void assertLo(PreparedStatement stmt, int limitLo, String expected) throws SQLException {
-        stmt.clearParameters();
-        stmt.setInt(1, limitLo);
-        try (final ResultSet resultSet = stmt.executeQuery()) {
-            assertResultSet(
-                    expected,
-                    Misc.getThreadLocalSink(),
-                    resultSet
-            );
-        }
     }
 
     @Test
@@ -653,6 +641,31 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
         });
     }
 
+    private static void assertLo(PreparedStatement stmt, int limitLo, String expected) throws SQLException {
+        stmt.clearParameters();
+        stmt.setInt(1, limitLo);
+        try (final ResultSet resultSet = stmt.executeQuery()) {
+            assertResultSet(
+                    expected,
+                    Misc.getThreadLocalSink(),
+                    resultSet
+            );
+        }
+    }
+
+    private static void assertLoHi(PreparedStatement stmt, int lo, int hi, String expected) throws SQLException {
+        stmt.clearParameters();
+        stmt.setInt(1, lo);
+        stmt.setInt(2, hi);
+        try (final ResultSet resultSet = stmt.executeQuery()) {
+            assertResultSet(
+                    expected,
+                    Misc.getThreadLocalSink(),
+                    resultSet
+            );
+        }
+    }
+
     private static void createTable(ServerMain serverMain, int numOfRows) {
         final CairoEngine engine = serverMain.getEngine();
         try (
@@ -679,17 +692,6 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
         return DriverManager.getConnection(url, properties);
     }
 
-    private static void runQueryWithParams(Connection connection, int limitLow, String expected) throws SQLException {
-        runQueryWithParams(
-                connection,
-                "SELECT * from tab where status = ? order by ts desc limit ?",
-                1,
-                limitLow,
-                0,
-                expected
-        );
-    }
-
     private static void runQueryWithParams(Connection connection, String sql, int status, int limitLow, int limitHigh, String expected) throws SQLException {
         final PreparedStatement stmt = connection.prepareStatement(sql);
         stmt.setInt(1, status);
@@ -702,16 +704,14 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
         stmt.close();
     }
 
-    private static void assertLoHi(PreparedStatement stmt, int lo, int hi, String expected) throws SQLException {
-        stmt.clearParameters();
-        stmt.setInt(1, lo);
-        stmt.setInt(2, hi);
-        try (final ResultSet resultSet = stmt.executeQuery()) {
-            assertResultSet(
-                    expected,
-                    Misc.getThreadLocalSink(),
-                    resultSet
-            );
-        }
+    private static void runQueryWithParams(Connection connection, int limitLow, String expected) throws SQLException {
+        runQueryWithParams(
+                connection,
+                "SELECT * from tab where status = ? order by ts desc limit ?",
+                1,
+                limitLow,
+                0,
+                expected
+        );
     }
 }
