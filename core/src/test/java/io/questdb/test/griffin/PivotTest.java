@@ -27,6 +27,8 @@ package io.questdb.test.griffin;
 import io.questdb.griffin.model.ExecutionModel;
 import org.junit.Test;
 
+// todo(nwoolmer): swap to assertQuery
+
 public class PivotTest extends AbstractSqlParserTest {
 
     public static String ddlCities = "CREATE TABLE cities (\n" +
@@ -183,6 +185,50 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotImplicitGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            String pivotQuery =
+                    "SELECT *\n" +
+                            "FROM cities\n" +
+                            "PIVOT (\n" +
+                            "    SUM(population)\n" +
+                            "    FOR\n" +
+                            "        year IN (2000, 2010, 2020)\n" +
+                            ");\n";
+
+            String result = "2000\t2010\t2020\n" +
+                    "9584\t9848\t10668\n";
+
+            assertSql(result, pivotQuery);
+        });
+    }
+
+    @Test
+    public void testPivotImplicitGroupByWithAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            String pivotQuery =
+                    "SELECT *\n" +
+                            "FROM cities\n" +
+                            "PIVOT (\n" +
+                            "    SUM(population) as sum\n" +
+                            "    FOR\n" +
+                            "        year IN (2000, 2010, 2020)\n" +
+                            ");\n";
+
+            String result = "2000_sum\t2010_sum\t2020_sum\n" +
+                    "9584\t9848\t10668\n";
+
+            assertSql(result, pivotQuery);
+        });
+    }
+
+    @Test
     public void testPivotNoGroupBy() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlCities);
@@ -205,8 +251,9 @@ public class PivotTest extends AbstractSqlParserTest {
         });
     }
 
+    // todo(nwoolmer): fix order by bug https://github.com/questdb/questdb/issues/5405
     @Test
-    public void testPivotNoGroupByWithOrderBy() throws Exception {
+    public void testPivotNoGroupByWithOrderBy1() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlCities);
             execute(dmlCities);
@@ -221,6 +268,7 @@ public class PivotTest extends AbstractSqlParserTest {
                             "    ORDER BY \"2000\"\n" +
                             ");\n";
 
+//            assertException(pivotQuery, 105, "order column position is out of range [max=3]");
 
             String result = "2000\t2010\t2020\n" +
                     "9584\t9848\t10668\n";
@@ -228,7 +276,6 @@ public class PivotTest extends AbstractSqlParserTest {
             assertSql(result, pivotQuery);
         });
     }
-
 
     @Test
     public void testPivotWithAliasedAggregate() throws Exception {
@@ -264,6 +311,105 @@ public class PivotTest extends AbstractSqlParserTest {
 
             assertSql(result, pivotQuery);
             assertSql(result, rewrittenQuery);
+        });
+    }
+
+    @Test
+    public void testPivotWithComplexInitialStatement() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            String pivotQuery = "SELECT *\n" +
+                    "FROM cities" +
+                    "WHERE (population % 2) = 0\n" +
+                    "PIVOT (\n" +
+                    "    SUM(population) as sum\n" +
+                    "    FOR\n" +
+                    "        year IN (2000, 2010, 2020)\n" +
+                    "    GROUP BY country, name\n" +
+                    ");";
+
+            String result = "country\tname\t2000_sum\t2010_sum\t2020_sum\n" +
+                    "US\tSeattle\t564\t608\t738\n" +
+                    "NL\tAmsterdam\t1005\t1065\t1158\n" +
+                    "US\tNew York City\t8015\t8175\t8772\n";
+
+            assertSql(result, pivotQuery);
+        });
+    }
+
+    @Test
+    public void testPivotWithGroupByAndLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            String pivotQuery = "SELECT *\n" +
+                    "FROM cities\n" +
+                    "PIVOT (\n" +
+                    "    SUM(population) as sum\n" +
+                    "    FOR\n" +
+                    "        year IN (2000, 2010, 2020)\n" +
+                    "    GROUP BY country, name\n" +
+                    "    LIMIT 1\n" +
+                    ");";
+
+            String result = "country\tname\t2000_sum\t2010_sum\t2020_sum\n" +
+                    "NL\tAmsterdam\t1005\t1065\t1158\n";
+
+            assertSql(result, pivotQuery);
+        });
+    }
+
+    // todo(nwoolmer): fix order by bug https://github.com/questdb/questdb/issues/5407
+    @Test
+    public void testPivotWithGroupByAndOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            String pivotQuery = "SELECT *\n" +
+                    "FROM cities\n" +
+                    "PIVOT (\n" +
+                    "    SUM(population) as sum\n" +
+                    "    FOR\n" +
+                    "        year IN (2000, 2010, 2020)\n" +
+                    "    GROUP BY country, name\n" +
+                    "    ORDER BY \"2000_sum\"\n" +
+                    ");";
+
+            String result = "country\tname\t2000_sum\t2010_sum\t2020_sum\n" +
+                    "US\tSeattle\t564\t608\t738\n" +
+                    "NL\tAmsterdam\t1005\t1065\t1158\n" +
+                    "US\tNew York City\t8015\t8175\t8772\n";
+
+            assertSql(result, pivotQuery);
+        });
+    }
+
+    @Test
+    public void testPivotWithGroupByAndOrderByAndLimit() throws Exception {
+        assertMemoryLeak(() -> {
+
+            execute(ddlCities);
+            execute(dmlCities);
+
+            String pivotQuery = "SELECT *\n" +
+                    "FROM cities\n" +
+                    "PIVOT (\n" +
+                    "    SUM(population) as sum\n" +
+                    "    FOR\n" +
+                    "        year IN (2000, 2010, 2020)\n" +
+                    "    GROUP BY country, name\n" +
+                    "    ORDER BY \"2000_sum\"\n" +
+                    "    LIMIT 1\n" +
+                    ");";
+
+            String result = "country\tname\t2000_sum\t2010_sum\t2020_sum\n" +
+                    "US\tSeattle\t564\t608\t738\n";
+
+            assertSql(result, pivotQuery);
         });
     }
 

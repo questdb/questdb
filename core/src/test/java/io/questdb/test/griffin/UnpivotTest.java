@@ -29,6 +29,9 @@ import org.junit.Test;
 import static io.questdb.test.griffin.PivotTest.ddlCities;
 import static io.questdb.test.griffin.PivotTest.dmlCities;
 
+
+// todo(nwoolmer): swap to assertQuery
+
 public class UnpivotTest extends AbstractSqlParserTest {
 
     public static String ddlMonthlySales = "CREATE TABLE monthly_sales\n" +
