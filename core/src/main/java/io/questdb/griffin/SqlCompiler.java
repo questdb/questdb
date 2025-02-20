@@ -31,6 +31,7 @@ import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
@@ -58,6 +59,8 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
             @Transient SqlExecutionContext executionContext,
             boolean generateProgressLogger
     ) throws SqlException;
+
+    BytecodeAssembler getAsm();
 
     CairoEngine getEngine();
 

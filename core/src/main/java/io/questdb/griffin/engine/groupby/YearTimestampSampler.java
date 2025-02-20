@@ -29,7 +29,6 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class YearTimestampSampler implements TimestampSampler {
-
     private final int bucket;
     private int startDay;
     private int startHour;

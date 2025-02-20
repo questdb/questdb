@@ -8,16 +8,25 @@ public class GenericDropOperationBuilder implements Mutable {
     private int entityNamePosition;
     private boolean ifExists;
     private int operationCode;
+    private CharSequence sqlText;
 
     public GenericDropOperation build() {
-        return new GenericDropOperation(operationCode, Chars.toString(entityName), entityNamePosition, ifExists);
+        return new GenericDropOperation(
+                operationCode,
+                Chars.toString(sqlText),
+                Chars.toString(entityName),
+                entityNamePosition,
+                ifExists
+        );
     }
 
     @Override
     public void clear() {
         this.operationCode = 0;
+        this.sqlText = null;
         this.entityName = null;
         this.entityNamePosition = 0;
+        this.ifExists = false;
     }
 
     public void setEntityName(CharSequence entityName) {
@@ -34,5 +43,9 @@ public class GenericDropOperationBuilder implements Mutable {
 
     public void setOperationCode(int operationCode) {
         this.operationCode = operationCode;
+    }
+
+    public void setSqlText(CharSequence sqlText) {
+        this.sqlText = sqlText;
     }
 }

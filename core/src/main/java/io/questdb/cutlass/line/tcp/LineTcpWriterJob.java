@@ -72,7 +72,7 @@ class LineTcpWriterJob implements Job, Closeable {
 
     @Override
     public void close() {
-        LOG.info().$("line protocol writer closing [threadId=").$(workerId).$(']').$();
+        LOG.info().$("line protocol writer closing [workerId=").$(workerId).I$();
         // Finish all jobs in the queue before stopping
         for (int n = 0; n < queue.getCycle(); n++) {
             if (!run(workerId, Job.TERMINATING_STATUS)) {
@@ -156,7 +156,7 @@ class LineTcpWriterJob implements Job, Closeable {
                                 nextCommitTime = millisecondClock.getTicks();
                                 LOG.info()
                                         .$("assigned table to writer thread [tableName=").$(tud.getTableToken())
-                                        .$(", threadId=").$(workerId)
+                                        .$(", workerId=").$(workerId)
                                         .I$();
                             }
                             event.append();
