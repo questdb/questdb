@@ -272,6 +272,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void resetFlags() {
+        this.containsSecret = false;
+        this.useSimpleCircuitBreaker = false;
+        this.cacheHit = false;
+    }
+
+    @Override
     public void setCacheHit(boolean value) {
         cacheHit = value;
     }
@@ -370,12 +377,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     private void doStoreTelemetry(short event, short origin) {
         TelemetryTask.store(telemetry, origin, event);
-    }
-
-    private void resetFlags() {
-        this.containsSecret = false;
-        this.useSimpleCircuitBreaker = false;
-        this.cacheHit = false;
     }
 
     private void storeTelemetryNoop(short event, short origin) {

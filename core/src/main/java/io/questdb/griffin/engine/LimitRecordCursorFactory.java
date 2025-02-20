@@ -26,6 +26,7 @@ package io.questdb.griffin.engine;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -35,7 +36,6 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor;
 import io.questdb.griffin.engine.table.PageFrameRecordCursor;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -45,10 +45,19 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final LimitRecordCursor cursor;
 
-    public LimitRecordCursorFactory(RecordCursorFactory base, Function loFunction, @Nullable Function hiFunction) {
+    public LimitRecordCursorFactory(
+            RecordCursorFactory base,
+            Function loFunction,
+            @Nullable Function hiFunction,
+            // limit is inverted is when we prefer backward scan for positive limit value, and
+            // forward scan for negative limit value.
+            // otherwise we prefer backward scan for negative limit value and forward scan
+            // for the positive limit
+            boolean invertedLimit
+    ) {
         super(base.getMetadata());
         this.base = base;
-        this.cursor = new LimitRecordCursor(loFunction, hiFunction);
+        this.cursor = new LimitRecordCursor(loFunction, hiFunction, invertedLimit);
     }
 
     @Override
@@ -119,6 +128,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     private static class LimitRecordCursor implements RecordCursor {
         private final RecordCursor.Counter counter = new Counter();
         private final Function hiFunction;
+        private final boolean invertedLimit;
         private final Function loFunction;
         private boolean areRowsCounted;
         private RecordCursor base;
@@ -131,9 +141,10 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         private long size;
         private long skipToRows;
 
-        public LimitRecordCursor(Function loFunction, Function hiFunction) {
+        public LimitRecordCursor(Function loFunction, Function hiFunction, boolean invertedLimit) {
             this.loFunction = loFunction;
             this.hiFunction = hiFunction;
+            this.invertedLimit = invertedLimit;
         }
 
         @Override
@@ -201,9 +212,21 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             loFunction.init(base, executionContext);
             long lo = loFunction.getLong(null);
 
-            if (lo != Numbers.LONG_NULL && loFunction.isRuntimeConstant()) {
-                if (lo < 0 && base instanceof PageFrameRecordCursor && ((PageFrameRecordCursor) base).getPageFrameCursor() instanceof FwdTableReaderPageFrameCursor) {
-                    throw TableReferenceOutOfDateException.of("shizzle");
+            if (
+                    loFunction.isRuntimeConstant() // lo function is a bind variable
+                            && lo != Numbers.LONG_NULL // and it is defined
+                            && base instanceof PageFrameRecordCursor
+            ) {
+                final PageFrameCursor pfc = ((PageFrameRecordCursor) base).getPageFrameCursor();
+                final int cursorDirection = pfc.cursorScanDirection();
+                if (invertedLimit) {
+                    if (lo > 0 && cursorDirection == PageFrameCursor.SCAN_DIR_FORWARD || lo < 0 && cursorDirection == PageFrameCursor.SCAN_DIR_BACKWARD) {
+                        throw TableReferenceOutOfDateException.of("internal error, plan should have been changed");
+                    }
+                } else {
+                    if (lo < 0 && cursorDirection == PageFrameCursor.SCAN_DIR_FORWARD || lo > 0 && cursorDirection == PageFrameCursor.SCAN_DIR_BACKWARD) {
+                        throw TableReferenceOutOfDateException.of("internal error, plan should have been changed");
+                    }
                 }
             }
             if (hiFunction != null) {

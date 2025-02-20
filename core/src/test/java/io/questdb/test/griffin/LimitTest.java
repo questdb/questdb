@@ -25,11 +25,15 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
+import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -269,6 +273,18 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLimitDefinesBindVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(createTableDdl);
+            execute(createTableDml);
+            testLimitDefinesBindVariables0("select * from y limit $1", 1);
+            testLimitDefinesBindVariables0("select * from y limit $1, $2", 2);
+            testLimitDefinesBindVariables0("select * from y order by timestamp limit $1, $2", 2);
+            testLimitDefinesBindVariables0("select * from y order by timestamp desc limit $1, $2", 2);
+        });
+    }
+
+    @Test
     public void testLimitMinusOneAndPredicateAndColumnAlias() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 (ts timestamp, id symbol)");
@@ -318,9 +334,9 @@ public class LimitTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: $0::long\n" +
-                    "    PageFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Frame forward scan on: y\n"
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: y\n"
             );
 
             assertPlanNoLeakCheck(
@@ -339,7 +355,7 @@ public class LimitTest extends AbstractCairoTest {
                     query,
                     "Radix sort light\n" +
                             "  keys: [timestamp]\n" +
-                            "    Limit lo: 2\n" +
+                            "    Limit lo: -$0::long\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: y\n");
@@ -619,10 +635,10 @@ public class LimitTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     "Sort light lo: $0::long hi: $1::long\n" +
-                    "  keys: [timestamp desc, c]\n" +
-                    "    PageFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Frame forward scan on: y\n"
+                            "  keys: [timestamp desc, c]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: y\n"
             );
 
             bindVariableService.setLong(0, 8L);
@@ -1006,6 +1022,21 @@ public class LimitTest extends AbstractCairoTest {
 
         String query = "select * from y limit 4,6";
         testLimit(expected, expected, query);
+    }
+
+    private static void testLimitDefinesBindVariables0(String sqlText, int bindVarCount) throws SqlException {
+        // ensure clear test environment
+        sqlExecutionContext.getBindVariableService().clear();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            try (RecordCursorFactory ignored = compiler.compile(sqlText, sqlExecutionContext).getRecordCursorFactory()) {
+                for (int i = 0; i < bindVarCount; i++) {
+                    Function fun = sqlExecutionContext.getBindVariableService().getFunction(i);
+                    Assert.assertNotNull(fun);
+                    Assert.assertEquals(ColumnType.LONG, fun.getType());
+                    Assert.assertEquals(Numbers.LONG_NULL, fun.getLong(null));
+                }
+            }
+        }
     }
 
     private void testInvalidNegativeLimit() throws Exception {

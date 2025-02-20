@@ -771,6 +771,10 @@ public class SqlUtil {
         return true;
     }
 
+    public static ExpressionNode nextExpr(ObjectPool<ExpressionNode> pool, int exprNodeType, CharSequence token, int position) {
+        return pool.next().of(exprNodeType, token, 0, position);
+    }
+
     /**
      * Parses partial representation of timestamp with time zone.
      *
@@ -836,10 +840,6 @@ public class SqlUtil {
             throw ImplicitCastException.inconvertibleValue(value, columnType, ColumnType.TIMESTAMP);
         }
         return Numbers.LONG_NULL;
-    }
-
-    private static ExpressionNode nextExpr(ObjectPool<ExpressionNode> pool, int exprNodeType, CharSequence token, int position) {
-        return pool.next().of(exprNodeType, token, 0, position);
     }
 
     static CharSequence createColumnAlias(

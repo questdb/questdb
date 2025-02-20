@@ -349,6 +349,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // pipeline entries begin life as anonymous, typical pipeline length is 1-3 entries
         // we do not need to create new objects until we know we're caching the entry
         this.sqlText = sqlText;
+        if (!recompile) {
+            sqlExecutionContext.resetFlags();
+        }
         this.empty = sqlText == null || sqlText.length() == 0;
         if (empty) {
             sqlExecutionContext.setCacheHit(cacheHit = true);

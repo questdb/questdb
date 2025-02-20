@@ -3081,8 +3081,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             final Function loFunc = getLoFunction(model, executionContext);
             final Function hiFunc = getHiFunction(model, executionContext);
-
-            return new LimitRecordCursorFactory(factory, loFunc, hiFunc);
+            return new LimitRecordCursorFactory(factory, loFunc, hiFunc, model.getNestedModel().isForceBackwardScan());
         } catch (Throwable e) {
             Misc.free(factory);
             throw e;
@@ -5350,15 +5349,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         model.setWhereClause(withinExtracted);
 
-        // Either this: `ORDER BY timestamp DESC`
-        // Or this: `ORDER BY timestamp DESC, side DESC LIMIT 3`
-        // In the latter case, we would like to generate a partially sorted cursor in `generateOrderBy`
-        // So we need to return a bwd scan here first.
-        boolean orderDescendingByDesignatedTimestampOnly = isOrderDescendingByDesignatedTimestampOnly(model);
-
-        boolean shouldGenerateBackwardsScan = orderDescendingByDesignatedTimestampOnly
-                || isOrderByStartingWithDescDesignatedTimestampAndLimited(model);
-
         if (withinExtracted != null) {
             CharSequence preferredKeyColumn = null;
             if (latestByColumnCount == 1) {
@@ -5432,7 +5422,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final boolean intervalHitsOnlyOnePartition;
             if (intrinsicModel.hasIntervalFilters()) {
                 RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
-                if (shouldGenerateBackwardsScan) {
+                if (model.isForceBackwardScan()) {
                     dfcFactory = new IntervalBwdPartitionFrameCursorFactory(
                             tableToken,
                             model.getMetadataVersion(),
@@ -5451,7 +5441,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition(reader.getPartitionedBy());
             } else {
-                if (shouldGenerateBackwardsScan) {
+                if (model.isForceBackwardScan()) {
                     dfcFactory = new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
                 } else {
                     dfcFactory = new FullFwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
@@ -5763,7 +5753,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             RowCursorFactory rowFactory;
-            if (shouldGenerateBackwardsScan) {
+            if (model.isForceBackwardScan()) {
                 rowFactory = new BwdPageFrameRowCursorFactory();
             } else {
                 rowFactory = new FwdPageFrameRowCursorFactory();
@@ -5792,7 +5782,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             AbstractPartitionFrameCursorFactory cursorFactory;
             RowCursorFactory rowCursorFactory;
 
-            if (shouldGenerateBackwardsScan) {
+            if (model.isForceBackwardScan()) {
                 cursorFactory = new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
                 rowCursorFactory = new BwdPageFrameRowCursorFactory();
             } else {
@@ -5805,7 +5795,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     myMeta,
                     cursorFactory,
                     rowCursorFactory,
-                    orderDescendingByDesignatedTimestampOnly,
+                    model.isOrderDescendingByDesignatedTimestampOnly(),
                     null,
                     true,
                     columnIndexes,
@@ -6066,19 +6056,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 model.getTimestamp().token);
     }
 
-    private boolean isOrderByStartingWithDescDesignatedTimestampAndLimited(QueryModel model) {
-        return model.getOrderByAdvice().size() > 1
-                && model.getTimestamp() != null
-                && Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token,
-                model.getTimestamp().token)
-                && model.getLimitLo() != null && !Chars.equals(model.getLimitLo().token, '-');
-    }
-
-    private boolean isOrderDescendingByDesignatedTimestampOnly(QueryModel model) {
-        return isOrderByDesignatedTimestampOnly(model) &&
-                getOrderByDirectionOrDefault(model, 0) == ORDER_DIRECTION_DESCENDING;
-    }
-
     private boolean isSameTable(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) {
         return masterFactory.getTableToken() != null && masterFactory.getTableToken().equals(slaveFactory.getTableToken());
     }
@@ -6293,7 +6270,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final Function limitFunc = functionParser.parseFunction(limit, EmptyRecordMetadata.INSTANCE, executionContext);
 
         // coerce to a convertible type
-        coerceRuntimeConstantType(limitFunc, ColumnType.INT, executionContext, "LIMIT expressions must be convertible to INT", limit.position);
+        coerceRuntimeConstantType(limitFunc, ColumnType.LONG, executionContext, "LIMIT expressions must be convertible to INT", limit.position);
 
         // also rule out string, varchar etc.
         int limitFuncType = limitFunc.getType();

@@ -164,6 +164,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public void resetFlags() {
+    }
+
+    @Override
     public void setCacheHit(boolean value) {
     }
 

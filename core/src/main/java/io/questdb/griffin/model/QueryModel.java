@@ -163,6 +163,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode fillStride;
     private ExpressionNode fillTo;
     private ObjList<ExpressionNode> fillValues;
+    private boolean forceBackwardScan;
     //simple flag to mark when limit x,y in current model (part of query) is already taken care of by existing factories e.g. LimitedSizeSortedLightRecordCursorFactory
     //and doesn't need to be enforced by LimitRecordCursor. We need it to detect whether current factory implements limit from this or inner query .
     private boolean isLimitImplemented;
@@ -188,6 +189,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
     // position of the order by clause token
     private int orderByPosition;
+    private boolean orderDescendingByDesignatedTimestampOnly;
     private IntList orderedJoinModels = orderedJoinModels2;
     // Expression clause that is actually part of left/outer join but not in join model.
     // Inner join expressions
@@ -469,6 +471,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         skipped = false;
         allowPropagationOfOrderByAdvice = true;
         decls.clear();
+        orderDescendingByDesignatedTimestampOnly = false;
+        forceBackwardScan = false;
     }
 
     public void clearColumnMapStructs() {
@@ -707,19 +711,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean getAllowPropagationOfOrderByAdvice() {
         return allowPropagationOfOrderByAdvice;
-    }
-
-    public boolean windowStopPropagate() {
-        if (selectModelType != SELECT_MODEL_WINDOW) {
-            return false;
-        }
-        for (int i = 0, size = getColumns().size(); i < size; i++) {
-            QueryColumn column = getColumns().getQuick(i);
-            if (column.isWindowColumn() && ((WindowColumn) column).stopOrderByPropagate(getOrderBy(), getOrderByDirection())) {
-                return true;
-            }
-        }
-        return false;
     }
 
     public ObjList<CharSequence> getBottomUpColumnAliases() {
@@ -1072,6 +1063,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return explicitTimestamp;
     }
 
+    public boolean isForceBackwardScan() {
+        return forceBackwardScan;
+    }
+
     public boolean isLimitImplemented() {
         return isLimitImplemented;
     }
@@ -1094,6 +1089,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         } catch (NumericException e) {
             return false;
         }
+    }
+
+    public boolean isOrderDescendingByDesignatedTimestampOnly() {
+        return orderDescendingByDesignatedTimestampOnly;
     }
 
     public boolean isSelectTranslation() {
@@ -1315,6 +1314,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.fillValues = fillValues;
     }
 
+    public void setForceBackwardScan(boolean forceBackwardScan) {
+        this.forceBackwardScan = forceBackwardScan;
+    }
+
     public void setIsUpdate(boolean isUpdate) {
         this.isUpdateModel = isUpdate;
     }
@@ -1379,6 +1382,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setOrderByPosition(int orderByPosition) {
         this.orderByPosition = orderByPosition;
+    }
+
+    public void setOrderDescendingByDesignatedTimestampOnly(boolean orderDescendingByDesignatedTimestampOnly) {
+        this.orderDescendingByDesignatedTimestampOnly = orderDescendingByDesignatedTimestampOnly;
     }
 
     public void setOrderedJoinModels(IntList that) {
@@ -1492,6 +1499,19 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
             columnAliasIndexes.put(bottomUpColumnAliases.getQuick(i), i);
         }
+    }
+
+    public boolean windowStopPropagate() {
+        if (selectModelType != SELECT_MODEL_WINDOW) {
+            return false;
+        }
+        for (int i = 0, size = getColumns().size(); i < size; i++) {
+            QueryColumn column = getColumns().getQuick(i);
+            if (column.isWindowColumn() && ((WindowColumn) column).stopOrderByPropagate(getOrderBy(), getOrderByDirection())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void aliasToSink(CharSequence alias, CharSink<?> sink) {

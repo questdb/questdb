@@ -196,4 +196,6 @@ public interface SqlExecutionContext extends Closeable {
 
     default void storeTelemetry(short event, short origin) {
     }
+
+    void resetFlags();
 }

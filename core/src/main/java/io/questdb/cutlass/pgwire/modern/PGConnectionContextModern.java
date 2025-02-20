@@ -1083,6 +1083,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tas)) {
                     pipelineCurrentEntry.ofCachedSelect(utf16SqlText, tas);
                     cachedStatus = CACHE_HIT_SELECT_VALID;
+                    sqlExecutionContext.resetFlags();
                 } else {
                     tas.close();
                     cachedStatus = CACHE_HIT_SELECT_INVALID;

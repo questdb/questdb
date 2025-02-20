@@ -4224,11 +4224,26 @@ public class SqlOptimiser implements Mutable {
                 assert loFunction != null; // covered by the guard
                 long limitValue = loFunction.getLong(null);
 
-                final CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
-                characterStoreEntry.put(-limitValue);
-                ExpressionNode limitNode = nextLiteral(characterStoreEntry.toImmutable());
-                // override limit node type
-                limitNode.type = CONSTANT;
+                ExpressionNode limitNode;
+                if (loFunction.isConstant()) {
+                    final CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
+                    characterStoreEntry.put(-limitValue);
+                    limitNode = nextLiteral(characterStoreEntry.toImmutable());
+                    // override limit node type
+                    limitNode.type = CONSTANT;
+                } else {
+                    // only runtime constant is possible
+                    limitNode = nextLiteral("-");
+                    // negate the limit
+                    limitNode.type = OPERATION;
+                    limitNode.rhs = SqlUtil.nextExpr(
+                            expressionNodePool,
+                            BIND_VARIABLE,
+                            model.getLimitLo().token,
+                            model.getLimitLo().position
+                    );
+                    limitNode.paramCount = 1;
+                }
 
                 // insert two models between "model" and "nested", like so:
                 // model -> order -> limit -> nested + order
@@ -4281,13 +4296,11 @@ public class SqlOptimiser implements Mutable {
                         order.addOrderBy(orderByNode, orderByDirection.getQuick(0));
                     }
 
-                    int newOrder;
                     if (orderByDirection.getQuick(0) == ORDER_DIRECTION_ASCENDING) {
-                        newOrder = QueryModel.ORDER_DIRECTION_DESCENDING;
+                        orderByDirection.setQuick(0, ORDER_DIRECTION_DESCENDING);
                     } else {
-                        newOrder = ORDER_DIRECTION_ASCENDING;
+                        orderByDirection.setQuick(0, ORDER_DIRECTION_ASCENDING);
                     }
-                    orderByDirection.setQuick(0, newOrder);
                 }
 
                 if (order == null) {
@@ -6152,6 +6165,55 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    /**
+     * Scans for NONE models, basically those that query table and if they have
+     * order by descending timestamp only. These models are tagged for the generator
+     * to handle the entire pipeline correctly.
+     * <p>
+     * Additionally, we scan the same models and separately tag them if they
+     * ordered by descending timestamp, together with other fields.
+     * <p>
+     * We go deep and wide, as in include joins and unions.
+     *
+     * @param model the starting point
+     */
+    private void tagLimitModels(QueryModel model) {
+        if (model == null) {
+            return;
+        }
+
+        if (model.getModelType() == SELECT_MODEL_NONE || model.getModelType() == SELECT_MODEL_CHOOSE) {
+            boolean orderDescendingByDesignatedTimestampOnly;
+            IntList direction = model.getOrderByDirectionAdvice();
+            if (direction.size() < 1) {
+                orderDescendingByDesignatedTimestampOnly = false;
+            } else {
+                orderDescendingByDesignatedTimestampOnly = model.getOrderByAdvice().size() == 1
+                        && model.getTimestamp() != null
+                        && Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token, model.getTimestamp().token)
+                        && direction.get(0) == ORDER_DIRECTION_DESCENDING;
+            }
+
+            model.setOrderDescendingByDesignatedTimestampOnly(orderDescendingByDesignatedTimestampOnly);
+            model.setForceBackwardScan(
+                    orderDescendingByDesignatedTimestampOnly || (
+                            model.getOrderByAdvice().size() > 1
+                                    && model.getTimestamp() != null
+                                    && Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token, model.getTimestamp().token)
+                                    && model.getLimitLo() != null && !Chars.equals(model.getLimitLo().token, '-'))
+            );
+        }
+
+        tagLimitModels(model.getNestedModel());
+        tagLimitModels(model.getUnionModel());
+
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        // ignore self
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            tagLimitModels(joinModels.getQuick(i));
+        }
+    }
+
     private void traverseNamesAndIndices(QueryModel parent, ExpressionNode node) throws SqlException {
         literalCollectorAIndexes.clear();
         literalCollectorBIndexes.clear();
@@ -6390,6 +6452,7 @@ public class SqlOptimiser implements Mutable {
             eraseColumnPrefixInWhereClauses(rewrittenModel);
             moveTimestampToChooseModel(rewrittenModel);
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
+            tagLimitModels(rewrittenModel);
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
             return rewrittenModel;
         } catch (Throwable th) {
