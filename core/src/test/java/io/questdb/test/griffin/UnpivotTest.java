@@ -233,6 +233,28 @@ public class UnpivotTest extends AbstractSqlParserTest {
                     pivotUnpivot);
         });
     }
+
+    @Test
+    public void testUnpivotWithMultipleDestinationColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlMonthlySales);
+            execute(dmlMonthlySales);
+            drainWalQueue();
+
+            String query = "FROM monthly_sales\n" +
+                    "UNPIVOT (\n" +
+                    "    (month_1_sales, month_2_sales, month_3_sales)\n" +
+                    "    FOR quarter IN (\n" +
+                    "        (jan, feb, mar) AS q1,\n" +
+                    "        (apr, may, jun) AS q2\n" +
+                    "    )\n" +
+                    ");";
+
+            assertPlanNoLeakCheck(query, "abc");
+
+            assertSql("abc", query);
+        });
+    }
 }
 
 
