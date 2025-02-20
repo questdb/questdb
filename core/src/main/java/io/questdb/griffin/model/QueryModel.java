@@ -1324,12 +1324,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.fillValues = fillValues;
     }
 
-    public void setIsMatView(boolean isMatView) {
-        this.isMatViewModel = isMatView;
-    }
-
     public void setForceBackwardScan(boolean forceBackwardScan) {
         this.forceBackwardScan = forceBackwardScan;
+    }
+
+    public void setIsMatView(boolean isMatView) {
+        this.isMatViewModel = isMatView;
     }
 
     public void setIsUpdate(boolean isUpdate) {
