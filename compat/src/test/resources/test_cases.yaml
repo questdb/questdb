@@ -269,9 +269,9 @@ tests:
         query: "SELECT col1, sum(status) as sum, last(ts) as last FROM ${table_name} ORDER BY 2 DESC LIMIT $[1],$[2]"
         parameters:
           - value: "1"
-            type: "INT4"
+            type: "INT8"
           - value: "3"
-            type: "INT4"
+            type: "INT8"
         # let's use the exact match here since it only returns one row
         expect:
           result:
@@ -282,9 +282,9 @@ tests:
         query: "SELECT col1, sum(status) as sum, last(ts) as last FROM ${table_name} ORDER BY 2 DESC LIMIT $[1],$[2]"
         parameters:
           - value: "1"
-            type: "INT4"
+            type: "INT8"
           - value: "2"
-            type: "INT4"
+            type: "INT8"
         expect:
           result:
             - [ 'Sym2', 50, '1970-01-01T00:00:29.700000Z' ]

@@ -151,63 +151,6 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         ((DynamicLimitCursor) cursor).updateLimits(limit, skipFirst, skipLast);
     }
 
-    private void computeLimits(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
-        loFunction.init(baseCursor, executionContext);
-        if (hiFunction != null) {
-            hiFunction.init(baseCursor, executionContext);
-        }
-
-        this.skipFirst = 0;
-        this.skipLast = 0;
-        this.limit = 0;
-        this.isFirstN = false;
-
-        long lo = loFunction.getLong(null);
-        if (lo < 0 && hiFunction == null) {
-            // last N rows
-            // lo is negative, -5 for example
-            // if we have 12 records we need to skip 12-5 = 7
-            // if we have 4 records = return all of them
-            // set limit to return remaining rows
-            this.limit = -lo;
-        } else if (lo > -1 && hiFunction == null) {
-            // first N rows
-            this.isFirstN = true;
-            this.limit = lo;
-        } else {
-            // at this stage we also have 'hi'
-            long hi = hiFunction.getLong(null);
-            if (lo < 0) {
-                // right, here we are looking for something like -10,-5 five rows away from tail
-                if (lo < hi) {
-                    this.limit = -lo;
-                    this.skipLast = Math.max(-hi, 0);
-                    //}
-                } else {
-                    // this is invalid bottom range, for example -3, -10
-                    this.limit = 0;//produce empty result
-                }
-            } else { //lo >= 0
-                if (hi < 0) {
-                    //if lo>=0 but hi<0 then we fall back to standard algorithm because we can't estimate result size
-                    // (it's from lo up to end-hi so probably whole result anyway )
-                    this.limit = -1;
-                    this.skipFirst = lo;
-                    this.skipLast = -hi;
-                } else { //both lo and hi are positive
-                    if (hi <= lo) {
-                        this.limit = 0;//produce empty result
-                    } else {
-                        this.isFirstN = true;
-                        this.limit = hi;
-                        //but we've to skip to lo
-                        this.skipFirst = lo;
-                    }
-                }
-            }
-        }
-    }
-
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
@@ -246,6 +189,58 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         }
 
         return !(loFunction.getLong(null) >= 0 && hiFunction != null && hiFunction.getLong(null) < 0);
+    }
+
+    private void computeLimits(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+        loFunction.init(baseCursor, executionContext);
+        if (hiFunction != null) {
+            hiFunction.init(baseCursor, executionContext);
+        }
+
+        this.skipFirst = 0;
+        this.skipLast = 0;
+        this.limit = 0;
+        this.isFirstN = false;
+
+        long lo = loFunction.getLong(null);
+        if (lo < 0 && hiFunction == null) {
+            // last N rows
+            // lo is negative, -5 for example
+            // if we have 12 records we need to skip 12-5 = 7
+            // if we have 4 records = return all of them
+            // set limit to return remaining rows
+            this.limit = -lo;
+        } else if (lo > -1 && hiFunction == null) {
+            // first N rows
+            this.isFirstN = true;
+            this.limit = lo;
+        } else {
+            // at this stage we also have 'hi'
+            long hi = hiFunction.getLong(null);
+            if (lo < 0) {
+                // right, here we are looking for something like -10,-5 five rows away from tail
+                if (lo == hi) {
+                    // this is invalid bottom range, for example -3, -10
+                    this.limit = 0;//produce empty result
+                } else {
+                    this.limit = -Math.min(hi, lo);
+                    this.skipLast = Math.max(-Math.max(hi, lo), 0);
+                }
+            } else { //lo >= 0
+                if (hi < 0) {
+                    //if lo>=0 but hi<0 then we fall back to standard algorithm because we can't estimate result size
+                    // (it's from lo up to end-hi so probably whole result anyway )
+                    this.limit = -1;
+                    this.skipFirst = lo;
+                    this.skipLast = -hi;
+                } else { //both lo and hi are positive
+                    this.isFirstN = true;
+                    this.limit = Math.max(hi, lo);
+                    //but we've to skip to lo
+                    this.skipFirst = Math.min(hi, lo);
+                }
+            }
+        }
     }
 
     private void initialize(SqlExecutionContext executionContext, RecordCursor baseCursor) throws SqlException {

@@ -166,10 +166,29 @@ public class LimitTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidBottomRange() throws Exception {
-        String expected = "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n";
+        String expected = "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
+                "21\tmsft\t0.597\t2018-01-01T00:42:00.000000Z\ttrue\tP\t0.6690790546123128\t0.6591\t974\t\tVTJW\t8843532011989881581\t1970-01-01T05:33:20.000000Z\t17\t00000000 a2 3c d0 65 5e b7 95 2e 4a af c6 d0 19 6a de 46\n" +
+                "00000010 04 d3\tZZBBUKOJSOLDYR\n" +
+                "22\tgoogl\t0.7020000000000001\t2018-01-01T00:44:00.000000Z\ttrue\tR\t0.7134568516750471\t0.0921\t879\t2015-03-07T18:51:10.265Z\tHYRX\t5447530387277886439\t1970-01-01T05:50:00.000000Z\t2\t\tQSQJGDIHHNSS\n" +
+                "23\tibm\t0.5730000000000001\t2018-01-01T00:46:00.000000Z\ttrue\tV\t0.32282028174282695\tnull\t791\t2015-10-07T21:38:49.138Z\tPEHN\t4430387718690044436\t1970-01-01T06:06:40.000000Z\t34\t\tZVQQHSQSPZPB\n" +
+                "24\tmsft\t0.23800000000000002\t2018-01-01T00:48:00.000000Z\ttrue\t\t0.47930730718677406\t0.6937\t635\t2015-10-11T00:49:46.817Z\tCPSW\t3860877990849202595\t1970-01-01T06:23:20.000000Z\t14\t\tPZNYVLTPKBBQ\n" +
+                "25\tmsft\t0.918\t2018-01-01T00:50:00.000000Z\tfalse\t\t0.32613652012030125\t0.3394\t176\t2015-02-06T18:42:24.631Z\t\t-8352023907145286323\t1970-01-01T06:40:00.000000Z\t14\t00000000 6a 9b cd bb 2e 74 cd 44 54 13 3f ff\tIGENFEL\n" +
+                "26\tibm\t0.33\t2018-01-01T00:52:00.000000Z\tfalse\tM\t0.19823647700531244\tnull\t557\t2015-01-30T03:27:34.392Z\t\t5324839128380055812\t1970-01-01T06:56:40.000000Z\t25\t00000000 25 07 db 62 44 33 6e 00 8e 93 bd 27 42 f8 25 2a\n" +
+                "00000010 42 71 a3 7a\tDNZNLCNGZTOY\n" +
+                "27\tmsft\t0.673\t2018-01-01T00:54:00.000000Z\tfalse\tP\t0.527776712010911\t0.0237\t517\t2015-05-20T07:51:29.675Z\tPEHN\t-7667438647671231061\t1970-01-01T07:13:20.000000Z\t22\t00000000 61 99 be 2d f5 30 78 6d 5a 3b\t\n";
 
-        String query = "select * from y limit -3,-10";
-        testLimit(expected, expected, query);
+        String expected2 = "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
+                "51\tgoogl\t0.761\t2018-01-01T01:42:00.000000Z\ttrue\tABC\t0.25251288918411996\tnull\t719\t2015-05-22T06:14:06.815Z\tHGKR\t7822359916932392178\t1970-01-01T05:33:20.000000Z\t2\t00000000 26 4f e4 51 37 85 e1 e4 6e 75 fc f4 57 0e 7b 09\n" +
+                "00000010 de 09 5e d7\tWCDVPWCYCTDDNJ\n" +
+                "52\tgoogl\t0.512\t2018-01-01T01:44:00.000000Z\tfalse\tABC\t0.4112208369860437\t0.2756\t740\t2015-02-23T09:03:19.389Z\tHGKR\t1930705357282501293\t1970-01-01T05:50:00.000000Z\t19\t\t\n" +
+                "53\tgoogl\t0.106\t2018-01-01T01:46:00.000000Z\ttrue\tABC\t0.5869842992348637\t0.4215\t762\t2015-03-07T03:16:06.453Z\tHGKR\t-7872707389967331757\t1970-01-01T06:06:40.000000Z\t3\t00000000 8d ca 1d d0 b2 eb 54 3f 32 82\tQQDOZFIDQTYO\n" +
+                "54\tmsft\t0.266\t2018-01-01T01:48:00.000000Z\tfalse\t\t0.26652004252953776\t0.0911\t937\t\t\t-7761587678997431446\t1970-01-01T06:23:20.000000Z\t39\t00000000 53 28 c0 93 b2 7b c7 55 0c dd fd c1\t\n" +
+                "55\tibm\t0.213\t2018-01-01T01:50:00.000000Z\tfalse\tKZZ\tnull\t0.0379\t503\t2015-08-25T16:59:46.151Z\tKKUS\t8510474930626176160\t1970-01-01T06:40:00.000000Z\t13\t\t\n" +
+                "56\tmsft\t0.061\t2018-01-01T01:52:00.000000Z\ttrue\tCDE\t0.7792511437604662\t0.3966\t341\t2015-03-04T08:18:06.265Z\tLVSY\t5320837171213814710\t1970-01-01T06:56:40.000000Z\t16\t\tJCUBBMQSRHLWSX\n" +
+                "57\tgoogl\t0.756\t2018-01-01T01:54:00.000000Z\tfalse\tKZZ\t0.8925723033175609\t0.9925\t416\t2015-11-08T09:45:16.753Z\tLVSY\t7173713836788833462\t1970-01-01T07:13:20.000000Z\t29\t00000000 4d 0d d7 44 2d f1 57 ea aa 41 c5 55 ef 19 d9 0f\n" +
+                "00000010 61 2d\tEYDNMIOCCVV\n";
+
+        testLimit(expected, expected2, "select * from y limit -3,-10");
     }
 
     @Test
@@ -243,10 +262,9 @@ public class LimitTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidTopRange() throws Exception {
-        String expected = "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n";
-
-        String query = "select * from y limit 6,5";
-        testLimit(expected, expected, query);
+        String expected = "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
+                "6\tmsft\t0.297\t2018-01-01T00:12:00.000000Z\tfalse\tY\t0.2672120489216767\t0.1326\t215\t\t\t-8534688874718947140\t1970-01-01T01:23:20.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n";
+        testLimit(expected, expected, "select * from y limit 6,5");
     }
 
     @Test

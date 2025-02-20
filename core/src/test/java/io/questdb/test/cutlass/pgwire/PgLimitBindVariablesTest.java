@@ -321,6 +321,23 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                                         "Sym8,1000,1970-01-01 00:16:59.7\n" +
                                         "Sym7,2000,1970-01-01 00:16:59.6\n"
                         );
+
+                        assertLoHi(
+                                stmt,
+                                3,
+                                1,
+                                "col1[VARCHAR],sum[BIGINT],last[TIMESTAMP]\n" +
+                                        "Sym8,1000,1970-01-01 00:16:59.7\n" +
+                                        "Sym7,2000,1970-01-01 00:16:59.6\n"
+                        );
+
+                        assertLoHi(
+                                stmt,
+                                5,
+                                5,
+                                "col1[VARCHAR],sum[BIGINT],last[TIMESTAMP]\n"
+                        );
+
                         assertLoHi(
                                 stmt,
                                 1,
@@ -335,6 +352,21 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                                 -1,
                                 "col1[VARCHAR],sum[BIGINT],last[TIMESTAMP]\n" +
                                         "Sym1,2000,1970-01-01 00:16:59.0\n"
+                        );
+
+                        assertLoHi(
+                                stmt,
+                                -1,
+                                -2,
+                                "col1[VARCHAR],sum[BIGINT],last[TIMESTAMP]\n" +
+                                        "Sym1,2000,1970-01-01 00:16:59.0\n"
+                        );
+
+                        assertLoHi(
+                                stmt,
+                                -3,
+                                -3,
+                                "col1[VARCHAR],sum[BIGINT],last[TIMESTAMP]\n"
                         );
                     }
 
@@ -388,7 +420,21 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
 
                         );
 
-                        //                     "select * from a limit -10+2",
+                        assertLoHi(
+                                stmt,
+                                -1,
+                                -5,
+                                "QUERY PLAN[VARCHAR]\n" +
+                                        "Sort light lo: $0::int hi: $1::int\n" +
+                                        "  keys: [sum desc]\n" +
+                                        "    GroupBy vectorized: false\n" +
+                                        "      keys: [col1]\n" +
+                                        "      values: [sum(status),last(ts)]\n" +
+                                        "        PageFrame\n" +
+                                        "            Row forward scan\n" +
+                                        "            Frame forward scan on: tab\n"
+
+                        );
                     }
 
                     try (final PreparedStatement stmt = connection.prepareStatement("SELECT * FROM tab ORDER BY ts DESC LIMIT ?")) {
@@ -422,6 +468,19 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                                         "Sym0,2,1970-01-01 00:00:20.9\n"
                         );
                     }
+
+                    // todo: bug to be fixed
+/*
+                    try (final PreparedStatement stmt = connection.prepareStatement("SELECT * FROM tab ORDER BY ts DESC LIMIT ?,?")) {
+                        assertLoHi(
+                                stmt,
+                                -1,
+                                -4,
+                                "col1[VARCHAR],status[BIGINT],ts[TIMESTAMP]\n" +
+                                        "Sym1,1,1970-01-01 00:00:20.0\n"
+                        );
+                    }
+*/
 
                     // explain for small limit
                     try (final PreparedStatement stmt = connection.prepareStatement("explain SELECT * FROM tab ORDER BY ts desc LIMIT ?")) {

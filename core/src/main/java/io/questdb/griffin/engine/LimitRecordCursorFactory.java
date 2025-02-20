@@ -211,7 +211,14 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             this.base = base;
             loFunction.init(base, executionContext);
             long lo = loFunction.getLong(null);
-
+            // swap lo and hi if lo > hi
+            if (hiFunction != null) {
+                hiFunction.init(base, executionContext);
+                long hi = hiFunction.getLong(null);
+                if (lo > hi && Numbers.sameSign(lo, hi)) {
+                    lo = hi;
+                }
+            }
             if (
                     loFunction.isRuntimeConstant() // lo function is a bind variable
                             && lo != Numbers.LONG_NULL // and it is defined
@@ -228,9 +235,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                         throw TableReferenceOutOfDateException.of("internal error, plan should have been changed");
                     }
                 }
-            }
-            if (hiFunction != null) {
-                hiFunction.init(base, executionContext);
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
             toTop();
@@ -254,6 +258,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             skipToRows = -1;
             lo = loFunction.getLong(null);
             hi = hiFunction != null ? hiFunction.getLong(null) : -1;
+            if (hi != -1 && hi < lo && Numbers.sameSign(lo, hi)) {
+                final long l = hi;
+                hi = lo;
+                lo = l;
+            }
             isLimitCounted = false;
             areRowsCounted = false;
             counter.clear();

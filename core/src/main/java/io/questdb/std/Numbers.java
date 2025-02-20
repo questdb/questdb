@@ -2035,6 +2035,10 @@ public final class Numbers {
         return Double.longBitsToDouble(Double.doubleToRawLongBits(roundUp00PosScale(absValue, scale)) | signMask);
     }
 
+    public static boolean sameSign(long a, long b) {
+        return (a ^ b) >= 0;
+    }
+
     public static int sinkSizeIPv4(int value) {
         // NULL handling should be done outside
         int sz = sinkSizeInt((value >> 24) & 0xff);
