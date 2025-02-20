@@ -73,7 +73,8 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+    default boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+        return false;
     }
 
     default void forceRemovePartitions(LongList partitionTimestamps) {

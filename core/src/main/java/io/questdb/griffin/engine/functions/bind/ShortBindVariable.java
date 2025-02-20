@@ -44,6 +44,11 @@ class ShortBindVariable extends ShortFunction implements ScalarFunction, Mutable
     }
 
     @Override
+    public boolean isNonDeterministic() {
+        return true;
+    }
+
+    @Override
     public boolean isRuntimeConstant() {
         return true;
     }

@@ -3278,16 +3278,15 @@ if __name__ == "__main__":
         String[][] sqlExpectedErrMsg = {
                 {"drop table doesnt", "ERROR: table does not exist [table=doesnt]"},
                 {"drop table", "ERROR: expected IF EXISTS table-name"},
-                {"drop doesnt", "ERROR: 'table' or 'all tables' expected"},
-                {"drop", "ERROR: 'table' or 'all tables' expected"},
+                {"drop doesnt", "ERROR: 'table' or 'materialized view' or 'all' expected"},
+                {"drop", "ERROR: 'table' or 'materialized view' or 'all' expected"},
                 {"drop table if doesnt", "ERROR: expected EXISTS"},
                 {"drop table exists doesnt", "ERROR: table and column names that are SQL keywords have to be enclosed in double quotes, such as \"exists\""},
-                {"drop table if exists", "ERROR: table-name expected"},
-                {"drop table if exists;", "ERROR: table-name expected"},
-                {"drop all table if exists;", "ERROR: 'tables' expected"},
-                {"drop all tables if exists;", "ERROR: expected [;]"},
-                {"drop all ;", "ERROR: 'tables' expected"},
-                {"drop database ;", "ERROR: 'table' or 'all tables' expected"}
+                {"drop table if exists", "ERROR: table name expected"},
+                {"drop table if exists;", "ERROR: table name expected"},
+                {"drop all table if exists;", "ERROR: ';' or 'tables' expected"},
+                {"drop all tables if exists;", "ERROR: ';' or 'tables' expected"},
+                {"drop database ;", "ERROR: 'table' or 'materialized view' or 'all' expected"}
         };
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             for (int i = 0, n = sqlExpectedErrMsg.length; i < n; i++) {
@@ -6101,6 +6100,22 @@ nodejs code:
                 assertResultSet(expected, sink, rs);
             }
         });
+    }
+
+    @Test
+    public void testJdbcIsValid() throws Exception {
+        skipOnWalRun(); // non-wal specific
+        AtomicReference<Connection> connectionRef = new AtomicReference<>();
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            Assert.assertTrue(connection.isValid(5));
+            final Connection connection2 = getConnection(mode, port, binary, 1);
+            connectionRef.set(connection2);
+            Assert.assertTrue(connection.isValid(5));
+            Assert.assertTrue(connection2.isValid(5));
+        });
+
+        Assert.assertFalse(connectionRef.get().isValid(5));
+        connectionRef.get().close();
     }
 
     @Test

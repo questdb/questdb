@@ -147,6 +147,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
             return enablePgWire;
         }
     };
+    private final WorkerPoolConfiguration confMatViewRefreshPool;
     private final WorkerPoolConfiguration confWalApplyPool;
     private final int workerCountHttp;
     private final HttpServerConfiguration confHttpMin = new DefaultHttpServerConfiguration() {
@@ -199,6 +200,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
                 return TestUtils.getCsvRoot();
             }
         };
+        this.confMatViewRefreshPool = () -> 0; // shared pool
         this.confWalApplyPool = () -> 0;
         this.confSharedPool = () -> workerCountShared;
         this.confLineTcpIOPool = () -> workerCountLineTcpIO;
@@ -238,6 +240,11 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     @Override
     public PGWireConfiguration getPGWireConfiguration() {
         return confPgWire;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
+        return confMatViewRefreshPool;
     }
 
     @Override

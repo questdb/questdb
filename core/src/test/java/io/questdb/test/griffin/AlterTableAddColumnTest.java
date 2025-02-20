@@ -111,7 +111,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                         // make sure we don't release writer until main test finishes
                         Assert.assertTrue(haltLatch.await(5, TimeUnit.SECONDS));
                     } catch (Throwable e) {
-                        e.printStackTrace();
+                        e.printStackTrace(System.out);
                         errorCounter.incrementAndGet();
                     } finally {
                         engine.clear();
@@ -158,6 +158,25 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     );
                 }
         );
+    }
+
+    @Test
+    public void testAddColumnIfNoExistsUnexpectedToken() throws Exception {
+        assertFailure("alter table x add column if not a int", 32,
+                "unexpected token 'a' for if not exists"
+        );
+    }
+
+    @Test
+    public void testAddColumnIfNotExists() throws Exception {
+        createX();
+        execute("alter table x add column if not exists a int");
+        execute("alter table x add column description string");
+    }
+
+    @Test
+    public void testAddColumnIfNotExistsWithMissingNotToken() throws Exception {
+        assertFailure("alter table x add column if exists b int", 28, "'not' expected");
     }
 
     @Test
@@ -338,28 +357,10 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnIfNotExists() throws Exception {
-        createX();
-        execute("alter table x add column if not exists a int");
-        execute("alter table x add column description string");
-    }
-
-    @Test
     public void testAddDuplicateColumnIfNotExists() throws Exception {
         createX();
         execute("alter table x add column a int");
         execute("alter table x add column if not exists a int");
-    }
-
-    @Test
-    public void testAddColumnINotExistsWithMissingNotToken() throws Exception {
-        assertFailure("alter table x add column if exists b int", 28, "'not' expected");
-    }
-
-    @Test
-    public void testAddColumnIfNoExistsUnexpectedToken() throws Exception {
-        assertFailure("alter table x add column if not a int", 32,
-                "unexpected token 'a' for if not exists");
     }
 
     @Test
@@ -684,12 +685,12 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
     @Test
     public void testExpectTableKeyword() throws Exception {
-        assertFailure("alter x", 6, "'table' expected");
+        assertFailure("alter x", 6, "'table' or 'materialized' expected");
     }
 
     @Test
     public void testExpectTableKeyword2() throws Exception {
-        assertFailure("alter", 5, "'table' expected");
+        assertFailure("alter", 5, "'table' or 'materialized' expected");
     }
 
     @Test
@@ -704,7 +705,8 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
             execute("alter table x add column a_varchar varchar");
             execute("insert into x values (4, 'added-1'), (5, 'added-2')");
             assertQuery("a_varchar\n\n\n\nadded-1\nadded-2\n",
-                    "select a_varchar from x", null, null, true, true);
+                    "select a_varchar from x", null, null, true, true
+            );
         });
     }
 

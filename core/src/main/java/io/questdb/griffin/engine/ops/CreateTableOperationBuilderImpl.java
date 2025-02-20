@@ -49,11 +49,10 @@ import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class CreateTableOperationBuilderImpl implements Mutable, Sinkable, CreateTableOperationBuilder {
+import static io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory.ttlToSink;
+
+public class CreateTableOperationBuilderImpl implements CreateTableOperationBuilder, Mutable, Sinkable {
     public static final ObjectFactory<CreateTableOperationBuilderImpl> FACTORY = CreateTableOperationBuilderImpl::new;
-    static final int COLUMN_FLAG_CACHED = 1;
-    static final int COLUMN_FLAG_INDEXED = COLUMN_FLAG_CACHED << 1;
-    static final int COLUMN_FLAG_DEDUP_KEY = COLUMN_FLAG_INDEXED << 1;
     private static final IntList castGroups = new IntList();
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> columnModels = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
@@ -65,7 +64,7 @@ public class CreateTableOperationBuilderImpl implements Mutable, Sinkable, Creat
     private boolean ignoreIfExists = false;
     private ExpressionNode likeTableNameExpr;
     private int maxUncommittedRows;
-    private long o3MaxLag;
+    private long o3MaxLag = -1;
     private ExpressionNode partitionByExpr;
     private QueryModel queryModel;
     private RecordCursorFactory recordCursorFactory;
@@ -153,21 +152,29 @@ public class CreateTableOperationBuilderImpl implements Mutable, Sinkable, Creat
 
     @Override
     public void clear() {
-        batchO3MaxLag = -1;
-        batchSize = -1;
         columnNameIndexMap.clear();
         columnNames.clear();
+        columnModels.clear();
+        typeCasts.clear();
+        batchO3MaxLag = -1;
+        batchSize = -1;
+        defaultSymbolCapacity = 0;
         ignoreIfExists = false;
         likeTableNameExpr = null;
+        maxUncommittedRows = 0;
         o3MaxLag = -1;
         partitionByExpr = null;
         queryModel = null;
         tableNameExpr = null;
         timestampExpr = null;
-        columnModels.clear();
-        typeCasts.clear();
+        selectText = null;
         volumeAlias = null;
         ttlHoursOrMonths = 0;
+        walEnabled = false;
+    }
+
+    public int getColumnCount() {
+        return columnNames.size();
     }
 
     public int getColumnIndex(CharSequence columnName) {
@@ -178,10 +185,15 @@ public class CreateTableOperationBuilderImpl implements Mutable, Sinkable, Creat
         return columnModels.get(columnName);
     }
 
+    public CharSequence getColumnName(int index) {
+        return columnNames.get(index);
+    }
+
     public int getPartitionByFromExpr() {
         return partitionByExpr == null ? PartitionBy.NONE : PartitionBy.fromString(partitionByExpr.token);
     }
 
+    @Override
     public QueryModel getQueryModel() {
         return queryModel;
     }
@@ -201,6 +213,14 @@ public class CreateTableOperationBuilderImpl implements Mutable, Sinkable, Creat
 
     public int getTimestampIndex() {
         return timestampExpr != null ? getColumnIndex(timestampExpr.token) : -1;
+    }
+
+    public int getTtlHoursOrMonths() {
+        return ttlHoursOrMonths;
+    }
+
+    public CharSequence getVolumeAlias() {
+        return volumeAlias;
     }
 
     public boolean isAtomic() {
@@ -380,6 +400,7 @@ public class CreateTableOperationBuilderImpl implements Mutable, Sinkable, Creat
                 sink.putAscii(" wal");
             }
         }
+        ttlToSink(ttlHoursOrMonths, sink);
         if (volumeAlias != null) {
             sink.putAscii(" in volume '").put(volumeAlias).putAscii('\'');
         }

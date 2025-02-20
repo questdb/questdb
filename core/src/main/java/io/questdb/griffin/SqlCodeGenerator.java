@@ -732,12 +732,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private static int getOrderByDirectionOrDefault(QueryModel model, int index) {
-        IntList direction = model.getOrderByDirectionAdvice();
-        if (index >= direction.size()) {
-            return ORDER_DIRECTION_ASCENDING;
-        } else {
-            return direction.get(index);
-        }
+        final IntList direction = model.getOrderByDirectionAdvice();
+        return index >= direction.size() ? ORDER_DIRECTION_ASCENDING : direction.getQuick(index);
     }
 
     private static boolean isGeoType(int colType) {
@@ -3871,7 +3867,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (!timestampSet && executionContext.isTimestampRequired()) {
             TableColumnMetadata colMetadata = metadata.getColumnMetadata(timestampIndex);
             int dot = Chars.indexOf(colMetadata.getColumnName(), '.');
-            if (dot > -1) {//remove inner table alias
+            if (dot > -1) { // remove inner table alias
                 selectMetadata.add(
                         new TableColumnMetadata(
                                 Chars.toString(colMetadata.getColumnName(), dot + 1, colMetadata.getColumnName().length()),
@@ -4101,7 +4097,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             RecordMetadata metadata = factory.getMetadata();
 
-            boolean enableParallelGroupBy = configuration.isSqlParallelGroupByEnabled();
+            boolean enableParallelGroupBy = executionContext.isParallelGroupByEnabled();
             // Inspect model for possibility of vector aggregate intrinsics.
             if (enableParallelGroupBy && pageFramingSupported && assembleKeysAndFunctionReferences(columns, metadata, hourIndex)) {
                 // Create metadata from everything we've gathered.
@@ -5349,28 +5345,38 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         model.setWhereClause(withinExtracted);
 
-        if (withinExtracted != null) {
-            CharSequence preferredKeyColumn = null;
-            if (latestByColumnCount == 1) {
-                final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
+        if (withinExtracted != null || executionContext.isOverriddenIntrinsics(reader.getTableToken())) {
+            final IntrinsicModel intrinsicModel;
+            if (withinExtracted != null) {
+                CharSequence preferredKeyColumn = null;
 
-                if (ColumnType.isSymbol(myMeta.getColumnType(latestByIndex))) {
-                    preferredKeyColumn = latestBy.getQuick(0).token;
+                if (latestByColumnCount == 1) {
+                    final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
+
+                    if (ColumnType.isSymbol(myMeta.getColumnType(latestByIndex))) {
+                        preferredKeyColumn = latestBy.getQuick(0).token;
+                    }
                 }
+
+                intrinsicModel = whereClauseParser.extract(
+                        model,
+                        withinExtracted,
+                        metadata,
+                        preferredKeyColumn,
+                        readerTimestampIndex,
+                        functionParser,
+                        myMeta,
+                        executionContext,
+                        latestByColumnCount > 1,
+                        reader
+                );
+            } else {
+                intrinsicModel = whereClauseParser.getEmpty();
             }
 
-            final IntrinsicModel intrinsicModel = whereClauseParser.extract(
-                    model,
-                    withinExtracted,
-                    metadata,
-                    preferredKeyColumn,
-                    readerTimestampIndex,
-                    functionParser,
-                    myMeta,
-                    executionContext,
-                    latestByColumnCount > 1,
-                    reader
-            );
+            // When we run materialized view refresh we want to restrict queries to the base table
+            // to the timestamp range that is updated by the previous transactions.
+            executionContext.overrideWhereIntrinsics(reader.getTableToken(), intrinsicModel);
 
             // intrinsic parser can collapse where clause when removing parts it can replace
             // need to make sure that filter is updated on the model in case it is processed up the call stack
@@ -6052,8 +6058,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private boolean isOrderByDesignatedTimestampOnly(QueryModel model) {
         return model.getOrderByAdvice().size() == 1
                 && model.getTimestamp() != null
-                && Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token,
-                model.getTimestamp().token);
+                && Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token, model.getTimestamp().token);
     }
 
     private boolean isSameTable(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) {
@@ -6399,9 +6404,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         public void toPlan(PlanSink sink) {
             sink.type(model.getTypeName());
 
-            CharSequence tableName = model.getTableName();
+            final CharSequence tableName = model.getTableName();
             if (tableName != null) {
-                sink.meta("table").val(tableName);
+                sink.meta(model.getModelType() == CREATE_MAT_VIEW ? "view" : "table").val(tableName);
             }
             if (factory != null) {
                 sink.child(factory);

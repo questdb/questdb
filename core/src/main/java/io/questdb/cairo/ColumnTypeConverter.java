@@ -1031,8 +1031,11 @@ public class ColumnTypeConverter {
 
     private static boolean stringFromChar(long srcAddr, CharSink<?> sink) {
         char value = Unsafe.getUnsafe().getChar(srcAddr);
-        sink.put(value);
-        return true;
+        if (value != 0) {
+            sink.put(value);
+            return true;
+        }
+        return false;
     }
 
     private static boolean stringFromDate(long srcAddr, CharSink<?> sink) {

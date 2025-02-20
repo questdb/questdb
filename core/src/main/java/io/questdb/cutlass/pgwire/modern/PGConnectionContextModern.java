@@ -165,7 +165,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private final CharSequenceObjHashMap<PGPipelineEntry> namedStatements;
     private final ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters;
     private final ArrayDeque<PGPipelineEntry> pipeline = new ArrayDeque<>();
-    private final Consumer<? super CharSequence> preparedStatementDeallocator = this::uncacheNamedStatement;
+    private final Consumer<? super CharSequence> preparedStatementDeallocator = this::deallocateNamedStatement;
     private final ResponseUtf8Sink responseUtf8Sink = new ResponseUtf8Sink();
     private final Rnd rnd;
     private final SecurityContextFactory securityContextFactory;
@@ -893,8 +893,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         }
 
         pipelineCurrentEntry.setStateClosed(true, isStatementClose);
-        // return the factory back to global cache in case of a select
-        pipelineCurrentEntry.cacheIfPossible(tasCache, null);
     }
 
     private void msgDescribe(long lo, long msgLimit) throws BadProtocolException {
@@ -1428,6 +1426,14 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             }
         }
         return null;
+    }
+
+    private void deallocateNamedStatement(CharSequence statementName) {
+        PGPipelineEntry pe = uncacheNamedStatement(statementName);
+
+        // the entry with a named prepared statement must be returned back to the pool
+        // otherwise we will leak memory until the connection is closed.
+        releaseToPool(pe);
     }
 
     private PGPipelineEntry uncacheNamedStatement(CharSequence statementName) {

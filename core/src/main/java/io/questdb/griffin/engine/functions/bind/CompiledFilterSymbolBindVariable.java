@@ -25,8 +25,11 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -74,6 +77,11 @@ public class CompiledFilterSymbolBindVariable extends SymbolFunction implements 
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         this.symbolTable = (StaticSymbolTable) symbolTableSource.getSymbolTable(columnIndex);
         this.symbolFunction.init(symbolTableSource, executionContext);
+    }
+
+    @Override
+    public boolean isNonDeterministic() {
+        return true;
     }
 
     @Override

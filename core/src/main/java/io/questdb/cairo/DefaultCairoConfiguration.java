@@ -463,6 +463,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getMatViewInsertAsSelectBatchSize() {
+        return 1_000_000;
+    }
+
+    @Override
+    public int getMatViewMaxRecompileAttempts() {
+        return 10;
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return 1;
     }
@@ -1185,6 +1195,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewEnabled() {
+        return false;
+    }
+
+    @Override
+    public boolean isMatViewParallelSqlEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isMultiKeyDedupEnabled() {
         return false;
     }
@@ -1256,6 +1276,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isWalApplyEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isWalApplyParallelSqlEnabled() {
         return true;
     }
 

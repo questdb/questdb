@@ -24,6 +24,11 @@ jobs:
         run: tar -xzf core/target/questdb-*-no-jre-bin.tar.gz
       - name: Start QuestDB
         run: ./questdb-*bin/questdb.sh start
+      - name: Setup PHP
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt update
+          sudo apt install php php-pdo php-pgsql composer -y
       - name: Setup Rust toolchain
         # 4d1965c9142484e48d40c19de54b5cba84953a06 is the same as @v1, except it's guaranteed to be immutable
         # even if the original tag is moved or deleted
