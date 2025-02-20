@@ -575,17 +575,17 @@ public final class TestUtils {
             return;
         }
         Assert.assertNotNull("expected NON-NULL array", actual);
-
-        final int dim = expected.getDimCount();
-        // First, check if dimensions match
-        Assert.assertEquals("Array dimension mismatch. Expected: " + dim + ", actual: " + actual.getDimCount(), dim, actual.getDimCount());
-
+        // Check that the number of dimensions matches
+        final int expectedDimCount = expected.getDimCount();
+        Assert.assertEquals("Array dimensionality mismatch", expectedDimCount, actual.getDimCount());
+        if (expectedDimCount == 0) {
+            return;
+        }
         // Check if each dimension has the same length
-        for (int i = 0; i < dim; i++) {
+        for (int i = 0; i < expectedDimCount; i++) {
             Assert.assertEquals(expected.getDimLen(i), actual.getDimLen(i));
         }
-
-        // Compare elements using virtual indexing
+        // Compare elements using flat indexing
         assertEqualsRecursive(expected, actual, 0, 0, 0);
     }
 
@@ -1889,7 +1889,13 @@ public final class TestUtils {
         }
     }
 
-    private static void assertEqualsRecursive(ArrayView expected, ArrayView actual, int dim, int expectedFlatIndex, int actualFlatIndex) {
+    private static void assertEqualsRecursive(
+            ArrayView expected,
+            ArrayView actual,
+            int dim,
+            int expectedFlatIndex,
+            int actualFlatIndex
+    ) {
         // last dimension
         int dimLen = actual.getDimLen(dim);
         if (dim == actual.getDimCount() - 1) {
