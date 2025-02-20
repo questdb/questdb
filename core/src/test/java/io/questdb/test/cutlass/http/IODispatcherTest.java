@@ -116,7 +116,6 @@ import io.questdb.std.Rnd;
 import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.StationaryNanosClock;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Zip;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.AbstractCharSequence;
@@ -5278,7 +5277,6 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     @Ignore("TODO: fix this test. the gzipped expected response makes it hard to change")
     public void testJsonQueryWithCompressedResults1() throws Exception {
-        Zip.init();
         assertMemoryLeak(() -> {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = root;
@@ -5326,7 +5324,6 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     @Ignore("TODO: fix this test. the gzipped expected response makes it hard to change")
     public void testJsonQueryWithCompressedResults2() throws Exception {
-        Zip.init();
         assertMemoryLeak(() -> {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = root;
@@ -8721,7 +8718,7 @@ public class IODispatcherTest extends AbstractTest {
         DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
 
         String telemetry = TelemetryTask.TABLE_NAME;
-        TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false, false, false, true);
+        TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false, false, false, false, true);
         try (
                 TableReader reader = new TableReader(configuration, telemetryTableName);
                 TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()

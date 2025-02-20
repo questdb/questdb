@@ -31,12 +31,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 
 public class IPv4BindVariable extends IPv4Function implements Mutable {
-
     int value;
-
-    IPv4BindVariable() {
-        super();
-    }
 
     @Override
     public void clear() {
@@ -46,6 +41,11 @@ public class IPv4BindVariable extends IPv4Function implements Mutable {
     @Override
     public int getIPv4(Record rec) {
         return value;
+    }
+
+    @Override
+    public boolean isNonDeterministic() {
+        return true;
     }
 
     @Override

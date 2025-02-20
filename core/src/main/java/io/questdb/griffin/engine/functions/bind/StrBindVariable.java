@@ -84,6 +84,11 @@ public class StrBindVariable extends StrFunction implements Mutable {
     }
 
     @Override
+    public boolean isNonDeterministic() {
+        return true;
+    }
+
+    @Override
     public boolean isRuntimeConstant() {
         return true;
     }

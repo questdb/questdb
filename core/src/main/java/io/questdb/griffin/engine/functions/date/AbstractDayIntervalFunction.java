@@ -81,6 +81,11 @@ public abstract class AbstractDayIntervalFunction extends IntervalFunction imple
     }
 
     @Override
+    public boolean isNonDeterministic() {
+        return true;
+    }
+
+    @Override
     public boolean isRuntimeConstant() {
         return true;
     }

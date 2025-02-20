@@ -86,7 +86,7 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                 final GenericRecordMetadata metadata = new GenericRecordMetadata();
                 // `read_parquet` function will request symbols to be converted to varchar
                 decoder.metadata().copyTo(metadata, true);
-                if (configuration.isSqlParallelReadParquetEnabled()) {
+                if (context.isParallelReadParquetEnabled()) {
                     return new CursorFunction(new ReadParquetPageFrameRecordCursorFactory(configuration, path, metadata));
                 } else {
                     return new CursorFunction(new ReadParquetRecordCursorFactory(path, metadata, ff));

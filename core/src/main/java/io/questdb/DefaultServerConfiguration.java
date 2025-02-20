@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.mv.DefaultMatViewRefreshWorkerPoolConfiguration;
 import io.questdb.cairo.wal.DefaultWalApplyWorkerPoolConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
@@ -49,6 +50,7 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     private final DefaultMetricsConfiguration metricsConfiguration = new DefaultMetricsConfiguration();
     private final DefaultPGWireConfiguration pgWireConfiguration = new DefaultPGWireConfiguration();
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new DefaultPublicPassthroughConfiguration();
+    private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new DefaultMatViewRefreshWorkerPoolConfiguration();
     private final WorkerPoolConfiguration walApplyPoolConfiguration = new DefaultWalApplyWorkerPoolConfiguration();
 
     public DefaultServerConfiguration(CharSequence dbRoot, CharSequence installRoot) {
@@ -114,6 +116,11 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     @Override
     public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
         return publicPassthroughConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
+        return matViewRefreshPoolConfiguration;
     }
 
     @Override

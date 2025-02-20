@@ -31,7 +31,6 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 
 class LongBindVariable extends LongFunction implements Mutable {
-
     long value;
 
     @Override
@@ -42,6 +41,11 @@ class LongBindVariable extends LongFunction implements Mutable {
     @Override
     public long getLong(Record rec) {
         return value;
+    }
+
+    @Override
+    public boolean isNonDeterministic() {
+        return true;
     }
 
     @Override

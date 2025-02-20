@@ -28,6 +28,7 @@ import io.questdb.Bootstrap;
 import io.questdb.Metrics;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Zip;
 import io.questdb.test.cutlass.http.HttpQueryTestBuilder;
 import io.questdb.test.cutlass.http.HttpServerConfigurationBuilder;
 import io.questdb.test.tools.TestUtils;
@@ -53,6 +54,7 @@ public class AbstractTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         TestOs.init();
+        Zip.init();
         // it is necessary to initialise logger before tests start
         // logger doesn't relinquish memory until JVM stops
         // which causes memory leak detector to fail should logger be

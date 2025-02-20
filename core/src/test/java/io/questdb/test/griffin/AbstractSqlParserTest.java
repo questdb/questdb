@@ -47,6 +47,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
 public class AbstractSqlParserTest extends AbstractCairoTest {
+
     private static void assertSyntaxError0(
             String query,
             int position,

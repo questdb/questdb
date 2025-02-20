@@ -70,6 +70,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
             return false;
         }
     };
+    private final WorkerPoolConfiguration confMatViewRefreshPool;
     private final WorkerPoolConfiguration confSharedPool;
     private final WorkerPoolConfiguration confWalApplyPool;
     private final boolean enablePgWire;
@@ -99,7 +100,6 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
             FactoryProvider factoryProvider
     ) {
         super(dbRoot, installRoot);
-        // something we can override in test
         this.enablePgWire = enablePgWire;
         this.factoryProvider = factoryProvider;
         final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
@@ -126,7 +126,6 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
                 return TestUtils.getCsvRoot();
             }
         };
-
         this.confHttp = new DefaultHttpServerConfiguration(
                 cairoConfiguration,
                 new DefaultHttpContextConfiguration() {
@@ -201,6 +200,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
             }
         };
 
+        this.confMatViewRefreshPool = () -> 0; // shared pool
         this.confWalApplyPool = () -> 0;
         this.confSharedPool = () -> workerCountShared;
         this.confLineTcpIOPool = () -> workerCountLineTcpIO;
@@ -235,6 +235,11 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     @Override
     public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
         return confLineUdp;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
+        return confMatViewRefreshPool;
     }
 
     @Override

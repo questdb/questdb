@@ -29,7 +29,7 @@ import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class FlyweightDirectUtf16Sink implements MutableUtf16Sink, DirectCharSequence, Utf16Sink {
+public class FlyweightDirectUtf16Sink implements MutableUtf16Sink, DirectCharSequence, CloneableMutable {
     private long hi;
     private long lo;
     private long ptr;
@@ -65,6 +65,12 @@ public class FlyweightDirectUtf16Sink implements MutableUtf16Sink, DirectCharSeq
 
     public void close() {
         lo = hi = ptr = 0;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <T> T copy() {
+        return (T) toString();
     }
 
     @Override

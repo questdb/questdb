@@ -60,12 +60,12 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
 
     @Test
     public void testExpectTableKeyword() throws Exception {
-        assertFailure("alter x", 6, "'table' expected");
+        assertFailure("alter x", 6, "'table' or 'materialized' expected");
     }
 
     @Test
     public void testExpectTableKeyword2() throws Exception {
-        assertFailure("alter", 5, "'table' expected");
+        assertFailure("alter", 5, "'table' or 'materialized' expected");
     }
 
     @Test

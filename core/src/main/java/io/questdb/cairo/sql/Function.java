@@ -199,6 +199,10 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return false;
     }
 
+    default boolean isNonDeterministic() {
+        return false;
+    }
+
     default boolean isNullConstant() {
         return false;
     }

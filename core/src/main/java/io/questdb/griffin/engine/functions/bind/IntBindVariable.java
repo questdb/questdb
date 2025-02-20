@@ -33,10 +33,6 @@ import io.questdb.std.Numbers;
 class IntBindVariable extends IntFunction implements Mutable {
     int value;
 
-    IntBindVariable() {
-        super();
-    }
-
     @Override
     public void clear() {
         this.value = Numbers.INT_NULL;
@@ -45,6 +41,11 @@ class IntBindVariable extends IntFunction implements Mutable {
     @Override
     public int getInt(Record rec) {
         return value;
+    }
+
+    @Override
+    public boolean isNonDeterministic() {
+        return true;
     }
 
     @Override

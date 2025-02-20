@@ -79,6 +79,11 @@ public class CompiledFilterSymbolBindVariable extends SymbolFunction {
     }
 
     @Override
+    public boolean isNonDeterministic() {
+        return true;
+    }
+
+    @Override
     public boolean isRuntimeConstant() {
         return true;
     }

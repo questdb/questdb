@@ -175,6 +175,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         super.setUp();
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
+        engine.getMatViewGraph().clear();
         inputRoot = root;
     }
 
@@ -1349,6 +1351,24 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                Frame forward scan on: a\n"
             );
         });
+    }
+
+    @Test
+    public void testExplainCreateMatView() throws Exception {
+        assertPlan(
+                "create table tab (ts timestamp, k symbol, v long) timestamp(ts) partition by day wal",
+                "create materialized view test as (select ts, k, avg(v) from tab sample by 30s) partition by day",
+                "Create materialized view: test\n" +
+                        "    Radix sort light\n" +
+                        "      keys: [ts]\n" +
+                        "        Async Group By workers: 1\n" +
+                        "          keys: [ts,k]\n" +
+                        "          values: [avg(v)]\n" +
+                        "          filter: null\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: tab\n"
+        );
     }
 
     @Test
@@ -3410,19 +3430,23 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLimit12() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, false);
-        assertPlan(
-                "create table di (x int, y long)",
-                "select y, count(*) c from di order by c limit 42",
-                "Long top K lo: 42\n" +
-                        "  keys: [c asc]\n" +
-                        "    GroupBy vectorized: false\n" +
-                        "      keys: [y]\n" +
-                        "      values: [count(*)]\n" +
-                        "        PageFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: di\n"
-        );
+        sqlExecutionContext.setParallelGroupByEnabled(false);
+        try {
+            assertPlan(
+                    "create table di (x int, y long)",
+                    "select y, count(*) c from di order by c limit 42",
+                    "Long top K lo: 42\n" +
+                            "  keys: [c asc]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [y]\n" +
+                            "      values: [count(*)]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: di\n"
+            );
+        } finally {
+            sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelGroupByEnabled());
+        }
     }
 
     @Test

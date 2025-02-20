@@ -49,6 +49,11 @@ public class BinBindVariable extends BinFunction implements Function {
     }
 
     @Override
+    public boolean isNonDeterministic() {
+        return true;
+    }
+
+    @Override
     public boolean isRuntimeConstant() {
         return true;
     }
