@@ -64,7 +64,6 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
         private final DirectArrayView arrayOut;
         private final int leftArgPos;
         private final Function leftFn;
-        private final int rightArgPos;
         private final Function rightFn;
 
         public MultiplyDoubleArrayFunction(
@@ -73,12 +72,19 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
                 Function rightFn,
                 int leftArgPos,
                 int rightArgPos
-        ) {
+        ) throws SqlException {
             this.leftFn = leftFn;
             this.rightFn = rightFn;
             this.arrayOut = new DirectArrayView(configuration);
             this.leftArgPos = leftArgPos;
-            this.rightArgPos = rightArgPos;
+            int nDimsLeft = ColumnType.decodeArrayDimensionality(leftFn.getType());
+            int nDimsRight = ColumnType.decodeArrayDimensionality(rightFn.getType());
+            if (nDimsLeft != 2) {
+                throw SqlException.position(leftArgPos).put("left array is not two-dimensional");
+            }
+            if (nDimsRight != 2) {
+                throw SqlException.position(rightArgPos).put("right array is not two-dimensional");
+            }
             this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
             arrayOut.setType(type);
         }
@@ -94,12 +100,6 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
         public ArrayView getArray(Record rec) {
             ArrayView left = leftFn.getArray(rec);
             ArrayView right = rightFn.getArray(rec);
-            if (left.getDimCount() != 2) {
-                throw CairoException.nonCritical().position(leftArgPos).put("left array is not two-dimensional");
-            }
-            if (right.getDimCount() != 2) {
-                throw CairoException.nonCritical().position(rightArgPos).put("right array is not two-dimensional");
-            }
             int commonDimLen = left.getDimLen(1);
             if (right.getDimLen(0) != commonDimLen) {
                 throw CairoException.nonCritical().position(leftArgPos)

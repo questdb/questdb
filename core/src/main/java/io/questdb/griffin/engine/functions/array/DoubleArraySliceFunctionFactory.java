@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
@@ -70,7 +69,7 @@ public class DoubleArraySliceFunctionFactory implements FunctionFactory {
             this.arrayFn = arrayFn;
             this.rangeFns = rangeFns;
             this.argPositions = argPositions;
-            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+            this.type = arrayFn.getType();
         }
 
         @Override

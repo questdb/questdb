@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
@@ -62,7 +61,7 @@ public class DoubleArrayTransposeFunctionFactory implements FunctionFactory {
 
         public TransposeDoubleArrayFunction(Function arrayFunc) {
             this.arrayFunc = arrayFunc;
-            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+            this.type = arrayFunc.getType();
         }
 
         @Override
