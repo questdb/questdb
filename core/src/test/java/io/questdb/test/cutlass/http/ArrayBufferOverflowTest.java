@@ -39,6 +39,7 @@ import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -206,6 +207,29 @@ public class ArrayBufferOverflowTest extends AbstractTest {
                                     "select x i, rnd_double_array(3, 1, 0, 6, 5, 5) a from long_sequence(10);",
                                     null,
                                     null
+                            );
+                        }
+                    });
+        });
+    }
+
+    @Ignore
+    @Test
+    public void testTextHttpWithNonDefaultStrides() throws Exception {
+        var rnd = TestUtils.generateRandom(LOG);
+        TestUtils.assertMemoryLeak(() -> {
+            HttpServerConfigurationBuilder httpServerConfigurationBuilder = new HttpServerConfigurationBuilder();
+            httpServerConfigurationBuilder.withSendBufferSize(Math.max(384, rnd.nextInt(2048)));
+            new HttpQueryTestBuilder()
+                    .withTempFolder(root)
+                    .withWorkerCount(1)
+                    .withHttpServerConfigBuilder(httpServerConfigurationBuilder)
+                    .withTelemetry(false).run(configuration, (engine, sqlExecutionContext) -> {
+                        try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                            testHttpClient.assertGet(
+                                    "/exp",
+                                    "arr\n[[1.0,3.0,5.0],[2.0,4.0,6.0]]",
+                                    "select t(ARRAY[[1.0,2],[3,4],[5,6]]) arr from long_sequence(1)"
                             );
                         }
                     });
