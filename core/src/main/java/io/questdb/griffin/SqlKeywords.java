@@ -765,7 +765,7 @@ public class SqlKeywords {
                 && (tok.charAt(1) | 32) == 'f';
     }
 
-    public static boolean isIgnoreWord(CharSequence tok) {
+    public static boolean isIgnoreKeyword(CharSequence tok) {
         return tok.length() == 6
                 && (tok.charAt(0) | 32) == 'i'
                 && (tok.charAt(1) | 32) == 'g'
@@ -1587,7 +1587,7 @@ public class SqlKeywords {
                 && (tok.charAt(5) | 32) == 'e';
     }
 
-    public static boolean isRespectWord(CharSequence tok) {
+    public static boolean isRespectKeyword(CharSequence tok) {
         return tok.length() == 7
                 && (tok.charAt(0) | 32) == 'r'
                 && (tok.charAt(1) | 32) == 'e'

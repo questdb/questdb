@@ -2900,9 +2900,9 @@ public class SqlParser {
                 // windowIgnoreNulls is 2 --> respect nulls
                 byte windowNullsDesc = 0;
                 if (tok != null) {
-                    if (isIgnoreWord(tok)) {
+                    if (isIgnoreKeyword(tok)) {
                         windowNullsDesc = 1;
-                    } else if (isRespectWord(tok)) {
+                    } else if (isRespectKeyword(tok)) {
                         windowNullsDesc = 2;
                     }
                 }
@@ -3245,7 +3245,7 @@ public class SqlParser {
                 }
 
                 if (!Chars.equals(tok, ',')) {
-                    if (isIgnoreWord(tok) || isRespectWord(tok)) {
+                    if (isIgnoreKeyword(tok) || isRespectKeyword(tok)) {
                         throw err(lexer, tok, "',', 'nulls' or 'from' expected");
                     }
                     throw err(lexer, tok, "',', 'from' or 'over' expected");
@@ -3423,17 +3423,50 @@ public class SqlParser {
             throw SqlException.$(lexer.lastTokenPosition(), "expected `(`");
         }
 
-        ExpressionNode expr = expr(lexer, model, sqlParserCallback);
+        ExpressionNode expr;
 
-        if (expr == null) {
-            throw SqlException.$(lexer.lastTokenPosition(), "missing column expression");
+        // optional additional bracket
+        // i.e UNPIVOT ((col1, col2, col3) FOR ...)
+
+        tok = SqlUtil.fetchNext(lexer);
+
+        boolean expectCloseParen = false;
+        if (tok != null && !Chars.equals(tok, "(")) {
+            lexer.unparseLast();
+        } else {
+            expectCloseParen = true;
         }
 
-        QueryColumn col = queryColumnPool.next().of(expr.token, expr);
-        model.addUnpivotColumn(col);
-        lexer.unparseLast();
+        do {
+            expr = expr(lexer, model, sqlParserCallback);
 
-        tok = optTok(lexer);
+            if (expr == null) {
+                throw SqlException.$(lexer.lastTokenPosition(), "missing column expression");
+            }
+
+            QueryColumn col = queryColumnPool.next().of(expr.token, expr);
+            model.addUnpivotColumn(col);
+            lexer.unparseLast();
+
+            tok = SqlUtil.fetchNext(lexer);
+
+            if (Chars.equals(tok, ",")) {
+                tok = SqlUtil.fetchNext(lexer);
+            }
+
+        } while (tok != null && tok != ")");
+
+        if (expectCloseParen) {
+            if (!Chars.equals(tok, ")")) {
+                throw SqlException.$(lexer.lastTokenPosition(), "expected `)");
+            } else {
+                tok = SqlUtil.fetchNext(lexer);
+
+                if (Chars.equals(tok, ")")) {
+                    tok = SqlUtil.fetchNext(lexer);
+                }
+            }
+        }
 
         if (tok != null && !isForKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "expected `FOR`");
