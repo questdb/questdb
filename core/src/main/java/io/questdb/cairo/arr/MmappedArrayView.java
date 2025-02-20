@@ -25,6 +25,7 @@
 package io.questdb.cairo.arr;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectIntSlice;
 import io.questdb.std.MemoryTag;
@@ -41,6 +42,11 @@ public class MmappedArrayView implements ArrayView, QuietCloseable {
     private final DirectIntSlice shapeView = new DirectIntSlice();
     // Encoded array type, contains element type and dimensionality
     private int type = ColumnType.UNDEFINED;
+
+    @Override
+    public void appendToMem(MemoryA mem) {
+        flatView.appendToMem(mem);
+    }
 
     @Override
     public void close() {

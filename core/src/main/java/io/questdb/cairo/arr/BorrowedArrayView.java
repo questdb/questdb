@@ -101,11 +101,6 @@ public class BorrowedArrayView implements ArrayView, AutoCloseable {
         return type == ColumnType.NULL;
     }
 
-    @Override
-    public boolean isVanilla() {
-        return false;
-    }
-
     public void of(ArrayView other) {
         this.type = other.getType();
         this.flatView = other.flatView();

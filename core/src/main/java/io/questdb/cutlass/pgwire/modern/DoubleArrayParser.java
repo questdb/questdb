@@ -33,32 +33,22 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 
-public final class DoubleArrayParser implements ArrayView {
+public final class DoubleArrayParser implements ArrayView, FlatArrayView {
     private final IntList dimensions = new IntList();
     private final IntList stridesOrTmpList = new IntList();
     private final DoubleList values = new DoubleList();
     private int type;
 
     @Override
+    public void appendToMem(MemoryA mem) {
+        for (int i = 0, n = values.size(); i < n; i++) {
+            mem.putDouble(values.getQuick(i));
+        }
+    }
+
+    @Override
     public FlatArrayView flatView() {
-        return new FlatArrayView() {
-            @Override
-            public void appendToMem(MemoryA mem) {
-                for (int i = 0, n = values.size(); i < n; i++) {
-                    mem.putDouble(values.getQuick(i));
-                }
-            }
-
-            @Override
-            public double getDouble(int elemIndex) {
-                return values.getQuick(elemIndex);
-            }
-
-            @Override
-            public long getLong(int elemIndex) {
-                throw new UnsupportedOperationException();
-            }
-        };
+        return this;
     }
 
     @Override
@@ -75,8 +65,18 @@ public final class DoubleArrayParser implements ArrayView {
     }
 
     @Override
+    public double getDouble(int elemIndex) {
+        return values.getQuick(elemIndex);
+    }
+
+    @Override
     public int getFlatViewLength() {
         return values.size();
+    }
+
+    @Override
+    public long getLong(int elemIndex) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

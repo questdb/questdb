@@ -29,12 +29,7 @@ import io.questdb.cairo.vm.api.MemoryA;
 
 public interface ArrayView {
 
-    default void appendToMem(MemoryA mem) {
-        if (!isVanilla()) {
-            throw new UnsupportedOperationException("non-vanilla array must override appendToMem()");
-        }
-        flatView().appendToMem(mem);
-    }
+    void appendToMem(MemoryA mem);
 
     /**
      * Returns a flat view over the elements of the N-dimensional array. It contains
@@ -81,18 +76,4 @@ public interface ArrayView {
      * Returns the encoded array type, as specified in {@link ColumnType#encodeArrayType(short, int)}.
      */
     int getType();
-
-    /**
-     * If this returns true, the underlying {@link #flatView} array is the correct physical
-     * representation of this array, and iterating over the elements of the flat array is
-     * equivalent to iterating over the elements of this n-dimensional array in row-major
-     * order. A vanilla array can be cheaply copied to a memory block by calling
-     * {@link FlatArrayView#appendToMem}.
-     * <p>
-     * If this returns false, you must copy the array by explicitly iterating through all the
-     * array indices in row-major order, and respecting its custom shape and strides.
-     */
-    default boolean isVanilla() {
-        return true;
-    }
 }
