@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
-import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.pgwire.modern.DoubleArrayParser;
@@ -61,6 +60,11 @@ public class CastStrToDoubleArrayFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function getArg() {
+            return function;
+        }
+
+        @Override
         public ArrayView getArray(Record rec) {
             CharSequence str = function.getStrA(rec);
             assert str != null; // for now
@@ -73,13 +77,8 @@ public class CastStrToDoubleArrayFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getArg() {
-            return function;
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
-            sink.val(getArg()).val("::boolean");
+            sink.val(getArg()).val("::double[]");
         }
     }
 }
