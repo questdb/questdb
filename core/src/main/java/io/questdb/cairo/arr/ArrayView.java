@@ -75,10 +75,14 @@ public interface ArrayView {
     int getType();
 
     /**
-     * If the underling array has default strides, 0 values offset and is aligned, we
-     * call it "vanilla" and we can persist the array without manipulating it.
-     *
-     * @return true for arrays lifted direct from storage or otherwise implementing "vanilla" layouts.
+     * If this returns true, the underlying {@link #flatView} array is the correct physical
+     * representation of this array, and iterating over the elements of the flat array is
+     * equivalent to iterating over the elements of this n-dimensional array in row-major
+     * order. A vanilla array can be cheaply copied to a memory block by calling
+     * {@link FlatArrayView#appendToMem}.
+     * <p>
+     * If this returns false, you must copy the array by explicitly iterating through all the
+     * array indices in row-major order, and respecting its custom shape and strides.
      */
     default boolean isVanilla() {
         return true;
