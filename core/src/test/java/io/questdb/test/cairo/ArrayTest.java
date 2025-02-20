@@ -444,6 +444,9 @@ public class ArrayTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck("SELECT arr[0:] FROM tango",
                     10, "too few arguments for '[]' [found=1,expected=2]"
             );
+            assertExceptionNoLeakCheck("SELECT arr[0:, 0:1] FROM tango",
+                    10, "too few arguments for '[]' [found=2,expected=3]"
+            );
             assertExceptionNoLeakCheck("SELECT arr[:0] FROM tango",
                     11, "undefined bind variable: :0"
             );
