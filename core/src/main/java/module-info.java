@@ -600,6 +600,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.cast.CastStrToBinaryFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastStrToUuidFunctionFactory,
+            io.questdb.griffin.engine.functions.cast.CastStrToDoubleArrayFunctionFactory,
 //                  cast varchar to ...
             io.questdb.griffin.engine.functions.cast.CastVarcharToVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.cast.CastVarcharToStrFunctionFactory,

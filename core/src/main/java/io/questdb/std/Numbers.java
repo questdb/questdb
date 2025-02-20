@@ -894,6 +894,10 @@ public final class Numbers {
         return FastDoubleParser.parseDouble(sequence, true);
     }
 
+    public static double parseDouble(CharSequence sequence, int offset, int length) throws NumericException {
+        return FastDoubleParser.parseDouble(sequence, offset, length, true);
+    }
+
     public static double parseDouble(long str, int len) throws NumericException {
         return FastDoubleParser.parseDouble(str, len, true);
     }

@@ -654,7 +654,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         || columnType == ColumnType.IPv4
                         || columnType == ColumnType.VARCHAR
                         || columnType == ColumnType.INTERVAL
-                        || columnType == ColumnType.ARRAY
+                        || ColumnType.tagOf(columnType) == ColumnType.ARRAY // todo: this is not great, we should be more specific
         ) {
             return Constants.getTypeConstant(columnType);
         }
