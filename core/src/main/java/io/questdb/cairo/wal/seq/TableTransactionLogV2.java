@@ -61,7 +61,7 @@ import static io.questdb.cairo.wal.WalUtils.*;
  * To calculate the partition one can use the following formula:
  * {@code (txn - 1) / partTransactionCount}
  * <p>
- * Header and record is described in @link TableTransactionLogFile
+ * Header and record is described in {@link TableTransactionLogFile}
  * <p>
  * Transaction record: 60 bytes
  */
@@ -94,7 +94,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         if (lastTxn < 0) {
             return -1;
         }
-        int partTransactionCount = ff.readNonNegativeInt(logFileFd, SEQ_PART_SIZE_32);
+        int partTransactionCount = ff.readNonNegativeInt(logFileFd, HEADER_SEQ_PART_SIZE_32);
         if (partTransactionCount < 1) {
             return -1;
         }
@@ -231,7 +231,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
         long lastTxn = txnMem.getLong(MAX_TXN_OFFSET_64);
         maxTxn.set(lastTxn);
-        partTransactionCount = txnMem.getInt(SEQ_PART_SIZE_32);
+        partTransactionCount = txnMem.getInt(HEADER_SEQ_PART_SIZE_32);
         if (partTransactionCount < 1) {
             throw new CairoException().put("invalid sequencer file part size [size=").put(partTransactionCount).put(", path=").put(path).put(']');
         }

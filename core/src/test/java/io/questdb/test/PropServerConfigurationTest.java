@@ -207,6 +207,10 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(2097152, configuration.getCairoConfiguration().getSqlCopyBufferSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getCopyPoolCapacity());
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
+        Assert.assertFalse(configuration.getCairoConfiguration().isMatViewEnabled());
+        Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewMaxRecompileAttempts());
+        Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
+        Assert.assertTrue(configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().getDefaultSymbolCacheFlag());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getDefaultSymbolCapacity());
         Assert.assertEquals(30, configuration.getCairoConfiguration().getFileOperationRetryCount());
@@ -481,10 +485,20 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(262144, configuration.getCairoConfiguration().getSystemWalDataAppendPageSize());
         Assert.assertTrue(configuration.getCairoConfiguration().isTableTypeConversionEnabled());
         Assert.assertEquals(10, configuration.getCairoConfiguration().getWalWriterPoolMaxSegments());
+        Assert.assertTrue(configuration.getCairoConfiguration().isWalApplyParallelSqlEnabled());
 
         Assert.assertEquals(20, configuration.getCairoConfiguration().getO3LastPartitionMaxSplits());
         Assert.assertEquals(50 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getPartitionO3SplitMinSize());
         Assert.assertFalse(configuration.getCairoConfiguration().getTextConfiguration().isUseLegacyStringDefault());
+
+        Assert.assertTrue(configuration.getMatViewRefreshPoolConfiguration().isEnabled());
+        Assert.assertFalse(configuration.getMatViewRefreshPoolConfiguration().haltOnError());
+        Assert.assertEquals("mat-view-refresh", configuration.getMatViewRefreshPoolConfiguration().getPoolName());
+        Assert.assertTrue(configuration.getMatViewRefreshPoolConfiguration().getWorkerCount() > 0);
+        Assert.assertEquals(10, configuration.getMatViewRefreshPoolConfiguration().getSleepTimeout());
+        Assert.assertEquals(7_000, configuration.getMatViewRefreshPoolConfiguration().getNapThreshold());
+        Assert.assertEquals(10_000, configuration.getMatViewRefreshPoolConfiguration().getSleepThreshold());
+        Assert.assertEquals(1000, configuration.getMatViewRefreshPoolConfiguration().getYieldThreshold());
     }
 
     @Test
@@ -1316,6 +1330,11 @@ public class PropServerConfigurationTest {
 
             Assert.assertTrue(configuration.getMetricsConfiguration().isEnabled());
 
+            Assert.assertTrue(configuration.getCairoConfiguration().isMatViewEnabled());
+            Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRecompileAttempts());
+            Assert.assertEquals(1000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
+            Assert.assertFalse(configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());
+
             // PG wire
             Assert.assertEquals(9, configuration.getPGWireConfiguration().getBinParamCountCapacity());
             Assert.assertFalse(configuration.getPGWireConfiguration().isSelectCacheEnabled());
@@ -1354,6 +1373,17 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(23, configuration.getWalApplyPoolConfiguration().getNapThreshold());
             Assert.assertEquals(33, configuration.getWalApplyPoolConfiguration().getSleepThreshold());
             Assert.assertEquals(33033, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
+            Assert.assertFalse(configuration.getCairoConfiguration().isWalApplyParallelSqlEnabled());
+
+            Assert.assertTrue(configuration.getMatViewRefreshPoolConfiguration().isEnabled());
+            Assert.assertTrue(configuration.getMatViewRefreshPoolConfiguration().haltOnError());
+            Assert.assertEquals("mat-view-refresh", configuration.getMatViewRefreshPoolConfiguration().getPoolName());
+            Assert.assertEquals(3, configuration.getMatViewRefreshPoolConfiguration().getWorkerCount());
+            Assert.assertArrayEquals(new int[]{1, 2, 3}, configuration.getMatViewRefreshPoolConfiguration().getWorkerAffinity());
+            Assert.assertEquals(55, configuration.getMatViewRefreshPoolConfiguration().getSleepTimeout());
+            Assert.assertEquals(23, configuration.getMatViewRefreshPoolConfiguration().getNapThreshold());
+            Assert.assertEquals(33, configuration.getMatViewRefreshPoolConfiguration().getSleepThreshold());
+            Assert.assertEquals(33033, configuration.getMatViewRefreshPoolConfiguration().getYieldThreshold());
         }
     }
 
@@ -1698,6 +1728,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals(CommitMode.ASYNC, configuration.getCommitMode());
         Assert.assertEquals(12, configuration.getCreateAsSelectRetryCount());
+        Assert.assertTrue(configuration.isMatViewEnabled());
         Assert.assertTrue(configuration.getDefaultSymbolCacheFlag());
         Assert.assertEquals(512, configuration.getDefaultSymbolCapacity());
         Assert.assertEquals(10, configuration.getFileOperationRetryCount());

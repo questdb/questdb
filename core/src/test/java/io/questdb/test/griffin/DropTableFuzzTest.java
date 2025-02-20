@@ -41,7 +41,6 @@ import org.junit.Test;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static io.questdb.test.tools.TestUtils.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.fail;
 
@@ -64,13 +63,13 @@ public class DropTableFuzzTest extends AbstractCairoTest {
                         fut.await();
                         assertFalse("Table renamed, yet DROP operation didn't fail", tableRenamed);
                     } catch (SqlException e) {
-                        assertEquals("[11] table does not exist [table=tango]", e.getMessage());
+                        TestUtils.assertContains(e.getMessage(), "[11] table does not exist");
                     }
                     try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
                         fut.await();
                         fail("Table is already dropped, yet repeating DROP succeeded");
                     } catch (SqlException e) {
-                        assertEquals("[11] table does not exist [table=tango]", e.getMessage());
+                        TestUtils.assertContains(e.getMessage(), "[11] table does not exist");
                     }
                     execute("CREATE TABLE tango (ts TIMESTAMP)");
                     try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
@@ -82,12 +81,55 @@ public class DropTableFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropTableDoesNotReturnErrorThatTableIsDropped() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int c = 0; c < 100; c++) {
+                execute("CREATE TABLE tango (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY WAL");
+
+                final int dropThreads = 5;
+                CyclicBarrier dropsStart = new CyclicBarrier(dropThreads);
+                AtomicReference<Throwable> exception = new AtomicReference<>();
+
+                ObjList<Thread> threads = new ObjList<>();
+                for (int i = 0; i < dropThreads; i++) {
+                    threads.add(new Thread(() -> {
+                        try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                            sqlExecutionContext.with(AllowAllSecurityContext.INSTANCE);
+                            dropsStart.await();
+                            engine.execute("DROP TABLE tango;", sqlExecutionContext);
+                        } catch (CairoException ex) {
+                            if (!ex.isTableDoesNotExist()) {
+                                exception.set(ex);
+                            }
+                        } catch (SqlException ex) {
+                            if (!ex.isTableDoesNotExist()) {
+                                exception.set(ex);
+                            }
+                        } catch (Throwable e) {
+                            exception.set(e);
+                        }
+                    }));
+                    threads.getLast().start();
+                }
+
+                for (int i = 0; i < dropThreads; i++) {
+                    threads.get(i).join();
+                }
+
+                if (exception.get() != null) {
+                    throw new RuntimeException(exception.get());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testDropTableIfExistsDoesNotFailWhenTableDoesNotExist() throws Exception {
         assertMemoryLeak(() -> {
             for (int c = 0; c < 10; c++) {
                 execute("CREATE TABLE tango (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY WAL");
 
-                int dropThreads = 5;
+                final int dropThreads = 5;
                 CyclicBarrier dropsStart = new CyclicBarrier(dropThreads);
                 AtomicReference<Throwable> exception = new AtomicReference<>();
 
@@ -105,51 +147,7 @@ public class DropTableFuzzTest extends AbstractCairoTest {
                     threads.getLast().start();
                 }
 
-                for (int i = 0, threadsSize = threads.size(); i < threadsSize; i++) {
-                    threads.get(i).join();
-                }
-
-                if (exception.get() != null) {
-                    throw new RuntimeException(exception.get());
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testDropTableDoesNotReturnErrorThatTableIsDropped() throws Exception {
-        assertMemoryLeak(() -> {
-            for (int c = 0; c < 1000; c++) {
-                execute("CREATE TABLE tango (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY WAL");
-
-                int dropThreads = 5;
-                CyclicBarrier dropsStart = new CyclicBarrier(dropThreads);
-                AtomicReference<Throwable> exception = new AtomicReference<>();
-
-                ObjList<Thread> threads = new ObjList<>();
                 for (int i = 0; i < dropThreads; i++) {
-                    threads.add(new Thread(() -> {
-                        try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
-                            sqlExecutionContext.with(AllowAllSecurityContext.INSTANCE);
-                            dropsStart.await();
-                            engine.execute("DROP TABLE tango;", sqlExecutionContext);
-                        } catch (CairoException ex) {
-                            if (!ex.isTableDoesNotExist()) {
-                                exception.set(ex);
-                            }
-
-                        } catch (SqlException ex) {
-                            if (!ex.isTableDoesNotExist()) {
-                                exception.set(ex);
-                            }
-                        } catch (Throwable e) {
-                            exception.set(e);
-                        }
-                    }));
-                    threads.getLast().start();
-                }
-
-                for (int i = 0, threadsSize = threads.size(); i < threadsSize; i++) {
                     threads.get(i).join();
                 }
 

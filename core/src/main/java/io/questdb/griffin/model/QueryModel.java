@@ -167,6 +167,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     //simple flag to mark when limit x,y in current model (part of query) is already taken care of by existing factories e.g. LimitedSizeSortedLightRecordCursorFactory
     //and doesn't need to be enforced by LimitRecordCursor. We need it to detect whether current factory implements limit from this or inner query .
     private boolean isLimitImplemented;
+    private boolean isMatViewModel;
     // A flag to mark intermediate SELECT translation models. Such models do not contain the full list of selected
     // columns (e.g. they lack virtual columns), so they should be skipped when rewriting positional ORDER BY.
     private boolean isSelectTranslation = false;
@@ -482,7 +483,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         topDownColumns.clear();
         topDownNameSet.clear();
         aliasToColumnMap.clear();
+        // TODO: replace booleans with an enum-like type: UPDATE/MAT_VIEW/INSERT_AS_SELECT/SELECT
+        //  default is SELECT
         isUpdateModel = false;
+        isMatViewModel = false;
         modelType = ExecutionModel.QUERY;
         updateSetColumns.clear();
         updateTableColumnTypes.clear();
@@ -582,7 +586,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                         qc.isIncludeIntoWildcard()
                 );
             }
-            this.aliasToColumnMap.put(alias, qc);
+            aliasToColumnMap.put(alias, qc);
         }
         ObjList<CharSequence> columnNames = other.bottomUpColumnAliases;
         this.bottomUpColumnAliases.addAll(columnNames);
@@ -663,6 +667,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && orderByAdviceMnemonic == that.orderByAdviceMnemonic
                 && tableId == that.tableId
                 && isUpdateModel == that.isUpdateModel
+                && isMatViewModel == that.isMatViewModel
                 && modelType == that.modelType
                 && artificialStar == that.artificialStar
                 && Objects.equals(bottomUpColumns, that.bottomUpColumns)
@@ -1012,6 +1017,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return tableId;
     }
 
+    @Override
     public CharSequence getTableName() {
         return tableNameExpr != null ? tableNameExpr.token : null;
     }
@@ -1114,7 +1120,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 isUpdateModel, modelType, updateTableModel,
                 updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues, decls,
                 allowPropagationOfOrderByAdvice,
-                pivotColumns, pivotFor, unpivotColumns, unpivotFor, unpivotIncludeNulls
+                pivotColumns, pivotFor, unpivotColumns, unpivotFor, unpivotIncludeNulls,
+                isUpdateModel, isMatViewModel, modelType, updateTableModel,
+                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues, decls
         );
     }
 
@@ -1132,6 +1140,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isLimitImplemented() {
         return isLimitImplemented;
+    }
+
+    public boolean isMatView() {
+        return isMatViewModel;
     }
 
     public boolean isNestedModelIsSubQuery() {
@@ -1388,6 +1400,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setFillValues(ObjList<ExpressionNode> fillValues) {
         this.fillValues = fillValues;
+    }
+
+    public void setIsMatView(boolean isMatView) {
+        this.isMatViewModel = isMatView;
     }
 
     public void setIsUpdate(boolean isUpdate) {

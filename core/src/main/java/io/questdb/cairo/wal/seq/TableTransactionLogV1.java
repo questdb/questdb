@@ -58,7 +58,7 @@ import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
  * Header: 76 bytes
  * Transaction record: 28 bytes
  * <p>
- * See the format of the header and transaction record in @link TableTransactionLogFile
+ * See the format of the header and transaction record in {@link TableTransactionLogFile}
  */
 public class TableTransactionLogV1 implements TableTransactionLogFile {
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV1.class);
