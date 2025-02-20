@@ -35,6 +35,18 @@ import org.junit.Test;
 public class DoubleArrayParserTest extends AbstractTest {
 
     @Test
+    public void testInconsistentArray() {
+        String input = "{{\"1\",\"2.0\"},{\"3.1\"}}";
+        DoubleArrayParser parser = new DoubleArrayParser();
+        try {
+            parser.of(input);
+            Assert.fail();
+        } catch (IllegalArgumentException ignore) {
+            TestUtils.assertContains(ignore.getMessage(), "inconsistent array [depth=1, currentCount=1, alreadyObservedCount=2, position=19]");
+        }
+    }
+
+    @Test
     public void testSmoke() {
         String input = "{{\"1\",\"2.0\"},{\"3.1\",\"0.4\"}}";
         int expectedType = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
@@ -57,14 +69,24 @@ public class DoubleArrayParserTest extends AbstractTest {
     }
 
     @Test
-    public void testInconsistentArray() {
-        String input = "{{\"1\",\"2.0\"},{\"3.1\"}}";
+    public void testSmokeNoQuotes() {
+        String input = "{\r{1,2.0}, {3.1,\n0.4}}";
+        int expectedType = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
+
         DoubleArrayParser parser = new DoubleArrayParser();
-        try {
-            parser.of(input);
-            Assert.fail();
-        } catch (IllegalArgumentException ignore) {
-            TestUtils.assertContains(ignore.getMessage(), "inconsistent array [depth=1, currentCount=1, alreadyObservedCount=2, position=19]");
-        }
+        parser.of(input);
+
+        Assert.assertEquals(4, parser.getFlatViewLength());
+        Assert.assertEquals(0, parser.getFlatViewOffset());
+        Assert.assertEquals(1, parser.getStride(0));
+        Assert.assertEquals(2, parser.getStride(1));
+        Assert.assertEquals(expectedType, parser.getType());
+        Assert.assertEquals(2, parser.getDimCount());
+
+        FlatArrayView flat = parser.flatView();
+        Assert.assertEquals(1, flat.getDouble(0), 0.0001);
+        Assert.assertEquals(2, flat.getDouble(1), 0.0001);
+        Assert.assertEquals(3.1, flat.getDouble(2), 0.0001);
+        Assert.assertEquals(0.4, flat.getDouble(3), 0.0001);
     }
 }

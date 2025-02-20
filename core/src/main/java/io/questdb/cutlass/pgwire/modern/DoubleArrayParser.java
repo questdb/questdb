@@ -34,90 +34,19 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 
 public final class DoubleArrayParser implements ArrayView {
-    private final DoubleList values = new DoubleList();
     private final IntList dimensions = new IntList();
     private final IntList stridesOrTmpList = new IntList();
+    private final DoubleList values = new DoubleList();
     private int type;
-
-    public void of(CharSequence input) {
-        values.clear();
-        dimensions.clear();
-        stridesOrTmpList.clear();
-        parse(input);
-        stridesOrTmpList.clear();
-        calculateStrides();
-        type = ColumnType.encodeArrayType(ColumnType.DOUBLE, dimensions.size());
-    }
-
-    private void parse(CharSequence input) {
-        IntList currentDimSizes = stridesOrTmpList;
-        assert currentDimSizes.size() == 0;
-
-        boolean inQuote = false;
-        int numberStart = -1;
-
-        for (int i = 0; i < input.length(); i++) {
-            char c = input.charAt(i);
-
-            if (c == '"') {
-                inQuote = !inQuote;
-                if (inQuote) {
-                    numberStart = i + 1;
-                } else {
-                    try {
-                        values.add(Numbers.parseDouble(input, numberStart, i - numberStart));
-                    } catch (NumericException e) {
-                        throw new IllegalArgumentException("Invalid number format at position " + numberStart, e);
-                    }
-                }
-            } else if (!inQuote) {
-                switch (c) {
-                    case '{':
-                        currentDimSizes.add(1);
-                        break;
-
-                    case '}':
-                        int depth = currentDimSizes.size() - 1;
-                        int currentCount = currentDimSizes.getQuick(depth);
-                        if (dimensions.size() <= depth) {
-                            dimensions.extendAndSet(depth, currentCount);
-                        } else {
-                            int alreadyObservedCount = dimensions.getQuick(depth);
-                            if (alreadyObservedCount == 0) {
-                                // first time we see this dimension
-                                dimensions.setQuick(depth, currentCount);
-                            } else if (currentCount != alreadyObservedCount) {
-                                throw new IllegalArgumentException("inconsistent array [depth=" + depth + ", currentCount=" + currentCount + ", alreadyObservedCount=" + alreadyObservedCount + ", position=" + i + "]");
-                            }
-                        }
-                        currentDimSizes.removeIndex(depth);
-                        break;
-
-                    case ',':
-                        int lastIndex = currentDimSizes.size() - 1;
-                        currentDimSizes.increment(lastIndex);
-                        break;
-                }
-            }
-        }
-    }
-
-    private void calculateStrides() {
-        assert stridesOrTmpList.size() == 0;
-
-        int stride = 1;
-        for (int i = dimensions.size() - 1; i >= 0; i--) {
-            stridesOrTmpList.add(stride);
-            stride *= dimensions.getQuick(i);
-        }
-    }
 
     @Override
     public FlatArrayView flatView() {
         return new FlatArrayView() {
             @Override
             public void appendToMem(MemoryA mem) {
-                throw new UnsupportedOperationException("not implemented yet");
+                for (int i = 0, n = values.size(); i < n; i++) {
+                    mem.putDouble(values.getQuick(i));
+                }
             }
 
             @Override
@@ -130,6 +59,19 @@ public final class DoubleArrayParser implements ArrayView {
                 throw new UnsupportedOperationException();
             }
         };
+    }
+
+    @Override
+    public int getDimCount() {
+        return dimensions.size();
+    }
+
+    @Override
+    public int getDimLen(int dimension) {
+        if (dimension < 0 || dimension >= dimensions.size()) {
+            throw new IllegalArgumentException("Invalid dimension: " + dimension);
+        }
+        return dimensions.getQuick(dimension);
     }
 
     @Override
@@ -150,16 +92,101 @@ public final class DoubleArrayParser implements ArrayView {
         return type;
     }
 
-    @Override
-    public int getDimCount() {
-        return dimensions.size();
+    public void of(CharSequence input) {
+        values.clear();
+        dimensions.clear();
+        stridesOrTmpList.clear();
+        parse(input);
+        stridesOrTmpList.clear();
+        calculateStrides();
+        type = ColumnType.encodeArrayType(ColumnType.DOUBLE, dimensions.size());
     }
 
-    @Override
-    public int getDimLen(int dimension) {
-        if (dimension < 0 || dimension >= dimensions.size()) {
-            throw new IllegalArgumentException("Invalid dimension: " + dimension);
+    private void addElement(CharSequence input, int numberStart, int i) {
+        try {
+            values.add(Numbers.parseDouble(input, numberStart, i - numberStart));
+        } catch (NumericException e) {
+            throw new IllegalArgumentException("Invalid number format at position " + numberStart, e);
         }
-        return dimensions.getQuick(dimension);
+    }
+
+    private void calculateStrides() {
+        assert stridesOrTmpList.size() == 0;
+
+        int stride = 1;
+        for (int i = dimensions.size() - 1; i >= 0; i--) {
+            stridesOrTmpList.add(stride);
+            stride *= dimensions.getQuick(i);
+        }
+    }
+
+    private void parse(CharSequence input) {
+        IntList currentDimSizes = stridesOrTmpList;
+        assert currentDimSizes.size() == 0;
+
+        boolean inQuote = false;
+        int numberStart = -1;
+        boolean inNumber = false;
+
+        for (int i = 0; i < input.length(); i++) {
+            char c = input.charAt(i);
+
+            if (c == '"') {
+                inQuote = !inQuote;
+                if (inQuote) {
+                    numberStart = i + 1;
+                } else {
+                    addElement(input, numberStart, i);
+                    inNumber = false;
+                }
+            } else if (!inQuote) {
+                switch (c) {
+                    case '{':
+                        currentDimSizes.add(1);
+                        break;
+                    case '}':
+                        if (inNumber) {
+                            addElement(input, numberStart, i);
+                            inNumber = false;
+                        }
+                        int depth = currentDimSizes.size() - 1;
+                        int currentCount = currentDimSizes.getQuick(depth);
+                        if (dimensions.size() <= depth) {
+                            dimensions.extendAndSet(depth, currentCount);
+                        } else {
+                            int alreadyObservedCount = dimensions.getQuick(depth);
+                            if (alreadyObservedCount == 0) {
+                                // first time we see this dimension
+                                dimensions.setQuick(depth, currentCount);
+                            } else if (currentCount != alreadyObservedCount) {
+                                throw new IllegalArgumentException("inconsistent array [depth=" + depth + ", currentCount=" + currentCount + ", alreadyObservedCount=" + alreadyObservedCount + ", position=" + i + "]");
+                            }
+                        }
+                        currentDimSizes.removeIndex(depth);
+                        break;
+                    case ',':
+                        if (inNumber) {
+                            addElement(input, numberStart, i);
+                            inNumber = false;
+                        }
+                        int lastIndex = currentDimSizes.size() - 1;
+                        currentDimSizes.increment(lastIndex);
+                        break;
+
+                    // Skip whitespace. {\r{1,2.0}, {3.1,\n0.4}} is a legal input
+                    case ' ':
+                    case '\t':
+                    case '\n':
+                    case '\r':
+                        break;
+
+                    default:
+                        if (!inNumber) {
+                            numberStart = i;
+                            inNumber = true;
+                        }
+                }
+            }
+        }
     }
 }

@@ -1383,25 +1383,6 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
-    public void testStringToArrayCast() throws Exception {
-        skipOnWalRun();
-        skipInLegacyMode();
-
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            try (PreparedStatement stmt = connection.prepareStatement("select '{\"1\",\"2\",\"3\",\"4\",\"5\"}'::double[] from long_sequence(1)")) {
-                sink.clear();
-                try (ResultSet rs = stmt.executeQuery()) {
-                    assertResultSet("cast[ARRAY]\n" +
-                                    "{1.0,2.0,3.0,4.0,5.0}\n",
-                            sink,
-                            rs
-                    );
-                }
-            }
-        });
-    }
-
-    @Test
     public void testArrayResultSet() throws Exception {
         sendBufferSize = 1000 * 1024; // use large enough buffer, otherwise we will get fragmented messages and this currently leads to non-deterministic results of rnd_double_array
 
@@ -2080,6 +2061,21 @@ if __name__ == "__main__":
         });
     }
 
+    @Test
+    public void testBindVariableDropLastPartitionListByMonthHigherPrecision() throws Exception {
+        testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.MONTH);
+    }
+
+    @Test
+    public void testBindVariableDropLastPartitionListByNoneHigherPrecision() throws Exception {
+        try {
+            testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.NONE);
+            Assert.fail();
+        } catch (PSQLException e) {
+            TestUtils.assertContains(e.getMessage(), "ERROR: table is not partitioned");
+        }
+    }
+
 //Testing through postgres - need to establish connection
 //    @Test
 //    public void testReadINet() throws SQLException, IOException {
@@ -2101,21 +2097,6 @@ if __name__ == "__main__":
 //                    "12.2.65.90\n", sink, rs);
 //        }
 //    }
-
-    @Test
-    public void testBindVariableDropLastPartitionListByMonthHigherPrecision() throws Exception {
-        testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.MONTH);
-    }
-
-    @Test
-    public void testBindVariableDropLastPartitionListByNoneHigherPrecision() throws Exception {
-        try {
-            testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.NONE);
-            Assert.fail();
-        } catch (PSQLException e) {
-            TestUtils.assertContains(e.getMessage(), "ERROR: table is not partitioned");
-        }
-    }
 
     @Test
     public void testBindVariableDropLastPartitionListByWeekHigherPrecision() throws Exception {
@@ -2899,6 +2880,33 @@ if __name__ == "__main__":
                         finished.await();
                         assertContains(e.getMessage(), "cancelled by user");
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCastInsertStringToArrayColum() throws Exception {
+        skipOnWalRun();
+        skipInLegacyMode();
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[])")) {
+                stmt.execute();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("insert into x values ('{1,2,3,4,5}'::double[])")) {
+                stmt.execute();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("al[ARRAY]\n" +
+                                    "{1.0,2.0,3.0,4.0,5.0}\n",
+                            sink,
+                            rs
+                    );
                 }
             }
         });
@@ -10595,6 +10603,25 @@ create table tab as (
     @Test
     public void testStringBindvarEqStringyCol() throws Exception {
         testVarcharBindVars("select v,s from x where ? != v and ? != s");
+    }
+
+    @Test
+    public void testStringToArrayCast() throws Exception {
+        skipOnWalRun();
+        skipInLegacyMode();
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("select '{\"1\",\"2\",\"3\",\"4\",\"5\"}'::double[] from long_sequence(1)")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("cast[ARRAY]\n" +
+                                    "{1.0,2.0,3.0,4.0,5.0}\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
     }
 
     @Test
