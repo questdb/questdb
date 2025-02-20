@@ -26,7 +26,7 @@ package io.questdb.cairo.arr;
 
 import io.questdb.cairo.ColumnType;
 
-public interface ArrayView extends ArrayShape {
+public interface ArrayView {
 
     /**
      * Returns a flat view over the elements of the N-dimensional array. It contains
@@ -43,6 +43,16 @@ public interface ArrayView extends ArrayShape {
      * <code>[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4]</code>.
      */
     FlatArrayView flatView();
+
+    /**
+     * Returns the number of dimensions in this array (i.e., its dimensionality).
+     */
+    int getDimCount();
+
+    /**
+     * Returns the number of elements in the given dimension (sub-arrays or leaf values)
+     */
+    int getDimLen(int dimension);
 
     /**
      * Returns the total number of data points (leaf values) in this array.
