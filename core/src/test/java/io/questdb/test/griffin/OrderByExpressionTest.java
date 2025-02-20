@@ -314,4 +314,29 @@ public class OrderByExpressionTest extends AbstractCairoTest {
                 true
         );
     }
+
+    @Test
+    public void testOrderByWithNumericNamedColumnInsideOfRange() throws Exception {
+        assertException("select * from (" +
+                "select 200 as \"3\", 201 as \"1\", 202 as \"2\" " +
+                "union all " +
+                "select 500 as \"3\", 501 as \"1\", 502 as \"2\" " +
+                "union all " +
+                "select 50 as \"3\", 51 as \"1\", 52 as \"2\") " +
+                "order by 2", 123, "ambiguous order by column [name=2]");
+    }
+
+    @Test
+    public void testOrderByWithNumericNamedColumnOutsideOfRange() throws Exception {
+        assertQuery("999\n50\n200\n500", "select * from (" +
+                        "select 200 as \"999\" " +
+                        "union all " +
+                        "select 500 as \"999\" " +
+                        "union all " +
+                        "select 50 as \"999\") " +
+                        "order by \"999\"",
+                null, null,
+                false,
+                true);
+    }
 }
