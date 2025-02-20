@@ -103,6 +103,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         this(configuration, tableToken, null, null);
     }
 
+    // Don't forget to change TableReader srcReader overload when changing this constructor.
     public TableReader(
             CairoConfiguration configuration,
             TableToken tableToken,
@@ -154,20 +155,76 @@ public class TableReader implements Closeable, SymbolTableSource {
             bitmapIndexes = new ObjList<>(capacity + 2);
             bitmapIndexes.setPos(capacity + 2);
 
-            openPartitionInfo = new LongList(partitionCount * PARTITIONS_SLOT_SIZE);
-            openPartitionInfo.setPos(partitionCount * PARTITIONS_SLOT_SIZE);
-            for (int i = 0; i < partitionCount; i++) {
-                // ts, number of rows, txn, column version for each partition
-                // it is compared to attachedPartitions within the txn file to determine if a partition needs to be reloaded or not
-                final int baseOffset = i * PARTITIONS_SLOT_SIZE;
-                final long partitionTimestamp = txFile.getPartitionTimestampByIndex(i);
-                final boolean isParquet = txFile.isPartitionParquet(i);
-                openPartitionInfo.setQuick(baseOffset, partitionTimestamp);
-                openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_SIZE, -1); // -1 means it is not open
-                openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txFile.getPartitionNameTxn(i));
-                openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
-                openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_FORMAT, isParquet ? PartitionFormat.PARQUET : PartitionFormat.NATIVE);
+            openPartitionInfo = initOpenPartitionInfo();
+            columnTops = new LongList(capacity / 2);
+            columnTops.setPos(capacity / 2);
+
+            this.partitionOverwriteControl = partitionOverwriteControl;
+            if (partitionOverwriteControl != null) {
+                partitionOverwriteControl.acquirePartitions(this);
             }
+        } catch (Throwable e) {
+            close();
+            throw e;
+        }
+    }
+
+    // copyOf constructor.
+    public TableReader(
+            CairoConfiguration configuration,
+            TableReader srcReader,
+            @Nullable MessageBus messageBus,
+            @Nullable PartitionOverwriteControl partitionOverwriteControl
+    ) {
+        assert srcReader.isOpen() && srcReader.isActive();
+
+        this.configuration = configuration;
+        this.clock = configuration.getMillisecondClock();
+        this.maxOpenPartitions = configuration.getInactiveReaderMaxOpenPartitions();
+        this.ff = configuration.getFilesFacade();
+        this.tableToken = srcReader.getTableToken();
+        this.messageBus = messageBus;
+        try {
+            this.path = new Path();
+            this.path.of(configuration.getDbRoot());
+            this.dbRootSize = path.size();
+            path.concat(tableToken.getDirName());
+            this.rootLen = path.size();
+            path.trimTo(rootLen);
+
+            metadata = copyMeta(srcReader.metadata);
+            partitionBy = metadata.getPartitionBy();
+            columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
+            txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount());
+            txnScoreboard.ofRW(path.trimTo(rootLen));
+            LOG.debug()
+                    .$("open as copy [id=").$(metadata.getTableId())
+                    .$(", table=").utf8(tableToken.getTableName())
+                    .$(", dirName=").utf8(tableToken.getDirName())
+                    .$(", srcTxn=").$(srcReader.getTxn())
+                    .I$();
+            txFile = new TxReader(ff).ofRO(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), partitionBy);
+            path.trimTo(rootLen);
+            reloadAtTxn(srcReader);
+            txPartitionVersion = txFile.getPartitionTableVersion();
+            txColumnVersion = txFile.getColumnVersion();
+            txTruncateVersion = txFile.getTruncateVersion();
+            columnCount = metadata.getColumnCount();
+            columnCountShl = getColumnBits(columnCount);
+            openSymbolMaps();
+            partitionCount = txFile.getPartitionCount();
+
+            int capacity = getColumnBase(partitionCount);
+            parquetPartitions = new ObjList<>(partitionCount);
+            parquetPartitions.setAll(partitionCount, NullMemoryCMR.INSTANCE);
+            columns = new ObjList<>(capacity + 2);
+            columns.setPos(capacity + 2);
+            columns.setQuick(0, NullMemoryCMR.INSTANCE);
+            columns.setQuick(1, NullMemoryCMR.INSTANCE);
+            bitmapIndexes = new ObjList<>(capacity + 2);
+            bitmapIndexes.setPos(capacity + 2);
+
+            openPartitionInfo = initOpenPartitionInfo();
             columnTops = new LongList(capacity / 2);
             columnTops.setPos(capacity / 2);
 
@@ -392,6 +449,39 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public void goActive() {
         reload();
+        if (partitionOverwriteControl != null) {
+            partitionOverwriteControl.acquirePartitions(this);
+        }
+    }
+
+    public void goActiveAtTxn(TableReader srcReader) {
+        assert srcReader.isOpen() && srcReader.isActive();
+        assert tableToken.equals(srcReader.getTableToken());
+
+        if (partitionOverwriteControl != null) {
+            // Mark partitions as unused before releasing txn in scoreboard
+            // to avoid false positives in partition overwrite control
+            partitionOverwriteControl.releasePartitions(this);
+        }
+        // close all partitions
+        if (PartitionBy.isPartitioned(partitionBy)) {
+            for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+                final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
+                long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
+                if (partitionSize > -1) {
+                    closePartition(partitionIndex);
+                }
+            }
+        }
+
+        reloadAtTxn(srcReader);
+
+        reconcileOpenPartitions(0, 0, 0);
+
+        txPartitionVersion = txFile.getPartitionTableVersion();
+        txColumnVersion = txFile.getColumnVersion();
+        txTruncateVersion = txFile.getTruncateVersion();
+
         if (partitionOverwriteControl != null) {
             partitionOverwriteControl.acquirePartitions(this);
         }
@@ -706,6 +796,17 @@ public class TableReader implements Closeable, SymbolTableSource {
         toIndexReaders.setQuick(toIndex + 1, bitmapIndexes.getAndSetQuick(fromIndex + 1, null));
     }
 
+    private TableReaderMetadata copyMeta(TableReaderMetadata srcMeta) {
+        TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableToken);
+        try {
+            metadata.loadFrom(srcMeta);
+            return metadata;
+        } catch (Throwable th) {
+            metadata.close();
+            throw th;
+        }
+    }
+
     private BitmapIndexReader createBitmapIndexReaderAt(int globalIndex, int columnBase, int columnIndex, long columnNameTxn, int direction, long txn) {
         BitmapIndexReader reader;
         if (!metadata.isColumnIndexed(columnIndex)) {
@@ -850,6 +951,24 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (tempMem8b != 0) {
             tempMem8b = Unsafe.free(tempMem8b, Long.BYTES, MemoryTag.NATIVE_TABLE_READER);
         }
+    }
+
+    private @NotNull LongList initOpenPartitionInfo() {
+        final LongList openPartitionInfo = new LongList(partitionCount * PARTITIONS_SLOT_SIZE);
+        openPartitionInfo.setPos(partitionCount * PARTITIONS_SLOT_SIZE);
+        for (int i = 0; i < partitionCount; i++) {
+            // ts, number of rows, txn, column version for each partition
+            // it is compared to attachedPartitions within the txn file to determine if a partition needs to be reloaded or not
+            final int baseOffset = i * PARTITIONS_SLOT_SIZE;
+            final long partitionTimestamp = txFile.getPartitionTimestampByIndex(i);
+            final boolean isParquet = txFile.isPartitionParquet(i);
+            openPartitionInfo.setQuick(baseOffset, partitionTimestamp);
+            openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_SIZE, -1); // -1 means it is not open
+            openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txFile.getPartitionNameTxn(i));
+            openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
+            openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_FORMAT, isParquet ? PartitionFormat.PARQUET : PartitionFormat.NATIVE);
+        }
+        return openPartitionInfo;
     }
 
     private void insertPartition(int partitionIndex, long timestamp) {
@@ -1264,6 +1383,22 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
+    private void reloadAtTxn(TableReader srcReader) {
+        // TODO: check for same txn, newer txn
+        if (metadata.getMetadataVersion() != srcReader.metadata.getMetadataVersion()) {
+            metadata.loadFrom(srcReader.metadata);
+        }
+        final long txn = srcReader.getTxn();
+        releaseTxn();
+        if (!txnScoreboard.acquireTxn(txn)) {
+            throw CairoException.critical(0).put("could not acquire txn when copying table reader state [txn=").put(txn).put(']');
+        }
+        this.txn = txn;
+        txnAcquired = true;
+        txFile.loadAllFrom(srcReader.txFile);
+        columnVersionReader.readFrom(srcReader.columnVersionReader);
+    }
+
     private void reloadColumnAt(
             int partitionIndex,
             Path path,
@@ -1458,7 +1593,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         return ((MemoryCMRDetachedImpl) parquetMem).tryChangeSize(parquetSize);
     }
 
-    private void reloadSlow(final boolean reshuffle) {
+    private void reloadSlow(boolean reshuffle) {
         final long deadline = clock.getTicks() + configuration.getSpinLockTimeout();
         do {
             // Reload txn

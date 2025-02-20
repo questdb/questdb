@@ -641,6 +641,15 @@ public class CairoEngine implements Closeable, WriterSource {
         return reader;
     }
 
+    /**
+     * Returns a pooled table reader that is pointed at the same transaction number
+     * as the source reader.
+     */
+    public TableReader getReaderAtTxn(TableReader srcReader) {
+        assert srcReader.isOpen() && srcReader.isActive();
+        return readerPool.getCopyOf(srcReader);
+    }
+
     public Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> getReaderPoolEntries() {
         return readerPool.entries();
     }

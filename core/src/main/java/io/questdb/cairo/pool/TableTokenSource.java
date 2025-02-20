@@ -22,11 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.vm.api;
+package io.questdb.cairo.pool;
 
-// mapped and readable
-public interface MemoryMR extends MemoryM, MemoryR {
-    default void growToFileSize() {
-        extend(getFilesFacade().length(getFd()));
-    }
+import io.questdb.cairo.TableToken;
+
+interface TableTokenSource {
+    TableToken getTableToken();
 }

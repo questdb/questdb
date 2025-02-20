@@ -1425,12 +1425,11 @@ public class MatViewTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
 
-            createMatView(
-                    "select a.sym sym_a, b.sym sym_b, a.sym2 sym2_a, b.sym2 sym2_b, last(b.price) as price, a.ts " +
-                            "from (base_price where sym = 'foobar') a " +
-                            "asof join (base_price where sym = 'barbaz') b on (sym2) " +
-                            "sample by 1h"
-            );
+            final String viewSql = "select a.sym sym_a, b.sym sym_b, a.sym2 sym2_a, b.sym2 sym2_b, last(b.price) as price, a.ts " +
+                    "from (base_price where sym = 'foobar') a " +
+                    "asof join (base_price where sym = 'barbaz') b on (sym2) " +
+                    "sample by 1h";
+            createMatView(viewSql);
 
             execute(
                     "insert into base_price(sym, sym2, price, ts) values('foobar', 's1', 1.320, '2024-09-10T12:01')" +
@@ -1448,11 +1447,12 @@ public class MatViewTest extends AbstractCairoTest {
                     "select view_name, base_table_name, view_status from mat_views"
             );
 
-            assertSql(
-                    "sym_a\tsym_b\tsym2_a\tsym2_b\tprice\tts\n" +
-                            "foobar\tbarbaz\ts1\ts1\t103.21\t2024-09-10T12:00:00.000000Z\n",
-                    "price_1h"
-            );
+            final String expected = "sym_a\tsym_b\tsym2_a\tsym2_b\tprice\tts\n" +
+                    "foobar\t\ts1\t\tnull\t2024-09-10T12:00:00.000000Z\n" +
+                    "foobar\tbarbaz\ts1\ts1\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                    "foobar\tbarbaz\ts1\ts1\t103.21\t2024-09-10T13:00:00.000000Z\n";
+            assertSql(expected, viewSql + " order by ts, sym_a, sym_b");
+            assertSql(expected, "price_1h order by ts, sym_a, sym_b");
         });
     }
 

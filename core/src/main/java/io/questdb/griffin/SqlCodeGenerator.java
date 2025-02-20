@@ -550,6 +550,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return new ExplainPlanFactory(recordCursorFactory, format);
     }
 
+    public BytecodeAssembler getAsm() {
+        return asm;
+    }
+
+    public EntityColumnFilter getEntityColumnFilter() {
+        return entityColumnFilter;
+    }
+
+    public ListColumnFilter getIndexColumnFilter() {
+        return listColumnFilterA;
+    }
+
+    public RecordComparatorCompiler getRecordComparatorCompiler() {
+        return recordComparatorCompiler;
+    }
+
     public IntList toOrderIndices(RecordMetadata m, ObjList<ExpressionNode> orderBy, IntList orderByDirection) throws SqlException {
         final IntList indices = intListPool.next();
         for (int i = 0, n = orderBy.size(); i < n; i++) {
@@ -570,22 +586,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             indices.add(index);
         }
         return indices;
-    }
-
-    public BytecodeAssembler getAsm() {
-        return asm;
-    }
-
-    public EntityColumnFilter getEntityColumnFilter() {
-        return entityColumnFilter;
-    }
-
-    public ListColumnFilter getIndexColumnFilter() {
-        return listColumnFilterA;
-    }
-
-    public RecordComparatorCompiler getRecordComparatorCompiler() {
-        return recordComparatorCompiler;
     }
 
     private static boolean allGroupsFirstLastWithSingleSymbolFilter(QueryModel model, RecordMetadata metadata) {
@@ -5275,7 +5275,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             0,
                             metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag(),
                             metadata.getColumnMetadata(columnIndex).getSymbolCapacity()
-
                     ));
 
                     if (columnIndex == readerTimestampIndex) {

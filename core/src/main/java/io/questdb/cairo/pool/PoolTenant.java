@@ -28,7 +28,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 
-public interface PoolTenant<T extends PoolTenant<T>> extends QuietCloseable {
+public interface PoolTenant<T extends PoolTenant<T>> extends TableTokenSource, QuietCloseable {
 
     /**
      * Pool tenant must keep track of the Entry it belongs to and provide this entry when requested. Entry is
@@ -52,6 +52,7 @@ public interface PoolTenant<T extends PoolTenant<T>> extends QuietCloseable {
      *
      * @return valid table name.
      */
+    @Override
     TableToken getTableToken();
 
     /**
@@ -65,6 +66,14 @@ public interface PoolTenant<T extends PoolTenant<T>> extends QuietCloseable {
      * the reader to be fully up-to-date with all data and metadata changes.
      */
     void refresh(@Nullable ResourcePoolSupervisor<T> supervisor);
+
+    /**
+     * Pool informs the reader that the instance is being returned to the new owner and the new owner expects
+     * the reader to have the same state, e.g. txn number, as the given source tenant.
+     */
+    default void refreshAt(@Nullable ResourcePoolSupervisor<T> supervisor, T srcTenant) {
+        throw new UnsupportedOperationException();
+    }
 
     /**
      * Refreshes value of the Table Token to the one it was created with.

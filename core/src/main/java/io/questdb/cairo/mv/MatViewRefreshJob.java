@@ -73,8 +73,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final CairoEngine engine;
     private final int maxRecompileAttempts;
     private final MicrosecondClock microsecondClock;
-    private final MatViewRefreshExecutionContext mvRefreshExecutionContext;
-    private final MatViewRefreshTask mvRefreshTask = new MatViewRefreshTask();
+    private final MatViewRefreshExecutionContext refreshExecutionContext;
+    private final MatViewRefreshTask refreshTask = new MatViewRefreshTask();
     private final WalTxnRangeLoader txnRangeLoader;
     private final int workerId;
 
@@ -82,7 +82,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         try {
             this.workerId = workerId;
             this.engine = engine;
-            this.mvRefreshExecutionContext = new MatViewRefreshExecutionContext(engine, workerCount, sharedWorkerCount);
+            this.refreshExecutionContext = new MatViewRefreshExecutionContext(engine, workerCount, sharedWorkerCount);
             final CairoConfiguration configuration = engine.getConfiguration();
             this.txnRangeLoader = new WalTxnRangeLoader(configuration.getFilesFacade());
             this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
@@ -106,7 +106,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     @Override
     public void close() {
         LOG.info().$("materialized view refresh job closing [workerId=").$(workerId).I$();
-        Misc.free(mvRefreshExecutionContext);
+        Misc.free(refreshExecutionContext);
         Misc.free(blockFileWriter);
         Misc.free(dbRoot);
     }
@@ -226,7 +226,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     if (factory == null) {
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
                             LOG.info().$("compiling materialized view [view=").$(viewDef.getMatViewToken()).$(", attempt=").$(i).I$();
-                            CompiledQuery compiledQuery = compiler.compile(viewDef.getMatViewSql(), mvRefreshExecutionContext);
+                            CompiledQuery compiledQuery = compiler.compile(viewDef.getMatViewSql(), refreshExecutionContext);
                             if (compiledQuery.getType() != CompiledQuery.SELECT) {
                                 throw SqlException.$(0, "materialized view query must be a SELECT statement");
                             }
@@ -254,7 +254,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 .put("' not found in view select query");
                     }
 
-                    try (RecordCursor cursor = factory.getCursor(mvRefreshExecutionContext)) {
+                    try (RecordCursor cursor = factory.getCursor(refreshExecutionContext)) {
                         final Record record = cursor.getRecord();
                         long deadline = batchSize;
                         rowCount = 0;
@@ -337,12 +337,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private boolean processNotifications() {
         final MatViewGraph matViewGraph = engine.getMatViewGraph();
         boolean refreshed = false;
-        while (matViewGraph.tryDequeueRefreshTask(mvRefreshTask)) {
-            final int operation = mvRefreshTask.operation;
-            final TableToken baseTableToken = mvRefreshTask.baseTableToken;
-            final TableToken matViewToken = mvRefreshTask.matViewToken;
-            final long refreshTriggeredTimestamp = mvRefreshTask.refreshTriggeredTimestamp;
-            final String invalidationReason = mvRefreshTask.invalidationReason;
+        while (matViewGraph.tryDequeueRefreshTask(refreshTask)) {
+            final int operation = refreshTask.operation;
+            final TableToken baseTableToken = refreshTask.baseTableToken;
+            final TableToken matViewToken = refreshTask.matViewToken;
+            final long refreshTriggeredTimestamp = refreshTask.refreshTriggeredTimestamp;
+            final String invalidationReason = refreshTask.invalidationReason;
 
             if (matViewToken == null) {
                 try {
@@ -412,10 +412,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
             }
         }
-        mvRefreshTask.clear();
-        mvRefreshTask.baseTableToken = baseTableToken;
-        mvRefreshTask.operation = MatViewRefreshTask.INCREMENTAL_REFRESH;
-        viewGraph.notifyBaseRefreshed(mvRefreshTask, minRefreshToTxn);
+        refreshTask.clear();
+        refreshTask.baseTableToken = baseTableToken;
+        refreshTask.operation = MatViewRefreshTask.INCREMENTAL_REFRESH;
+        viewGraph.notifyBaseRefreshed(refreshTask, minRefreshToTxn);
 
         if (refreshed) {
             LOG.info().$("refreshed materialized views dependent on [table=").$(baseTableToken).I$();
@@ -500,15 +500,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // - apply resulting commit
         // - update applied to txn in MatViewGraph
         try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
-            // Operate SQL on a fixed reader that has known max transaction visible.
-            // The reader is returned from mvRefreshExecutionContext.getReader() call,
-            // so if we don't detach it, it may get closed prematurely and/or multiple times.
-            engine.detachReader(baseTableReader);
-            mvRefreshExecutionContext.of(baseTableReader);
+            // Operate SQL on a fixed reader that has known max transaction visible. The reader
+            // is used to initialize bast table readers returned from the mvRefreshExecutionContext.getReader()
+            // call, so that all of them are at the same txn.
+            refreshExecutionContext.of(baseTableReader);
             try {
                 final long toBaseTxn = baseTableReader.getSeqTxn();
                 // Make time interval filter no-op as we're querying all partitions.
-                mvRefreshExecutionContext.setRange(Long.MIN_VALUE + 1, Long.MAX_VALUE);
+                refreshExecutionContext.setRange(Long.MIN_VALUE + 1, Long.MAX_VALUE);
 
                 try (TableWriterAPI commitWriter = engine.getTableWriterAPI(viewToken, "mat view full refresh")) {
                     commitWriter.truncateSoft();
@@ -525,7 +524,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     }
                 }
             } finally {
-                engine.attachReader(baseTableReader);
+                refreshExecutionContext.clearReader();
             }
         } catch (SqlException e) {
             LOG.error().$("error refreshing materialized view [view=").$(viewToken)
@@ -584,11 +583,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
 
         try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
-            mvRefreshExecutionContext.of(baseTableReader);
-            // Operate SQL on a fixed reader that has known max transaction visible.
-            engine.detachReader(baseTableReader);
+            // Operate SQL on a fixed reader that has known max transaction visible. The reader
+            // is used to initialize bast table readers returned from the mvRefreshExecutionContext.getReader()
+            // call, so that all of them are at the same txn.
+            refreshExecutionContext.of(baseTableReader);
             try {
-                if (findCommitTimestampRanges(mvRefreshExecutionContext, baseTableReader, viewDef, fromBaseTxn)) {
+                if (findCommitTimestampRanges(refreshExecutionContext, baseTableReader, viewDef, fromBaseTxn)) {
                     toBaseTxn = baseTableReader.getSeqTxn();
 
                     try (TableWriterAPI commitWriter = engine.getTableWriterAPI(viewToken, "Mat View refresh")) {
@@ -607,7 +607,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     }
                 }
             } finally {
-                engine.attachReader(baseTableReader);
+                refreshExecutionContext.clearReader();
             }
         } catch (SqlException e) {
             LOG.error().$("error refreshing materialized view [view=").$(viewToken)

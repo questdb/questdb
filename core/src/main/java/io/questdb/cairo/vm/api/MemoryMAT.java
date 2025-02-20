@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.vm.api;
 
-//mapped appendable tailing
+// mapped appendable tailing
 public interface MemoryMAT extends MemoryA {
 
     @Override

@@ -24,10 +24,25 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SymbolCountProvider;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
+import io.questdb.cairo.TxWriter;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
@@ -60,7 +75,6 @@ public class TxnTest extends AbstractCairoTest {
 
             FilesFacadeImpl cleanFf = new TestFilesFacadeImpl();
             assertMemoryLeak(() -> {
-
                 String tableName = "txntest";
                 TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY);
                 model.timestamp();
@@ -110,6 +124,66 @@ public class TxnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLoadAllFrom() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            assertMemoryLeak(() -> {
+                String tableName = "txntest";
+                TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY);
+                model.timestamp();
+                AbstractCairoTest.create(model);
+
+                try (Path path = new Path()) {
+                    TableToken tableToken = engine.verifyTableName(tableName);
+                    path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                    int testPartitionCount = 2;
+                    try (TxWriter txWriter = new TxWriter(ff, configuration)) {
+                        txWriter.ofRW(path.$(), PartitionBy.DAY);
+                        for (int i = 0; i < testPartitionCount; i++) {
+                            txWriter.updatePartitionSizeByTimestamp(i * Timestamps.DAY_MICROS, i + 1);
+                        }
+                        txWriter.updateMaxTimestamp(testPartitionCount * Timestamps.DAY_MICROS + 1);
+                        txWriter.finishPartitionSizeUpdate();
+                        txWriter.commit(new ObjList<>());
+                    }
+
+                    try (
+                            TxReader txReader = new TxReader(ff);
+                            MemoryCARW dumpMem = Vm.getCARWInstance(ff.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                            TxReader txCopyReader = new TxReader(ff);
+                            MemoryCARW dumpCopyMem = Vm.getCARWInstance(ff.getPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+                    ) {
+                        txReader.ofRO(path.$(), PartitionBy.DAY);
+
+                        txReader.unsafeLoadAll();
+                        final String expected = "{txn: 1, attachedPartitions: [\n" +
+                                "{ts: '1970-01-01T00:00:00.000Z', rowCount: 1, nameTxn: -1},\n" +
+                                "{ts: '1970-01-02T00:00:00.000Z', rowCount: 2, nameTxn: -1}\n" +
+                                "], transientRowCount: 2, fixedRowCount: 1, minTimestamp: '294247-01-10T04:00:54.775Z', maxTimestamp: '1970-01-03T00:00:00.000Z', dataVersion: 0, structureVersion: 0, partitionTableVersion: 0, columnVersion: 0, truncateVersion: 0, seqTxn: 0, symbolColumnCount: 0, lagRowCount: 0, lagMinTimestamp: '294247-01-10T04:00:54.775Z', lagMaxTimestamp: '', lagTxnCount: 0, lagOrdered: true}";
+                        Assert.assertEquals(expected, txReader.toString());
+
+                        txCopyReader.loadAllFrom(txReader);
+                        Assert.assertEquals(expected, txCopyReader.toString());
+
+                        Assert.assertTrue(txReader.getRecordSize() > 0);
+                        Assert.assertEquals(txReader.getRecordSize(), txCopyReader.getRecordSize());
+
+                        // Make sure to zero the memory before the dump to avoid garbage bytes in paddings.
+                        dumpMem.jumpTo(txReader.getRecordSize());
+                        dumpMem.zero();
+                        dumpCopyMem.jumpTo(txCopyReader.getRecordSize());
+                        dumpCopyMem.zero();
+
+                        txReader.dumpTo(dumpMem);
+                        txCopyReader.dumpTo(dumpCopyMem);
+                        Assert.assertTrue(Vect.memeq(dumpMem.addressOf(0), dumpCopyMem.addressOf(0), txReader.getRecordSize()));
+                    }
+                }
+            });
+        });
+    }
+
+    @Test
     public void testToString() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade ff = engine.getConfiguration().getFilesFacade();
@@ -124,7 +198,8 @@ public class TxnTest extends AbstractCairoTest {
                     TableToken tableToken = engine.verifyTableName(tableName);
                     path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                     int testPartitionCount = 2;
-                    try (TxWriter txWriter = new TxWriter(ff, configuration).ofRW(path.$(), PartitionBy.DAY)) {
+                    try (TxWriter txWriter = new TxWriter(ff, configuration)) {
+                        txWriter.ofRW(path.$(), PartitionBy.DAY);
                         for (int i = 0; i < testPartitionCount; i++) {
                             txWriter.updatePartitionSizeByTimestamp(i * Timestamps.DAY_MICROS, i + 1);
                         }

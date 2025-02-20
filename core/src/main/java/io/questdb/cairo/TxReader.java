@@ -278,14 +278,6 @@ public class TxReader implements Closeable, Mutable {
         return -1;
     }
 
-    public int getPartitionInsertionIndex(long partitionTimestamp) {
-        int index = findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
-        if (index > -1) {
-            return index / LONGS_PER_TX_ATTACHED_PARTITION;
-        }
-        return (-index - 1) / LONGS_PER_TX_ATTACHED_PARTITION;
-    }
-
     public long getPartitionNameTxn(int i) {
         return getPartitionNameTxnByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
@@ -413,6 +405,49 @@ public class TxReader implements Closeable, Mutable {
 
     public boolean isPartitionReadOnlyByRawIndex(int indexRaw) {
         return checkPartitionOptionBit(indexRaw, PARTITION_MASK_READ_ONLY_BIT_OFFSET);
+    }
+
+    /**
+     * Copies all _txn values from the given reader.
+     */
+    public void loadAllFrom(TxReader srcReader) {
+        // The following three fields are temporary fields used when reading mmapped _txn file,
+        // so they're not mandatory to copy. Yet, we include them for the sake of copy completeness.
+        this.baseOffset = srcReader.baseOffset;
+        this.size = srcReader.size;
+        this.attachedPartitionsSize = srcReader.attachedPartitionsSize;
+
+        this.partitionBy = srcReader.partitionBy;
+        this.partitionFloorMethod = srcReader.partitionFloorMethod;
+        this.partitionCeilMethod = srcReader.partitionCeilMethod;
+
+        this.version = srcReader.version;
+        this.symbolsSize = srcReader.symbolsSize;
+        this.partitionSegmentSize = srcReader.partitionSegmentSize;
+
+        this.txn = srcReader.txn;
+        this.transientRowCount = srcReader.transientRowCount;
+        this.fixedRowCount = srcReader.fixedRowCount;
+        this.minTimestamp = srcReader.minTimestamp;
+        this.maxTimestamp = srcReader.maxTimestamp;
+        this.structureVersion = srcReader.structureVersion;
+        this.dataVersion = srcReader.dataVersion;
+        this.partitionTableVersion = srcReader.partitionTableVersion;
+        this.columnVersion = srcReader.columnVersion;
+        this.truncateVersion = srcReader.truncateVersion;
+        this.seqTxn = srcReader.seqTxn;
+        this.lagRowCount = srcReader.lagRowCount;
+        this.lagMinTimestamp = srcReader.lagMinTimestamp;
+        this.lagMaxTimestamp = srcReader.lagMaxTimestamp;
+        this.lagOrdered = srcReader.lagOrdered;
+        this.lagTxnCount = srcReader.lagTxnCount;
+        this.symbolColumnCount = srcReader.symbolColumnCount;
+
+        symbolCountSnapshot.clear();
+        symbolCountSnapshot.addAll(srcReader.symbolCountSnapshot);
+
+        attachedPartitions.clear();
+        attachedPartitions.addAll(srcReader.attachedPartitions);
     }
 
     public TxReader ofRO(@Transient LPSZ path, int partitionBy) {
@@ -595,13 +630,13 @@ public class TxReader implements Closeable, Mutable {
 
     private void clearData() {
         baseOffset = 0;
-        size = 0L;
-        partitionTableVersion = -1L;
+        size = 0;
+        partitionTableVersion = -1;
         attachedPartitionsSize = -1;
         attachedPartitions.clear();
-        version = -1L;
-        txn = -1L;
-        seqTxn = -1L;
+        version = -1;
+        txn = -1;
+        seqTxn = -1;
     }
 
     private int getInt(long readOffset) {

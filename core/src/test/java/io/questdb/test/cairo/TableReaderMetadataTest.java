@@ -50,7 +50,6 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class TableReaderMetadataTest extends AbstractCairoTest {
-
     private static final String stringColumnType = ColumnType.nameOf(ColumnType.STRING);
     private static final String varcharColumnType = ColumnType.nameOf(ColumnType.VARCHAR);
     private volatile Throwable exception = null;
@@ -216,10 +215,11 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
         String tableName = "all";
         try (
-                Path path = getMetaFilePath(root, tableName);
+                Path path = new Path();
                 TableReaderMetadata metadata = new TableReaderMetadata(configuration)
         ) {
-            metadata.load(path.$());
+            TableToken tableToken = engine.verifyTableName(tableName);
+            metadata.load(path.of(root).concat(tableToken).concat(TableUtils.META_FILE_NAME).$());
             for (ObjIntHashMap.Entry<String> e : expected) {
                 Assert.assertEquals(e.value, metadata.getColumnIndexQuiet(e.key));
             }
@@ -249,6 +249,28 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     @Test
     public void testFreeNullAddressAsIndex() {
         TableUtils.freeTransitionIndex(0);
+    }
+
+    @Test
+    public void testLoadFrom() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            CreateTableTestUtils.createAllTableWithNewTypes(engine, PartitionBy.HOUR);
+            final String tableName = "all2";
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            try (
+                    TableReaderMetadata ogMeta = new TableReaderMetadata(configuration, tableToken);
+                    TableReaderMetadata copyMeta = new TableReaderMetadata(configuration, tableToken);
+            ) {
+                ogMeta.load();
+                copyMeta.loadFrom(ogMeta);
+                assertEquals(ogMeta, copyMeta);
+
+                // Transition should also be possible.
+                Assert.assertTrue(copyMeta.prepareTransition(ogMeta.getMetadataVersion()));
+                copyMeta.applyTransition();
+                assertEquals(ogMeta, copyMeta);
+            }
+        });
     }
 
     @Test
@@ -303,7 +325,6 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "varchar:" + varcharColumnType + "\n" +
                 "str:" + stringColumnType + "\n" +
                 "short:INT\n";
-
         assertThat(expected,
                 w -> w.removeColumn("short"),
                 w -> w.removeColumn("str"),
@@ -430,7 +451,6 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "bin:BINARY\n" +
                 "date:DATE\n" +
                 "varchar:" + varcharColumnType + "\n";
-
         assertThat(expected,
                 w -> w.removeColumn("double"),
                 w -> w.removeColumn("str"));
@@ -453,10 +473,24 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         assertThat(expected, (w) -> w.renameColumn("str", "str1"));
     }
 
+    private static void assertEquals(TableReaderMetadata ogMeta, TableReaderMetadata copyMeta) {
+        Assert.assertEquals(ogMeta.getMetadataVersion(), copyMeta.getMetadataVersion());
+        Assert.assertEquals(ogMeta.getTableId(), copyMeta.getTableId());
+        Assert.assertEquals(ogMeta.getTableToken(), copyMeta.getTableToken());
+        Assert.assertEquals(ogMeta.getPartitionBy(), copyMeta.getPartitionBy());
+        Assert.assertEquals(ogMeta.isWalEnabled(), copyMeta.isWalEnabled());
+        Assert.assertEquals(ogMeta.getMaxUncommittedRows(), copyMeta.getMaxUncommittedRows());
+        Assert.assertEquals(ogMeta.getO3MaxLag(), copyMeta.getO3MaxLag());
+        Assert.assertEquals(ogMeta.getTtlHoursOrMonths(), copyMeta.getTtlHoursOrMonths());
+        Assert.assertEquals(ogMeta.getColumnCount(), copyMeta.getColumnCount());
 
-    private static Path getMetaFilePath(final CharSequence root, final CharSequence tableName) {
-        TableToken tableToken = engine.verifyTableName(tableName);
-        return new Path().of(root).concat(tableToken).concat(TableUtils.META_FILE_NAME);
+        for (int i = 0, n = ogMeta.getColumnCount(); i < n; i++) {
+            Assert.assertEquals(ogMeta.getColumnName(i), copyMeta.getColumnName(i));
+            Assert.assertEquals(ogMeta.getColumnType(i), copyMeta.getColumnType(i));
+            Assert.assertEquals(ogMeta.isDedupKey(i), copyMeta.isDedupKey(i));
+            Assert.assertEquals(ogMeta.isIndexed(i), copyMeta.isIndexed(i));
+            Assert.assertEquals(ogMeta.isSymbolTableStatic(i), copyMeta.isSymbolTableStatic(i));
+        }
     }
 
     private void assertThat(String expected, ColumnManipulator... manipulators) throws Exception {
