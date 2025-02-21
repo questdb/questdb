@@ -472,10 +472,10 @@ public class ArrayTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4], [5, 6]] arr FROM long_sequence(1))");
             assertExceptionNoLeakCheck("SELECT arr[0:] FROM tango",
-                    10, "too few arguments for '[]' [found=1,expected=2]"
+                    12, "too few arguments for ':' [found=1,expected=2]"
             );
             assertExceptionNoLeakCheck("SELECT arr[0:, 0:1] FROM tango",
-                    10, "too few arguments for '[]' [found=2,expected=3]"
+                    12, "too few arguments for ':' [found=1,expected=2]"
             );
             assertExceptionNoLeakCheck("SELECT arr[:0] FROM tango",
                     11, "undefined bind variable: :0"
