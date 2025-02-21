@@ -2493,7 +2493,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     }
                                 }
 
-                                if (isArray && sigArgType == ColumnType.DOUBLE) {
+                                if (isArray && !isConstant && sigArgType == ColumnType.DOUBLE) {
                                     args.add(new DoubleArray2dConstant(new double[][]{{1}, {1}}));
                                 } else if (factory instanceof SwitchFunctionFactory) {
                                     args.add(new IntConstant(1));
