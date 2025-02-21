@@ -505,6 +505,16 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSliceTransposeCombinations() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0,2.0],[3.0,4.0],[5.0,6.0]] arr FROM long_sequence(1))");
+            assertSql("x\n[[3.0,4.0]]\n", "SELECT arr[1:2] x FROM tango");
+            assertSql("x\n[[3.0],[4.0]]\n", "SELECT t(arr[1:2]) x FROM tango");
+            assertSql("x\n[[2.0,4.0,6.0]]\n", "SELECT t(arr)[1:2] x FROM tango");
+        });
+    }
+
+    @Test
     public void testTransposeArray() throws Exception {
         assertMemoryLeak(() -> {
             String original = "[[1.0,2.0],[3.0,4.0],[5.0,6.0]]";
