@@ -511,8 +511,8 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("x\n[[3.0,4.0]]\n", "SELECT arr[1:2] x FROM tango");
             assertSql("x\n[[3.0],[4.0]]\n", "SELECT t(arr[1:2]) x FROM tango");
             assertSql("x\n[[2.0,4.0,6.0]]\n", "SELECT t(arr)[1:2] x FROM tango");
-            assertSql("x\n[4.0]\n", "SELECT (arr[1])[1:2] x FROM tango");
             assertSql("x\n4.0\n", "SELECT arr[1][1] x FROM tango");
+            assertSql("x\n[4.0]\n", "SELECT arr[1][1:2] x FROM tango");
             assertSql("x\n[5.0,6.0]\n", "SELECT arr[1:3][1] x FROM tango");
         });
     }
@@ -528,6 +528,19 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("original\n" + original + '\n', "SELECT arr original FROM tango");
             assertSql("transposed\n" + transposed + "\n", "SELECT t(arr) transposed FROM tango");
             assertSql("twice_transposed\n" + original + '\n', "SELECT t(t(arr)) twice_transposed FROM tango");
+        });
+    }
+
+    @Test
+    public void testTransposeSubArray() throws Exception {
+        assertMemoryLeak(() -> {
+            String original = "[[[1.0,2.0],[3.0,4.0],[5.0,6.0]]]";
+            String subTransposed = "[[1.0,3.0,5.0],[2.0,4.0,6.0]]";
+            assertSql("transposed\n" + subTransposed + "\n",
+                    "SELECT t(ARRAY" + original + "[0]) transposed FROM long_sequence(1)");
+            execute("CREATE TABLE tango AS (SELECT ARRAY" + original + " arr FROM long_sequence(1))");
+            assertSql("original\n" + original + '\n', "SELECT arr original FROM tango");
+            assertSql("transposed\n" + subTransposed + "\n", "SELECT t(arr[0]) transposed FROM tango");
         });
     }
 
