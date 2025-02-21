@@ -67,7 +67,6 @@ public class DoubleArrayTransposeFunctionFactory implements FunctionFactory {
         @Override
         public void close() {
             arrayFunc.close();
-            borrowedView.close();
         }
 
         @Override

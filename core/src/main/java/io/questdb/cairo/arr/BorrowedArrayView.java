@@ -27,9 +27,7 @@ package io.questdb.cairo.arr;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.std.DirectIntList;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
+import io.questdb.std.IntList;
 
 /**
  * A view over a native-memory array. Does not own the backing native memory.
@@ -37,12 +35,12 @@ import io.questdb.std.Misc;
  * You can change what slice of the underlying flat array it represents, as well as
  * transpose it.
  */
-public class BorrowedArrayView implements ArrayView, AutoCloseable {
+public class BorrowedArrayView implements ArrayView {
+    private final IntList shape = new IntList(0);
+    private final IntList strides = new IntList(0);
     private FlatArrayView flatView;
     private int flatViewLength;
     private int flatViewOffset;
-    private DirectIntList shape = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG1);
-    private DirectIntList strides = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG1);
     // Encoded array type, contains element type class, type precision, and dimensionality
     private int type = ColumnType.UNDEFINED;
 
@@ -51,10 +49,6 @@ public class BorrowedArrayView implements ArrayView, AutoCloseable {
         appendToMemRecursive(0, 0, mem);
     }
 
-    @Override
-    public void close() {
-        this.shape = Misc.free(shape);
-        this.strides = Misc.free(strides);
     }
 
     @Override
@@ -64,7 +58,7 @@ public class BorrowedArrayView implements ArrayView, AutoCloseable {
 
     @Override
     public int getDimCount() {
-        return (int) shape.size();
+        return shape.size();
     }
 
     @Override
