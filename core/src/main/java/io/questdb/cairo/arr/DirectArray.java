@@ -47,6 +47,7 @@ public class DirectArray implements ArrayView, ArraySink, Mutable, QuietCloseabl
     private final BorrowedFlatArrayView flatView = new BorrowedFlatArrayView();
     private long capacity;
     private int flatViewLength = 0;
+    private int maxArrayElementCount;
     private long ptr = 0;
     private int[] shape;
     private int[] strides;
@@ -54,6 +55,12 @@ public class DirectArray implements ArrayView, ArraySink, Mutable, QuietCloseabl
 
     public DirectArray(CairoConfiguration configuration) {
         this.configuration = configuration;
+        this.maxArrayElementCount = configuration.maxArrayElementCount();
+    }
+
+    public DirectArray(int maxArrayElementCount) {
+        this.configuration = null;
+        this.maxArrayElementCount = maxArrayElementCount;
     }
 
     @Override
@@ -65,7 +72,7 @@ public class DirectArray implements ArrayView, ArraySink, Mutable, QuietCloseabl
     public void applyShape(int errorPosition) {
         assert strides.length == shape.length;
 
-        int maxArrayElementCount = configuration.maxArrayElementCount();
+        int maxArrayElementCount = configuration != null ? configuration.maxArrayElementCount() : this.maxArrayElementCount;
         int flatElemCount = 1;
         for (int i = 0, n = shape.length; i < n; i++) {
             flatElemCount *= shape[i];
