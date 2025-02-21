@@ -68,7 +68,7 @@ public class DoubleArraySliceFunctionFactory implements FunctionFactory {
 
         public SliceDoubleArrayFunction(Function arrayFn, ObjList<Function> rangeFns, IntList argPositions) {
             this.arrayFn = arrayFn;
-            this.rangeFns = rangeFns;
+            this.rangeFns = new ObjList<>(rangeFns);
             this.argPositions = argPositions;
             this.type = arrayFn.getType();
         }

@@ -80,7 +80,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
 
         DoubleArrayAccessFunction(Function arrayFn, ObjList<Function> indexFns, IntList indexArgPositions) {
             this.arrayFn = arrayFn;
-            this.indexFns = indexFns;
+            this.indexFns = new ObjList<>(indexFns);
             this.indexArgPositions = indexArgPositions;
         }
 
@@ -133,7 +133,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         private DoubleSubArrayFunction(Function arrayFn, ObjList<Function> indexFns, IntList indexArgPositions) {
             this.arrayFn = arrayFn;
             this.indexArgPositions = indexArgPositions;
-            this.indexFns = indexFns;
+            this.indexFns = new ObjList<>(indexFns);
             int nDimsOriginal = ColumnType.decodeArrayDimensionality(arrayFn.getType());
             this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDimsOriginal - indexFns.size());
         }
