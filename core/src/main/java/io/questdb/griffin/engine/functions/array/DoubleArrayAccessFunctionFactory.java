@@ -155,7 +155,10 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             for (int n = indexFns.size(), i = 0; i < n; i++) {
                 Function indexFn = indexFns.getQuick(i);
                 int arrayIndex = indexFn.getInt(rec);
-                borrowedView.asSubArrayAt(arrayIndex, indexArgPositions.get(i));
+                borrowedView.slice(i, arrayIndex, arrayIndex + 1, indexArgPositions.get(i));
+            }
+            for (int n = indexFns.size(), i = 0; i < n; i++) {
+                borrowedView.flattenDim(0);
             }
             return borrowedView;
         }

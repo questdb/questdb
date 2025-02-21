@@ -94,7 +94,7 @@ public class DoubleArraySliceFunctionFactory implements FunctionFactory {
                 int lo = (int) loLong;
                 int hi = (int) hiLong;
                 assert lo == loLong && hi == hiLong : "int overflow on interval bounds: " + loLong + ", " + hiLong;
-                borrowedView.sliceOneDim(i, lo, hi, argPositions.get(i));
+                borrowedView.slice(i, lo, hi, argPositions.get(i));
             }
             return borrowedView;
         }

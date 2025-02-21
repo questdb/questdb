@@ -49,20 +49,25 @@ public class BorrowedArrayView implements ArrayView {
         appendToMemRecursive(0, 0, mem);
     }
 
-    public void asSubArrayAt(int index, int argPos) {
-        if (index >= getDimLen(0)) {
-            throw CairoException.nonCritical().position(argPos)
-                    .put("array index out of range [index=").put(index)
-                    .put(", length=").put(getDimLen(0)).put(']');
-        }
-        flatViewOffset += index * strides.get(0);
-        shape.removeIndex(0);
-        strides.removeIndex(0);
-    }
-
     @Override
     public FlatArrayView flatView() {
         return flatView;
+    }
+
+    public void flattenDim(int dim) {
+        final int nDims = getDimCount();
+        assert dim < nDims;
+        final int dimToFlattenInto;
+        if (dim == 0) {
+            dimToFlattenInto = 1;
+        } else if (dim == nDims - 1) {
+            dimToFlattenInto = dim - 1;
+        } else {
+            dimToFlattenInto = getStride(dim - 1) < getStride(dim + 1) ? dim - 1 : dim + 1;
+        }
+        shape.set(dimToFlattenInto, shape.get(dimToFlattenInto) * shape.get(dim));
+        shape.removeIndex(dim);
+        strides.removeIndex(dim);
     }
 
     @Override
@@ -119,14 +124,6 @@ public class BorrowedArrayView implements ArrayView {
     }
 
     /**
-     * Set to a null array.
-     */
-    public void ofNull() {
-        reset();
-        type = ColumnType.NULL;
-    }
-
-    /**
      * Reset to an invalid array.
      */
     public void reset() {
@@ -137,32 +134,32 @@ public class BorrowedArrayView implements ArrayView {
         this.flatViewLength = 0;
     }
 
-    public void sliceOneDim(int dim, int left, int right, int argPos) {
+    public void slice(int dim, int lo, int hi, int argPos) {
         if (dim < 0 || dim >= getDimCount()) {
             throw CairoException.nonCritical().position(argPos)
                     .put("array dimension doesn't exist [dim=").put(dim)
                     .put(", nDims=").put(getDimCount()).put(']');
         }
         int dimLen = getDimLen(dim);
-        if (left >= right) {
+        if (lo >= hi) {
             throw CairoException.nonCritical()
                     .position(argPos)
                     .put("lower bound is not less than upper bound [dim=").put(dim)
-                    .put(", lowerBound=").put(left)
-                    .put(", upperBound=").put(right)
+                    .put(", lowerBound=").put(lo)
+                    .put(", upperBound=").put(hi)
                     .put(']');
         }
-        if (left < 0 || left >= dimLen || right > dimLen) {
+        if (lo < 0 || lo >= dimLen || hi > dimLen) {
             throw CairoException.nonCritical()
                     .position(argPos)
                     .put("array slice bounds out of range [dim=").put(dim)
                     .put(", dimLen=").put(dimLen)
-                    .put(", lowerBound=").put(left)
-                    .put(", upperBound=").put(right)
+                    .put(", lowerBound=").put(lo)
+                    .put(", upperBound=").put(hi)
                     .put(']');
         }
-        flatViewOffset += left * getStride(dim);
-        shape.set(dim, right - left);
+        flatViewOffset += lo * getStride(dim);
+        shape.set(dim, hi - lo);
     }
 
     public void transpose() {
