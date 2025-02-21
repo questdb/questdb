@@ -36,7 +36,7 @@ import io.questdb.std.Unsafe;
 import static io.questdb.cairo.arr.ArrayMetaUtils.validateShapeAndGetFlatElemCount;
 import static io.questdb.cairo.arr.ArrayTypeDriver.bytesToSkipForAlignment;
 
-public class MmappedArrayView implements ArrayView, QuietCloseable {
+public class MmappedArray implements ArrayView, QuietCloseable {
     private final DirectIntList cachedDefaultStrides = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG1);
     private final BorrowedFlatArrayView flatView = new BorrowedFlatArrayView();
     private final DirectIntSlice shapeView = new DirectIntSlice();
@@ -85,7 +85,7 @@ public class MmappedArrayView implements ArrayView, QuietCloseable {
         return type;
     }
 
-    public MmappedArrayView of(
+    public MmappedArray of(
             int columnType,
             long auxAddr,
             long auxLim,
