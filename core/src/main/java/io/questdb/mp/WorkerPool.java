@@ -25,7 +25,6 @@
 package io.questdb.mp;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.arr.ArrayRowMajorTraversal;
 import io.questdb.log.Log;
 import io.questdb.metrics.WorkerMetrics;
 import io.questdb.std.Misc;
@@ -217,8 +216,6 @@ public class WorkerPool implements Closeable {
         for (int i = 0; i < workerCount; i++) {
             ObjList<Closeable> workerCleaners = threadLocalCleaners.getQuick(i);
             workerCleaners.add(Path.THREAD_LOCAL_CLEANER);
-            // todo: these cleaners are in a wrong place, method name should be used as a clue
-            workerCleaners.add(ArrayRowMajorTraversal.THREAD_LOCAL_CLEANER);
         }
     }
 }
