@@ -45,8 +45,10 @@ public class ArrayTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0,2.0],[3.0,4.0],[5.0,6.0]] arr FROM long_sequence(1))");
             assertSql("x\n[[3.0,4.0]]\n", "SELECT arr[1:2] x FROM tango");
+            assertSql("x\n[3.0,4.0]\n", "SELECT arr[1] x FROM tango");
             assertSql("x\n[[3.0],[4.0]]\n", "SELECT t(arr[1:2]) x FROM tango");
-            assertSql("x\n[[2.0,4.0,6.0]]\n", "SELECT t(arr)[1:2] x FROM tango");
+            assertSql("x\n[[3.0],[4.0]]\n", "SELECT t(arr[1:2]) x FROM tango");
+            assertSql("x\n[2.0,4.0,6.0]\n", "SELECT t(arr)[1] x FROM tango");
             assertSql("x\n4.0\n", "SELECT arr[1][1] x FROM tango");
             assertSql("x\n[4.0]\n", "SELECT arr[1][1:2] x FROM tango");
             assertSql("x\n[5.0,6.0]\n", "SELECT arr[1:3][1] x FROM tango");
@@ -515,6 +517,25 @@ public class ArrayTest extends AbstractCairoTest {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4], [5, 6]] arr FROM long_sequence(1))");
             // transposed array: [[1,3,5],[2,4,6]]; slice takes first row, and first two elements from it
             assertSql("slice\n[[1.0,3.0]]\n", "SELECT t(arr)[0:1, 0:2] slice FROM tango");
+        });
+    }
+
+    @Test
+    public void testSubArrayInvalid() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[[1.0, 2], [3, 4]], [[5, 6], [7, 8]]] arr FROM long_sequence(1))");
+            assertExceptionNoLeakCheck("SELECT arr[-1] FROM tango",
+                    11, "array slice bounds out of range [dim=0, dimLen=2, lowerBound=-1, upperBound=0]"
+            );
+            assertExceptionNoLeakCheck("SELECT arr[2] FROM tango",
+                    11, "array slice bounds out of range [dim=0, dimLen=2, lowerBound=2, upperBound=3]"
+            );
+            assertExceptionNoLeakCheck("SELECT arr[1, -1] FROM tango",
+                    14, "array slice bounds out of range [dim=1, dimLen=2, lowerBound=-1, upperBound=0]"
+            );
+            assertExceptionNoLeakCheck("SELECT arr[1, 2] FROM tango",
+                    14, "array slice bounds out of range [dim=1, dimLen=2, lowerBound=2, upperBound=3]"
+            );
         });
     }
 
