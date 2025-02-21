@@ -27,9 +27,7 @@ package io.questdb.cairo.arr;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.std.DirectIntList;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
+import io.questdb.std.IntList;
 
 /**
  * A view over a native-memory array. Does not own the backing native memory.
@@ -37,12 +35,12 @@ import io.questdb.std.Misc;
  * You can change what slice of the underlying flat array it represents, as well as
  * transpose it.
  */
-public class BorrowedArrayView implements ArrayView, AutoCloseable {
+public class BorrowedArrayView implements ArrayView {
+    private final IntList shape = new IntList(0);
+    private final IntList strides = new IntList(0);
     private FlatArrayView flatView;
     private int flatViewLength;
     private int flatViewOffset;
-    private DirectIntList shape = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG1);
-    private DirectIntList strides = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG1);
     // Encoded array type, contains element type class, type precision, and dimensionality
     private int type = ColumnType.UNDEFINED;
 
@@ -51,10 +49,15 @@ public class BorrowedArrayView implements ArrayView, AutoCloseable {
         appendToMemRecursive(0, 0, mem);
     }
 
-    @Override
-    public void close() {
-        this.shape = Misc.free(shape);
-        this.strides = Misc.free(strides);
+    public void asSubArrayAt(int index, int argPos) {
+        if (index >= getDimLen(0)) {
+            throw CairoException.nonCritical().position(argPos)
+                    .put("array index out of range [index=").put(index)
+                    .put(", length=").put(getDimLen(0)).put(']');
+        }
+        flatViewOffset += index * strides.get(0);
+        shape.removeIndex(0);
+        strides.removeIndex(0);
     }
 
     @Override
@@ -64,7 +67,7 @@ public class BorrowedArrayView implements ArrayView, AutoCloseable {
 
     @Override
     public int getDimCount() {
-        return (int) shape.size();
+        return shape.size();
     }
 
     @Override
@@ -173,7 +176,7 @@ public class BorrowedArrayView implements ArrayView, AutoCloseable {
         final boolean atDeepestDim = dim == getDimCount() - 1;
         if (atDeepestDim) {
             for (int i = 0; i < count; i++) {
-                mem.putDouble(flatView.getDouble(flatIndex));
+                mem.putDouble(flatView.getDouble(flatViewOffset + flatIndex));
                 flatIndex += stride;
             }
         } else {

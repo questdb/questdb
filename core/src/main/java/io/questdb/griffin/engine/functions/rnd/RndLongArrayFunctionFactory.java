@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.functions.rnd;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.DirectArrayView;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -67,12 +67,12 @@ public class RndLongArrayFunctionFactory implements FunctionFactory {
         private static final int MAX_DIM_LEN = 16;
         private final int functionPosition;
         private final int nDims;
-        private DirectArrayView array;
+        private DirectArray array;
         private Rnd rnd;
 
         public RndLongArrayFunction(CairoConfiguration configuration, int nDims, int functionPosition) {
             this.nDims = nDims;
-            this.array = new DirectArrayView(configuration);
+            this.array = new DirectArray(configuration);
             this.array.setType(ColumnType.encodeArrayType(ColumnType.LONG, nDims));
             this.functionPosition = functionPosition;
         }

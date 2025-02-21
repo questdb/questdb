@@ -29,7 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
-import io.questdb.cairo.arr.DirectArrayView;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256Impl;
@@ -69,7 +69,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
     private static final ThreadLocal<TestRecord.ArrayBinarySequence> tlBinSeq = new ThreadLocal<>(TestRecord.ArrayBinarySequence::new);
     private static final ThreadLocal<IntList> tlIntList = new ThreadLocal<>(IntList::new);
     private static final ThreadLocal<Utf8StringSink> tlUtf8 = new ThreadLocal<>(Utf8StringSink::new);
-    private final DirectArrayView array;
+    private final DirectArray array;
     private final double cancelRows;
     private final double notSet;
     private final double nullSet;
@@ -98,7 +98,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
         this.timestamp = timestamp;
         this.notSet = notSet;
         this.nullSet = nullSet;
-        this.array = new DirectArrayView(cairoConfiguration);
+        this.array = new DirectArray(cairoConfiguration);
     }
 
     @Override

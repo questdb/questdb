@@ -381,22 +381,23 @@ public class ExpressionParser {
                         thisBranch = BRANCH_LEFT_BRACKET;
                         boolean isArrayConstructor = withinArrayConstructor() && !isCompletedOperand(prevBranch);
 
+                        // pop left literal or . expression, e.g. "a.b[i]" and push to the output queue.
+                        // the precedence of '[' is fixed to 2
+                        ExpressionNode other;
+                        while ((other = opStack.peek()) != null && (other.type == ExpressionNode.LITERAL ||
+                                other.type == ExpressionNode.ARRAY_CONSTRUCTOR ||
+                                other.type == ExpressionNode.ARRAY_ACCESS)
+                        ) {
+                            argStackDepth = onNode(listener, other, argStackDepth, false);
+                            opStack.pop();
+                        }
+
                         // entering bracketed context, push stuff onto the stacks
                         paramCountStack.push(paramCount);
                         paramCount = 0;
                         argStackDepthStack.push(argStackDepth);
                         argStackDepth = 0;
                         scopeStack.push(Scope.BRACKET);
-
-                        // pop left literal or . expression, e.g. "a.b[i]" and push to the output queue.
-                        // the precedence of '[' is fixed to 2
-                        ExpressionNode other;
-                        while ((other = opStack.peek()) != null &&
-                                (other.type == ExpressionNode.LITERAL || other.type == ExpressionNode.ARRAY_CONSTRUCTOR)
-                        ) {
-                            argStackDepth = onNode(listener, other, argStackDepth, false);
-                            opStack.pop();
-                        }
 
                         // precedence must be max value to make sure control node isn't
                         // consumed as parameter to a greedy function
@@ -810,7 +811,7 @@ public class ExpressionParser {
                             scopeStack.push(Scope.ARRAY);
                             opStack.push(expressionNodePool.next().of(ExpressionNode.CONTROL,
                                     "[[", Integer.MAX_VALUE, lexer.lastTokenPosition()));
-                        } else if ((prevBranch == BRANCH_LITERAL || prevBranch == BRANCH_CONSTANT || prevBranch == BRANCH_RIGHT_PARENTHESIS) && SqlKeywords.isAtKeyword(tok)) {
+                        } else if (isCompletedOperand(prevBranch) && SqlKeywords.isAtKeyword(tok)) {
                             int pos = lexer.getPosition();
                             // '.' processing expects floating char sequence
                             CharSequence atTok = GenericLexer.immutableOf(tok);

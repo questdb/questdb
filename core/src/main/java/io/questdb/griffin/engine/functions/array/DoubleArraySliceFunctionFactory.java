@@ -36,6 +36,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class DoubleArraySliceFunctionFactory implements FunctionFactory {
@@ -61,24 +62,24 @@ public class DoubleArraySliceFunctionFactory implements FunctionFactory {
     private static class SliceDoubleArrayFunction extends ArrayFunction {
 
         private final IntList argPositions;
-        private final Function arrayFn;
         private final BorrowedArrayView borrowedView = new BorrowedArrayView();
         private final ObjList<Function> rangeFns;
+        private Function arrayFn;
 
         public SliceDoubleArrayFunction(Function arrayFn, ObjList<Function> rangeFns, IntList argPositions) {
             this.arrayFn = arrayFn;
-            this.rangeFns = rangeFns;
+            this.rangeFns = new ObjList<>(rangeFns);
             this.argPositions = argPositions;
             this.type = arrayFn.getType();
         }
 
         @Override
         public void close() {
-            arrayFn.close();
-            borrowedView.close();
+            this.arrayFn = Misc.free(this.arrayFn);
             for (int n = rangeFns.size(), i = 0; i < n; i++) {
                 rangeFns.getQuick(i).close();
             }
+            rangeFns.clear();
         }
 
         @Override

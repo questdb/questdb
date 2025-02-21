@@ -29,7 +29,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.MmappedArrayView;
+import io.questdb.cairo.arr.MmappedArray;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCR;
@@ -60,7 +60,7 @@ import org.jetbrains.annotations.Nullable;
 public class PageFrameMemoryRecord implements Record, StableStringSource, QuietCloseable, Mutable {
     public static final byte RECORD_A_LETTER = 0;
     public static final byte RECORD_B_LETTER = 1;
-    private final ObjList<MmappedArrayView> arrayBuffers = new ObjList<>();
+    private final ObjList<MmappedArray> arrayBuffers = new ObjList<>();
     private final ObjList<MemoryCR.ByteSequenceView> bsViews = new ObjList<>();
     private final ObjList<DirectString> csViewsA = new ObjList<>();
     private final ObjList<DirectString> csViewsB = new ObjList<>();
@@ -126,7 +126,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             final long auxPageLim = auxPageAddress + auxPageSizes.getQuick(columnIndex);
             final long dataPageAddress = pageAddresses.getQuick(columnIndex);
             final long dataPageLim = dataPageAddress + pageSizes.getQuick(columnIndex);
-            final MmappedArrayView array = ensureMmappedArray(arrayBuffers, columnIndex);
+            final MmappedArray array = ensureMmappedArray(arrayBuffers, columnIndex);
             return array.of(
                     columnType,
                     auxPageAddress,
@@ -482,10 +482,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.rowIndex = rowIndex;
     }
 
-    private static @NotNull MmappedArrayView ensureMmappedArray(ObjList<MmappedArrayView> arrays, int columnIndex) {
-        MmappedArrayView array = arrays.getQuiet(columnIndex);
+    private static @NotNull MmappedArray ensureMmappedArray(ObjList<MmappedArray> arrays, int columnIndex) {
+        MmappedArray array = arrays.getQuiet(columnIndex);
         if (array == null) {
-            array = new MmappedArrayView();
+            array = new MmappedArray();
             arrays.extendAndSet(columnIndex, array);
         }
         return array;

@@ -83,6 +83,7 @@ import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.ByteConstant;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.constants.DateConstant;
+import io.questdb.griffin.engine.functions.constants.DoubleArray2dConstant;
 import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.griffin.engine.functions.constants.FloatConstant;
 import io.questdb.griffin.engine.functions.constants.GeoByteConstant;
@@ -2492,7 +2493,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     }
                                 }
 
-                                if (factory instanceof SwitchFunctionFactory) {
+                                if (isArray && !isConstant && sigArgType == ColumnType.DOUBLE) {
+                                    args.add(new DoubleArray2dConstant(new double[][]{{1}, {1}}));
+                                } else if (factory instanceof SwitchFunctionFactory) {
                                     args.add(new IntConstant(1));
                                     args.add(new IntConstant(2));
                                     args.add(new StrConstant("a"));

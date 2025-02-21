@@ -227,6 +227,15 @@ public class IntList implements Mutable, Sinkable {
         pos = 0;
     }
 
+    public void reverse() {
+        final int len = size();
+        for (int index = 0, mid = len / 2; index < mid; ++index) {
+            final int temp = get(index);
+            set(index, get(len - index - 1));
+            set(len - index - 1, temp);
+        }
+    }
+
     public void set(int index, int element) {
         if (index < pos) {
             data[index] = element;

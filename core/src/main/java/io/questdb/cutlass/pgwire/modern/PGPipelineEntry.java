@@ -106,14 +106,13 @@ import static io.questdb.cutlass.pgwire.modern.PGUtils.estimateColumnTxtSize;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
 
 public class PGPipelineEntry implements QuietCloseable, Mutable {
-    private static final Log LOG = LogFactory.getLog(PGPipelineEntry.class);
-
     // SYNC_DESC_ constants describe the state of the "describe" message
     // they have no relation to the state of SYNC message processing as such
     public static final int SYNC_DESC_NONE = 0;
     public static final int SYNC_DESC_PARAMETER_DESCRIPTION = 2;
     public static final int SYNC_DESC_ROW_DESCRIPTION = 1;
     private static final int ERROR_TAIL_MAX_SIZE = 23;
+    private static final Log LOG = LogFactory.getLog(PGPipelineEntry.class);
     // tableOid + column number + type + type size + type modifier + format code
     private static final int ROW_DESCRIPTION_COLUMN_RECORD_FIXED_SIZE = 3 * Short.BYTES + 3 * Integer.BYTES;
     private static final int SYNC_BIND = 1;
@@ -1666,6 +1665,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             return;
         }
 
+        int indexOffset = arrayView.getFlatViewOffset();
         int nDims = arrayView.getDimCount();
         int totalElements = 1;
         for (int i = 0; i < nDims; i++) {
@@ -1695,7 +1695,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 // Write array elements in row-major order, which is native to both
                 // PostgreSQL wire protocol and our ArrayView
                 for (int i = 0; i < totalElements; i++) {
-                    double d = arrayView.flatView().getDouble(i);
+                    double d = arrayView.flatView().getDouble(indexOffset + i);
                     if (Numbers.isNull(d)) {
                         hasNulls = true;
                         utf8Sink.setNullValue();
@@ -1707,7 +1707,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 break;
             case ColumnType.LONG:
                 for (int i = 0; i < totalElements; i++) {
-                    long l = arrayView.flatView().getLong(i);
+                    long l = arrayView.flatView().getLong(indexOffset + i);
                     if (l == Numbers.LONG_NULL) {
                         hasNulls = true;
                         utf8Sink.setNullValue();

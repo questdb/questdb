@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.arr.ArrayState;
 import io.questdb.cairo.arr.ArrayTypeDriver;
-import io.questdb.cairo.arr.DirectArrayView;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.NoopArrayState;
 import io.questdb.std.NanosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -66,7 +66,7 @@ public class ArrayBufferOverflowTest extends AbstractTest {
 
     @Test
     public void testArrayToTextContinuity() {
-        try (DirectArrayView arrayView = new DirectArrayView(configuration)) {
+        try (DirectArray arrayView = new DirectArray(configuration)) {
             var rnd = TestUtils.generateRandom(LOG);
             rnd.nextDoubleArray(Math.max(1, rnd.nextInt(4)), arrayView, 1, 10, 0);
             var sinkActual = new StringSink();

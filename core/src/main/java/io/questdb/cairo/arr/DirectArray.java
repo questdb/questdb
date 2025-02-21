@@ -38,7 +38,7 @@ import java.util.Arrays;
 /**
  * Mutable array that owns its backing native memory.
  */
-public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietCloseable {
+public class DirectArray implements ArrayView, ArraySink, Mutable, QuietCloseable {
     private static final long DOUBLE_BYTES = 8;
     private static final int[] EMPTY_INTS = new int[0];
     private static final long LONG_BYTES = 8;
@@ -47,13 +47,20 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
     private final BorrowedFlatArrayView flatView = new BorrowedFlatArrayView();
     private long capacity;
     private int flatViewLength = 0;
+    private int maxArrayElementCount;
     private long ptr = 0;
     private int[] shape;
     private int[] strides;
     private int type = ColumnType.UNDEFINED;
 
-    public DirectArrayView(CairoConfiguration configuration) {
+    public DirectArray(CairoConfiguration configuration) {
         this.configuration = configuration;
+        this.maxArrayElementCount = configuration.maxArrayElementCount();
+    }
+
+    public DirectArray(int maxArrayElementCount) {
+        this.configuration = null;
+        this.maxArrayElementCount = maxArrayElementCount;
     }
 
     @Override
@@ -65,7 +72,7 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
     public void applyShape(int errorPosition) {
         assert strides.length == shape.length;
 
-        int maxArrayElementCount = configuration.maxArrayElementCount();
+        int maxArrayElementCount = configuration != null ? configuration.maxArrayElementCount() : this.maxArrayElementCount;
         int flatElemCount = 1;
         for (int i = 0, n = shape.length; i < n; i++) {
             flatElemCount *= shape[i];

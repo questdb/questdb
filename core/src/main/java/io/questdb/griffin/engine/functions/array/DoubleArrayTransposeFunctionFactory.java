@@ -35,6 +35,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class DoubleArrayTransposeFunctionFactory implements FunctionFactory {
@@ -56,8 +57,8 @@ public class DoubleArrayTransposeFunctionFactory implements FunctionFactory {
 
     private static class TransposeDoubleArrayFunction extends ArrayFunction {
 
-        private final Function arrayFunc;
         private final BorrowedArrayView borrowedView = new BorrowedArrayView();
+        private Function arrayFunc;
 
         public TransposeDoubleArrayFunction(Function arrayFunc) {
             this.arrayFunc = arrayFunc;
@@ -66,8 +67,7 @@ public class DoubleArrayTransposeFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            arrayFunc.close();
-            borrowedView.close();
+            this.arrayFunc = Misc.free(this.arrayFunc);
         }
 
         @Override

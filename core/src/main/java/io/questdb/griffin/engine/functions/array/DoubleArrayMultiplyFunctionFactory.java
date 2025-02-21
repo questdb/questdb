@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.DirectArrayView;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
@@ -61,10 +62,10 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
 
     private static class MultiplyDoubleArrayFunction extends ArrayFunction implements BinaryFunction {
 
-        private final DirectArrayView arrayOut;
         private final int leftArgPos;
-        private final Function leftFn;
-        private final Function rightFn;
+        private DirectArray arrayOut;
+        private Function leftFn;
+        private Function rightFn;
 
         public MultiplyDoubleArrayFunction(
                 CairoConfiguration configuration,
@@ -75,7 +76,7 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
         ) throws SqlException {
             this.leftFn = leftFn;
             this.rightFn = rightFn;
-            this.arrayOut = new DirectArrayView(configuration);
+            this.arrayOut = new DirectArray(configuration);
             this.leftArgPos = leftArgPos;
             int nDimsLeft = ColumnType.decodeArrayDimensionality(leftFn.getType());
             int nDimsRight = ColumnType.decodeArrayDimensionality(rightFn.getType());
@@ -91,9 +92,9 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            leftFn.close();
-            rightFn.close();
-            arrayOut.close();
+            this.leftFn = Misc.free(this.leftFn);
+            this.rightFn = Misc.free(this.rightFn);
+            this.arrayOut = Misc.free(this.arrayOut);
         }
 
         @Override
@@ -116,6 +117,8 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
             int rightStride1 = right.getStride(1);
             FlatArrayView leftFlatView = left.flatView();
             FlatArrayView rightFlatView = right.flatView();
+            int leftIndexOffset = left.getFlatViewOffset();
+            int rightIndexOffset = right.getFlatViewOffset();
             arrayOut.clear();
             arrayOut.setDimLen(0, outRowCount);
             arrayOut.setDimLen(1, outColCount);
@@ -125,8 +128,8 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
                 for (int colOut = 0; colOut < outColCount; colOut++) {
                     double sum = 0;
                     for (int commonDim = 0; commonDim < commonDimLen; commonDim++) {
-                        int leftFlatIndex = leftStride0 * rowOut + leftStride1 * commonDim;
-                        int rightFlatIndex = rightStride0 * commonDim + rightStride1 * colOut;
+                        int leftFlatIndex = leftIndexOffset + leftStride0 * rowOut + leftStride1 * commonDim;
+                        int rightFlatIndex = rightIndexOffset + rightStride0 * commonDim + rightStride1 * colOut;
                         sum += leftFlatView.getDouble(leftFlatIndex) * rightFlatView.getDouble(rightFlatIndex);
                     }
                     arrayOut.putDouble(flatIndexOut++, sum);
