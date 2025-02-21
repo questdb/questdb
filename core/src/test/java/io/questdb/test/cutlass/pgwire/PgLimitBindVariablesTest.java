@@ -36,7 +36,6 @@ import io.questdb.std.Misc;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.sql.Connection;
@@ -60,7 +59,6 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
     }
 
     @Test
-    @Ignore
     public void testBindVariableLimitSignChange() throws Exception {
         assertMemoryLeak(() -> {
             createDummyConfiguration("pg.select.cache.enabled=true");
@@ -81,11 +79,14 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                                     resultSet
                             );
                         }
-                        assertLo(stmt, -1, "QUERY PLAN[VARCHAR]\n" +
-                                "Limit lo: 1\n" +
-                                "    PageFrame\n" +
-                                "        Row backward scan\n" +
-                                "        Frame backward scan on: tab\n");
+                        assertLo(
+                                stmt,
+                                -1,
+                                "QUERY PLAN[VARCHAR]\n" +
+                                        "Limit lo: -$0::int\n" +
+                                        "    PageFrame\n" +
+                                        "        Row backward scan\n" +
+                                        "        Frame backward scan on: tab\n");
                     }
 
                     try (final PreparedStatement stmt = connection.prepareStatement("SELECT * FROM tab LIMIT ?")) {
@@ -98,8 +99,12 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                                     resultSet
                             );
                         }
-                        assertLo(stmt, -1, "col1[VARCHAR],status[BIGINT],ts[TIMESTAMP]\n" +
-                                "Sym1,0,1970-01-01 00:00:29.9\n");
+                        assertLo(
+                                stmt,
+                                -1,
+                                "col1[VARCHAR],status[BIGINT],ts[TIMESTAMP]\n" +
+                                        "Sym0,0,1970-01-01 00:00:29.9\n"
+                        );
                     }
                 }
             }
