@@ -73,23 +73,23 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
 
     private static class DoubleArrayAccessFunction extends DoubleFunction {
 
-        private final Function arrayArg;
+        private final Function arrayFn;
         private final IntList indexArgPositions;
-        private final ObjList<Function> indexArgs;
+        private final ObjList<Function> indexFns;
 
-        DoubleArrayAccessFunction(Function arrayArg, ObjList<Function> indexArgs, IntList indexArgPositions) {
-            this.arrayArg = arrayArg;
-            this.indexArgs = indexArgs;
+        DoubleArrayAccessFunction(Function arrayFn, ObjList<Function> indexFns, IntList indexArgPositions) {
+            this.arrayFn = arrayFn;
+            this.indexFns = indexFns;
             this.indexArgPositions = indexArgPositions;
         }
 
         @Override
         public double getDouble(Record rec) {
-            ArrayView array = arrayArg.getArray(rec);
-            int nDims = indexArgs.size();
+            ArrayView array = arrayFn.getArray(rec);
+            int nDims = indexFns.size();
             int flatIndex = 0;
             for (int dim = 0; dim < nDims; dim++) {
-                int indexAtDim = indexArgs.getQuick(dim).getInt(rec);
+                int indexAtDim = indexFns.getQuick(dim).getInt(rec);
                 int strideAtDim = array.getStride(dim);
                 int dimLen = array.getDimLen(dim);
                 if (indexAtDim < 0 || indexAtDim >= dimLen) {
@@ -106,9 +106,9 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("[](").val(arrayArg);
-            for (int n = indexArgs.size(), i = 0; i < n; i++) {
-                sink.val(',').val(indexArgs.getQuick(i));
+            sink.val("[](").val(arrayFn);
+            for (int n = indexFns.size(), i = 0; i < n; i++) {
+                sink.val(',').val(indexFns.getQuick(i));
             }
             sink.val(')');
         }
