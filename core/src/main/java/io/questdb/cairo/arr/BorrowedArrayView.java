@@ -49,6 +49,15 @@ public class BorrowedArrayView implements ArrayView {
         appendToMemRecursive(0, 0, mem);
     }
 
+    public void asSubArrayAt(int index, int argPos) {
+        if (index >= getDimLen(0)) {
+            throw CairoException.nonCritical().position(argPos)
+                    .put("array index out of range [index=").put(index)
+                    .put(", length=").put(getDimLen(0)).put(']');
+        }
+        flatViewOffset += index * strides.get(0);
+        shape.removeIndex(0);
+        strides.removeIndex(0);
     }
 
     @Override

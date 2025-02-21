@@ -284,7 +284,8 @@ public class ArrayTest extends AbstractCairoTest {
     public void testMultiplyArrayTransposed() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4], [5, 6]] arr FROM long_sequence(1))");
-            assertSql("column\n[[5.0,11.0,17.0],[11.0,25.0,39.0],[17.0,39.0,61.0]]\n", "SELECT arr * t(arr) FROM tango");
+            assertSql("product\n[[5.0,11.0,17.0],[11.0,25.0,39.0],[17.0,39.0,61.0]]\n",
+                    "SELECT arr * t(arr) product FROM tango");
         });
     }
 
@@ -381,10 +382,8 @@ public class ArrayTest extends AbstractCairoTest {
     public void testSelectArrayElementsInvalid() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4]] arr FROM long_sequence(1))");
-            assertExceptionNoLeakCheck("SELECT arr[0] FROM tango",
-                    11, "wrong number of array coordinates [accessDims=1, arrayDims=2]");
             assertExceptionNoLeakCheck("SELECT arr[0, 0, 0] FROM tango",
-                    17, "wrong number of array coordinates [accessDims=3, arrayDims=2]");
+                    17, "too many array coordinates [accessDims=3, arrayDims=2]");
             assertExceptionNoLeakCheck("SELECT arr[-1, 0] FROM tango",
                     11, "array index out of range [dim=0, index=-1, dimLen=2]");
             assertExceptionNoLeakCheck("SELECT arr[2, 0] FROM tango",
@@ -426,6 +425,26 @@ public class ArrayTest extends AbstractCairoTest {
                     25, "mismatched array shape");
             assertExceptionNoLeakCheck("SELECT ARRAY[[[a], [a]], [a, a]] FROM tango",
                     25, "mismatched array shape");
+        });
+    }
+
+    @Test
+    public void testSelectSubArray3d() throws Exception {
+        assertMemoryLeak(() -> {
+            String subArr00 = "[1.0,2.0]";
+            String subArr01 = "[3.0,4.0]";
+            String subArr10 = "[5.0,6.0]";
+            String subArr11 = "[7.0,8.0]";
+            String subArr0 = "[" + subArr00 + "," + subArr01 + "]";
+            String subArr1 = "[" + subArr10 + "," + subArr11 + "]";
+            String fullArray = "[" + subArr0 + "," + subArr1 + "]";
+            execute("CREATE TABLE tango AS (SELECT ARRAY" + fullArray + " arr FROM long_sequence(1))");
+            assertSql("x\n" + subArr0 + "\n", "SELECT arr[0] x FROM tango");
+            assertSql("x\n" + subArr1 + "\n", "SELECT arr[1] x FROM tango");
+            assertSql("x\n" + subArr00 + "\n", "SELECT arr[0,0] x FROM tango");
+            assertSql("x\n" + subArr01 + "\n", "SELECT arr[0,1] x FROM tango");
+            assertSql("x\n" + subArr10 + "\n", "SELECT arr[1,0] x FROM tango");
+            assertSql("x\n" + subArr11 + "\n", "SELECT arr[1,1] x FROM tango");
         });
     }
 
@@ -473,6 +492,15 @@ public class ArrayTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck("SELECT arr[1:0] FROM tango",
                     12, "lower bound is not less than upper bound [dim=0, lowerBound=1, upperBound=0]"
             );
+        });
+    }
+
+    @Test
+    public void testSliceArrayTransposed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4], [5, 6]] arr FROM long_sequence(1))");
+            // transposed array: [[1,3,5],[2,4,6]]; slice takes first row, and first two elements from it
+            assertSql("slice\n[[1.0,3.0]]\n", "SELECT t(arr)[0:1, 0:2] slice FROM tango");
         });
     }
 

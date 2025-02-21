@@ -26,7 +26,10 @@ package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArrayView;
+import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -54,7 +57,18 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         Function arrayArg = args.getQuick(0);
         args.remove(0);
         argPositions.removeIndex(0);
-        return new DoubleArrayAccessFunction(arrayArg, args, argPositions);
+        int arrayDimCount = ColumnType.decodeArrayDimensionality(arrayArg.getType());
+        int accessDimCount = args.size();
+        if (accessDimCount > arrayDimCount) {
+            throw SqlException
+                    .position(argPositions.get(arrayDimCount))
+                    .put("too many array coordinates [accessDims=").put(accessDimCount)
+                    .put(", arrayDims=").put(arrayDimCount)
+                    .put(']');
+        }
+        return accessDimCount == arrayDimCount
+                ? new DoubleArrayAccessFunction(arrayArg, args, argPositions)
+                : new DoubleSubArrayFunction(arrayArg, args, argPositions);
     }
 
     private static class DoubleArrayAccessFunction extends DoubleFunction {
@@ -72,18 +86,9 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             ArrayView array = arrayArg.getArray(rec);
-            int accessDimCount = indexArgs.size();
-            int arrayDimCount = array.getDimCount();
-            if (accessDimCount != arrayDimCount) {
-                int errPos = indexArgPositions.get(accessDimCount > arrayDimCount ? arrayDimCount : accessDimCount - 1);
-                throw CairoException.nonCritical()
-                        .position(errPos)
-                        .put("wrong number of array coordinates [accessDims=").put(accessDimCount)
-                        .put(", arrayDims=").put(arrayDimCount)
-                        .put(']');
-            }
+            int nDims = indexArgs.size();
             int flatIndex = 0;
-            for (int dim = 0; dim < accessDimCount; dim++) {
+            for (int dim = 0; dim < nDims; dim++) {
                 int indexAtDim = indexArgs.getQuick(dim).getInt(rec);
                 int strideAtDim = array.getStride(dim);
                 int dimLen = array.getDimLen(dim);
@@ -96,7 +101,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                 }
                 flatIndex += strideAtDim * indexAtDim;
             }
-            return array.flatView().getDouble(flatIndex);
+            return array.flatView().getDouble(array.getFlatViewOffset() + flatIndex);
         }
 
         @Override
@@ -104,6 +109,42 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             sink.val("[](").val(arrayArg);
             for (int n = indexArgs.size(), i = 0; i < n; i++) {
                 sink.val(',').val(indexArgs.getQuick(i));
+            }
+            sink.val(')');
+        }
+    }
+
+    private static class DoubleSubArrayFunction extends ArrayFunction {
+        private final Function arrayFn;
+        private final BorrowedArrayView borrowedView = new BorrowedArrayView();
+        private final IntList indexArgPositions;
+        private final ObjList<Function> indexFns;
+
+        private DoubleSubArrayFunction(Function arrayFn, ObjList<Function> indexFns, IntList indexArgPositions) {
+            this.arrayFn = arrayFn;
+            this.indexArgPositions = indexArgPositions;
+            this.indexFns = indexFns;
+            int nDimsOriginal = ColumnType.decodeArrayDimensionality(arrayFn.getType());
+            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDimsOriginal - indexFns.size());
+        }
+
+        @Override
+        public ArrayView getArray(Record rec) {
+            ArrayView array = arrayFn.getArray(rec);
+            borrowedView.of(array);
+            for (int n = indexFns.size(), i = 0; i < n; i++) {
+                Function indexFn = indexFns.getQuick(i);
+                int arrayIndex = indexFn.getInt(rec);
+                borrowedView.asSubArrayAt(arrayIndex, indexArgPositions.get(i));
+            }
+            return borrowedView;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("[](").val(arrayFn);
+            for (int n = indexFns.size(), i = 0; i < n; i++) {
+                sink.val(',').val(indexFns.getQuick(i));
             }
             sink.val(')');
         }
