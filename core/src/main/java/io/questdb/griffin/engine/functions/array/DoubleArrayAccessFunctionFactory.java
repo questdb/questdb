@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
@@ -73,9 +74,9 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
 
     private static class DoubleArrayAccessFunction extends DoubleFunction {
 
-        private final Function arrayFn;
         private final IntList indexArgPositions;
         private final ObjList<Function> indexFns;
+        private Function arrayFn;
 
         DoubleArrayAccessFunction(Function arrayFn, ObjList<Function> indexFns, IntList indexArgPositions) {
             this.arrayFn = arrayFn;
@@ -85,10 +86,11 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            arrayFn.close();
+            this.arrayFn = Misc.free(arrayFn);
             for (int n = indexFns.size(), i = 0; i < n; i++) {
                 indexFns.getQuick(i).close();
             }
+            indexFns.clear();
         }
 
         @Override
@@ -123,10 +125,10 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
     }
 
     private static class DoubleSubArrayFunction extends ArrayFunction {
-        private final Function arrayFn;
         private final BorrowedArrayView borrowedView = new BorrowedArrayView();
         private final IntList indexArgPositions;
         private final ObjList<Function> indexFns;
+        private Function arrayFn;
 
         private DoubleSubArrayFunction(Function arrayFn, ObjList<Function> indexFns, IntList indexArgPositions) {
             this.arrayFn = arrayFn;
@@ -139,10 +141,11 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            arrayFn.close();
+            this.arrayFn = Misc.free(arrayFn);
             for (int n = indexFns.size(), i = 0; i < n; i++) {
                 indexFns.getQuick(i).close();
             }
+            indexFns.clear();
         }
 
         @Override

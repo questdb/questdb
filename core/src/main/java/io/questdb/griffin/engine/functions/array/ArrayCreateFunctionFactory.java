@@ -36,6 +36,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 import static io.questdb.cairo.ColumnType.commonWideningType;
@@ -64,7 +65,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
     }
 
     private static class FunctionArrayFunction extends ArrayFunction {
-        private final FunctionArray array;
+        private FunctionArray array;
 
         public FunctionArrayFunction(ObjList<Function> args, IntList argPositions) throws SqlException {
             try {
@@ -130,6 +131,11 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                     }
                 }
             }
+        }
+
+        @Override
+        public void close() {
+            this.array = Misc.free(this.array);
         }
 
         @Override

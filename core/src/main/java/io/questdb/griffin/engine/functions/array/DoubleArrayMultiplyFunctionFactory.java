@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
@@ -61,10 +62,10 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
 
     private static class MultiplyDoubleArrayFunction extends ArrayFunction implements BinaryFunction {
 
-        private final DirectArray arrayOut;
         private final int leftArgPos;
-        private final Function leftFn;
-        private final Function rightFn;
+        private DirectArray arrayOut;
+        private Function leftFn;
+        private Function rightFn;
 
         public MultiplyDoubleArrayFunction(
                 CairoConfiguration configuration,
@@ -91,9 +92,9 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            leftFn.close();
-            rightFn.close();
-            arrayOut.close();
+            this.leftFn = Misc.free(this.leftFn);
+            this.rightFn = Misc.free(this.rightFn);
+            this.arrayOut = Misc.free(this.arrayOut);
         }
 
         @Override
