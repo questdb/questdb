@@ -557,7 +557,8 @@ public final class ColumnType {
                         toType == FLOAT ||
                         toType == DOUBLE ||
                         toType == CHAR ||
-                        toType == UUID);
+                        toType == UUID ||
+                        ColumnType.isArray(toType));
     }
 
     private static boolean isStringCast(int fromType, int toType) {

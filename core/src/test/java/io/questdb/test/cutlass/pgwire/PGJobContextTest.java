@@ -2886,7 +2886,7 @@ if __name__ == "__main__":
     }
 
     @Test
-    public void testCastInsertStringToArrayColum() throws Exception {
+    public void testExplicitCastInsertStringToArrayColum() throws Exception {
         skipOnWalRun();
         skipInLegacyMode();
 
@@ -2904,6 +2904,33 @@ if __name__ == "__main__":
                 try (ResultSet rs = stmt.executeQuery()) {
                     assertResultSet("al[ARRAY]\n" +
                                     "{1.0,2.0,3.0,4.0,5.0}\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInsertStringToArrayColum() throws Exception {
+        skipOnWalRun();
+        skipInLegacyMode();
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
+                stmt.execute();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("insert into x values ('{{1,2},{3,4}}')")) {
+                stmt.execute();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("al[ARRAY]\n" +
+                                    "{{1.0,2.0},{3.0,4.0}}\n",
                             sink,
                             rs
                     );
