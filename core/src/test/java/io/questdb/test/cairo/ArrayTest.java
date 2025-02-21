@@ -41,6 +41,20 @@ import static org.junit.Assert.assertEquals;
 public class ArrayTest extends AbstractCairoTest {
 
     @Test
+    public void testArrayOpComposition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0,2.0],[3.0,4.0],[5.0,6.0]] arr FROM long_sequence(1))");
+            assertSql("x\n[[3.0,4.0]]\n", "SELECT arr[1:2] x FROM tango");
+            assertSql("x\n[[3.0],[4.0]]\n", "SELECT t(arr[1:2]) x FROM tango");
+            assertSql("x\n[[2.0,4.0,6.0]]\n", "SELECT t(arr)[1:2] x FROM tango");
+            assertSql("x\n4.0\n", "SELECT arr[1][1] x FROM tango");
+            assertSql("x\n[4.0]\n", "SELECT arr[1][1:2] x FROM tango");
+            assertSql("x\n[5.0,6.0]\n", "SELECT arr[1:3][1] x FROM tango");
+            assertSql("x\n[[5.0,6.0]]\n", "SELECT arr[1:3][1:2] x FROM tango");
+        });
+    }
+
+    @Test
     public void testArrayToJsonDouble() {
         try (DirectArray array = new DirectArray(configuration);
              DirectUtf8Sink sink = new DirectUtf8Sink(20)
@@ -501,19 +515,6 @@ public class ArrayTest extends AbstractCairoTest {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4], [5, 6]] arr FROM long_sequence(1))");
             // transposed array: [[1,3,5],[2,4,6]]; slice takes first row, and first two elements from it
             assertSql("slice\n[[1.0,3.0]]\n", "SELECT t(arr)[0:1, 0:2] slice FROM tango");
-        });
-    }
-
-    @Test
-    public void testSliceTransposeCombinations() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0,2.0],[3.0,4.0],[5.0,6.0]] arr FROM long_sequence(1))");
-            assertSql("x\n[[3.0,4.0]]\n", "SELECT arr[1:2] x FROM tango");
-            assertSql("x\n[[3.0],[4.0]]\n", "SELECT t(arr[1:2]) x FROM tango");
-            assertSql("x\n[[2.0,4.0,6.0]]\n", "SELECT t(arr)[1:2] x FROM tango");
-            assertSql("x\n4.0\n", "SELECT arr[1][1] x FROM tango");
-            assertSql("x\n[4.0]\n", "SELECT arr[1][1:2] x FROM tango");
-            assertSql("x\n[5.0,6.0]\n", "SELECT arr[1:3][1] x FROM tango");
         });
     }
 
