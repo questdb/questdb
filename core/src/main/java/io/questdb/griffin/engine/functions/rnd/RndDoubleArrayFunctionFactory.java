@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.functions.rnd;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.DirectArrayView;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -116,13 +116,13 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         private final int functionPosition;
         private final int nDims;
         private final int nanRate;
-        private DirectArrayView array;
+        private DirectArray array;
         private Rnd rnd;
 
         public RndDoubleArrayFixDimLenFunction(CairoConfiguration configuration, int nDims, int nanRate, IntList dimLens, int functionPosition) {
             this.nanRate = nanRate + 1;
             this.nDims = nDims;
-            this.array = new DirectArrayView(configuration);
+            this.array = new DirectArray(configuration);
             this.array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims));
             this.dimLens = dimLens;
             this.functionPosition = functionPosition;
@@ -175,13 +175,13 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
         private final int maxDimLen;
         private final int nDims;
         private final int nanRate;
-        private DirectArrayView array;
+        private DirectArray array;
         private Rnd rnd;
 
         public RndDoubleArrayRndDimLenFunction(CairoConfiguration configuration, int nDims, int nanRate, int maxDimLen, int functionPosition) {
             this.nanRate = nanRate + 1;
             this.nDims = nDims;
-            this.array = new DirectArrayView(configuration);
+            this.array = new DirectArray(configuration);
             this.array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims));
             this.maxDimLen = maxDimLen;
             this.functionPosition = functionPosition;

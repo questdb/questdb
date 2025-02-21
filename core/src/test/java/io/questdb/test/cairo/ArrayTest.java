@@ -26,7 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayTypeDriver;
-import io.questdb.cairo.arr.DirectArrayView;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.NoopArrayState;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cutlass.line.tcp.ArrayParser;
@@ -42,7 +42,7 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testArrayToJsonDouble() {
-        try (DirectArrayView array = new DirectArrayView(configuration);
+        try (DirectArray array = new DirectArray(configuration);
              DirectUtf8Sink sink = new DirectUtf8Sink(20)
         ) {
             array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2));
@@ -61,7 +61,7 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testArrayToJsonLong() {
-        try (DirectArrayView array = new DirectArrayView(configuration);
+        try (DirectArray array = new DirectArray(configuration);
              DirectUtf8Sink sink = new DirectUtf8Sink(20)
         ) {
             array.setType(ColumnType.encodeArrayType(ColumnType.LONG, 2));

@@ -38,7 +38,7 @@ import java.util.Arrays;
 /**
  * Mutable array that owns its backing native memory.
  */
-public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietCloseable {
+public class DirectArray implements ArrayView, ArraySink, Mutable, QuietCloseable {
     private static final long DOUBLE_BYTES = 8;
     private static final int[] EMPTY_INTS = new int[0];
     private static final long LONG_BYTES = 8;
@@ -52,7 +52,7 @@ public class DirectArrayView implements ArrayView, ArraySink, Mutable, QuietClos
     private int[] strides;
     private int type = ColumnType.UNDEFINED;
 
-    public DirectArrayView(CairoConfiguration configuration) {
+    public DirectArray(CairoConfiguration configuration) {
         this.configuration = configuration;
     }
 

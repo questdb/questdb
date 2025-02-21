@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.DirectArrayView;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
@@ -61,7 +61,7 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
 
     private static class MultiplyDoubleArrayFunction extends ArrayFunction implements BinaryFunction {
 
-        private final DirectArrayView arrayOut;
+        private final DirectArray arrayOut;
         private final int leftArgPos;
         private final Function leftFn;
         private final Function rightFn;
@@ -75,7 +75,7 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
         ) throws SqlException {
             this.leftFn = leftFn;
             this.rightFn = rightFn;
-            this.arrayOut = new DirectArrayView(configuration);
+            this.arrayOut = new DirectArray(configuration);
             this.leftArgPos = leftArgPos;
             int nDimsLeft = ColumnType.decodeArrayDimensionality(leftFn.getType());
             int nDimsRight = ColumnType.decodeArrayDimensionality(rightFn.getType());
