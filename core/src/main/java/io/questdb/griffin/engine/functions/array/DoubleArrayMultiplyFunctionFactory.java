@@ -116,6 +116,8 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
             int rightStride1 = right.getStride(1);
             FlatArrayView leftFlatView = left.flatView();
             FlatArrayView rightFlatView = right.flatView();
+            int leftIndexOffset = left.getFlatViewOffset();
+            int rightIndexOffset = right.getFlatViewOffset();
             arrayOut.clear();
             arrayOut.setDimLen(0, outRowCount);
             arrayOut.setDimLen(1, outColCount);
@@ -125,8 +127,8 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
                 for (int colOut = 0; colOut < outColCount; colOut++) {
                     double sum = 0;
                     for (int commonDim = 0; commonDim < commonDimLen; commonDim++) {
-                        int leftFlatIndex = leftStride0 * rowOut + leftStride1 * commonDim;
-                        int rightFlatIndex = rightStride0 * commonDim + rightStride1 * colOut;
+                        int leftFlatIndex = leftIndexOffset + leftStride0 * rowOut + leftStride1 * commonDim;
+                        int rightFlatIndex = rightIndexOffset + rightStride0 * commonDim + rightStride1 * colOut;
                         sum += leftFlatView.getDouble(leftFlatIndex) * rightFlatView.getDouble(rightFlatIndex);
                     }
                     arrayOut.putDouble(flatIndexOut++, sum);

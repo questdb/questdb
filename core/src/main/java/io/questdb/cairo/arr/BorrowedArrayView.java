@@ -173,7 +173,7 @@ public class BorrowedArrayView implements ArrayView, AutoCloseable {
         final boolean atDeepestDim = dim == getDimCount() - 1;
         if (atDeepestDim) {
             for (int i = 0; i < count; i++) {
-                mem.putDouble(flatView.getDouble(flatIndex));
+                mem.putDouble(flatView.getDouble(flatViewOffset + flatIndex));
                 flatIndex += stride;
             }
         } else {
