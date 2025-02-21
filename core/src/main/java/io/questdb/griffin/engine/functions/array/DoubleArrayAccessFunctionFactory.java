@@ -84,6 +84,14 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void close() {
+            arrayFn.close();
+            for (int n = indexFns.size(), i = 0; i < n; i++) {
+                indexFns.getQuick(i).close();
+            }
+        }
+
+        @Override
         public double getDouble(Record rec) {
             ArrayView array = arrayFn.getArray(rec);
             int nDims = indexFns.size();
@@ -126,6 +134,15 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             this.indexFns = indexFns;
             int nDimsOriginal = ColumnType.decodeArrayDimensionality(arrayFn.getType());
             this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDimsOriginal - indexFns.size());
+        }
+
+
+        @Override
+        public void close() {
+            arrayFn.close();
+            for (int n = indexFns.size(), i = 0; i < n; i++) {
+                indexFns.getQuick(i).close();
+            }
         }
 
         @Override
