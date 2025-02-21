@@ -571,7 +571,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // - update applied to txn in MatViewGraph
         if (fromBaseTxn < 0) {
             fromBaseTxn = state.getLastRefreshBaseTxn();
-            if (fromBaseTxn >= toBaseTxn) {
+            if (fromBaseTxn >= toBaseTxn && fromBaseTxn >= 0) {
                 // Already refreshed
                 return false;
             }
