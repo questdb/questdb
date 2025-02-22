@@ -1174,7 +1174,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertIdentifierError("select 'a' } ");
         assertIdentifierError("select 'a' { ");
         assertIdentifierError("select 'a' ] ");
-        assertSyntaxError("select 'a' : ", 11, "too few arguments for ':'");
+        assertSyntaxError("select 'a' : ", 11, "there is no matching operator `:` with the argument type: CHAR");
         assertIdentifierError("select 'a' ? ");
         assertIdentifierError("select 'a' @ ");
         assertSyntaxError("select 'a' ) ", 11, "unexpected token [)]");

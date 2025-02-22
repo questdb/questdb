@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 
 /**
  * A view over a native-memory array. Does not own the backing native memory.
@@ -141,6 +142,9 @@ public class BorrowedArrayView implements ArrayView {
                     .put(", nDims=").put(getDimCount()).put(']');
         }
         int dimLen = getDimLen(dim);
+        if (hi == Numbers.INT_NULL) {
+            hi = dimLen;
+        }
         if (lo >= hi) {
             throw CairoException.nonCritical()
                     .position(argPos)

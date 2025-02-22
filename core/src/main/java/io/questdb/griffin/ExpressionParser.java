@@ -177,6 +177,9 @@ public class ExpressionParser {
     private int onNode(
             ExpressionParserListener listener, ExpressionNode node, int argStackDepth, boolean exprStackUnwind
     ) throws SqlException {
+        if (node.type == ExpressionNode.OPERATION && node.token.equals(":") && argStackDepth == 1) {
+            node.paramCount = 1;
+        }
         if (argStackDepth < node.paramCount) {
             throw SqlException.position(node.position).put("too few arguments for '").put(node.token)
                     .put("' [found=").put(argStackDepth)

@@ -167,6 +167,7 @@ open module io.questdb {
 
             // interval operator !
             io.questdb.griffin.engine.functions.array.IntIntervalFunctionFactory,
+            io.questdb.griffin.engine.functions.array.IntIntervalRightOpenFunctionFactory,
 
             // '=' operators
             io.questdb.griffin.engine.functions.eq.EqStrFunctionFactory,

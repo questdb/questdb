@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class DoubleArraySliceFunctionFactory implements FunctionFactory {
@@ -93,7 +94,12 @@ public class DoubleArraySliceFunctionFactory implements FunctionFactory {
                 long hiLong = range.getHi();
                 int lo = (int) loLong;
                 int hi = (int) hiLong;
-                assert lo == loLong && hi == hiLong : "int overflow on interval bounds: " + loLong + ", " + hiLong;
+                if (hiLong == Numbers.LONG_NULL) {
+                    hi = Numbers.INT_NULL;
+                } else {
+                    assert hi == hiLong : "int overflow on interval upper bound: " + hiLong;
+                }
+                assert lo == loLong : "int overflow on interval lower bound: " + loLong;
                 borrowedView.slice(i, lo, hi, argPositions.get(i));
             }
             return borrowedView;
