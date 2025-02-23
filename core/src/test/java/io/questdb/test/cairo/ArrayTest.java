@@ -76,6 +76,26 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayAccessWithNonConstants() throws Exception {
+        assertMemoryLeak(() -> {
+            String subArr00 = "[1.0,2.0]";
+            String subArr01 = "[3.0,4.0]";
+            String subArr10 = "[5.0,6.0]";
+            String subArr11 = "[7.0,8.0]";
+            String subArr0 = "[" + subArr00 + "," + subArr01 + "]";
+            String subArr1 = "[" + subArr10 + "," + subArr11 + "]";
+            String fullArray = "[" + subArr0 + "," + subArr1 + "]";
+            execute("CREATE TABLE tango AS (SELECT 0 i, 1 j, ARRAY" + fullArray + " arr FROM long_sequence(1))");
+            assertSql("x\n" + subArr0 + "\n", "SELECT arr[i] x FROM tango");
+            assertSql("x\n" + subArr1 + "\n", "SELECT arr[j-i] x FROM tango");
+            assertSql("x\n" + subArr01 + "\n", "SELECT arr[i,j] x FROM tango");
+            assertSql("x\n[" + subArr0 + "]\n", "SELECT arr[i:j] x FROM tango");
+            assertSql("x\n[" + subArr0 + "]\n", "SELECT arr[i:j-i] x FROM tango");
+            assertSql("x\n[" + subArr1 + "]\n", "SELECT arr[j-i:j+j] x FROM tango");
+        });
+    }
+
+    @Test
     public void testArrayOpComposition() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0,2.0],[3.0,4.0],[5.0,6.0]] arr FROM long_sequence(1))");
