@@ -56,6 +56,9 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("x\n2.0\n", "SELECT arr[0, 0, 1] x FROM tango");
             assertSql("x\n6.0\n", "SELECT arr[1, 0, 1] x FROM tango");
             assertSql("x\n8.0\n", "SELECT arr[1, 1, 1] x FROM tango");
+            assertSql("x\n8.0\n", "SELECT arr[1, 1][1] x FROM tango");
+            assertSql("x\n8.0\n", "SELECT arr[1][1, 1] x FROM tango");
+            assertSql("x\n8.0\n", "SELECT arr[1][1][1] x FROM tango");
         });
     }
 
