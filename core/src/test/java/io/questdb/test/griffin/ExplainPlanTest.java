@@ -44,6 +44,7 @@ import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.NegatingFunctionFactory;
 import io.questdb.griffin.engine.functions.SwappingArgsFunctionFactory;
 import io.questdb.griffin.engine.functions.array.ArrayCreateFunctionFactory;
+import io.questdb.griffin.engine.functions.array.DoubleArrayAccessFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InCharFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InTimestampIntervalFunctionFactory;
@@ -2484,6 +2485,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         sigArgType = ColumnType.INT;
                                         useConst = true;
                                     } else if (factory instanceof ArrayCreateFunctionFactory) {
+                                        sigArgType = ColumnType.INT;
+                                    } else if (factory instanceof DoubleArrayAccessFunctionFactory) {
                                         sigArgType = ColumnType.INT;
                                     } else if (factory instanceof RndDoubleArrayFunctionFactory) {
                                         sigArgType = ColumnType.INT;
