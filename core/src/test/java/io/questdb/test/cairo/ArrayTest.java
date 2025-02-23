@@ -45,6 +45,7 @@ public class ArrayTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[1.0, 2, 3] arr FROM long_sequence(1))");
             assertSql("x\n2.0\n", "SELECT arr[1] x FROM tango");
+            assertSql("x\n2.0\n", "SELECT arr[arr[0]::int] x FROM tango");
         });
     }
 
