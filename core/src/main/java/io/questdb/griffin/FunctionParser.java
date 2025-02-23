@@ -329,7 +329,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             final Function function = functionStack.poll();
             positionStack.pop();
             assert positionStack.size() == functionStack.size();
-            if (function != null && function.isConstant() && function.getExtendedOps() == null) {
+            if (function != null && function.isConstant() && function.extendedOps() == null) {
                 return functionToConstant(function);
             }
             return function;

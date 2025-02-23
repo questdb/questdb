@@ -308,6 +308,11 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public FunctionExtension extendedOps() {
+            return this;
+        }
+
+        @Override
         public ArrayView getArray(Record rec) {
             throw new UnsupportedOperationException();
         }
@@ -362,11 +367,6 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
             Assert.assertEquals(ColumnType.DOUBLE, type);
             callCount++;
             return 1;
-        }
-
-        @Override
-        public FunctionExtension getExtendedOps() {
-            return this;
         }
 
         @Override

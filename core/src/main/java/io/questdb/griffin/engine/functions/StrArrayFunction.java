@@ -41,6 +41,11 @@ import org.jetbrains.annotations.NotNull;
 public abstract class StrArrayFunction implements Function, FunctionExtension {
 
     @Override
+    public FunctionExtension extendedOps() {
+        throw new UnsupportedOperationException("Implementation error! StrArrayFunction must return a FunctionExtension");
+    }
+
+    @Override
     public ArrayView getArray(Record rec) {
         throw new UnsupportedOperationException();
     }
@@ -78,11 +83,6 @@ public abstract class StrArrayFunction implements Function, FunctionExtension {
     @Override
     public final double getDouble(Record rec) {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public FunctionExtension getExtendedOps() {
-        throw new UnsupportedOperationException("Implementation error! StrArrayFunction must return a FunctionExtension");
     }
 
     @Override

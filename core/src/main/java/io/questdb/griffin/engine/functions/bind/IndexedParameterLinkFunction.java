@@ -67,13 +67,18 @@ public class IndexedParameterLinkFunction implements Function, FunctionExtension
     }
 
     @Override
+    public FunctionExtension extendedOps() {
+        return this;
+    }
+
+    @Override
     public ArrayView getArray(Record rec) {
         return getBase().getArray(rec);
     }
 
     @Override
     public int getArrayLength() {
-        return getBase().getExtendedOps().getArrayLength();
+        return getBase().extendedOps().getArrayLength();
     }
 
     @Override
@@ -109,11 +114,6 @@ public class IndexedParameterLinkFunction implements Function, FunctionExtension
     @Override
     public double getDouble(Record rec) {
         return getBase().getDouble(rec);
-    }
-
-    @Override
-    public FunctionExtension getExtendedOps() {
-        return this;
     }
 
     @Override
@@ -188,7 +188,7 @@ public class IndexedParameterLinkFunction implements Function, FunctionExtension
 
     @Override
     public Record getRecord(Record rec) {
-        return getBase().getExtendedOps().getRecord(rec);
+        return getBase().extendedOps().getRecord(rec);
     }
 
     @Override
@@ -203,7 +203,7 @@ public class IndexedParameterLinkFunction implements Function, FunctionExtension
 
     @Override
     public CharSequence getStrA(Record rec, int arrayIndex) {
-        return getBase().getExtendedOps().getStrA(rec, arrayIndex);
+        return getBase().extendedOps().getStrA(rec, arrayIndex);
     }
 
     @Override
@@ -213,7 +213,7 @@ public class IndexedParameterLinkFunction implements Function, FunctionExtension
 
     @Override
     public CharSequence getStrB(Record rec, int arrayIndex) {
-        return getBase().getExtendedOps().getStrB(rec, arrayIndex);
+        return getBase().extendedOps().getStrB(rec, arrayIndex);
     }
 
     @Override
@@ -223,7 +223,7 @@ public class IndexedParameterLinkFunction implements Function, FunctionExtension
 
     @Override
     public int getStrLen(Record rec, int arrayIndex) {
-        return getBase().getExtendedOps().getStrLen(rec, arrayIndex);
+        return getBase().extendedOps().getStrLen(rec, arrayIndex);
     }
 
     @Override

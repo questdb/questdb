@@ -51,13 +51,13 @@ public class IntervalColumn extends IntervalFunction implements Function, Functi
     }
 
     @Override
-    public int getArrayLength() {
-        throw new UnsupportedOperationException();
+    public FunctionExtension extendedOps() {
+        return this;
     }
 
     @Override
-    public FunctionExtension getExtendedOps() {
-        return this;
+    public int getArrayLength() {
+        throw new UnsupportedOperationException();
     }
 
     @Override

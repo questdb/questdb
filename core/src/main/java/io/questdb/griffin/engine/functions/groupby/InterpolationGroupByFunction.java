@@ -68,13 +68,18 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
     }
 
     @Override
+    public FunctionExtension extendedOps() {
+        return this;
+    }
+
+    @Override
     public ArrayView getArray(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
     public int getArrayLength() {
-        return wrappedFunction.getExtendedOps().getArrayLength();
+        return wrappedFunction.extendedOps().getArrayLength();
     }
 
     @Override
@@ -122,11 +127,6 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
             return InterpolationUtil.interpolate(startTime + current++ * interval, startTime, value, endTime, wrappedFunction.getDouble(target));
         }
         return value;
-    }
-
-    @Override
-    public FunctionExtension getExtendedOps() {
-        return this;
     }
 
     @Override
@@ -213,7 +213,7 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
 
     @Override
     public Record getRecord(Record rec) {
-        return wrappedFunction.getExtendedOps().getRecord(rec);
+        return wrappedFunction.extendedOps().getRecord(rec);
     }
 
     @Override
@@ -237,7 +237,7 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
 
     @Override
     public CharSequence getStrA(Record rec, int arrayIndex) {
-        return wrappedFunction.getExtendedOps().getStrA(rec, arrayIndex);
+        return wrappedFunction.extendedOps().getStrA(rec, arrayIndex);
     }
 
     @Override
@@ -247,7 +247,7 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
 
     @Override
     public CharSequence getStrB(Record rec, int arrayIndex) {
-        return wrappedFunction.getExtendedOps().getStrB(rec, arrayIndex);
+        return wrappedFunction.extendedOps().getStrB(rec, arrayIndex);
     }
 
     @Override
@@ -257,7 +257,7 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
 
     @Override
     public int getStrLen(Record rec, int arrayIndex) {
-        return wrappedFunction.getExtendedOps().getStrLen(rec, arrayIndex);
+        return wrappedFunction.extendedOps().getStrLen(rec, arrayIndex);
     }
 
     @Override

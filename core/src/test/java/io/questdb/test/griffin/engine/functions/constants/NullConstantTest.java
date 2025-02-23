@@ -59,7 +59,7 @@ public class NullConstantTest {
         Assert.assertTrue(constant.supportsRandomAccess());
         Assert.assertFalse(constant.isUndefined());
 
-        Assert.assertEquals(TableUtils.NULL_LEN, constant.getExtendedOps().getArrayLength());
+        Assert.assertEquals(TableUtils.NULL_LEN, constant.extendedOps().getArrayLength());
         Assert.assertEquals(StrConstant.NULL.getStrLen(null), constant.getStrLen(null));
 
         Assert.assertEquals(IntConstant.NULL.getInt(null), constant.getInt(null));
@@ -85,7 +85,7 @@ public class NullConstantTest {
         Assert.assertEquals(GeoHashes.BYTE_NULL, constant.getGeoByte(null));
         Assert.assertEquals(GeoHashes.INT_NULL, constant.getGeoInt(null));
         Assert.assertEquals(GeoHashes.SHORT_NULL, constant.getGeoShort(null));
-        Assert.assertNull(constant.getExtendedOps().getRecord(null));
+        Assert.assertNull(constant.extendedOps().getRecord(null));
 
         StringSink sink = new StringSink();
         constant.getLong256(null, sink);

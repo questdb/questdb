@@ -147,13 +147,13 @@ public class StringToStringArrayFunction extends StrArrayFunction implements Fun
     }
 
     @Override
-    public int getArrayLength() {
-        return items.size();
+    public FunctionExtension extendedOps() {
+        return this;
     }
 
     @Override
-    public FunctionExtension getExtendedOps() {
-        return this;
+    public int getArrayLength() {
+        return items.size();
     }
 
     @Override

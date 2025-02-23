@@ -49,13 +49,13 @@ public class CurrentSchemasFunctionFactory implements FunctionFactory {
 
     private static class CurrentSchemaFunction extends StrArrayFunction implements FunctionExtension {
         @Override
-        public int getArrayLength() {
-            return 1;
+        public FunctionExtension extendedOps() {
+            return this;
         }
 
         @Override
-        public FunctionExtension getExtendedOps() {
-            return this;
+        public int getArrayLength() {
+            return 1;
         }
 
         @Override

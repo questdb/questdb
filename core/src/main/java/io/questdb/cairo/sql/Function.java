@@ -96,6 +96,10 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     default void cursorClosed() {
     }
 
+    default FunctionExtension extendedOps() {
+        return null;
+    }
+
     ArrayView getArray(Record rec);
 
     BinarySequence getBin(Record rec);
@@ -111,10 +115,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     long getDate(Record rec);
 
     double getDouble(Record rec);
-
-    default FunctionExtension getExtendedOps() {
-        return null;
-    }
 
     float getFloat(Record rec);
 

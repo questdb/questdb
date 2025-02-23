@@ -173,7 +173,7 @@ public class VirtualRecord implements ColumnTypes, Record {
 
     @Override
     public Record getRecord(int col) {
-        return getFunction(col).getExtendedOps().getRecord(base);
+        return getFunction(col).extendedOps().getRecord(base);
     }
 
     @Override

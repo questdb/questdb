@@ -51,6 +51,11 @@ public final class NullConstant implements ConstantFunction, FunctionExtension {
     }
 
     @Override
+    public FunctionExtension extendedOps() {
+        return this;
+    }
+
+    @Override
     public ArrayView getArray(Record rec) {
         return null;
     }
@@ -93,11 +98,6 @@ public final class NullConstant implements ConstantFunction, FunctionExtension {
     @Override
     public double getDouble(Record rec) {
         return DoubleConstant.NULL.getDouble(null);
-    }
-
-    @Override
-    public FunctionExtension getExtendedOps() {
-        return this;
     }
 
     @Override

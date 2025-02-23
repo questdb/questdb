@@ -42,13 +42,13 @@ public class RecordColumn extends RecordFunction implements FunctionExtension {
     }
 
     @Override
-    public int getArrayLength() {
-        throw new UnsupportedOperationException();
+    public FunctionExtension extendedOps() {
+        return this;
     }
 
     @Override
-    public FunctionExtension getExtendedOps() {
-        return this;
+    public int getArrayLength() {
+        throw new UnsupportedOperationException();
     }
 
     @Override

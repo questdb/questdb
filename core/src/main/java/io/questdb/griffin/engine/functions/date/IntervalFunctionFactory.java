@@ -89,13 +89,13 @@ public class IntervalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getArrayLength() {
-            throw new UnsupportedOperationException();
+        public FunctionExtension extendedOps() {
+            return this;
         }
 
         @Override
-        public FunctionExtension getExtendedOps() {
-            return this;
+        public int getArrayLength() {
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -160,13 +160,13 @@ public class IntervalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getArrayLength() {
-            throw new UnsupportedOperationException();
+        public FunctionExtension extendedOps() {
+            return this;
         }
 
         @Override
-        public FunctionExtension getExtendedOps() {
-            return this;
+        public int getArrayLength() {
+            throw new UnsupportedOperationException();
         }
 
         @Override

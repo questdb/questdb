@@ -41,13 +41,13 @@ public class RecordFunctionTest {
     };
     private static final RecordFunction function = new RecordFunction() {
         @Override
-        public int getArrayLength() {
-            throw new UnsupportedOperationException();
+        public FunctionExtension extendedOps() {
+            return this;
         }
 
         @Override
-        public FunctionExtension getExtendedOps() {
-            return this;
+        public int getArrayLength() {
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -188,7 +188,7 @@ public class RecordFunctionTest {
 
     @Test
     public void testGetRecord() {
-        Assert.assertEquals(39909900999L, function.getExtendedOps().getRecord(null).getLong(0));
+        Assert.assertEquals(39909900999L, function.extendedOps().getRecord(null).getLong(0));
     }
 
     @Test(expected = UnsupportedOperationException.class)
