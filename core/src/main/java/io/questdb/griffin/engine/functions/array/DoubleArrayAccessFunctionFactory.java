@@ -63,7 +63,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             inputArgs.remove(0);
             inputArgPositions.removeIndex(0);
             ObjList<Function> args = null;
-            IntList argPositions = inputArgPositions;
+            IntList argPositions = null;
             // If the array argument is another array slicing function, and if all its arguments are indexes
             // (not ranges for slicing), we can inline it into this function by prepending all its args to
             // our args, and by using its array argument as our array argument.
@@ -80,11 +80,13 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                 if (canInline) {
                     arrayArg = sliceFn.arrayArg;
                     args = rangeArgs;
-                    argPositions = sliceFn.argPositions;
+                    argPositions = new IntList();
+                    argPositions.addAll(sliceFn.argPositions);
                     argPositions.addAll(inputArgPositions);
                 }
             }
             if (args == null) {
+                argPositions = inputArgPositions;
                 args = new ObjList<>();
             }
             args.addAll(inputArgs);
