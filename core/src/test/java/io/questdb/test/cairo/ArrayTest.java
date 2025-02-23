@@ -62,8 +62,16 @@ public class ArrayTest extends AbstractCairoTest {
     public void testAccessArrayInvalid() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4]] arr FROM long_sequence(1))");
+            assertExceptionNoLeakCheck("SELECT arr['0',0] FROM tango",
+                    10, "there is no matching function `[]` with the argument types: (DOUBLE[][], CHAR, INT)");
+            assertExceptionNoLeakCheck("SELECT arr[0,0::long] FROM tango",
+                    14, "invalid argument type [type=6]");
+            assertExceptionNoLeakCheck("SELECT arr[0,true] FROM tango",
+                    13, "invalid argument type [type=1]");
+            assertExceptionNoLeakCheck("SELECT arr[0,'0'] FROM tango",
+                    13, "invalid argument type [type=4]");
             assertExceptionNoLeakCheck("SELECT arr[0, 0, 0] FROM tango",
-                    17, "too many array coordinates [accessDims=3, arrayDims=2]");
+                    17, "too many array access arguments [nArgs=3, nDims=2]");
             assertExceptionNoLeakCheck("SELECT arr[-1, 0] FROM tango",
                     11, "array index out of range [dim=0, index=-1, dimLen=2]");
             assertExceptionNoLeakCheck("SELECT arr[2, 0] FROM tango",

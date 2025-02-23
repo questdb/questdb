@@ -62,19 +62,23 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             arrayArg = args.getQuick(0);
             args.remove(0);
             argPositions.removeIndex(0);
-            int arrayDimCount = ColumnType.decodeArrayDimensionality(arrayArg.getType());
-            int accessDimCount = args.size();
-            if (accessDimCount > arrayDimCount) {
+            int nDims = ColumnType.decodeArrayDimensionality(arrayArg.getType());
+            int nArgs = args.size();
+            if (nArgs > nDims) {
                 throw SqlException
-                        .position(argPositions.get(arrayDimCount))
-                        .put("too many array coordinates [accessDims=").put(accessDimCount)
-                        .put(", arrayDims=").put(arrayDimCount)
+                        .position(argPositions.get(nDims))
+                        .put("too many array access arguments [nArgs=").put(nArgs)
+                        .put(", nDims=").put(nDims)
                         .put(']');
             }
-            int resultNDims = arrayDimCount;
+            int resultNDims = nDims;
             for (int n = args.size(), i = 0; i < n; i++) {
-                if (args.getQuick(i).getType() == ColumnType.INT) {
+                int argType = args.getQuick(i).getType();
+                if (argType == ColumnType.INT || argType == ColumnType.SHORT || argType == ColumnType.BYTE) {
                     resultNDims--;
+                } else if (!ColumnType.isInterval(argType)) {
+                    throw SqlException.position(argPositions.get(i))
+                            .put("invalid argument type [type=").put(argType).put(']');
                 }
             }
             return resultNDims == 0
