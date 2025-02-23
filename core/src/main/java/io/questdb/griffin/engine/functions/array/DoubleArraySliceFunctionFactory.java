@@ -24,94 +24,9 @@
 
 package io.questdb.griffin.engine.functions.array;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.BorrowedArrayView;
-import io.questdb.cairo.sql.ArrayFunction;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
-import io.questdb.std.Interval;
-import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
-
-public class DoubleArraySliceFunctionFactory implements FunctionFactory {
+public class DoubleArraySliceFunctionFactory extends DoubleArrayAccessFunctionFactory {
     @Override
     public String getSignature() {
         return "[](D[]ΔV)";
-    }
-
-    @Override
-    public Function newInstance(
-            int position,
-            ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        Function arrayFunc = args.getQuick(0);
-        args.remove(0);
-        argPositions.removeIndex(0);
-        return new SliceDoubleArrayFunction(arrayFunc, args, argPositions);
-    }
-
-    private static class SliceDoubleArrayFunction extends ArrayFunction {
-
-        private final IntList argPositions;
-        private final BorrowedArrayView borrowedView = new BorrowedArrayView();
-        private final ObjList<Function> rangeFns;
-        private Function arrayFn;
-
-        public SliceDoubleArrayFunction(Function arrayFn, ObjList<Function> rangeFns, IntList argPositions) {
-            this.arrayFn = arrayFn;
-            this.rangeFns = new ObjList<>(rangeFns);
-            this.argPositions = argPositions;
-            this.type = arrayFn.getType();
-        }
-
-        @Override
-        public void close() {
-            this.arrayFn = Misc.free(this.arrayFn);
-            for (int n = rangeFns.size(), i = 0; i < n; i++) {
-                rangeFns.getQuick(i).close();
-            }
-            rangeFns.clear();
-        }
-
-        @Override
-        public ArrayView getArray(Record rec) {
-            ArrayView array = arrayFn.getArray(rec);
-            borrowedView.of(array);
-            for (int n = rangeFns.size(), i = 0; i < n; i++) {
-                Function rangeFn = rangeFns.getQuick(i);
-                Interval range = rangeFn.getInterval(rec);
-                long loLong = range.getLo();
-                long hiLong = range.getHi();
-                int lo = (int) loLong;
-                int hi = (int) hiLong;
-                if (hiLong == Numbers.LONG_NULL) {
-                    hi = Numbers.INT_NULL;
-                } else {
-                    assert hi == hiLong : "int overflow on interval upper bound: " + hiLong;
-                }
-                assert lo == loLong : "int overflow on interval lower bound: " + loLong;
-                borrowedView.slice(i, lo, hi, argPositions.get(i));
-            }
-            return borrowedView;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val("[](").val(arrayFn);
-            for (int n = rangeFns.size(), i = 0; i < n; i++) {
-                sink.val(',').val(rangeFns.getQuick(i));
-            }
-            sink.val(')');
-        }
     }
 }

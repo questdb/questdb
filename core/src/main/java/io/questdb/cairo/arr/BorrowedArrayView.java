@@ -55,9 +55,15 @@ public class BorrowedArrayView implements ArrayView {
         return flatView;
     }
 
-    public void flattenDim(int dim) {
+    public void flattenDim(int dim, int argPos) {
         final int nDims = getDimCount();
-        assert dim < nDims;
+        assert dim >= 0 && dim < nDims : "dim out of range: " + dim + ", nDims: " + nDims;
+        if (getStride(dim) == 1) {
+            throw CairoException.nonCritical()
+                    .position(argPos)
+                    .put("cannot flatten dim with stride 1 [dim=").put(dim)
+                    .put(", nDims=").put(nDims).put(']');
+        }
         final int dimToFlattenInto;
         if (dim == 0) {
             dimToFlattenInto = 1;
@@ -67,8 +73,7 @@ public class BorrowedArrayView implements ArrayView {
             dimToFlattenInto = getStride(dim - 1) < getStride(dim + 1) ? dim - 1 : dim + 1;
         }
         shape.set(dimToFlattenInto, shape.get(dimToFlattenInto) * shape.get(dim));
-        shape.removeIndex(dim);
-        strides.removeIndex(dim);
+        removeDim(dim);
     }
 
     @Override
@@ -78,7 +83,8 @@ public class BorrowedArrayView implements ArrayView {
 
     @Override
     public int getDimLen(int dim) {
-        return shape.get(dim);
+        assert dim >= 0 && dim < shape.size() : "dim out ouf range: " + dim;
+        return shape.getQuick(dim);
     }
 
     @Override
@@ -122,6 +128,12 @@ public class BorrowedArrayView implements ArrayView {
             shape.add(other.getDimLen(i));
             strides.add(other.getStride(i));
         }
+    }
+
+    public void removeDim(int dim) {
+        assert dim >= 0 && dim < shape.size() : "dim out of range: " + dim;
+        shape.removeIndex(dim);
+        strides.removeIndex(dim);
     }
 
     /**

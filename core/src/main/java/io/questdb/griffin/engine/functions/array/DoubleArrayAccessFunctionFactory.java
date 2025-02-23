@@ -38,7 +38,9 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
@@ -67,18 +69,24 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                     .put(", arrayDims=").put(arrayDimCount)
                     .put(']');
         }
-        return accessDimCount == arrayDimCount
-                ? new DoubleArrayAccessFunction(arrayArg, args, argPositions)
-                : new DoubleSubArrayFunction(arrayArg, args, argPositions);
+        int resultNDims = arrayDimCount;
+        for (int n = args.size(), i = 0; i < n; i++) {
+            if (args.getQuick(i).getType() == ColumnType.INT) {
+                resultNDims--;
+            }
+        }
+        return resultNDims == 0
+                ? new AccessDoubleArrayFunction(arrayArg, args, argPositions)
+                : new SliceDoubleArrayFunction(arrayArg, resultNDims, args, argPositions);
     }
 
-    private static class DoubleArrayAccessFunction extends DoubleFunction {
+    static class AccessDoubleArrayFunction extends DoubleFunction {
 
         private final IntList indexArgPositions;
         private final ObjList<Function> indexFns;
         private Function arrayFn;
 
-        DoubleArrayAccessFunction(Function arrayFn, ObjList<Function> indexFns, IntList indexArgPositions) {
+        AccessDoubleArrayFunction(Function arrayFn, ObjList<Function> indexFns, IntList indexArgPositions) {
             this.arrayFn = arrayFn;
             this.indexFns = new ObjList<>(indexFns);
             this.indexArgPositions = indexArgPositions;
@@ -124,41 +132,64 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class DoubleSubArrayFunction extends ArrayFunction {
+    static class SliceDoubleArrayFunction extends ArrayFunction {
+
+        private final IntList argPositions;
         private final BorrowedArrayView borrowedView = new BorrowedArrayView();
-        private final IntList indexArgPositions;
-        private final ObjList<Function> indexFns;
+        private final ObjList<Function> rangeFns;
         private Function arrayFn;
 
-        private DoubleSubArrayFunction(Function arrayFn, ObjList<Function> indexFns, IntList indexArgPositions) {
+        public SliceDoubleArrayFunction(Function arrayFn, int resultNDims, ObjList<Function> rangeFns, IntList argPositions) {
             this.arrayFn = arrayFn;
-            this.indexArgPositions = indexArgPositions;
-            this.indexFns = new ObjList<>(indexFns);
-            int nDimsOriginal = ColumnType.decodeArrayDimensionality(arrayFn.getType());
-            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDimsOriginal - indexFns.size());
+            this.rangeFns = new ObjList<>(rangeFns);
+            this.argPositions = argPositions;
+            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, resultNDims);
         }
-
 
         @Override
         public void close() {
-            this.arrayFn = Misc.free(arrayFn);
-            for (int n = indexFns.size(), i = 0; i < n; i++) {
-                indexFns.getQuick(i).close();
+            this.arrayFn = Misc.free(this.arrayFn);
+            for (int n = rangeFns.size(), i = 0; i < n; i++) {
+                rangeFns.getQuick(i).close();
             }
-            indexFns.clear();
+            rangeFns.clear();
         }
 
         @Override
         public ArrayView getArray(Record rec) {
             ArrayView array = arrayFn.getArray(rec);
             borrowedView.of(array);
-            for (int n = indexFns.size(), i = 0; i < n; i++) {
-                Function indexFn = indexFns.getQuick(i);
-                int arrayIndex = indexFn.getInt(rec);
-                borrowedView.slice(i, arrayIndex, arrayIndex + 1, indexArgPositions.get(i));
-            }
-            for (int n = indexFns.size(), i = 0; i < n; i++) {
-                borrowedView.flattenDim(0);
+            int dim = 0;
+            for (int n = rangeFns.size(), i = 0; i < n; i++) {
+                Function rangeFn = rangeFns.getQuick(i);
+                int argPos = argPositions.get(i);
+                if (rangeFn.getType() == ColumnType.INTERVAL) {
+                    Interval range = rangeFn.getInterval(rec);
+                    long loLong = range.getLo();
+                    long hiLong = range.getHi();
+                    int lo = (int) loLong;
+                    int hi = (int) hiLong;
+                    if (hiLong == Numbers.LONG_NULL) {
+                        hi = Numbers.INT_NULL;
+                    } else {
+                        assert hi == hiLong : "int overflow on interval upper bound: " + hiLong;
+                    }
+                    assert lo == loLong : "int overflow on interval lower bound: " + loLong;
+                    borrowedView.slice(dim++, lo, hi, argPos);
+                } else {
+                    int index = rangeFn.getInt(rec);
+                    int dimLen = borrowedView.getDimLen(dim);
+                    if (index < 0 || index >= dimLen) {
+                        throw CairoException.nonCritical()
+                                .position(argPos)
+                                .put("array index out of range [dim=").put(i)
+                                .put(", index=").put(index)
+                                .put(", dimLen=").put(dimLen)
+                                .put(']');
+                    }
+                    borrowedView.slice(dim, index, index + 1, argPos);
+                    borrowedView.removeDim(dim);
+                }
             }
             return borrowedView;
         }
@@ -166,8 +197,8 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val("[](").val(arrayFn);
-            for (int n = indexFns.size(), i = 0; i < n; i++) {
-                sink.val(',').val(indexFns.getQuick(i));
+            for (int n = rangeFns.size(), i = 0; i < n; i++) {
+                sink.val(',').val(rangeFns.getQuick(i));
             }
             sink.val(')');
         }
