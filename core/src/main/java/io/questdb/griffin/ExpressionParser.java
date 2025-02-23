@@ -175,9 +175,21 @@ public class ExpressionParser {
     }
 
     private int onNode(
-            ExpressionParserListener listener, ExpressionNode node, int argStackDepth, boolean exprStackUnwind
+            ExpressionParserListener listener, ExpressionNode node, int argStackDepth, int prevBranch
     ) throws SqlException {
-        if (node.type == ExpressionNode.OPERATION && node.token.equals(":") && argStackDepth == 1) {
+        return onNode(listener, node, argStackDepth, prevBranch, false);
+    }
+
+    private int onNode(
+            ExpressionParserListener listener,
+            ExpressionNode node,
+            int argStackDepth,
+            int prevBranch,
+            boolean exprStackUnwind
+    ) throws SqlException {
+        if (node.type == ExpressionNode.OPERATION && node.token.equals(":") &&
+                (argStackDepth == 1 || prevBranch == BRANCH_OPERATOR)
+        ) {
             node.paramCount = 1;
         }
         if (argStackDepth < node.paramCount) {
@@ -223,10 +235,10 @@ public class ExpressionParser {
 
         ExpressionNode node = expressionNodePool.next().of(ExpressionNode.QUERY, null, 0, pos);
         // validate is Query is allowed
-        onNode(listener, node, argStackDepth, false);
+        onNode(listener, node, argStackDepth, BRANCH_NONE);
         // we can compile query if all is well
         node.queryModel = sqlParser.parseAsSubQuery(lexer, null, true, sqlParserCallback, decls);
-        argStackDepth = onNode(listener, node, argStackDepth, false);
+        argStackDepth = onNode(listener, node, argStackDepth, BRANCH_NONE);
 
         // pop our control node if sub-query hasn't done it
         ExpressionNode control = opStack.peek();
@@ -270,7 +282,7 @@ public class ExpressionParser {
             ExpressionNode node;
             CharSequence tok;
             char thisChar;
-            int prevBranch;
+            int prevBranch = BRANCH_NONE;
             int thisBranch = BRANCH_NONE;
             boolean isCastingNull = false;
             OUT:
@@ -352,7 +364,7 @@ public class ExpressionParser {
                         // parens/brackets are encountered, either the separator was misplaced or
                         // paren/bracket was mismatched.
                         while ((node = opStack.pop()) != null && node.type != ExpressionNode.CONTROL) {
-                            argStackDepth = onNode(listener, node, argStackDepth, false);
+                            argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                         }
                         assert node != null : "opStack is empty at ','";
                         opStack.push(node);
@@ -391,7 +403,7 @@ public class ExpressionParser {
                                 other.type == ExpressionNode.ARRAY_CONSTRUCTOR ||
                                 other.type == ExpressionNode.ARRAY_ACCESS)
                         ) {
-                            argStackDepth = onNode(listener, other, argStackDepth, false);
+                            argStackDepth = onNode(listener, other, argStackDepth, prevBranch);
                             opStack.pop();
                         }
 
@@ -436,7 +448,7 @@ public class ExpressionParser {
                         // push it to the output queue.
                         // If the stack runs out without finding a left bracket, then there are mismatched brackets.
                         while ((node = opStack.pop()) != null && (node.type != ExpressionNode.CONTROL || node.token.charAt(0) != '[')) {
-                            argStackDepth = onNode(listener, node, argStackDepth, false);
+                            argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                         }
                         assert node != null : "opStack is empty at ']'";
                         if (node.token.equals("[")) {
@@ -460,7 +472,7 @@ public class ExpressionParser {
                             );
                             // paramCount counts commas in this case. So, with no commas, there's already 1 arg.
                             node.paramCount = paramCount + 1;
-                            argStackDepth = onNode(listener, node, argStackDepth, false);
+                            argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                         }
                         if (argStackDepthStack.notEmpty()) {
                             argStackDepth += argStackDepthStack.pop();
@@ -534,7 +546,7 @@ public class ExpressionParser {
                         while ((node = opStack.pop()) != null && (node.type != ExpressionNode.CONTROL || node.token.charAt(0) != '(')) {
                             // special case - (*) expression
                             if (Chars.equals(node.token, '*') && argStackDepth == 0 && isCount()) {
-                                argStackDepth = onNode(listener, node, 2, false);
+                                argStackDepth = onNode(listener, node, 2, prevBranch);
                                 continue;
                             }
                             if (thisWasCast && prevBranch != BRANCH_GEOHASH) {
@@ -547,7 +559,7 @@ public class ExpressionParser {
                                 }
                                 node.type = ExpressionNode.CONSTANT;
                             }
-                            argStackDepth = onNode(listener, node, argStackDepth, false);
+                            argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                         }
 
                         if (argStackDepthStack.notEmpty()) {
@@ -579,7 +591,7 @@ public class ExpressionParser {
                             // the parenthesised expression is preceded by a literal => it's a function call
                             node.paramCount = localParamCount + Math.max(0, node.paramCount - 1);
                             node.type = ExpressionNode.FUNCTION;
-                            argStackDepth = onNode(listener, node, argStackDepth, false);
+                            argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                             opStack.pop();
                         } else if (node.type == ExpressionNode.SET_OPERATION && !SqlKeywords.isBetweenKeyword(node.token)) {
                             node.paramCount = localParamCount + Math.max(0, node.paramCount - 1);
@@ -587,7 +599,7 @@ public class ExpressionParser {
                                 throw SqlException.position(node.position).put("too few arguments for '").put(node.token).put('\'');
                             }
                             node.type = ExpressionNode.FUNCTION;
-                            argStackDepth = onNode(listener, node, argStackDepth, false);
+                            argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                             opStack.pop();
                         }
 
@@ -763,7 +775,7 @@ public class ExpressionParser {
                                 while ((node = opStack.pop()) != null && node.token.charAt(0) != '(') {
                                     nodeCount++;
                                     isCastingNull = nodeCount == 1 && SqlKeywords.isNullKeyword(node.token);
-                                    argStackDepth = onNode(listener, node, argStackDepth, false);
+                                    argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                                 }
                                 if (node != null) {
                                     // push back '('
@@ -779,7 +791,7 @@ public class ExpressionParser {
                                 betweenAndCount++;
                                 thisBranch = BRANCH_BETWEEN_END;
                                 while ((node = opStack.pop()) != null && !SqlKeywords.isBetweenKeyword(node.token)) {
-                                    argStackDepth = onNode(listener, node, argStackDepth, false);
+                                    argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                                 }
 
                                 if (node != null) {
@@ -956,8 +968,7 @@ public class ExpressionParser {
                                             listener,
                                             constNode,
                                             argStackDepth,
-                                            false
-                                    );
+                                            prevBranch);
 
                                     // replace const node with 'to_timezone' function node
                                     constNode = expressionNodePool.next().of(
@@ -985,15 +996,15 @@ public class ExpressionParser {
                                         throw SqlException.$(prevNode.position, "impossible type cast, invalid type");
                                     }
                                     ExpressionNode stringLiteral = SqlUtil.nextConstant(expressionNodePool, GenericLexer.immutableOf(tok), lastPos);
-                                    onNode(listener, stringLiteral, 0, false);
+                                    onNode(listener, stringLiteral, 0, prevBranch);
 
                                     prevNode.type = ExpressionNode.CONSTANT;
-                                    onNode(listener, prevNode, 0, false);
+                                    onNode(listener, prevNode, 0, prevBranch);
 
                                     ExpressionNode cast = expressionNodePool.next().of(ExpressionNode.FUNCTION, "cast", 0, prevNode.position);
                                     cast.paramCount = 2;
 
-                                    onNode(listener, cast, argStackDepth + 2, false);
+                                    onNode(listener, cast, argStackDepth + 2, prevBranch);
                                     argStackDepth++;
                                     break;
                                 }
@@ -1197,7 +1208,7 @@ public class ExpressionParser {
                             }
 
                             if (greaterPrecedence) {
-                                argStackDepth = onNode(listener, other, argStackDepth, false);
+                                argStackDepth = onNode(listener, other, argStackDepth, prevBranch);
                                 opStack.pop();
                             } else {
                                 break;
@@ -1263,7 +1274,7 @@ public class ExpressionParser {
                                         //   - If the stack runs out without finding a left parenthesis, then there are
                                         //     mismatched parentheses.
                                         while ((node = opStack.pop()) != null && !SqlKeywords.isCaseKeyword(node.token)) {
-                                            argStackDepth = onNode(listener, node, argStackDepth, false);
+                                            argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                                         }
 
                                         // 'when/else' have been clearing argStackDepth to ensure expressions between
@@ -1278,7 +1289,7 @@ public class ExpressionParser {
                                         assert scope == Scope.CASE : "Should have popped CASE, but got " + scope;
                                         node.paramCount = paramCount;
                                         // add the number of 'case' arguments to the original stack depth
-                                        argStackDepth = onNode(listener, node, argStackDepth + paramCount, false);
+                                        argStackDepth = onNode(listener, node, argStackDepth + paramCount, prevBranch);
                                         if (paramCountStack.notEmpty()) {
                                             paramCount = paramCountStack.pop();
                                         }
@@ -1303,7 +1314,7 @@ public class ExpressionParser {
                                         // do no steal parameters outside of local 'case' scope
                                         int argCount = 0;
                                         while ((node = opStack.pop()) != null && !SqlKeywords.isCaseKeyword(node.token)) {
-                                            argStackDepth = onNode(listener, node, argStackDepth, false);
+                                            argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                                             argCount++;
                                         }
 
@@ -1312,7 +1323,7 @@ public class ExpressionParser {
                                                 // this is 'case when', we will indicate that this is regular 'case'
                                                 // to the rewrite logic
                                                 onNode(listener, expressionNodePool.next().of(ExpressionNode.LITERAL,
-                                                        null, Integer.MIN_VALUE, -1), argStackDepth, false);
+                                                        null, Integer.MIN_VALUE, -1), argStackDepth, prevBranch);
                                             }
                                             paramCount++;
                                         }
@@ -1450,8 +1461,7 @@ public class ExpressionParser {
                                                             listener,
                                                             member,
                                                             argStackDepth,
-                                                            false
-                                                    );
+                                                            prevBranch);
                                                     opStack.pop();
                                                     paramCount++;
                                                     thisBranch = BRANCH_COMMA;
@@ -1527,7 +1537,7 @@ public class ExpressionParser {
                     break;
                 }
 
-                argStackDepth = onNode(listener, node, argStackDepth, caseCount == 0);
+                argStackDepth = onNode(listener, node, argStackDepth, prevBranch, caseCount == 0);
             }
 
             if (shadowParseMismatchFirstPosition != -1) {

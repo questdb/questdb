@@ -510,8 +510,11 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("x\n[[4.0]]\n", "SELECT arr[0:1,1:2,1] x FROM tango");
             assertSql("x\n[" + subArr01 + "," + subArr11 + "]\n", "SELECT arr[0:,1] x FROM tango");
             assertSql("x\n[[4.0],[8.0]]\n", "SELECT arr[0:,1:2,1] x FROM tango");
-            // TODO: make this syntax work!
-//            assertSql("x\n[[4.0],[8.0]]\n", "SELECT arr[0:,1:,1] x FROM tango");
+            assertSql("x\n[[7.0,8.0]]\n", "SELECT arr[1,1:] x FROM tango");
+            assertSql("x\n[[[7.0,8.0]]]\n", "SELECT arr[1:,1:] x FROM tango");
+            assertSql("x\n[8.0]\n", "SELECT arr[1,1,1:] x FROM tango");
+            assertSql("x\n[[8.0]]\n", "SELECT arr[1,1:,1:] x FROM tango");
+            assertSql("x\n[[8.0]]\n", "SELECT arr[1,2-1:,1:] x FROM tango");
         });
     }
 
