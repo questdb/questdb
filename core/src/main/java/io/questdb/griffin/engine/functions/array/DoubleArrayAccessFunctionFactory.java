@@ -72,7 +72,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                 SliceDoubleArrayFunction sliceFn = (SliceDoubleArrayFunction) arrayArg;
                 ObjList<Function> rangeArgs = sliceFn.rangeArgs;
                 for (int n = rangeArgs.size(), i = 0; i < n; i++) {
-                    if (!isIndexArg(rangeArgs.getQuick(i).getType())) {
+                    if (ColumnType.isInterval(rangeArgs.getQuick(i).getType())) {
                         canInline = false;
                         break;
                     }
