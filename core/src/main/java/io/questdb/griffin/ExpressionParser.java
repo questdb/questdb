@@ -373,7 +373,7 @@ public class ExpressionParser {
                     }
                     case ':': {
                         processDefaultBranch = true;
-                        if (isCompletedOperand(prevBranch)) {
+                        if (tok.length() > 1 || isCompletedOperand(prevBranch)) {
                             break;
                         }
                         CharSequence content = lexer.getContent();
@@ -422,9 +422,11 @@ public class ExpressionParser {
                     }
                     case ']': {
                         if (isTypeQualifier() || scopeStack.peek(1) == Scope.CAST_AS) {
-                            ExpressionNode en = opStack.peek();
-                            ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
-                            break;
+                            GenericLexer.FloatingSequence token = (GenericLexer.FloatingSequence) opStack.peek().token;
+                            if (token.charAt(token.length() - 1) == '[') {
+                                token.setHi(lastPos + 1);
+                                break;
+                            }
                         }
                         if (prevBranch == BRANCH_COMMA) {
                             throw missingArgs(lastPos);
