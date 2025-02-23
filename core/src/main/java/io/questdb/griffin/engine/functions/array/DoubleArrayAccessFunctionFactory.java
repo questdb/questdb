@@ -79,17 +79,17 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                 }
                 if (canInline) {
                     arrayArg = sliceFn.arrayArg;
-                    args = rangeArgs;
+                    args = new ObjList<>(rangeArgs);
+                    args.addAll(inputArgs);
                     argPositions = new IntList();
                     argPositions.addAll(sliceFn.argPositions);
                     argPositions.addAll(inputArgPositions);
                 }
             }
             if (args == null) {
+                args = new ObjList<>(inputArgs);
                 argPositions = inputArgPositions;
-                args = new ObjList<>();
             }
-            args.addAll(inputArgs);
 
             int nDims = ColumnType.decodeArrayDimensionality(arrayArg.getType());
             int nArgs = args.size();
