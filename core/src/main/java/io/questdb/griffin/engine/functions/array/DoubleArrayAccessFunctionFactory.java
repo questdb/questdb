@@ -57,27 +57,34 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        Function arrayArg = args.getQuick(0);
-        args.remove(0);
-        argPositions.removeIndex(0);
-        int arrayDimCount = ColumnType.decodeArrayDimensionality(arrayArg.getType());
-        int accessDimCount = args.size();
-        if (accessDimCount > arrayDimCount) {
-            throw SqlException
-                    .position(argPositions.get(arrayDimCount))
-                    .put("too many array coordinates [accessDims=").put(accessDimCount)
-                    .put(", arrayDims=").put(arrayDimCount)
-                    .put(']');
-        }
-        int resultNDims = arrayDimCount;
-        for (int n = args.size(), i = 0; i < n; i++) {
-            if (args.getQuick(i).getType() == ColumnType.INT) {
-                resultNDims--;
+        Function arrayArg = null;
+        try {
+            arrayArg = args.getQuick(0);
+            args.remove(0);
+            argPositions.removeIndex(0);
+            int arrayDimCount = ColumnType.decodeArrayDimensionality(arrayArg.getType());
+            int accessDimCount = args.size();
+            if (accessDimCount > arrayDimCount) {
+                throw SqlException
+                        .position(argPositions.get(arrayDimCount))
+                        .put("too many array coordinates [accessDims=").put(accessDimCount)
+                        .put(", arrayDims=").put(arrayDimCount)
+                        .put(']');
             }
+            int resultNDims = arrayDimCount;
+            for (int n = args.size(), i = 0; i < n; i++) {
+                if (args.getQuick(i).getType() == ColumnType.INT) {
+                    resultNDims--;
+                }
+            }
+            return resultNDims == 0
+                    ? new AccessDoubleArrayFunction(arrayArg, args, argPositions)
+                    : new SliceDoubleArrayFunction(arrayArg, resultNDims, args, argPositions);
+        } catch (Throwable e) {
+            Misc.free(arrayArg);
+            Misc.clearObjList(args);
+            throw e;
         }
-        return resultNDims == 0
-                ? new AccessDoubleArrayFunction(arrayArg, args, argPositions)
-                : new SliceDoubleArrayFunction(arrayArg, resultNDims, args, argPositions);
     }
 
     static class AccessDoubleArrayFunction extends DoubleFunction {
