@@ -28,12 +28,15 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cutlass.pgwire.modern.DoubleArrayParser;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.std.Mutable;
 
 public final class ArrayBindVariable extends ArrayFunction implements Mutable {
 
     private ArrayView view;
+    private final DoubleArrayParser doubleArrayParser = new DoubleArrayParser();
 
     public void assignType(int type) throws SqlException {
         if (view == null || view.getType() == ColumnType.UNDEFINED) {
@@ -56,7 +59,7 @@ public final class ArrayBindVariable extends ArrayFunction implements Mutable {
     }
 
     public void parseArray(CharSequence value) {
-        throw new UnsupportedOperationException("implement me");
+        view = SqlUtil.implicitCastStringAsDoubleArray(value, doubleArrayParser, super.type);
     }
 
     public void setType(int colType) {

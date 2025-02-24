@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.pgwire.modern.DoubleArrayParser;
@@ -1181,15 +1182,7 @@ public class RecordToRowCopierUtils {
             return;
         }
 
-        int expectedDimCount = ColumnType.decodeArrayDimensionality(expectedType);
-        try {
-            parser.of(str);
-        } catch (IllegalArgumentException e) {
-            throw ImplicitCastException.inconvertibleValue(str, ColumnType.STRING, expectedType);
-        }
-        if (parser.getDimCount() != expectedDimCount) {
-            throw ImplicitCastException.inconvertibleValue(str, ColumnType.STRING, expectedType);
-        }
-        row.putArray(col, parser);
+        ArrayView view = SqlUtil.implicitCastStringAsDoubleArray(str, parser, expectedType);
+        row.putArray(col, view);
     }
 }

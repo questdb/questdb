@@ -1356,14 +1356,13 @@ public class PGJobContextTest extends BasePGTest {
         skipOnWalRun();
         skipInLegacyMode();
 
-        // todo: run with all modes
-        assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
-            try (PreparedStatement stmt = connection.prepareStatement("create table x (al long[])")) {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[])")) {
                 stmt.execute();
             }
 
             try (PreparedStatement stmt = connection.prepareStatement("insert into x values (?)")) {
-                Array arr = connection.createArrayOf("int8", new Long[]{1L, 2L, 3L, 4L, 5L});
+                Array arr = connection.createArrayOf("int8", new Double[]{1d, 2d, 3d, 4d, 5d});
                 stmt.setArray(1, arr);
                 stmt.execute();
             }
@@ -1373,7 +1372,7 @@ public class PGJobContextTest extends BasePGTest {
                 sink.clear();
                 try (ResultSet rs = stmt.executeQuery()) {
                     assertResultSet("al[ARRAY]\n" +
-                                    "{1,2,3,4,5}\n",
+                                    "{1.0,2.0,3.0,4.0,5.0}\n",
                             sink,
                             rs
                     );

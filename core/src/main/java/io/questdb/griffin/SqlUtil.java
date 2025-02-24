@@ -27,7 +27,9 @@ package io.questdb.griffin;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cutlass.pgwire.modern.DoubleArrayParser;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.griffin.model.ExpressionNode;
@@ -743,6 +745,18 @@ public class SqlUtil {
 
     public static long implicitCastVarcharAsTimestamp(CharSequence value) {
         return implicitCastStrVarcharAsTimestamp0(value, ColumnType.VARCHAR);
+    }
+
+    public static ArrayView implicitCastStringAsDoubleArray(CharSequence value, DoubleArrayParser parser, int expectedType) {
+        try {
+            parser.of(value);
+        } catch (IllegalArgumentException e) {
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, expectedType);
+        }
+        if (expectedType != ColumnType.UNDEFINED && parser.getType() != expectedType) {
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, expectedType);
+        }
+        return parser;
     }
 
     public static boolean isParallelismSupported(ObjList<Function> functions) {
