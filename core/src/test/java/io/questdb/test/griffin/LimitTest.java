@@ -287,7 +287,7 @@ public class LimitTest extends AbstractCairoTest {
                 "60\tgoogl\t0.852\t2018-01-01T02:00:00.000000Z\ttrue\tKZZ\tnull\tnull\t834\t2015-07-15T04:34:51.645Z\tLMSR\t-4834150290387342806\t1970-01-01T08:03:20.000000Z\t23\t00000000 dd 02 98 ad a8 82 73 a6 7f db d6 20\tFDRPHNGTNJJPT\n";
 
         String query = "select * from y limit -5";
-        testLimit(expected, expected2, query, true);
+        testLimit(expected, expected2, query);
     }
 
     @Test
@@ -346,12 +346,12 @@ public class LimitTest extends AbstractCairoTest {
                     query,
                     "timestamp",
                     true,
-                    false
+                    true
             );
 
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: $0::long\n" +
+                    "Limit lo: $0::long[2] skip-over-rows: 0 limit: 2\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: y\n"
@@ -359,24 +359,21 @@ public class LimitTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from y limit -2",
-                    "Radix sort light\n" +
-                            "  keys: [timestamp]\n" +
-                            "    Limit lo: 2\n" +
-                            "        PageFrame\n" +
-                            "            Row backward scan\n" +
-                            "            Frame backward scan on: y\n"
+                    "Limit lo: -2 skip-over-rows: 58 limit: 2\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: y\n"
             );
 
             bindVariableService.setLong(0, -2L);
 
             assertPlanNoLeakCheck(
                     query,
-                    "Radix sort light\n" +
-                            "  keys: [timestamp]\n" +
-                            "    Limit lo: -$0::long\n" +
-                            "        PageFrame\n" +
-                            "            Row backward scan\n" +
-                            "            Frame backward scan on: y\n");
+                    "Limit lo: $0::long[-2] skip-over-rows: 58 limit: 2\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: y\n"
+            );
 
             assertQuery(
                     "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
@@ -507,7 +504,7 @@ public class LimitTest extends AbstractCairoTest {
                     "y where sym = 'googl' limit -3",
                     "timestamp",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -559,11 +556,11 @@ public class LimitTest extends AbstractCairoTest {
                 bindVariableService.setLong("lo", 4);
                 bindVariableService.setInt("hi", 8);
 
-                assertQueryAndCache(expected1, query, "timestamp", true, false);
+                assertQueryAndCache(expected1, query, "timestamp", true, true);
                 bindVariableService.setLong("lo", 6);
                 bindVariableService.setInt("hi", 12);
 
-                assertQueryAndCache(expected2, query, "timestamp", true, false);
+                assertQueryAndCache(expected2, query, "timestamp", true, true);
             } finally {
                 engine.clear();
             }
@@ -600,7 +597,7 @@ public class LimitTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 10\n" +
+                    "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
                             "    PageFrame\n" +
                             "        Row backward scan\n" +
                             "        Interval backward scan on: intervaltest\n" +
@@ -622,7 +619,7 @@ public class LimitTest extends AbstractCairoTest {
                     query,
                     "ts###DESC",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -969,9 +966,9 @@ public class LimitTest extends AbstractCairoTest {
                 );
 
                 bindVariableService.setLong(0, 4);
-                assertQueryAndCache(expected1, query, "timestamp", true, false);
+                assertQueryAndCache(expected1, query, "timestamp", true, true);
                 bindVariableService.setLong(0, 6);
-                assertQueryAndCache(expected2, query, "timestamp", true, false);
+                assertQueryAndCache(expected2, query, "timestamp", true, true);
             } finally {
                 engine.clear();
             }
@@ -1023,9 +1020,9 @@ public class LimitTest extends AbstractCairoTest {
                 );
 
                 bindVariableService.setLong("lim", 4);
-                assertQueryAndCache(expected1, query, "timestamp", true, false);
+                assertQueryAndCache(expected1, query, "timestamp", true, true);
                 bindVariableService.setLong("lim", 6);
-                assertQueryAndCache(expected2, query, "timestamp", true, false);
+                assertQueryAndCache(expected2, query, "timestamp", true, true);
             } finally {
                 engine.clear();
             }
@@ -1084,16 +1081,12 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     private void testLimit(String expected1, String expected2, String query) throws Exception {
-        testLimit(expected1, expected2, query, false);
-    }
-
-    private void testLimit(String expected1, String expected2, String query, boolean expectSize) throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     createTableDdl
             );
 
-            assertQueryAndCache(expected1, query, "timestamp", true, expectSize);
+            assertQueryAndCache(expected1, query, "timestamp", true, true);
 
             execute(
                     "insert into y select * from " +
@@ -1118,7 +1111,7 @@ public class LimitTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQuery(expected2, query, "timestamp", true, expectSize);
+            assertQuery(expected2, query, "timestamp", true, true);
         });
     }
 

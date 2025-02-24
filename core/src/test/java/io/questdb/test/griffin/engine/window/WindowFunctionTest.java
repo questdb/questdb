@@ -262,7 +262,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             " limit -5",
                     "ts",
                     false,
-                    false,
+                    true,
                     false
             );
 
@@ -292,7 +292,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             " limit -5",
                     "ts",
                     false,
-                    false,
+                    true,
                     false
             );
 
@@ -322,7 +322,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             " limit -5",
                     "ts",
                     false,
-                    false,
+                    true,
                     false
             );
 
@@ -356,7 +356,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             " limit -5",
                     "ts",
                     false,
-                    false,
+                    true,
                     false
             );
         });
@@ -408,7 +408,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "limit -1) ",
                     "ts",
                     false,
-                    false,
+                    true,
                     false
             );
         });
@@ -458,7 +458,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab) limit -1)",
                     "ts",
                     false,
-                    false,
+                    true,
                     false
             );
         });
@@ -2114,7 +2114,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "limit 10",
                     null,
                     false,
-                    false
+                    true
             );
         });
     }
@@ -3113,7 +3113,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "    RANGE UNBOUNDED PRECEDING\n" +
                         ")\n" +
                         "FROM long_sequence(10)\n" +
-                        "limit -10", false));
+                        "limit -10",
+                true)
+        );
     }
 
     @Test

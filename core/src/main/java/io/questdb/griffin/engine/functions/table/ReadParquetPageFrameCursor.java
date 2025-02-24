@@ -90,11 +90,6 @@ public class ReadParquetPageFrameCursor implements PageFrameCursor {
     }
 
     @Override
-    public int cursorScanDirection() {
-        return SCAN_DIR_UNSORTED;
-    }
-
-    @Override
     public IntList getColumnIndexes() {
         return columnIndexes;
     }

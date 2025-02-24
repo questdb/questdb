@@ -1251,7 +1251,6 @@ public class SqlOptimiser implements Mutable {
         if (parent != model) {
             throw SqlException.position(alias.position).put("Duplicate table or alias: ").put(alias.token);
         }
-
     }
 
     private ExpressionNode concatFilters(ExpressionNode old, ExpressionNode filter) {
@@ -4194,213 +4193,126 @@ public class SqlOptimiser implements Mutable {
      * select a,b from X order by ts limit -10 -> select a,b  from (select * from X order by ts desc limit 10) order by ts asc
      * select a,b from X order by ts desc limit -10 -> select a,b from (select * from X order by ts asc limit 10) order by ts desc
      *
-     * @param model            input model
-     * @param executionContext execution context
+     * @param model input model
      */
-    private void rewriteNegativeLimit(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+    private void rewriteMultipleTermLimitedOrderByPart1(QueryModel model) {
         if (model != null) {
+            if (
+                    model.getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
+                            && model.getNestedModel() != null
+                            && model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_NONE
+                            && model.getNestedModel().getOrderBy() != null
+                            && model.getNestedModel().getOrderBy().size() > 1
+                            && model.getNestedModel().getTimestamp() != null
+                            && model.getLimitLo() != null
+                            && model.getLimitHi() == null
+                            && Chars.equals(model.getLimitLo().token, '-')
+            ) {
 
-            if (!rewriteNegativeLimitGuard(model, executionContext)) {
-                rewriteNegativeLimitWithOrderBy(model);
-            }
+                QueryModel nested = model.getNestedModel();
 
-            final QueryModel nested = model.getNestedModel();
+                int firstOrderByDir = nested.getOrderByDirection().get(0);
 
-            if (rewriteNegativeLimitGuard(model, executionContext)) {
-                Function loFunction = getLoFunction(model.getLimitLo(), executionContext);
-                ObjList<ExpressionNode> orderBy = nested.getOrderBy();
-                assert loFunction != null; // covered by the guard
-                long limitValue = loFunction.getLong(null);
-
-                ExpressionNode limitNode;
-                if (loFunction.isConstant()) {
-                    final CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
-                    characterStoreEntry.put(-limitValue);
-                    limitNode = nextLiteral(characterStoreEntry.toImmutable());
-                    // override limit node type
-                    limitNode.type = CONSTANT;
-                } else {
-                    // only runtime constant is possible
-                    limitNode = nextLiteral("-");
-                    // negate the limit
-                    limitNode.type = OPERATION;
-                    limitNode.rhs = SqlUtil.nextExpr(
-                            expressionNodePool,
-                            BIND_VARIABLE,
-                            model.getLimitLo().token,
-                            model.getLimitLo().position
-                    );
-                    limitNode.paramCount = 1;
+                if (firstOrderByDir != ORDER_DIRECTION_ASCENDING) {
+                    return;
                 }
 
-                // insert two models between "model" and "nested", like so:
-                // model -> order -> limit -> nested + order
+                ExpressionNode firstOrderByArg = nested.getOrderBy().get(0);
 
-                // the outer model loses its limit
+                if (!Chars.equalsIgnoreCase(firstOrderByArg.token, nested.getTimestamp().token)) {
+                    return;
+                }
+
+                // we want to push down a limited reverse scan, and then sort into the intended ordering afterward
+
+                // first, copy the order by up
+                for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
+                    model.addOrderBy(nested.getOrderBy().get(i), nested.getOrderByDirection().get(i));
+                    model.getOrderByAdvice().add(nested.getOrderBy().get(i));
+                    model.getOrderByDirectionAdvice().add(nested.getOrderByDirection().get(i));
+                }
+
+
+                if (nested.getOrderByAdvice().size() == 0) {
+                    for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
+                        nested.getOrderByAdvice().add(nested.getOrderBy().get(i));
+                        // we have to reverse the sorting order of the additional (to timestamp)
+                        // terms because we are using reverse timestamp scan and also topN sort logic
+                        // this is negative limit!
+                        int orderDirection = nested.getOrderByDirection().get(i) == ORDER_DIRECTION_DESCENDING ? ORDER_DIRECTION_ASCENDING : ORDER_DIRECTION_DESCENDING;
+                        nested.getOrderByDirectionAdvice().add(orderDirection);
+                        nested.getOrderByDirection().setQuick(i, orderDirection);
+                    }
+                    // reverse the scan
+                    nested.getOrderByDirection().set(0, ORDER_DIRECTION_DESCENDING);
+                } else {
+                    // assume already filled
+                    nested.getOrderByDirectionAdvice().set(0, ORDER_DIRECTION_DESCENDING);
+                }
+
+                nested.setAllowPropagationOfOrderByAdvice(false); // stop propagation
+
+                // copy the integral part i.e if it's -3, then 3
+                nested.setLimit(model.getLimitLo().rhs, null);
+
+                // remove limit from outer
                 model.setLimit(null, null);
-
-                QueryModel limitModel = queryModelPool.next();
-                limitModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
-                limitModel.setNestedModel(nested);
-                limitModel.setLimit(limitNode, null);
-
-                // copy columns to the "limit" model from the "nested" model
-                ObjList<CharSequence> nestedColumnNames = nested.getBottomUpColumnAliases();
-                for (int i = 0, n = nestedColumnNames.size(); i < n; i++) {
-                    limitModel.addBottomUpColumn(nextColumn(nestedColumnNames.getQuick(i)));
-                }
-
-                QueryModel order = null;
-                if (limitValue < -1) {
-                    order = queryModelPool.next();
-                    order.setNestedModel(limitModel);
-                    ObjList<QueryColumn> limitColumns = limitModel.getBottomUpColumns();
-                    for (int i = 0, n = limitColumns.size(); i < n; i++) {
-                        order.addBottomUpColumn(limitColumns.getQuick(i));
-                    }
-                    order.setNestedModelIsSubQuery(true);
-                    model.setNestedModel(order);
-                }
-
-                if (orderBy.size() == 0) {
-                    if (order != null) {
-                        order.addOrderBy(nested.getTimestamp(), ORDER_DIRECTION_ASCENDING);
-                    }
-
-                    nested.addOrderBy(nested.getTimestamp(), QueryModel.ORDER_DIRECTION_DESCENDING);
-                } else {
-                    final IntList orderByDirection = nested.getOrderByDirection();
-                    if (order != null) {
-                        // it is possible that order by column has not been selected in the order model
-                        // for that reason we must add column lookup to allow order-by optimisation to resolve the column name
-                        final ExpressionNode orderByNode = nested.getTimestamp();
-                        final CharSequence orderByToken = orderByNode.token;
-                        // We are here because order-by matched timestamp, what we don't know is
-                        // if we matched timestamp via index or name. If we parse order-by token
-                        // AGAIN, that would be our index, otherwise - it is a name
-                        if (order.getAliasToColumnMap().excludes(orderByToken)) {
-                            order.getAliasToColumnMap().put(orderByToken, nextColumn(orderByToken));
-                        }
-                        order.addOrderBy(orderByNode, orderByDirection.getQuick(0));
-                    }
-
-                    if (orderByDirection.getQuick(0) == ORDER_DIRECTION_ASCENDING) {
-                        orderByDirection.setQuick(0, ORDER_DIRECTION_DESCENDING);
-                    } else {
-                        orderByDirection.setQuick(0, ORDER_DIRECTION_ASCENDING);
-                    }
-                }
-
-                if (order == null) {
-                    model.setNestedModel(limitModel);
-                }
             }
-            // assign different nested model because it might need to be re-written
-            rewriteNegativeLimit(nested, executionContext);
+            rewriteMultipleTermLimitedOrderByPart1(model.getNestedModel());
+            final ObjList<QueryModel> joinModels = model.getJoinModels();
+            for (int i = 1, n = joinModels.size(); i < n; i++) {
+                rewriteMultipleTermLimitedOrderByPart1(joinModels.getQuick(i));
+            }
+            rewriteMultipleTermLimitedOrderByPart1(model.getUnionModel());
         }
     }
 
-    private boolean rewriteNegativeLimitGuard(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        final QueryModel nested = model.getNestedModel();
-        Function loFunction;
-        ObjList<ExpressionNode> orderBy;
-        long limitValue;
-        return
-                (model.getLimitLo() != null
-                        && model.getLimitHi() == null
-                        && model.getUnionModel() == null
-                        && model.getJoinModels().size() == 1
-                        && model.getGroupBy().size() == 0
-                        && model.getSampleBy() == null
-                        && hasNoAggregateQueryColumns(model)
-                        && !model.isDistinct()
-                        && nested != null
-                        && nested.getJoinModels().size() == 1
-                        && nested.getTimestamp() != null
-                        && nested.getWhereClause() == null
-                        && (loFunction = getLoFunction(model.getLimitLo(), executionContext)) != null
-                        && (loFunction.isConstant() || loFunction.isRuntimeConstant())
-                        && (limitValue = loFunction.getLong(null)) < 0
-                        && (limitValue >= -executionContext.getCairoEngine().getConfiguration().getSqlMaxNegativeLimit())
-                        && ((orderBy = nested.getOrderBy()).size() == 0 ||
-                        (
-                                orderBy.size() == 1
-                                        && nested.isOrderByTimestamp(orderBy.getQuick(0).token)
-                        ))
-                );
-    }
-
     /**
-     * Handle queries like:
-     * SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3
-     * With a model like this:
-     * `select-choose timestamp, side from (trades timestamp (timestamp) order by timestamp, side desc) limit -(3)`
+     * Scans for NONE models, basically those that query table and if they have
+     * order by descending timestamp only. These models are tagged for the generator
+     * to handle the entire pipeline correctly.
      * <p>
-     * This would ordinarily compile to a `LimitedSizePartiallySortedRecordCursor`.
-     * That means it will forward scan - and run out of memory on demo!
-     * Instead, we aim to subquery a backwards scan and sort.
-     * This then needs to be compiled into a `LimitedSizePartiallySortedRecordCursor`, but in reverse
-     * in order to correctly handle duplicates.
+     * Additionally, we scan the same models and separately tag them if they
+     * ordered by descending timestamp, together with other fields.
      * <p>
-     * So we produce a model like this:
-     * `select-choose timestamp, side from (trades timestamp (timestamp) order by timestamp desc, side desc limit 3) order by timestamp, side desc`
+     * We go deep and wide, as in include joins and unions.
+     *
+     * @param model the starting point
      */
-    private void rewriteNegativeLimitWithOrderBy(QueryModel model) {
-        if (
-                model.getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
-                        && model.getNestedModel() != null
-                        && model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_NONE
-                        && model.getNestedModel().getOrderBy() != null
-                        && model.getNestedModel().getOrderBy().size() > 1
-                        && model.getNestedModel().getTimestamp() != null
-                        && model.getLimitLo() != null
-                        && model.getLimitHi() == null
-                        && Chars.equals(model.getLimitLo().token, '-')
-        ) {
+    private void rewriteMultipleTermLimitedOrderByPart2(QueryModel model) {
+        if (model == null) {
+            return;
+        }
 
-            QueryModel nested = model.getNestedModel();
-
-            int firstOrderByDir = nested.getOrderByDirection().get(0);
-
-            if (firstOrderByDir != ORDER_DIRECTION_ASCENDING) {
-                return;
-            }
-
-            ExpressionNode firstOrderByArg = nested.getOrderBy().get(0);
-
-            if (!Chars.equalsIgnoreCase(firstOrderByArg.token, nested.getTimestamp().token)) {
-                return;
-            }
-
-            // we want to push down a limited reverse scan, and then sort into the intended ordering afterward
-
-            // first, copy the order by up
-            for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
-                model.addOrderBy(nested.getOrderBy().get(i), nested.getOrderByDirection().get(i));
-                model.getOrderByAdvice().add(nested.getOrderBy().get(i));
-                model.getOrderByDirectionAdvice().add(nested.getOrderByDirection().get(i));
-            }
-
-            // reverse the scan
-            nested.getOrderByDirection().set(0, ORDER_DIRECTION_DESCENDING);
-
-            if (nested.getOrderByAdvice().size() == 0) {
-                for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
-                    nested.getOrderByAdvice().add(nested.getOrderBy().get(i));
-                    nested.getOrderByDirectionAdvice().add(nested.getOrderByDirection().get(i));
-                }
+        if (model.getModelType() == SELECT_MODEL_NONE || model.getModelType() == SELECT_MODEL_CHOOSE) {
+            boolean orderDescendingByDesignatedTimestampOnly;
+            IntList direction = model.getOrderByDirectionAdvice();
+            if (direction.size() < 1) {
+                orderDescendingByDesignatedTimestampOnly = false;
             } else {
-                // assume already filled
-                nested.getOrderByDirectionAdvice().set(0, ORDER_DIRECTION_DESCENDING);
+                orderDescendingByDesignatedTimestampOnly = model.getOrderByAdvice().size() == 1
+                        && model.getTimestamp() != null
+                        && Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token, model.getTimestamp().token)
+                        && direction.get(0) == ORDER_DIRECTION_DESCENDING;
             }
 
-            nested.setAllowPropagationOfOrderByAdvice(false); // stop propagation
+            model.setOrderDescendingByDesignatedTimestampOnly(orderDescendingByDesignatedTimestampOnly);
+            model.setForceBackwardScan(
+                    orderDescendingByDesignatedTimestampOnly || (
+                            model.getOrderByAdvice().size() > 1
+                                    && model.getTimestamp() != null
+                                    && Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token, model.getTimestamp().token)
+                                    && model.getLimitLo() != null && !Chars.equals(model.getLimitLo().token, '-'))
+            );
+        }
 
-            // copy the integral part i.e if it's -3, then 3
-            nested.setLimit(model.getLimitLo().rhs, null);
+        rewriteMultipleTermLimitedOrderByPart2(model.getNestedModel());
+        rewriteMultipleTermLimitedOrderByPart2(model.getUnionModel());
 
-            // remove limit from outer
-            model.setLimit(null, null);
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        // ignore self
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            rewriteMultipleTermLimitedOrderByPart2(joinModels.getQuick(i));
         }
     }
 
@@ -5444,7 +5356,7 @@ public class SqlOptimiser implements Mutable {
                     continue;
                 }
 
-                validateGroupByExpression(node, groupByModel, originalNodePosition);
+                validateGroupByExpression(node, originalNodePosition);
 
                 if (node.type == LITERAL) {
                     if (alias == null) {
@@ -6153,55 +6065,6 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    /**
-     * Scans for NONE models, basically those that query table and if they have
-     * order by descending timestamp only. These models are tagged for the generator
-     * to handle the entire pipeline correctly.
-     * <p>
-     * Additionally, we scan the same models and separately tag them if they
-     * ordered by descending timestamp, together with other fields.
-     * <p>
-     * We go deep and wide, as in include joins and unions.
-     *
-     * @param model the starting point
-     */
-    private void tagLimitModels(QueryModel model) {
-        if (model == null) {
-            return;
-        }
-
-        if (model.getModelType() == SELECT_MODEL_NONE || model.getModelType() == SELECT_MODEL_CHOOSE) {
-            boolean orderDescendingByDesignatedTimestampOnly;
-            IntList direction = model.getOrderByDirectionAdvice();
-            if (direction.size() < 1) {
-                orderDescendingByDesignatedTimestampOnly = false;
-            } else {
-                orderDescendingByDesignatedTimestampOnly = model.getOrderByAdvice().size() == 1
-                        && model.getTimestamp() != null
-                        && Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token, model.getTimestamp().token)
-                        && direction.get(0) == ORDER_DIRECTION_DESCENDING;
-            }
-
-            model.setOrderDescendingByDesignatedTimestampOnly(orderDescendingByDesignatedTimestampOnly);
-            model.setForceBackwardScan(
-                    orderDescendingByDesignatedTimestampOnly || (
-                            model.getOrderByAdvice().size() > 1
-                                    && model.getTimestamp() != null
-                                    && Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token, model.getTimestamp().token)
-                                    && model.getLimitLo() != null && !Chars.equals(model.getLimitLo().token, '-'))
-            );
-        }
-
-        tagLimitModels(model.getNestedModel());
-        tagLimitModels(model.getUnionModel());
-
-        ObjList<QueryModel> joinModels = model.getJoinModels();
-        // ignore self
-        for (int i = 1, n = joinModels.size(); i < n; i++) {
-            tagLimitModels(joinModels.getQuick(i));
-        }
-    }
-
     private void traverseNamesAndIndices(QueryModel parent, ExpressionNode node) throws SqlException {
         literalCollectorAIndexes.clear();
         literalCollectorBIndexes.clear();
@@ -6249,20 +6112,20 @@ public class SqlOptimiser implements Mutable {
     }
 
     /* Throws exception if given node tree contains reference to aggregate or window function that are not allowed in GROUP BY clause. */
-    private void validateGroupByExpression(@Transient ExpressionNode node, QueryModel model, int originalNodePosition) throws SqlException {
+    private void validateGroupByExpression(@Transient ExpressionNode node, int originalNodePosition) throws SqlException {
         try {
-            validateNotAggregateOrWindowFunction(node, model);
+            validateNotAggregateOrWindowFunction(node);
 
             sqlNodeStack.clear();
             while (node != null) {
                 if (node.paramCount < 3) {
                     if (node.rhs != null) {
-                        validateNotAggregateOrWindowFunction(node.rhs, model);
+                        validateNotAggregateOrWindowFunction(node.rhs);
                         sqlNodeStack.push(node.rhs);
                     }
 
                     if (node.lhs != null) {
-                        validateNotAggregateOrWindowFunction(node.lhs, model);
+                        validateNotAggregateOrWindowFunction(node.lhs);
                         node = node.lhs;
                     } else {
                         if (!sqlNodeStack.isEmpty()) {
@@ -6274,12 +6137,12 @@ public class SqlOptimiser implements Mutable {
                 } else {
                     for (int i = 1, k = node.paramCount; i < k; i++) {
                         ExpressionNode e = node.args.getQuick(i);
-                        validateNotAggregateOrWindowFunction(e, model);
+                        validateNotAggregateOrWindowFunction(e);
                         sqlNodeStack.push(e);
                     }
 
                     ExpressionNode e = node.args.getQuick(0);
-                    validateNotAggregateOrWindowFunction(e, model);
+                    validateNotAggregateOrWindowFunction(e);
                     node = e;
                 }
             }
@@ -6291,7 +6154,7 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void validateNotAggregateOrWindowFunction(ExpressionNode node, QueryModel model) throws SqlException {
+    private void validateNotAggregateOrWindowFunction(ExpressionNode node) throws SqlException {
         if (node.type == FUNCTION) {
             if (functionParser.getFunctionFactoryCache().isGroupBy(node.token)) {
                 throw SqlException.$(node.position, "aggregate functions are not allowed in GROUP BY");
@@ -6439,7 +6302,7 @@ public class SqlOptimiser implements Mutable {
             optimiseJoins(rewrittenModel);
             collapseStackedChooseModels(rewrittenModel);
             rewriteCountDistinct(rewrittenModel);
-            rewriteNegativeLimit(rewrittenModel, sqlExecutionContext);
+            rewriteMultipleTermLimitedOrderByPart1(rewrittenModel);
             pushLimitFromChooseToNone(rewrittenModel, sqlExecutionContext);
             validateWindowFunctions(rewrittenModel, sqlExecutionContext, 0);
             rewriteOrderByPosition(rewrittenModel);
@@ -6451,7 +6314,7 @@ public class SqlOptimiser implements Mutable {
             eraseColumnPrefixInWhereClauses(rewrittenModel);
             moveTimestampToChooseModel(rewrittenModel);
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
-            tagLimitModels(rewrittenModel);
+            rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
             return rewrittenModel;
         } catch (Throwable th) {

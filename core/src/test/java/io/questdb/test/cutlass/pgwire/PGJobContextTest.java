@@ -3689,7 +3689,7 @@ if __name__ == "__main__":
                 try (ResultSet rs = statement.getResultSet()) {
                     assertResultSet(
                             "QUERY PLAN[VARCHAR]\n" +
-                                    "Limit lo: 10\n" +
+                                    "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
                                     "    PageFrame\n" +
                                     "        Row forward scan\n" +
                                     "        Frame forward scan on: xx\n",

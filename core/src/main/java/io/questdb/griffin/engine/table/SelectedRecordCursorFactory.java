@@ -283,11 +283,6 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public int cursorScanDirection() {
-            return baseCursor.cursorScanDirection();
-        }
-
-        @Override
         public IntList getColumnIndexes() {
             return baseCursor.getColumnIndexes();
         }

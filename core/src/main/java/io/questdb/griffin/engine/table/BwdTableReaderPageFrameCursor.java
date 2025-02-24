@@ -88,11 +88,6 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
-    public int cursorScanDirection() {
-        return SCAN_DIR_BACKWARD;
-    }
-
-    @Override
     public IntList getColumnIndexes() {
         return columnIndexes;
     }

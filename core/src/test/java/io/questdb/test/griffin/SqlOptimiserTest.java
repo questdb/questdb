@@ -207,7 +207,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
@@ -225,7 +225,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
@@ -243,7 +243,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
@@ -261,7 +261,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
@@ -315,6 +315,77 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDuplicateColumnsInWindowModel() throws SqlException {
+        execute("create table cpu_ts ( hostname symbol, usage_system double, ts timestamp) timestamp(ts);");
+        execute("insert into cpu_ts select rnd_symbol('A', 'B', 'C'), x, x::timestamp from long_sequence(3)");
+        String q1 = "select rank() over(), t1.usage_system, t1.usage_system from cpu_ts t1 join cpu_ts t2 on t1.ts > t2.ts";
+
+        assertPlanNoLeakCheck(
+                q1,
+                "Window\n" +
+                        "  functions: [rank() over ()]\n" +
+                        "    SelectedRecord\n" +
+                        "        Filter filter: t2.ts<t1.ts\n" +
+                        "            Cross Join\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: cpu_ts\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: cpu_ts\n"
+        );
+        assertSql("rank\tusage_system\tusage_system1\n" +
+                "1\t2.0\t2.0\n" +
+                "1\t3.0\t3.0\n" +
+                "1\t3.0\t3.0\n", q1);
+
+        String q2 = "select rank() over(partition by t1.hostname order by t1.ts), t2.usage_system, t2.usage_system from cpu_ts t1 join cpu_ts t2 on t1.ts > t2.ts";
+
+        assertPlanNoLeakCheck(
+                q2,
+                "Window\n" +
+                        "  functions: [rank() over (partition by [hostname])]\n" +
+                        "    SelectedRecord\n" +
+                        "        Filter filter: t2.ts<t1.ts\n" +
+                        "            Cross Join\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: cpu_ts\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: cpu_ts\n"
+        );
+        assertSql("rank\tusage_system\tusage_system1\n" +
+                "1\t1.0\t1.0\n" +
+                "1\t1.0\t1.0\n" +
+                "1\t2.0\t2.0\n", q2);
+
+        // useInnerModel
+        String q3 = "select rank() over(partition by t1.hostname order by t1.ts), t2.usage_system, t2.usage_system, t1.usage_system + 10 from cpu_ts t1 join cpu_ts t2 on t1.ts > t2.ts";
+
+        assertPlanNoLeakCheck(
+                q3,
+                "Window\n" +
+                        "  functions: [rank() over (partition by [hostname])]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [hostname,ts,usage_system,usage_system1+10]\n" +
+                        "        SelectedRecord\n" +
+                        "            Filter filter: t2.ts<t1.ts\n" +
+                        "                Cross Join\n" +
+                        "                    PageFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: cpu_ts\n" +
+                        "                    PageFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: cpu_ts\n"
+        );
+        assertSql("rank\tusage_system\tusage_system1\tcolumn\n" +
+                "1\t1.0\t1.0\t12.0\n" +
+                "1\t1.0\t1.0\t13.0\n" +
+                "1\t2.0\t2.0\t13.0\n", q3);
+    }
+
+    @Test
     public void testFirstAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
@@ -323,7 +394,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertEquals("select-choose ts FIRST from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
@@ -462,7 +533,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertEquals("select-choose ts LAST from (select [ts] from y timestamp (ts)) order by LAST desc limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
@@ -499,7 +570,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertEquals("select-choose ts max from (select [ts] from y timestamp (ts)) order by max desc limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
@@ -535,7 +606,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertEquals("select-choose ts min from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
@@ -571,7 +642,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertEquals("select-choose FIRST from (select-choose [ts FIRST] ts FIRST from (select [ts] from y timestamp (ts)) limit 1)", model.toString0());
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
@@ -593,7 +664,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             );
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
@@ -615,7 +686,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             );
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
@@ -633,7 +704,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertEquals("select-choose MIN from (select-choose [ts MIN] ts MIN from (select [ts] from y timestamp (ts)) limit 1)", model.toString0());
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
@@ -662,22 +733,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "Union\n" +
                             "    Union\n" +
                             "        Union\n" +
-                            "            Limit lo: 1\n" +
+                            "            Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "                SelectedRecord\n" +
                             "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: y\n" +
-                            "            Limit lo: 1\n" +
+                            "            Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "                SelectedRecord\n" +
                             "                    PageFrame\n" +
                             "                        Row backward scan\n" +
                             "                        Frame backward scan on: y\n" +
-                            "        Limit lo: 1\n" +
+                            "        Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "            SelectedRecord\n" +
                             "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: y\n" +
-                            "    Limit lo: 1\n" +
+                            "    Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "        SelectedRecord\n" +
                             "            PageFrame\n" +
                             "                Row backward scan\n" +
@@ -805,7 +876,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "from tab1 join tab2 on tab1.id = tab2.id\n" +
                             "order by a desc " +
                             "limit 10",
-                    "Limit lo: 10\n" +
+                    "Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                             "    Sort\n" +
                             "      keys: [a desc]\n" +
                             "        SelectedRecord\n" +
@@ -842,7 +913,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "order by a desc, ts " +
                             "limit 10",
                     "SelectedRecord\n" +
-                            "    Limit lo: 10\n" +
+                            "    Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                             "        Sort\n" +
                             "          keys: [a desc, ts]\n" +
                             "            SelectedRecord\n" +
@@ -1004,19 +1075,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "LIMIT 1000000;";
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by s, ts limit 1000000", query);
-            assertPlanNoLeakCheck(query, "Limit lo: 1000000\n" +
-                    "    Sort\n" +
-                    "      keys: [s, ts]\n" +
-                    "        SelectedRecord\n" +
-                    "            AsOf Join Fast Scan\n" +
-                    "              condition: t2.s=t1.s\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: t1\n" +
-                    "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Frame forward scan on: t2\n");
+            assertPlanNoLeakCheck(query,
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1\n" +
+                            "    Sort\n" +
+                            "      keys: [s, ts]\n" +
+                            "        SelectedRecord\n" +
+                            "            AsOf Join Fast Scan\n" +
+                            "              condition: t2.s=t1.s\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Interval forward scan on: t1\n" +
+                            "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: t2\n");
             assertSql("s\tts\ts1\tts1\n" +
                     "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n", query);
         });
@@ -1039,19 +1111,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "LIMIT 1000000;";
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by ts, s limit 1000000", query);
-            assertPlanNoLeakCheck(query, "Limit lo: 1000000\n" +
-                    "    Sort\n" +
-                    "      keys: [ts, s]\n" +
-                    "        SelectedRecord\n" +
-                    "            AsOf Join Fast Scan\n" +
-                    "              condition: t2.s=t1.s\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: t1\n" +
-                    "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Frame forward scan on: t2\n");
+            assertPlanNoLeakCheck(query,
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1\n" +
+                            "    Sort\n" +
+                            "      keys: [ts, s]\n" +
+                            "        SelectedRecord\n" +
+                            "            AsOf Join Fast Scan\n" +
+                            "              condition: t2.s=t1.s\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Interval forward scan on: t1\n" +
+                            "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: t2\n");
             assertSql("s\tts\ts1\tts1\n" +
                     "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n", query);
         });
@@ -1074,19 +1147,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "    LIMIT 1000000;";
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by s, ts1 limit 1000000", query);
-            assertPlanNoLeakCheck(query, "Limit lo: 1000000\n" +
-                    "    Sort\n" +
-                    "      keys: [s, ts1]\n" +
-                    "        SelectedRecord\n" +
-                    "            AsOf Join Fast Scan\n" +
-                    "              condition: t2.s=t1.s\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: t1\n" +
-                    "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Frame forward scan on: t2\n");
+            assertPlanNoLeakCheck(query,
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1\n" +
+                            "    Sort\n" +
+                            "      keys: [s, ts1]\n" +
+                            "        SelectedRecord\n" +
+                            "            AsOf Join Fast Scan\n" +
+                            "              condition: t2.s=t1.s\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Interval forward scan on: t1\n" +
+                            "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: t2\n");
             assertSql("s\tts\ts1\tts1\n" +
                     "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n", query);
         });
@@ -1109,19 +1183,21 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "LIMIT 1000000;";
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by s1, ts1 limit 1000000", query);
-            assertPlanNoLeakCheck(query, "Limit lo: 1000000\n" +
-                    "    Sort\n" +
-                    "      keys: [s1, ts1]\n" +
-                    "        SelectedRecord\n" +
-                    "            AsOf Join Fast Scan\n" +
-                    "              condition: t2.s=t1.s\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: t1\n" +
-                    "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Frame forward scan on: t2\n");
+            assertPlanNoLeakCheck(
+                    query,
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 1\n" +
+                            "    Sort\n" +
+                            "      keys: [s1, ts1]\n" +
+                            "        SelectedRecord\n" +
+                            "            AsOf Join Fast Scan\n" +
+                            "              condition: t2.s=t1.s\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Interval forward scan on: t1\n" +
+                            "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: t2\n");
             assertSql("s\tts\ts1\tts1\n" +
                     "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n", query);
         });
@@ -1144,19 +1220,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "LIMIT 1000000;";
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000", query);
-            assertPlanNoLeakCheck(query, "Limit lo: 1000000\n" +
-                    "    Sort\n" +
-                    "      keys: [s, ts]\n" +
-                    "        SelectedRecord\n" +
-                    "            AsOf Join Fast Scan\n" +
-                    "              condition: t2.s=t1.s\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: t1\n" +
-                    "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Frame forward scan on: t2\n");
+            assertPlanNoLeakCheck(query,
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 7\n" +
+                            "    Sort\n" +
+                            "      keys: [s, ts]\n" +
+                            "        SelectedRecord\n" +
+                            "            AsOf Join Fast Scan\n" +
+                            "              condition: t2.s=t1.s\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Interval forward scan on: t1\n" +
+                            "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: t2\n");
             assertSql("s\tts\ts1\tts1\n" +
                     "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
                     "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
@@ -1185,17 +1262,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "LIMIT 1000000;";
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by s, ts limit 1000000", query);
-            assertPlanNoLeakCheck(query, "Limit lo: 1000000\n" +
-                    "    SelectedRecord\n" +
-                    "        Cross Join\n" +
-                    "            SortedSymbolIndex\n" +
-                    "                Index forward scan on: s\n" +
-                    "                  symbolOrder: asc\n" +
-                    "                Interval forward scan on: t1\n" +
-                    "                  intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Frame forward scan on: t2\n");
+            assertPlanNoLeakCheck(query,
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 9\n" +
+                            "    SelectedRecord\n" +
+                            "        Cross Join\n" +
+                            "            SortedSymbolIndex\n" +
+                            "                Index forward scan on: s\n" +
+                            "                  symbolOrder: asc\n" +
+                            "                Interval forward scan on: t1\n" +
+                            "                  intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: t2\n");
             assertSql("s\tts\ts1\tts1\n" +
                     "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
                     "a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
@@ -1226,17 +1304,19 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "LIMIT 1000000;";
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000", query);
-            assertPlanNoLeakCheck(query, "Limit lo: 1000000\n" +
-                    "    SelectedRecord\n" +
-                    "        Cross Join\n" +
-                    "            SortedSymbolIndex\n" +
-                    "                Index forward scan on: s\n" +
-                    "                  symbolOrder: asc\n" +
-                    "                Interval forward scan on: t1\n" +
-                    "                  intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Frame forward scan on: t2\n");
+            assertPlanNoLeakCheck(query,
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 63\n" +
+                            "    SelectedRecord\n" +
+                            "        Cross Join\n" +
+                            "            SortedSymbolIndex\n" +
+                            "                Index forward scan on: s\n" +
+                            "                  symbolOrder: asc\n" +
+                            "                Interval forward scan on: t1\n" +
+                            "                  intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: t2\n"
+            );
             assertSql("s\tts\ts1\tts1\n" +
                     "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
                     "a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
@@ -1321,18 +1401,19 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "LIMIT 1000000;";
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by s, ts, ts1, s1 limit 1000000", query);
-            assertPlanNoLeakCheck(query, "Limit lo: 1000000\n" +
-                    "    Sort\n" +
-                    "      keys: [s, ts, ts1, s1]\n" +
-                    "        SelectedRecord\n" +
-                    "            Cross Join\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: t1\n" +
-                    "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Frame forward scan on: t2\n");
+            assertPlanNoLeakCheck(query,
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 63\n" +
+                            "    Sort\n" +
+                            "      keys: [s, ts, ts1, s1]\n" +
+                            "        SelectedRecord\n" +
+                            "            Cross Join\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Interval forward scan on: t1\n" +
+                            "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: t2\n");
             assertSql("s\tts\ts1\tts1\n" +
                     "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
                     "a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
@@ -1417,17 +1498,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "LIMIT 1000000;";
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by s limit 1000000", query);
-            assertPlanNoLeakCheck(query, "Limit lo: 1000000\n" +
-                    "    SelectedRecord\n" +
-                    "        Cross Join\n" +
-                    "            SortedSymbolIndex\n" +
-                    "                Index forward scan on: s\n" +
-                    "                  symbolOrder: asc\n" +
-                    "                Interval forward scan on: t1\n" +
-                    "                  intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Frame forward scan on: t2\n");
+            assertPlanNoLeakCheck(query,
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 63\n" +
+                            "    SelectedRecord\n" +
+                            "        Cross Join\n" +
+                            "            SortedSymbolIndex\n" +
+                            "                Index forward scan on: s\n" +
+                            "                  symbolOrder: asc\n" +
+                            "                Interval forward scan on: t1\n" +
+                            "                  intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: t2\n");
             assertSql("s\tts\ts1\tts1\n" +
                     "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
                     "a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
@@ -1512,18 +1594,19 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "LIMIT 1000000;";
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by ts, s limit 1000000", query);
-            assertPlanNoLeakCheck(query, "Limit lo: 1000000\n" +
-                    "    Sort\n" +
-                    "      keys: [ts, s]\n" +
-                    "        SelectedRecord\n" +
-                    "            Cross Join\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: t1\n" +
-                    "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Frame forward scan on: t2\n");
+            assertPlanNoLeakCheck(query,
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 63\n" +
+                            "    Sort\n" +
+                            "      keys: [ts, s]\n" +
+                            "        SelectedRecord\n" +
+                            "            Cross Join\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Interval forward scan on: t1\n" +
+                            "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: t2\n");
             assertSql("s\tts\ts1\tts1\n" +
                     "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
                     "a\t2023-09-01T00:00:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
@@ -1608,18 +1691,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "LIMIT 1000000;";
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by ts, s1, s, ts1 limit 1000000", query);
-            assertPlanNoLeakCheck(query, "Limit lo: 1000000\n" +
-                    "    Sort\n" +
-                    "      keys: [ts, s1, s, ts1]\n" +
-                    "        SelectedRecord\n" +
-                    "            Cross Join\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: t1\n" +
-                    "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Frame forward scan on: t2\n");
+            assertPlanNoLeakCheck(query,
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 63\n" +
+                            "    Sort\n" +
+                            "      keys: [ts, s1, s, ts1]\n" +
+                            "        SelectedRecord\n" +
+                            "            Cross Join\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Interval forward scan on: t1\n" +
+                            "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: t2\n"
+            );
             assertSql("s\tts\ts1\tts1\n" +
                     "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
                     "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
@@ -1704,19 +1789,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "    LIMIT 1000000;";
 
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) lt join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by s, ts1 limit 1000000", query);
-            assertPlanNoLeakCheck(query, "Limit lo: 1000000\n" +
-                    "    Sort\n" +
-                    "      keys: [s, ts1]\n" +
-                    "        SelectedRecord\n" +
-                    "            Lt Join Light\n" +
-                    "              condition: t2.s=t1.s\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Interval forward scan on: t1\n" +
-                    "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Frame forward scan on: t2\n");
+            assertPlanNoLeakCheck(query,
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 7\n" +
+                            "    Sort\n" +
+                            "      keys: [s, ts1]\n" +
+                            "        SelectedRecord\n" +
+                            "            Lt Join Light\n" +
+                            "              condition: t2.s=t1.s\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Interval forward scan on: t1\n" +
+                            "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: t2\n");
             assertSql("s\tts\ts1\tts1\n" +
                     "a\t2023-09-01T00:00:00.000000Z\t\t\n" +
                     "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
@@ -1746,7 +1832,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by s, ts, ts1 limit 1000000", query);
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1000000\n" +
+                    "Limit lo: 1000000 skip-over-rows: 0 limit: 21\n" +
                             "    Sort\n" +
                             "      keys: [s, ts, ts1]\n" +
                             "        SelectedRecord\n" +
@@ -1856,6 +1942,35 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testOrderByNotChooseByParent() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (f1 float, f2 float, ts timestamp) timestamp(ts)");
+            execute("insert into tab VALUES(1, 10, '2024-12-24T00:11:00.000Z'), (2, 20, '2024-12-24T00:11:00.000Z')");
+            String q1 = "select f2 - f1 as p1, f1, f2 from tab order by ts desc";
+            assertPlanNoLeakCheck(q1, "SelectedRecord\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [f2-f1,f1,f2,ts]\n" +
+                    "        PageFrame\n" +
+                    "            Row backward scan\n" +
+                    "            Frame backward scan on: tab\n");
+            assertQueryNoLeakCheck("p1\tf1\tf2\n" +
+                    "18.0\t2.0000\t20.0000\n" +
+                    "9.0\t1.0000\t10.0000\n", q1);
+
+            String q2 = "select f2 - f1, f1, f2 from tab order by ts desc";
+            assertPlanNoLeakCheck(q2, "SelectedRecord\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [f2-f1,f1,f2,ts]\n" +
+                    "        PageFrame\n" +
+                    "            Row backward scan\n" +
+                    "            Frame backward scan on: tab\n");
+            assertQueryNoLeakCheck("column\tf1\tf2\n" +
+                    "18.0\t2.0000\t20.0000\n" +
+                    "9.0\t1.0000\t10.0000\n", q2);
+        });
+    }
+
+    @Test
     public void testOrderingOfSortsInSingleTimestampCase() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");
@@ -1871,7 +1986,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             " limit 10" +
                             ") " +
                             "order by ts desc",
-                    "Limit lo: 10\n" +
+                    "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
                             "    SelectedRecord\n" +
                             "        Cross Join\n" +
                             "            PageFrame\n" +
@@ -1902,37 +2017,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             " limit 10" +
                             ") " +
                             "order by ts desc",
-                    "ts"
+                    "ts",
+                    false,
+                    true
             );
-        });
-    }
-
-    @Test
-    public void testOrderByNotChooseByParent() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (f1 float, f2 float, ts timestamp) timestamp(ts)");
-            execute("insert into tab VALUES(1, 10, '2024-12-24T00:11:00.000Z'), (2, 20, '2024-12-24T00:11:00.000Z')");
-            String q1 = "select f2 - f1 as p1, f1, f2 from tab order by ts desc";
-            assertPlanNoLeakCheck(q1, "SelectedRecord\n" +
-                    "    VirtualRecord\n" +
-                    "      functions: [f2-f1,f1,f2,ts]\n" +
-                    "        PageFrame\n" +
-                    "            Row backward scan\n" +
-                    "            Frame backward scan on: tab\n");
-            assertQueryNoLeakCheck("p1\tf1\tf2\n" +
-                    "18.0\t2.0000\t20.0000\n" +
-                    "9.0\t1.0000\t10.0000\n", q1);
-
-            String q2 = "select f2 - f1, f1, f2 from tab order by ts desc";
-            assertPlanNoLeakCheck(q2, "SelectedRecord\n" +
-                    "    VirtualRecord\n" +
-                    "      functions: [f2-f1,f1,f2,ts]\n" +
-                    "        PageFrame\n" +
-                    "            Row backward scan\n" +
-                    "            Frame backward scan on: tab\n");
-            assertQueryNoLeakCheck("column\tf1\tf2\n" +
-                    "18.0\t2.0000\t20.0000\n" +
-                    "9.0\t1.0000\t10.0000\n", q2);
         });
     }
 
@@ -1973,7 +2061,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             TestUtils.assertEquals("select-choose ts FIRST from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
@@ -2057,7 +2145,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             TestUtils.assertEquals("select-choose ts LAST from (select [ts] from y timestamp (ts)) order by LAST desc limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
@@ -2093,7 +2181,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             TestUtils.assertEquals("select-choose ts max from (select [ts] from y timestamp (ts)) order by max desc limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
@@ -2128,7 +2216,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             TestUtils.assertEquals("select-choose ts min from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
@@ -2163,7 +2251,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             TestUtils.assertEquals("select-choose FIRST from (select-choose [ts FIRST] ts FIRST from (select [ts] from y timestamp (ts)) limit 1)", model.toString0());
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
@@ -2180,7 +2268,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             TestUtils.assertEquals("select-choose LAST from (select-choose [ts LAST] ts LAST from (select [ts] from y timestamp (ts)) order by LAST desc limit 1)", model.toString0());
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
@@ -2197,7 +2285,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             TestUtils.assertEquals("select-choose MAX from (select-choose [ts MAX] ts MAX from (select [ts] from y timestamp (ts)) order by MAX desc limit 1)", model.toString0());
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
@@ -2214,7 +2302,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             TestUtils.assertEquals("select-choose MIN from (select-choose [ts MIN] ts MIN from (select [ts] from y timestamp (ts)) limit 1)", model.toString0());
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
@@ -2239,27 +2327,26 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "Union\n" +
                             "    Union\n" +
                             "        Union\n" +
-                            "            Limit lo: 1\n" +
+                            "            Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "                SelectedRecord\n" +
                             "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: y\n" +
-                            "            Limit lo: 1\n" +
+                            "            Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "                SelectedRecord\n" +
                             "                    PageFrame\n" +
                             "                        Row backward scan\n" +
                             "                        Frame backward scan on: y\n" +
-                            "        Limit lo: 1\n" +
+                            "        Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "            SelectedRecord\n" +
                             "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: y\n" +
-                            "    Limit lo: 1\n" +
+                            "    Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "        SelectedRecord\n" +
                             "            PageFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: y\n");
-
         });
     }
 
@@ -2357,27 +2444,27 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "Union\n" +
                             "    Union\n" +
                             "        Union\n" +
-                            "            Limit lo: 1\n" +
+                            "            Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "                SelectedRecord\n" +
                             "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: y\n" +
-                            "            Limit lo: 1\n" +
+                            "            Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "                SelectedRecord\n" +
                             "                    PageFrame\n" +
                             "                        Row backward scan\n" +
                             "                        Frame backward scan on: y\n" +
-                            "        Limit lo: 1\n" +
+                            "        Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "            SelectedRecord\n" +
                             "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: y\n" +
-                            "    Limit lo: 1\n" +
+                            "    Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "        SelectedRecord\n" +
                             "            PageFrame\n" +
                             "                Row backward scan\n" +
-                            "                Frame backward scan on: y\n");
-
+                            "                Frame backward scan on: y\n"
+            );
         });
     }
 
@@ -2556,7 +2643,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             TestUtils.assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
@@ -2573,7 +2660,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             TestUtils.assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
@@ -2590,7 +2677,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             TestUtils.assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
@@ -2607,7 +2694,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             TestUtils.assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
@@ -2651,7 +2738,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "SELECT trades.timestamp, * FROM trades\n" +
                             "ASOF JOIN (SELECT * from trades) trades2\n" +
                             " LIMIT -3, -10;",
-                    "Limit lo: -3 hi: -10\n" +
+                    "Limit lo: -3 hi: -10 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        AsOf Join Fast Scan\n" +
                             "            PageFrame\n" +
@@ -2672,7 +2759,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "SELECT trades.timestamp, * FROM trades\n" +
                             "ASOF JOIN (SELECT * from trades) trades2\n" +
                             " LIMIT -3;",
-                    "Limit lo: -3\n" +
+                    "Limit lo: -3 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        AsOf Join Fast Scan\n" +
                             "            PageFrame\n" +
@@ -2689,15 +2776,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertPlanNoLeakCheck("select timestamp ts1, timestamp ts2 from trades limit -3",
-                    "SelectedRecord\n" +
-                            "    Radix sort light\n" +
-                            "      keys: [timestamp]\n" +
-                            "        SelectedRecord\n" +
-                            "            Limit lo: 3\n" +
-                            "                PageFrame\n" +
-                            "                    Row backward scan\n" +
-                            "                    Frame backward scan on: trades\n");
+            assertPlanNoLeakCheck(
+                    "select timestamp ts1, timestamp ts2 from trades limit -3",
+                    "Limit lo: -3 skip-over-rows: 0 limit: 0\n" +
+                            "    SelectedRecord\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trades\n"
+            );
         });
     }
 
@@ -2706,14 +2792,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertPlanNoLeakCheck("SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3;",
+            assertPlanNoLeakCheck(
+                    "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3;",
                     "Sort light\n" +
                             "  keys: [timestamp, side desc]\n" +
                             "    Sort light lo: 3 partiallySorted: true\n" +
-                            "      keys: [timestamp desc, side desc]\n" +
+                            "      keys: [timestamp desc, side]\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
-                            "            Frame backward scan on: trades\n");
+                            "            Frame backward scan on: trades\n"
+            );
             execute("insert into trades (timestamp, side, symbol) values " +
                     "(0, 'sell', 'abc'), (0, 'buy', 'abc'), (0, 'buy', 'def'), (0, 'buy', 'fgh'), (1, 'sell', 'abc')");
             drainWalQueue();
@@ -2724,12 +2812,13 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "1970-01-01T00:00:00.000000Z\tbuy\n" +
                             "1970-01-01T00:00:00.000001Z\tsell\n",
                     "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC; ");
+            // last 3 rows of the result set above
             assertSql("timestamp\tside\n" +
-                            "1970-01-01T00:00:00.000000Z\tsell\n" +
+                            "1970-01-01T00:00:00.000000Z\tbuy\n" +
                             "1970-01-01T00:00:00.000000Z\tbuy\n" +
                             "1970-01-01T00:00:00.000001Z\tsell\n",
-                    "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3;");
-
+                    "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3;"
+            );
         });
     }
 
@@ -2742,7 +2831,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "Sort light\n" +
                             "  keys: [timestamp, side]\n" +
                             "    Sort light lo: 3 partiallySorted: true\n" +
-                            "      keys: [timestamp desc, side]\n" +
+                            "      keys: [timestamp desc, side desc]\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: trades\n");
@@ -2758,7 +2847,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side ASC; ");
             assertSql("timestamp\tside\n" +
                             "1970-01-01T00:00:00.000000Z\tbuy\n" +
-                            "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                            "1970-01-01T00:00:00.000000Z\tsell\n" +
                             "1970-01-01T00:00:00.000001Z\tsell\n",
                     "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side ASC LIMIT -3;");
         });
@@ -2773,7 +2862,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "Sort light\n" +
                             "  keys: [timestamp, side desc]\n" +
                             "    Sort light lo: 3 partiallySorted: true\n" +
-                            "      keys: [timestamp desc, side desc]\n" +
+                            "      keys: [timestamp desc, side]\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: trades\n");
@@ -2787,8 +2876,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "1970-01-01T00:00:00.000000Z\tbuy\n" +
                             "1970-01-01T00:00:00.000001Z\tsell\n",
                     "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC; ");
+            // last 3 roes of the result set above
             assertSql("timestamp\tside\n" +
-                            "1970-01-01T00:00:00.000000Z\tsell\n" +
+                            "1970-01-01T00:00:00.000000Z\tbuy\n" +
                             "1970-01-01T00:00:00.000000Z\tbuy\n" +
                             "1970-01-01T00:00:00.000001Z\tsell\n",
                     "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3;");
@@ -2801,17 +2891,21 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertPlanNoLeakCheck("SELECT timestamp, side, symbol FROM trades ORDER BY timestamp ASC, side DESC, symbol ASC LIMIT -3;",
+            assertPlanNoLeakCheck(
+                    "SELECT timestamp, side, symbol FROM trades ORDER BY timestamp ASC, side DESC, symbol ASC LIMIT -3;",
                     "Sort light\n" +
                             "  keys: [timestamp, side desc, symbol]\n" +
                             "    Sort light lo: 3 partiallySorted: true\n" +
-                            "      keys: [timestamp desc, side desc, symbol]\n" +
+                            "      keys: [timestamp desc, side, symbol desc]\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
-                            "            Frame backward scan on: trades\n");
+                            "            Frame backward scan on: trades\n"
+            );
 
-            execute("insert into trades (timestamp, side, symbol) values " +
-                    "(0, 'sell', 'abc'), (0, 'buy', 'abc'), (0, 'buy', 'def'), (0, 'buy', 'fgh'), (1, 'sell', 'abc')");
+            execute(
+                    "insert into trades (timestamp, side, symbol) values " +
+                    "(0, 'sell', 'abc'), (0, 'buy', 'abc'), (0, 'buy', 'def'), (0, 'buy', 'fgh'), (1, 'sell', 'abc')"
+            );
             drainWalQueue();
             assertSql("timestamp\tside\tsymbol\n" +
                             "1970-01-01T00:00:00.000000Z\tsell\tabc\n" +
@@ -2820,11 +2914,13 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "1970-01-01T00:00:00.000000Z\tbuy\tfgh\n" +
                             "1970-01-01T00:00:00.000001Z\tsell\tabc\n",
                     "SELECT timestamp, side, symbol FROM trades ORDER BY timestamp ASC, side DESC, symbol ASC;");
-            assertSql("timestamp\tside\tsymbol\n" +
-                            "1970-01-01T00:00:00.000000Z\tsell\tabc\n" +
-                            "1970-01-01T00:00:00.000000Z\tbuy\tabc\n" +
+            assertSql(
+                    "timestamp\tside\tsymbol\n" +
+                            "1970-01-01T00:00:00.000000Z\tbuy\tdef\n" +
+                            "1970-01-01T00:00:00.000000Z\tbuy\tfgh\n" +
                             "1970-01-01T00:00:00.000001Z\tsell\tabc\n",
-                    "SELECT timestamp, side, symbol FROM trades ORDER BY timestamp ASC, side DESC, symbol ASC LIMIT -3;");
+                    "SELECT timestamp, side, symbol FROM trades ORDER BY timestamp ASC, side DESC, symbol ASC LIMIT -3;"
+            );
         });
     }
 
@@ -2840,21 +2936,24 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trades\n");
             execute("insert into trades (timestamp, side, symbol) values " +
-                    "(0, 'sell', 'abc'), (0, 'buy', 'abc'), (0, 'buy', 'def'), (0, 'buy', 'fgh'), (1, 'sell', 'abc')");
+                    "(0, 'sell1', 'abc'), (0, 'buy', 'abc'), (0, 'buy', 'def'), (0, 'buy', 'fgh'), (1, 'sell', 'abc')");
             drainWalQueue();
-            assertSql("timestamp\tside\n" +
-                            "1970-01-01T00:00:00.000000Z\tsell\n" +
+            assertSql(
+                    "timestamp\tside\n" +
+                            "1970-01-01T00:00:00.000000Z\tsell1\n" +
                             "1970-01-01T00:00:00.000000Z\tbuy\n" +
                             "1970-01-01T00:00:00.000000Z\tbuy\n" +
                             "1970-01-01T00:00:00.000000Z\tbuy\n" +
                             "1970-01-01T00:00:00.000001Z\tsell\n",
-                    "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC; ");
-            assertSql("timestamp\tside\n" +
-                            "1970-01-01T00:00:00.000000Z\tsell\n" +
+                    "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC;"
+            );
+            assertSql(
+                    "timestamp\tside\n" +
+                            "1970-01-01T00:00:00.000000Z\tbuy\n" +
                             "1970-01-01T00:00:00.000000Z\tbuy\n" +
                             "1970-01-01T00:00:00.000001Z\tsell\n",
-                    "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3;");
-
+                    "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3;"
+            );
         });
     }
 
@@ -2864,13 +2963,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute(tradesDdl);
             drainWalQueue();
             assertPlanNoLeakCheck("select timestamp, * from trades limit -3",
-                    "Radix sort light\n" +
-                            "  keys: [timestamp]\n" +
+                    "Limit lo: -3 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
-                            "        Limit lo: 3\n" +
-                            "            PageFrame\n" +
-                            "                Row backward scan\n" +
-                            "                Frame backward scan on: trades\n");
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trades\n");
         });
     }
 
@@ -2880,13 +2977,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute(tradesDdl);
             drainWalQueue();
             assertPlanNoLeakCheck("select *, timestamp ts1, timestamp ts2 from trades limit -3",
-                    "Radix sort light\n" +
-                            "  keys: [timestamp]\n" +
+                    "Limit lo: -3 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
-                            "        Limit lo: 3\n" +
-                            "            PageFrame\n" +
-                            "                Row backward scan\n" +
-                            "                Frame backward scan on: trades\n");
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trades\n");
         });
     }
 
@@ -2896,13 +2991,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute(tradesDdl);
             drainWalQueue();
             assertPlanNoLeakCheck("select *, timestamp from trades limit -3",
-                    "Radix sort light\n" +
-                            "  keys: [timestamp]\n" +
+                    "Limit lo: -3 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
-                            "        Limit lo: 3\n" +
-                            "            PageFrame\n" +
-                            "                Row backward scan\n" +
-                            "                Frame backward scan on: trades\n");
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trades\n");
         });
     }
 
@@ -2912,7 +3005,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute(tradesDdl);
             drainWalQueue();
             assertPlanNoLeakCheck("select timestamp ts1, timestamp ts2 from trades limit -3, -10",
-                    "Limit lo: -3 hi: -10\n" +
+                    "Limit lo: -3 hi: -10 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
@@ -2926,7 +3019,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute(tradesDdl);
             drainWalQueue();
             assertPlanNoLeakCheck("select *, timestamp ts1, timestamp ts2 from trades limit -3, -10;",
-                    "Limit lo: -3 hi: -10\n" +
+                    "Limit lo: -3 hi: -10 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
@@ -2940,11 +3033,58 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute(tradesDdl);
             drainWalQueue();
             assertPlanNoLeakCheck("select *, timestamp from trades limit -3, -10;",
-                    "Limit lo: -3 hi: -10\n" +
+                    "Limit lo: -3 hi: -10 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: trades\n");
+        });
+    }
+
+    @Test
+    public void testSampleByExpressionDependOtherColumn() throws Exception {
+        execute("create table t (\n" +
+                "  timestamp TIMESTAMP,\n" +
+                "  symbol SYMBOL capacity 256 CACHE,\n" +
+                "  side SYMBOL CAPACITY 256 CACHE,\n" +
+                "  price double\n" +
+                ") timestamp(timestamp) partition by day;");
+
+        execute("INSERT INTO t (timestamp, symbol, side, price) VALUES" +
+                " ('2023-09-01T00:00:00.000Z', 'ETH-USD', 'buyer', 3240.0)," +
+                " ('2023-09-01T01:00:00.000Z', 'ETH-USD', 'buyer', 3241.0)," +
+                " ('2023-09-01T02:00:00.000Z', 'ETH-USD', 'buyer', 3242.0)," +
+                " ('2023-09-01T03:00:00.000Z', 'ETH-USD', 'buyer', 3243.0)," +
+                " ('2023-09-01T04:00:00.000Z', 'ETH-USD', 'buyer', 3244.0)," +
+                " ('2023-09-01T05:00:00.000Z', 'ETH-USD', 'seller', 5.0)");
+        assertMemoryLeak(() -> {
+            final String query = "select timestamp, symbol, side, CASE WHEN price > 3240  THEN avg(price) END as price_today, CASE WHEN price < 3240  THEN avg(price) END as price_yesterday " +
+                    "from t where timestamp >= '2023-09-01T00:00:00.000Z' and symbol = 'ETH-USD' sample by 1h";
+
+            final String result = "timestamp\tsymbol\tside\tprice_today\tprice_yesterday\n" +
+                    "2023-09-01T00:00:00.000000Z\tETH-USD\tbuyer\tnull\tnull\n" +
+                    "2023-09-01T01:00:00.000000Z\tETH-USD\tbuyer\t3241.0\tnull\n" +
+                    "2023-09-01T02:00:00.000000Z\tETH-USD\tbuyer\t3242.0\tnull\n" +
+                    "2023-09-01T03:00:00.000000Z\tETH-USD\tbuyer\t3243.0\tnull\n" +
+                    "2023-09-01T04:00:00.000000Z\tETH-USD\tbuyer\t3244.0\tnull\n" +
+                    "2023-09-01T05:00:00.000000Z\tETH-USD\tseller\tnull\t5.0\n";
+
+            assertSql(result, query);
+        });
+
+        assertMemoryLeak(() -> {
+            final String query = "select timestamp, symbol, side, CASE WHEN extract('day', timestamp) =14  THEN avg(price) END as price_today, CASE WHEN true  THEN avg(price) END as price_yesterday " +
+                    "from t where timestamp >= '2023-09-01T00:00:00.000Z' and symbol = 'ETH-USD' sample by 1h";
+
+            final String result = "timestamp\tsymbol\tside\tprice_today\tprice_yesterday\n" +
+                    "2023-09-01T00:00:00.000000Z\tETH-USD\tbuyer\tnull\t3240.0\n" +
+                    "2023-09-01T01:00:00.000000Z\tETH-USD\tbuyer\tnull\t3241.0\n" +
+                    "2023-09-01T02:00:00.000000Z\tETH-USD\tbuyer\tnull\t3242.0\n" +
+                    "2023-09-01T03:00:00.000000Z\tETH-USD\tbuyer\tnull\t3243.0\n" +
+                    "2023-09-01T04:00:00.000000Z\tETH-USD\tbuyer\tnull\t3244.0\n" +
+                    "2023-09-01T05:00:00.000000Z\tETH-USD\tseller\tnull\t5.0\n";
+
+            assertSql(result, query);
         });
     }
 
@@ -3158,6 +3298,80 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "from fromto sample by 5d from '2018-01-01' to '2018-01-31' fill(42)";
 
             assertException(query, -1, "not enough fill values");
+        });
+    }
+
+    @Test
+    public void testSampleByFromToParallelDeduceTimeStampColumn() throws Exception {
+        execute("CREATE TABLE 't' (\n" +
+                "  name SYMBOL capacity 256 CACHE,\n" +
+                "  timestamp TIMESTAMP\n" +
+                ") timestamp (timestamp) PARTITION BY DAY;");
+        execute("INSERT INTO t (name, timestamp) VALUES" +
+                " ('a', '2023-09-01T00:00:00.000Z')," +
+                " ('a', '2023-09-01T00:10:00.000Z')");
+
+        assertMemoryLeak(() -> {
+            final String query = "SELECT timestamp+60000000 as 'timestamp', 0 AS extra_column, 0 AS extra_column2 \n" +
+                    "FROM t\n" +
+                    "WHERE name = 'a'\n" +
+                    "SAMPLE BY (1m);\n";
+
+            final String result = "timestamp\textra_column\textra_column2\n" +
+                    "2023-09-01T00:01:00.000000Z\t0\t0\n" +
+                    "2023-09-01T00:11:00.000000Z\t0\t0\n";
+
+            assertSql(result, query);
+        });
+
+        assertMemoryLeak(() -> {
+            final String query = "select dateadd('d', 1, timestamp) timestamp, name from t sample by 10m";
+
+            final String result = "timestamp\tname\n" +
+                    "2023-09-02T00:00:00.000000Z\ta\n" +
+                    "2023-09-02T00:10:00.000000Z\ta\n";
+
+            assertSql(result, query);
+        });
+
+        assertMemoryLeak(() -> {
+            final String query = "select dateadd('d', 1, timestamp) timestamp, dateadd('d', 2, timestamp) timestamp2, name from t sample by 10m";
+
+            final String result = "timestamp\ttimestamp2\tname\n" +
+                    "2023-09-02T00:00:00.000000Z\t2023-09-03T00:00:00.000000Z\ta\n" +
+                    "2023-09-02T00:10:00.000000Z\t2023-09-03T00:10:00.000000Z\ta\n";
+
+            assertSql(result, query);
+        });
+
+        assertMemoryLeak(() -> {
+            final String query = "select timestamp + 60000000 as 'timestamp', timestamp  from t where name = 'a' sample by (1m)";
+
+            final String result = "timestamp\ttimestamp1\n" +
+                    "2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\n" +
+                    "2023-09-01T00:11:00.000000Z\t2023-09-01T00:10:00.000000Z\n";
+
+            assertSql(result, query);
+        });
+
+        assertMemoryLeak(() -> {
+            final String query = "select timestamp + 60000000 as 'timestamp1', timestamp  from t where name = 'a' sample by (1m)";
+
+            final String result = "timestamp1\ttimestamp\n" +
+                    "2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\n" +
+                    "2023-09-01T00:11:00.000000Z\t2023-09-01T00:10:00.000000Z\n";
+
+            assertSql(result, query);
+        });
+
+        assertMemoryLeak(() -> {
+            final String query = "select timestamp + 60000000 as 'timestamp', timestamp as 'timestamp1'  from t where name = 'a' sample by (1m)";
+
+            final String result = "timestamp\ttimestamp1\n" +
+                    "2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\n" +
+                    "2023-09-01T00:11:00.000000Z\t2023-09-01T00:10:00.000000Z\n";
+
+            assertSql(result, query);
         });
     }
 
@@ -3741,127 +3955,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSampleByFromToParallelDeduceTimeStampColumn() throws Exception {
-        execute("CREATE TABLE 't' (\n" +
-                "  name SYMBOL capacity 256 CACHE,\n" +
-                "  timestamp TIMESTAMP\n" +
-                ") timestamp (timestamp) PARTITION BY DAY;");
-        execute("INSERT INTO t (name, timestamp) VALUES" +
-                " ('a', '2023-09-01T00:00:00.000Z')," +
-                " ('a', '2023-09-01T00:10:00.000Z')");
-
-        assertMemoryLeak(() -> {
-            final String query = "SELECT timestamp+60000000 as 'timestamp', 0 AS extra_column, 0 AS extra_column2 \n" +
-                    "FROM t\n" +
-                    "WHERE name = 'a'\n" +
-                    "SAMPLE BY (1m);\n";
-
-            final String result = "timestamp\textra_column\textra_column2\n" +
-                    "2023-09-01T00:01:00.000000Z\t0\t0\n" +
-                    "2023-09-01T00:11:00.000000Z\t0\t0\n";
-
-            assertSql(result, query);
-        });
-
-        assertMemoryLeak(() -> {
-            final String query = "select dateadd('d', 1, timestamp) timestamp, name from t sample by 10m";
-
-            final String result = "timestamp\tname\n" +
-                    "2023-09-02T00:00:00.000000Z\ta\n" +
-                    "2023-09-02T00:10:00.000000Z\ta\n";
-
-            assertSql(result, query);
-        });
-
-        assertMemoryLeak(() -> {
-            final String query = "select dateadd('d', 1, timestamp) timestamp, dateadd('d', 2, timestamp) timestamp2, name from t sample by 10m";
-
-            final String result = "timestamp\ttimestamp2\tname\n" +
-                    "2023-09-02T00:00:00.000000Z\t2023-09-03T00:00:00.000000Z\ta\n" +
-                    "2023-09-02T00:10:00.000000Z\t2023-09-03T00:10:00.000000Z\ta\n";
-
-            assertSql(result, query);
-        });
-
-        assertMemoryLeak(() -> {
-            final String query = "select timestamp + 60000000 as 'timestamp', timestamp  from t where name = 'a' sample by (1m)";
-
-            final String result = "timestamp\ttimestamp1\n" +
-                    "2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\n" +
-                    "2023-09-01T00:11:00.000000Z\t2023-09-01T00:10:00.000000Z\n";
-
-            assertSql(result, query);
-        });
-
-        assertMemoryLeak(() -> {
-            final String query = "select timestamp + 60000000 as 'timestamp1', timestamp  from t where name = 'a' sample by (1m)";
-
-            final String result = "timestamp1\ttimestamp\n" +
-                    "2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\n" +
-                    "2023-09-01T00:11:00.000000Z\t2023-09-01T00:10:00.000000Z\n";
-
-            assertSql(result, query);
-        });
-
-        assertMemoryLeak(() -> {
-            final String query = "select timestamp + 60000000 as 'timestamp', timestamp as 'timestamp1'  from t where name = 'a' sample by (1m)";
-
-            final String result = "timestamp\ttimestamp1\n" +
-                    "2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\n" +
-                    "2023-09-01T00:11:00.000000Z\t2023-09-01T00:10:00.000000Z\n";
-
-            assertSql(result, query);
-        });
-    }
-
-    @Test
-    public void testSampleByExpressionDependOtherColumn() throws Exception {
-        execute("create table t (\n" +
-                "  timestamp TIMESTAMP,\n" +
-                "  symbol SYMBOL capacity 256 CACHE,\n" +
-                "  side SYMBOL CAPACITY 256 CACHE,\n" +
-                "  price double\n" +
-                ") timestamp(timestamp) partition by day;");
-
-        execute("INSERT INTO t (timestamp, symbol, side, price) VALUES" +
-                " ('2023-09-01T00:00:00.000Z', 'ETH-USD', 'buyer', 3240.0)," +
-                " ('2023-09-01T01:00:00.000Z', 'ETH-USD', 'buyer', 3241.0)," +
-                " ('2023-09-01T02:00:00.000Z', 'ETH-USD', 'buyer', 3242.0)," +
-                " ('2023-09-01T03:00:00.000Z', 'ETH-USD', 'buyer', 3243.0)," +
-                " ('2023-09-01T04:00:00.000Z', 'ETH-USD', 'buyer', 3244.0)," +
-                " ('2023-09-01T05:00:00.000Z', 'ETH-USD', 'seller', 5.0)");
-        assertMemoryLeak(() -> {
-            final String query = "select timestamp, symbol, side, CASE WHEN price > 3240  THEN avg(price) END as price_today, CASE WHEN price < 3240  THEN avg(price) END as price_yesterday " +
-                    "from t where timestamp >= '2023-09-01T00:00:00.000Z' and symbol = 'ETH-USD' sample by 1h";
-
-            final String result = "timestamp\tsymbol\tside\tprice_today\tprice_yesterday\n" +
-                    "2023-09-01T00:00:00.000000Z\tETH-USD\tbuyer\tnull\tnull\n" +
-                    "2023-09-01T01:00:00.000000Z\tETH-USD\tbuyer\t3241.0\tnull\n" +
-                    "2023-09-01T02:00:00.000000Z\tETH-USD\tbuyer\t3242.0\tnull\n" +
-                    "2023-09-01T03:00:00.000000Z\tETH-USD\tbuyer\t3243.0\tnull\n" +
-                    "2023-09-01T04:00:00.000000Z\tETH-USD\tbuyer\t3244.0\tnull\n" +
-                    "2023-09-01T05:00:00.000000Z\tETH-USD\tseller\tnull\t5.0\n";
-
-            assertSql(result, query);
-        });
-
-        assertMemoryLeak(() -> {
-            final String query = "select timestamp, symbol, side, CASE WHEN extract('day', timestamp) =14  THEN avg(price) END as price_today, CASE WHEN true  THEN avg(price) END as price_yesterday " +
-                    "from t where timestamp >= '2023-09-01T00:00:00.000Z' and symbol = 'ETH-USD' sample by 1h";
-
-            final String result = "timestamp\tsymbol\tside\tprice_today\tprice_yesterday\n" +
-                    "2023-09-01T00:00:00.000000Z\tETH-USD\tbuyer\tnull\t3240.0\n" +
-                    "2023-09-01T01:00:00.000000Z\tETH-USD\tbuyer\tnull\t3241.0\n" +
-                    "2023-09-01T02:00:00.000000Z\tETH-USD\tbuyer\tnull\t3242.0\n" +
-                    "2023-09-01T03:00:00.000000Z\tETH-USD\tbuyer\tnull\t3243.0\n" +
-                    "2023-09-01T04:00:00.000000Z\tETH-USD\tbuyer\tnull\t3244.0\n" +
-                    "2023-09-01T05:00:00.000000Z\tETH-USD\tseller\tnull\t5.0\n";
-
-            assertSql(result, query);
-        });
-    }
-
-    @Test
     public void testSampleByFromToPlansWithRewrite() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl (\n" +
@@ -4115,22 +4208,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "Union\n" +
                             "    Union\n" +
                             "        Union\n" +
-                            "            Limit lo: 1\n" +
+                            "            Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "                SelectedRecord\n" +
                             "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: y\n" +
-                            "            Limit lo: 1\n" +
+                            "            Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "                SelectedRecord\n" +
                             "                    PageFrame\n" +
                             "                        Row backward scan\n" +
                             "                        Frame backward scan on: y\n" +
-                            "        Limit lo: 1\n" +
+                            "        Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "            SelectedRecord\n" +
                             "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: y\n" +
-                            "    Limit lo: 1\n" +
+                            "    Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                             "        SelectedRecord\n" +
                             "            PageFrame\n" +
                             "                Row backward scan\n" +
@@ -4394,7 +4487,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
         assertPlanNoLeakCheck(
                 q1,
-                "Limit lo: 40\n" +
+                "Limit lo: 40 skip-over-rows: 0 limit: 40\n" +
                         "    Sort\n" +
                         "      keys: [hostname, ts2]\n" +
                         "        Window\n" +
@@ -4456,7 +4549,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                 q3,
                 "Sort\n" +
                         "  keys: [ts1 desc]\n" +
-                        "    Limit lo: 9223372036854775807L\n" +
+                        "    Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 10\n" +
                         "        Window\n" +
                         "          functions: [max(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]\n" +
                         "            PageFrame\n" +
@@ -4485,7 +4578,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                 "Radix sort light\n" +
                         "  keys: [ts1 desc]\n" +
                         "    SelectedRecord\n" +
-                        "        Limit lo: 9223372036854775807L\n" +
+                        "        Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 10\n" +
                         "            Sort\n" +
                         "              keys: [ts2]\n" +
                         "                Window\n" +
@@ -4516,7 +4609,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
         assertPlanNoLeakCheck(
                 q5,
-                "Limit lo: 40\n" +
+                "Limit lo: 40 skip-over-rows: 0 limit: 40\n" +
                         "    Sort\n" +
                         "      keys: [ts2, hostname]\n" +
                         "        Window\n" +
@@ -4569,77 +4662,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                 "1970-01-01T00:00:00.000003Z\tB\t3.0\t3\t3\tnull\t8.0\t3\n" +
                 "1970-01-01T00:00:00.000002Z\tA\t2.0\t2\t2\t1.0\t9.0\t2\n" +
                 "1970-01-01T00:00:00.000001Z\tA\t1.0\t3\t3\tnull\t2.0\t3\n", q6);
-    }
-
-    @Test
-    public void testDuplicateColumnsInWindowModel() throws SqlException {
-        execute("create table cpu_ts ( hostname symbol, usage_system double, ts timestamp) timestamp(ts);");
-        execute("insert into cpu_ts select rnd_symbol('A', 'B', 'C'), x, x::timestamp from long_sequence(3)");
-        String q1 = "select rank() over(), t1.usage_system, t1.usage_system from cpu_ts t1 join cpu_ts t2 on t1.ts > t2.ts";
-
-        assertPlanNoLeakCheck(
-                q1,
-                "Window\n" +
-                        "  functions: [rank() over ()]\n" +
-                        "    SelectedRecord\n" +
-                        "        Filter filter: t2.ts<t1.ts\n" +
-                        "            Cross Join\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: cpu_ts\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: cpu_ts\n"
-        );
-        assertSql("rank\tusage_system\tusage_system1\n" +
-                "1\t2.0\t2.0\n" +
-                "1\t3.0\t3.0\n" +
-                "1\t3.0\t3.0\n", q1);
-
-        String q2 = "select rank() over(partition by t1.hostname order by t1.ts), t2.usage_system, t2.usage_system from cpu_ts t1 join cpu_ts t2 on t1.ts > t2.ts";
-
-        assertPlanNoLeakCheck(
-                q2,
-                "Window\n" +
-                        "  functions: [rank() over (partition by [hostname])]\n" +
-                        "    SelectedRecord\n" +
-                        "        Filter filter: t2.ts<t1.ts\n" +
-                        "            Cross Join\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: cpu_ts\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: cpu_ts\n"
-        );
-        assertSql("rank\tusage_system\tusage_system1\n" +
-                "1\t1.0\t1.0\n" +
-                "1\t1.0\t1.0\n" +
-                "1\t2.0\t2.0\n", q2);
-
-        // useInnerModel
-        String q3 = "select rank() over(partition by t1.hostname order by t1.ts), t2.usage_system, t2.usage_system, t1.usage_system + 10 from cpu_ts t1 join cpu_ts t2 on t1.ts > t2.ts";
-
-        assertPlanNoLeakCheck(
-                q3,
-                "Window\n" +
-                        "  functions: [rank() over (partition by [hostname])]\n" +
-                        "    VirtualRecord\n" +
-                        "      functions: [hostname,ts,usage_system,usage_system1+10]\n" +
-                        "        SelectedRecord\n" +
-                        "            Filter filter: t2.ts<t1.ts\n" +
-                        "                Cross Join\n" +
-                        "                    PageFrame\n" +
-                        "                        Row forward scan\n" +
-                        "                        Frame forward scan on: cpu_ts\n" +
-                        "                    PageFrame\n" +
-                        "                        Row forward scan\n" +
-                        "                        Frame forward scan on: cpu_ts\n"
-        );
-        assertSql("rank\tusage_system\tusage_system1\tcolumn\n" +
-                "1\t1.0\t1.0\t12.0\n" +
-                "1\t1.0\t1.0\t13.0\n" +
-                "1\t2.0\t2.0\t13.0\n", q3);
     }
 
     protected QueryModel compileModel(String query) throws SqlException {

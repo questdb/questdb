@@ -30,13 +30,7 @@ import org.jetbrains.annotations.Nullable;
 
 public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
 
-    int SCAN_DIR_BACKWARD = 2;
-    int SCAN_DIR_FORWARD = 1;
-    int SCAN_DIR_UNSORTED = 0;
-
     void calculateSize(RecordCursor.Counter counter);
-
-    int cursorScanDirection();
 
     /**
      * Returns local (query) to table reader index mapping.

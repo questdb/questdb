@@ -4816,8 +4816,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "0xc78d67954cb7866695b5e08df69df8819fc909a43f149089c143a3bb982af031\n" +
                     "0x6ddedcf7415306f799ce31489578cac77b0ec57771d6e9f27c517f53d504487d\n" +
                     "0xa38b2ad7fbc79d366f9b5d1b162ba472613f1eb5f98a2df86a7f0ebbd1d28a95\n";
-            printSqlResult(expected, "t limit -5", null, true, false);
-            printSqlResult(expected, "l256 limit -5", null, true, false);
+            printSqlResult(expected, "t limit -5", null, true, true);
+            printSqlResult(expected, "l256 limit -5", null, true, true);
         });
     }
 
@@ -5240,7 +5240,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "        Filter filter: T2.created in [now(),now()]\n" +
                             "            Nested Loop Left Join\n" +
                             "              filter: T1.created<T2.created\n" +
-                            "                Limit lo: 0\n" +
+                            "                Limit lo: 0 skip-over-rows: 0 limit: 0\n" +
                             "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: tab\n" +
@@ -5283,10 +5283,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "    Filter filter: (null=T2.created or 0<T2.created::long)\n" +
                             "        Nested Loop Left Join\n" +
                             "          filter: T1.created<T2.created\n" +
-                            "            Limit lo: 1\n" +
+                            "            Limit lo: -1 skip-over-rows: 2 limit: 1\n" +
                             "                PageFrame\n" +
-                            "                    Row backward scan\n" +
-                            "                    Frame backward scan on: tab\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tab\n"
@@ -5439,7 +5439,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "              condition: T3.created=T2.created\n" +
                             "                Nested Loop Left Join\n" +
                             "                  filter: T1.created<T2.created\n" +
-                            "                    Limit lo: 2\n" +
+                            "                    Limit lo: 2 skip-over-rows: 0 limit: 2\n" +
                             "                        PageFrame\n" +
                             "                            Row forward scan\n" +
                             "                            Frame forward scan on: tab\n" +
@@ -5447,11 +5447,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: tab\n" +
                             "                Hash\n" +
-                            "                    Limit lo: 3\n" +
+                            "                    Limit lo: 3 skip-over-rows: 0 limit: 3\n" +
                             "                        PageFrame\n" +
                             "                            Row forward scan\n" +
                             "                            Frame forward scan on: tab\n" +
-                            "            Limit lo: 4\n" +
+                            "            Limit lo: 4 skip-over-rows: 0 limit: 3\n" +
                             "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab\n"

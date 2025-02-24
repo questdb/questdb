@@ -26,17 +26,14 @@ package io.questdb.griffin.engine;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.PageFrameRecordCursor;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.Nullable;
@@ -45,19 +42,10 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final LimitRecordCursor cursor;
 
-    public LimitRecordCursorFactory(
-            RecordCursorFactory base,
-            Function loFunction,
-            @Nullable Function hiFunction,
-            // limit is inverted is when we prefer backward scan for positive limit value, and
-            // forward scan for negative limit value.
-            // otherwise we prefer backward scan for negative limit value and forward scan
-            // for the positive limit
-            boolean invertedLimit
-    ) {
+    public LimitRecordCursorFactory(RecordCursorFactory base, Function loFunction, @Nullable Function hiFunction) {
         super(base.getMetadata());
         this.base = base;
-        this.cursor = new LimitRecordCursor(loFunction, hiFunction, invertedLimit);
+        this.cursor = new LimitRecordCursor(loFunction, hiFunction);
     }
 
     @Override
@@ -101,11 +89,25 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Limit");
-        if (cursor.loFunction != null) {
-            sink.meta("lo").val(cursor.loFunction);
+        Function loFunc = cursor.loFunction;
+        Function hiFunc = cursor.hiFunction;
+        if (loFunc != null) {
+            sink.meta("lo").val(loFunc);
+            if (loFunc.isRuntimeConstant()) {
+                sink.val('[').val(loFunc.getLong(null)).val(']');
+            }
         }
-        if (cursor.hiFunction != null) {
-            sink.meta("hi").val(cursor.hiFunction);
+        if (hiFunc != null) {
+            sink.meta("hi").val(hiFunc);
+            if (hiFunc.isRuntimeConstant()) {
+                sink.val('[').val(hiFunc.getLong(null)).val(']');
+            }
+        }
+
+        if (loFunc != null && loFunc.getLong(null) != Numbers.LONG_NULL) {
+            cursor.countLimit();
+            sink.meta("skip-over-rows").val(cursor.skippedRows);
+            sink.meta("limit").val(cursor.limit);
         }
         sink.child(base);
     }
@@ -128,7 +130,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     private static class LimitRecordCursor implements RecordCursor {
         private final RecordCursor.Counter counter = new Counter();
         private final Function hiFunction;
-        private final boolean invertedLimit;
         private final Function loFunction;
         private boolean areRowsCounted;
         private RecordCursor base;
@@ -140,11 +141,13 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         private long rowCount;
         private long size;
         private long skipToRows;
+        // number of rows cursor will skip, it is used to display correct
+        // query execution plan only
+        private long skippedRows;
 
-        public LimitRecordCursor(Function loFunction, Function hiFunction, boolean invertedLimit) {
+        public LimitRecordCursor(Function loFunction, Function hiFunction) {
             this.loFunction = loFunction;
             this.hiFunction = hiFunction;
-            this.invertedLimit = invertedLimit;
         }
 
         @Override
@@ -155,10 +158,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 return;
             }
 
-            if (!isLimitCounted) {
-                countLimit();
-                isLimitCounted = true;
-            }
+            countLimitIfNotCounted();
 
             while (limit > 0 && base.hasNext()) {
                 limit--;
@@ -188,10 +188,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            if (!isLimitCounted) {
-                countLimit();
-                isLimitCounted = true;
-            }
+            countLimitIfNotCounted();
             if (limit <= 0) {
                 return false;
             }
@@ -210,31 +207,9 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
             this.base = base;
             loFunction.init(base, executionContext);
-            long lo = loFunction.getLong(null);
             // swap lo and hi if lo > hi
             if (hiFunction != null) {
                 hiFunction.init(base, executionContext);
-                long hi = hiFunction.getLong(null);
-                if (lo > hi && Numbers.sameSign(lo, hi)) {
-                    lo = hi;
-                }
-            }
-            if (
-                    loFunction.isRuntimeConstant() // lo function is a bind variable
-                            && lo != Numbers.LONG_NULL // and it is defined
-                            && base instanceof PageFrameRecordCursor
-            ) {
-                final PageFrameCursor pfc = ((PageFrameRecordCursor) base).getPageFrameCursor();
-                final int cursorDirection = pfc.cursorScanDirection();
-                if (invertedLimit) {
-                    if (lo > 0 && cursorDirection == PageFrameCursor.SCAN_DIR_FORWARD || lo < 0 && cursorDirection == PageFrameCursor.SCAN_DIR_BACKWARD) {
-                        throw TableReferenceOutOfDateException.of("internal error, plan should have been changed");
-                    }
-                } else {
-                    if (lo < 0 && cursorDirection == PageFrameCursor.SCAN_DIR_FORWARD || lo > 0 && cursorDirection == PageFrameCursor.SCAN_DIR_BACKWARD) {
-                        throw TableReferenceOutOfDateException.of("internal error, plan should have been changed");
-                    }
-                }
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
             toTop();
@@ -247,7 +222,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public long size() {
-            return areRowsCounted ? size : -1;
+            countLimitIfNotCounted();
+            return size;
         }
 
         @Override
@@ -266,6 +242,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             isLimitCounted = false;
             areRowsCounted = false;
             counter.clear();
+            skippedRows = 0;
         }
 
         private void countLimit() {
@@ -294,7 +271,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                     limit = lo;
                     areRowsCounted = false;
                 }
-                size = limit;
+                countRows();
+                size = Math.min(rowCount, limit);
             } else {
                 // at this stage we have 'hi'
                 if (lo < 0) {
@@ -315,6 +293,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                                 limit = Math.min(rowCount, -lo + hi);
                             }
                             size = limit;
+                        } else {
+                            limit = size = 0;
                         }
                     } else {
                         // this is invalid bottom range, for example -3, -10
@@ -351,6 +331,13 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
 
+        private void countLimitIfNotCounted() {
+            if (!isLimitCounted) {
+                countLimit();
+                isLimitCounted = true;
+            }
+        }
+
         private void countRows() {
             if (rowCount == -1) {
                 rowCount = base.size();
@@ -363,6 +350,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
             if (!areRowsCounted) {
                 base.calculateSize(circuitBreaker, counter);
+                base.toTop();
                 rowCount = counter.get();
                 areRowsCounted = true;
                 counter.clear();
@@ -373,6 +361,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             if (skipToRows == -1) {
                 skipToRows = Math.max(0, rowCount);
                 counter.set(skipToRows);
+                skippedRows = skipToRows;
                 base.toTop();
             }
             if (skipToRows > 0) {

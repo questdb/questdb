@@ -5327,7 +5327,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                                 "10\n",
                         factory,
                         true,
-                        false
+                        true
                 );
             }
         });
@@ -7465,7 +7465,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ") timestamp(k) partition by DAY",
                 null,
                 true,
-                false
+                true
         );
     }
 

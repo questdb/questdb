@@ -71,7 +71,7 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                         try (final ResultSet resultSet = stmt.executeQuery()) {
                             assertResultSet(
                                     "QUERY PLAN[VARCHAR]\n" +
-                                            "Limit lo: $0::int\n" +
+                                            "Limit lo: $0::int[1] skip-over-rows: 0 limit: 1\n" +
                                             "    PageFrame\n" +
                                             "        Row forward scan\n" +
                                             "        Frame forward scan on: tab\n",
@@ -83,10 +83,10 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                                 stmt,
                                 -1,
                                 "QUERY PLAN[VARCHAR]\n" +
-                                        "Limit lo: -$0::int\n" +
+                                        "Limit lo: $0::int[-1] skip-over-rows: 99 limit: 1\n" +
                                         "    PageFrame\n" +
-                                        "        Row backward scan\n" +
-                                        "        Frame backward scan on: tab\n");
+                                        "        Row forward scan\n" +
+                                        "        Frame forward scan on: tab\n");
                     }
 
                     try (final PreparedStatement stmt = connection.prepareStatement("SELECT * FROM tab LIMIT ?")) {
@@ -317,6 +317,25 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                         }
                     }
 
+                    try (final PreparedStatement stmt = connection.prepareStatement("explain SELECT col1, sum(status) as sum, last(ts) as last FROM tab ORDER BY 1 DESC LIMIT 4,-3")) {
+                        try (final ResultSet resultSet = stmt.executeQuery()) {
+                            assertResultSet(
+                                    "QUERY PLAN[VARCHAR]\n" +
+                                            "Limit lo: 4 hi: -3 skip-over-rows: 4 limit: 3\n" +
+                                            "    Sort light\n" +
+                                            "      keys: [col1 desc]\n" +
+                                            "        GroupBy vectorized: false\n" +
+                                            "          keys: [col1]\n" +
+                                            "          values: [sum(status),last(ts)]\n" +
+                                            "            PageFrame\n" +
+                                            "                Row forward scan\n" +
+                                            "                Frame forward scan on: tab\n",
+                                    Misc.getThreadLocalSink(),
+                                    resultSet
+                            );
+                        }
+                    }
+
                     try (final PreparedStatement stmt = connection.prepareStatement("SELECT col1, sum(status) as sum, last(ts) as last FROM tab ORDER BY 1 DESC LIMIT ?,?")) {
                         assertLoHi(
                                 stmt,
@@ -372,6 +391,16 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                                 -3,
                                 -3,
                                 "col1[VARCHAR],sum[BIGINT],last[TIMESTAMP]\n"
+                        );
+
+                        assertLoHi(
+                                stmt,
+                                4,
+                                -3,
+                                "col1[VARCHAR],sum[BIGINT],last[TIMESTAMP]\n" +
+                                        "Sym5,2000,1970-01-01 00:16:59.4\n" +
+                                        "Sym4,1000,1970-01-01 00:16:59.3\n" +
+                                        "Sym3,2000,1970-01-01 00:16:59.2\n"
                         );
                     }
 
@@ -461,31 +490,30 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                                 stmt,
                                 -10,
                                 "col1[VARCHAR],status[BIGINT],ts[TIMESTAMP]\n" +
-                                        "Sym1,1,1970-01-01 00:00:20.0\n" +
-                                        "Sym2,2,1970-01-01 00:00:20.1\n" +
-                                        "Sym3,3,1970-01-01 00:00:20.2\n" +
-                                        "Sym4,0,1970-01-01 00:00:20.3\n" +
-                                        "Sym5,1,1970-01-01 00:00:20.4\n" +
-                                        "Sym6,2,1970-01-01 00:00:20.5\n" +
-                                        "Sym7,3,1970-01-01 00:00:20.6\n" +
-                                        "Sym8,0,1970-01-01 00:00:20.7\n" +
+                                        "Sym0,2,1970-01-01 00:00:20.9\n" +
                                         "Sym9,1,1970-01-01 00:00:20.8\n" +
-                                        "Sym0,2,1970-01-01 00:00:20.9\n"
+                                        "Sym8,0,1970-01-01 00:00:20.7\n" +
+                                        "Sym7,3,1970-01-01 00:00:20.6\n" +
+                                        "Sym6,2,1970-01-01 00:00:20.5\n" +
+                                        "Sym5,1,1970-01-01 00:00:20.4\n" +
+                                        "Sym4,0,1970-01-01 00:00:20.3\n" +
+                                        "Sym3,3,1970-01-01 00:00:20.2\n" +
+                                        "Sym2,2,1970-01-01 00:00:20.1\n" +
+                                        "Sym1,1,1970-01-01 00:00:20.0\n"
                         );
                     }
 
-                    // todo: bug to be fixed
-/*
                     try (final PreparedStatement stmt = connection.prepareStatement("SELECT * FROM tab ORDER BY ts DESC LIMIT ?,?")) {
                         assertLoHi(
                                 stmt,
                                 -1,
                                 -4,
                                 "col1[VARCHAR],status[BIGINT],ts[TIMESTAMP]\n" +
-                                        "Sym1,1,1970-01-01 00:00:20.0\n"
+                                        "Sym4,0,1970-01-01 00:00:20.3\n" +
+                                        "Sym3,3,1970-01-01 00:00:20.2\n" +
+                                        "Sym2,2,1970-01-01 00:00:20.1\n"
                         );
                     }
-*/
 
                     // explain for small limit
                     try (final PreparedStatement stmt = connection.prepareStatement("explain SELECT * FROM tab ORDER BY ts desc LIMIT ?")) {
@@ -495,7 +523,7 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                                 stmt,
                                 1,
                                 "QUERY PLAN[VARCHAR]\n" +
-                                        "Limit lo: $0::int\n" +
+                                        "Limit lo: $0::int[1] skip-over-rows: 0 limit: 1\n" +
                                         "    PageFrame\n" +
                                         "        Row backward scan\n" +
                                         "        Frame backward scan on: tab\n"
@@ -506,20 +534,20 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                                 stmt,
                                 -1,
                                 "QUERY PLAN[VARCHAR]\n" +
-                                        "Limit lo: -$0::int\n" +
+                                        "Limit lo: $0::int[-1] skip-over-rows: 9999 limit: 1\n" +
                                         "    PageFrame\n" +
-                                        "        Row forward scan\n" +
-                                        "        Frame forward scan on: tab\n"
+                                        "        Row backward scan\n" +
+                                        "        Frame backward scan on: tab\n"
                         );
 
                         assertLo(
                                 stmt,
                                 -10,
                                 "QUERY PLAN[VARCHAR]\n" +
-                                        "Limit lo: -$0::int\n" +
+                                        "Limit lo: $0::int[-10] skip-over-rows: 9990 limit: 10\n" +
                                         "    PageFrame\n" +
-                                        "        Row forward scan\n" +
-                                        "        Frame forward scan on: tab\n"
+                                        "        Row backward scan\n" +
+                                        "        Frame backward scan on: tab\n"
                         );
                     }
                 }

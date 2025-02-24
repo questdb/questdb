@@ -3698,7 +3698,7 @@ public class JoinTest extends AbstractCairoTest {
             );
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 3\n" +
+                    "Limit lo: 3 skip-over-rows: 0 limit: 3\n" +
                             "    VirtualRecord\n" +
                             "      functions: [dim_ap_temperature__category,timestamp_floor('day',to_utc(date_time,1))]\n" +
                             "        SelectedRecord\n" +

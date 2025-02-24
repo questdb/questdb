@@ -3077,12 +3077,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             final Function loFunc = getLoFunction(model, executionContext);
             final Function hiFunc = getHiFunction(model, executionContext);
-            return new LimitRecordCursorFactory(
-                    factory,
-                    loFunc,
-                    hiFunc,
-                    model.getNestedModel().isForceBackwardScan()
-            );
+            return new LimitRecordCursorFactory(factory, loFunc, hiFunc);
         } catch (Throwable e) {
             Misc.free(factory);
             throw e;
