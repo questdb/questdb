@@ -26,10 +26,22 @@ package io.questdb.cairo.arr;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.IntList;
+import io.questdb.std.QuietCloseable;
 
-public interface ArrayView {
+public abstract class ArrayView implements QuietCloseable {
+    protected final IntList shape = new IntList();
+    protected final IntList strides = new IntList();
+    protected FlatArrayView flatView;
+    protected int flatViewLength;
+    protected int flatViewOffset;
+    protected int type = ColumnType.UNDEFINED;
 
-    void appendToMem(MemoryA mem);
+    public abstract void appendToMem(MemoryA mem);
+
+    @Override
+    public void close() {
+    }
 
     /**
      * Returns a flat view over the elements of the N-dimensional array. It contains
@@ -45,35 +57,66 @@ public interface ArrayView {
      * The flat array would contain a flat vector of elements with the numbers
      * <code>[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4]</code>.
      */
-    FlatArrayView flatView();
+    public final FlatArrayView flatView() {
+        return flatView;
+    }
 
     /**
      * Returns the number of dimensions in this array (i.e., its dimensionality).
      */
-    int getDimCount();
+    public final int getDimCount() {
+        return shape.size();
+    }
 
     /**
      * Returns the number of elements in the given dimension (sub-arrays or leaf values)
      */
-    int getDimLen(int dimension);
+    public final int getDimLen(int dimension) {
+        assert dimension >= 0 && dimension < shape.size();
+        return shape.getQuick(dimension);
+    }
 
     /**
      * Returns the total number of data points (leaf values) in this array.
      */
-    int getFlatViewLength();
+    public final int getFlatViewLength() {
+        return flatViewLength;
+    }
 
     /**
      * Returns the index of the underlying flat array at which the first element
      * of this array view is located.
      */
-    default int getFlatViewOffset() {
-        return 0;
+    public final int getFlatViewOffset() {
+        return flatViewOffset;
     }
 
-    int getStride(int dimension);
+    public final int getStride(int dimension) {
+        assert dimension >= 0 && dimension < strides.size();
+        return strides.getQuick(dimension);
+    }
 
     /**
      * Returns the encoded array type, as specified in {@link ColumnType#encodeArrayType(short, int)}.
      */
-    int getType();
+    public final int getType() {
+        return type;
+    }
+
+    protected final BorrowedFlatArrayView borrowedFlatView() {
+        return (BorrowedFlatArrayView) flatView;
+    }
+
+    protected void resetToDefaultStrides() {
+        strides.clear();
+        int nDims = shape.size();
+        for (int i = 0; i < nDims; i++) {
+            strides.add(0);
+        }
+        int stride = 1;
+        for (int dimIndex = nDims - 1; dimIndex >= 0; dimIndex--) {
+            strides.set(dimIndex, stride);
+            stride *= shape.get(dimIndex);
+        }
+    }
 }

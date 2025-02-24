@@ -26,63 +26,35 @@ package io.questdb.cairo.arr;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectIntSlice;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
-import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 
-import static io.questdb.cairo.arr.ArrayMetaUtils.validateShapeAndGetFlatElemCount;
 import static io.questdb.cairo.arr.ArrayTypeDriver.bytesToSkipForAlignment;
 
-public class MmappedArray implements ArrayView, QuietCloseable {
-    private final DirectIntList cachedDefaultStrides = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY_DBG1);
-    private final BorrowedFlatArrayView flatView = new BorrowedFlatArrayView();
-    private final DirectIntSlice shapeView = new DirectIntSlice();
-    // Encoded array type, contains element type and dimensionality
-    private int type = ColumnType.UNDEFINED;
+public class MmappedArray extends ArrayView {
+    /**
+     * Maximum size of any given dimension.
+     * <p>Why:
+     * <ul>
+     *   <li>Our buffers are at most Integer.MAX_VALUE long</li>
+     *   <li>Our largest datatypes are 8 bytes</li>
+     * </ul>
+     * Assuming a 1-D array, <code>Integer.MAX_VALUE / Long.BYTES</code> gives us a maximum
+     * of 2 ** 28 - 1, i.e. all bits 0 to (inc) 27 set.
+     * <p><strong>NOTE</strong>: This value can also be used as a mask to extract the dim
+     * from the lower bits of an int, packed with extra data in the remaining bits.</p>
+     */
+    public static final int DIM_MAX_SIZE = (1 << 28) - 1;
+    // Helper object used during init
+    private final DirectIntSlice mmappedShape = new DirectIntSlice();
+
+    public MmappedArray() {
+        this.flatView = new BorrowedFlatArrayView();
+    }
 
     @Override
     public void appendToMem(MemoryA mem) {
         flatView.appendToMem(mem);
-    }
-
-    @Override
-    public void close() {
-        Misc.free(cachedDefaultStrides);
-    }
-
-    @Override
-    public FlatArrayView flatView() {
-        return flatView;
-    }
-
-    @Override
-    public int getDimCount() {
-        return shapeView.length();
-    }
-
-    @Override
-    public int getDimLen(int dimension) {
-        return shapeView.get(dimension);
-    }
-
-    @Override
-    public int getFlatViewLength() {
-        // flatView is element type-agnostic, so it doesn't know its length in elements.
-        // Therefore, compute the length from the array shape.
-        return getDimLen(0) * getStride(0);
-    }
-
-    @Override
-    public int getStride(int dimension) {
-        return cachedDefaultStrides.get(dimension);
-    }
-
-    @Override
-    public int getType() {
-        return type;
     }
 
     public MmappedArray of(
@@ -95,9 +67,12 @@ public class MmappedArray implements ArrayView, QuietCloseable {
     ) {
         assert ColumnType.isArray(columnType) : "type class is not Array";
         this.type = columnType;
+        this.flatViewOffset = 0;
+        shape.clear();
+        strides.clear();
         final int elementSize = ColumnType.sizeOf(ColumnType.decodeArrayElementType(columnType));
         final int nDims = ColumnType.decodeArrayDimensionality(columnType);
-        assert nDims > 0 && nDims <= ColumnType.ARRAY_NDIMS_LIMIT : "nDims out of range";
+        assert nDims > 0 && nDims <= ColumnType.ARRAY_NDIMS_LIMIT;
 
         final long rowOffset = ArrayTypeDriver.getAuxVectorOffsetStatic(row);
         assert auxAddr + ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES <= auxLim;
@@ -108,32 +83,26 @@ public class MmappedArray implements ArrayView, QuietCloseable {
             return this;
         }
 
-        assert dataAddr + sizeBytes <= dataLim;
-        // This is a non-null array, we need to access the data vec.
+        assert dataAddr + sizeBytes <= dataLim : "dataAddr + sizeBytes > dataLim";
         final long offset = crcAndOffset & ArrayTypeDriver.OFFSET_MAX;
-
-        // Decode the shape and set the default strides.
         final long dataEntryPtr = dataAddr + offset;
-        assert (dataEntryPtr + nDims * Integer.BYTES) <= dataLim;
-        ArrayMetaUtils.determineDefaultStrides(dataEntryPtr, nDims, cachedDefaultStrides);
-        assert cachedDefaultStrides.size() == nDims;
+
+        validateAndInitShape(dataEntryPtr, nDims);
+        final int arrayByteSize = flatViewLength * elementSize;
+        assert (dataEntryPtr + nDims * Integer.BYTES) <= dataLim : "dataEntryPtr + shapeSize > dataLim";
+        resetToDefaultStrides();
 
         // Obtain the values ptr / len from the data.
-        final long unalignedValuesOffset = offset + ((long) (nDims) * Integer.BYTES);
+        final long unalignedValuesOffset = offset + ((long) nDims * Integer.BYTES);
         final long bytesToSkipForAlignment = bytesToSkipForAlignment(unalignedValuesOffset, elementSize);
         final long valuesPtr = dataAddr + unalignedValuesOffset + bytesToSkipForAlignment;
-        shapeView.of(dataEntryPtr, nDims);
-        final int flatLength = ArrayMetaUtils.validateShapeAndGetFlatElemCount(shapeView);
-        final int valuesSize = flatLength * ColumnType.sizeOf(elementSize);
-        assert valuesPtr + valuesSize <= dataLim;
-        final int flatElemCout = validateShapeAndGetFlatElemCount(shapeView);
-        validateValuesSize(columnType, flatElemCout, valuesSize);
-        flatView.of(valuesPtr, valuesSize);
+        assert valuesPtr + arrayByteSize <= dataLim;
+        borrowedFlatView().of(valuesPtr, arrayByteSize);
         return this;
     }
 
     /**
-     * Set to a null array.
+     * Sets to a null array.
      */
     public void ofNull() {
         reset();
@@ -141,20 +110,36 @@ public class MmappedArray implements ArrayView, QuietCloseable {
     }
 
     /**
-     * Reset to an invalid array.
+     * Resets to an invalid array.
      */
     public void reset() {
         this.type = ColumnType.UNDEFINED;
-        this.shapeView.reset();
-        this.cachedDefaultStrides.clear();
-        this.flatView.reset();
+        borrowedFlatView().reset();
+        shape.clear();
+        strides.clear();
     }
 
-    private static void validateValuesSize(int type, int valuesLength, int valuesSize) {
-        assert ColumnType.isArray(type) : "type class is not Array";
-        final int expectedByteSize = valuesLength * ColumnType.sizeOf(ColumnType.decodeArrayElementType(type));
-        if (valuesSize != expectedByteSize) {
-            throw new AssertionError(String.format("invalid valuesSize, expected %,d actual %,d", expectedByteSize, valuesSize));
+    private void validateAndInitShape(long shapePtr, int nDims) {
+        mmappedShape.of(shapePtr, nDims);
+        try {
+            if (mmappedShape.length() > ColumnType.ARRAY_NDIMS_LIMIT) {
+                throw new AssertionError("shape length exceeds max dimensionality: " + mmappedShape.length());
+            }
+            int flatLength = 1;
+            for (int i = 0; i < nDims; ++i) {
+                final int dimLength = mmappedShape.get(i);
+                if (dimLength <= 0 || dimLength >= DIM_MAX_SIZE) {
+                    throw new AssertionError(String.format("shape dimension %,d out of bounds: %,d", i, dimLength));
+                }
+                flatLength = Math.multiplyExact(flatLength, dimLength);
+            }
+            this.flatViewLength = flatLength;
+            shape.clear();
+            for (int i = 0; i < nDims; i++) {
+                shape.add(mmappedShape.get(i));
+            }
+        } finally {
+            mmappedShape.reset();
         }
     }
 }

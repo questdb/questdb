@@ -31,21 +31,18 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 
-import java.io.Closeable;
-import java.io.IOException;
+public class FunctionArray extends ArrayView implements FlatArrayView {
 
-public class FunctionArray implements ArrayView, FlatArrayView, Closeable {
-
-    private final int[] shape;
-    private final int[] strides;
     private Function[] functions;
     private Record record;
-    private int type;
 
     public FunctionArray(short elementType, int nDims) {
-        this.shape = new int[nDims];
-        this.strides = new int[nDims];
         this.type = ColumnType.encodeArrayType(elementType, nDims);
+        this.flatView = this;
+        for (int i = 0; i < nDims; i++) {
+            shape.add(0);
+            strides.add(0);
+        }
     }
 
     @Override
@@ -117,21 +114,22 @@ public class FunctionArray implements ArrayView, FlatArrayView, Closeable {
 
     public void applyShape() {
         int stride = 1;
-        for (int i = shape.length - 1; i >= 0; i--) {
-            int dimLen = shape[i];
+        for (int i = shape.size() - 1; i >= 0; i--) {
+            int dimLen = shape.get(i);
             if (dimLen == 0) {
                 throw new IllegalStateException("Zero dimLen at " + i);
             }
-            strides[i] = stride;
+            strides.set(i, stride);
             stride *= dimLen;
         }
+        this.flatViewLength = stride;
         if (functions == null || functions.length < stride) {
             functions = new Function[stride];
         }
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         Function[] functions = functions();
         for (int n = functions.length, i = 0; i < n; i++) {
             functions[i] = Misc.free(functions[i]);
@@ -139,28 +137,8 @@ public class FunctionArray implements ArrayView, FlatArrayView, Closeable {
     }
 
     @Override
-    public FlatArrayView flatView() {
-        return this;
-    }
-
-    @Override
-    public int getDimCount() {
-        return shape.length;
-    }
-
-    @Override
-    public int getDimLen(int dimension) {
-        return shape[dimension];
-    }
-
-    @Override
     public double getDouble(int flatIndex) {
         return functions()[flatIndex].getDouble(record);
-    }
-
-    @Override
-    public int getFlatViewLength() {
-        return functions().length;
     }
 
     public Function getFunctionAtFlatIndex(int flatIndex) {
@@ -172,22 +150,12 @@ public class FunctionArray implements ArrayView, FlatArrayView, Closeable {
         return functions()[flatIndex].getLong(record);
     }
 
-    @Override
-    public int getStride(int dimension) {
-        return strides[dimension];
-    }
-
-    @Override
-    public int getType() {
-        return type;
-    }
-
     public void putFunction(int flatIndex, Function f) {
         functions()[flatIndex] = f;
     }
 
     public void setDimLen(int dim, int len) {
-        shape[dim] = len;
+        shape.set(dim, len);
     }
 
     public void setRecord(Record rec) {

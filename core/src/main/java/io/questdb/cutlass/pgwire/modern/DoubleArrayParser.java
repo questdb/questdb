@@ -35,11 +35,12 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 
-public final class DoubleArrayParser implements ArrayView, FlatArrayView {
-    private final IntList dimensions = new IntList();
-    private final IntList stridesOrTmpList = new IntList();
+public final class DoubleArrayParser extends ArrayView implements FlatArrayView {
     private final DoubleList values = new DoubleList();
-    private int type;
+
+    public DoubleArrayParser() {
+        this.flatView = this;
+    }
 
     @Override
     public void appendToMem(MemoryA mem) {
@@ -49,31 +50,8 @@ public final class DoubleArrayParser implements ArrayView, FlatArrayView {
     }
 
     @Override
-    public FlatArrayView flatView() {
-        return this;
-    }
-
-    @Override
-    public int getDimCount() {
-        return dimensions.size();
-    }
-
-    @Override
-    public int getDimLen(int dimension) {
-        if (dimension < 0 || dimension >= dimensions.size()) {
-            throw new IllegalArgumentException("Invalid dimension: " + dimension);
-        }
-        return dimensions.getQuick(dimension);
-    }
-
-    @Override
     public double getDouble(int elemIndex) {
         return values.getQuick(elemIndex);
-    }
-
-    @Override
-    public int getFlatViewLength() {
-        return values.size();
     }
 
     @Override
@@ -81,52 +59,40 @@ public final class DoubleArrayParser implements ArrayView, FlatArrayView {
         throw new UnsupportedOperationException();
     }
 
-    @Override
-    public int getStride(int dimension) {
-        if (dimension < 0 || dimension >= dimensions.size()) {
-            throw new IllegalArgumentException("Invalid dimension: " + dimension);
-        }
-        return stridesOrTmpList.getQuick(dimension);
-    }
-
-    @Override
-    public int getType() {
-        return type;
-    }
-
     public void of(CharSequence input) {
         values.clear();
-        dimensions.clear();
-        stridesOrTmpList.clear();
+        shape.clear();
+        strides.clear();
         type = ColumnType.ARRAY; // todo: what's the right type when array is null?
         if (input != null) {
             parse(input);
-            type = ColumnType.encodeArrayType(ColumnType.DOUBLE, dimensions.size());
+            type = ColumnType.encodeArrayType(ColumnType.DOUBLE, shape.size());
         }
-        stridesOrTmpList.clear();
+        strides.clear();
         calculateStrides();
     }
 
     private void addElement(CharSequence input, int numberStart, int i) {
         try {
             values.add(Numbers.parseDouble(input, numberStart, i - numberStart));
+            flatViewLength++;
         } catch (NumericException e) {
             throw new IllegalArgumentException("Invalid number format at position " + numberStart, e);
         }
     }
 
     private void calculateStrides() {
-        assert stridesOrTmpList.size() == 0;
+        assert strides.size() == 0;
 
         int stride = 1;
-        for (int i = dimensions.size() - 1; i >= 0; i--) {
-            stridesOrTmpList.add(stride);
-            stride *= dimensions.getQuick(i);
+        for (int i = shape.size() - 1; i >= 0; i--) {
+            strides.add(stride);
+            stride *= shape.getQuick(i);
         }
     }
 
     private void parse(CharSequence input) {
-        IntList currentDimSizes = stridesOrTmpList;
+        IntList currentDimSizes = strides;
         assert currentDimSizes.size() == 0;
 
         boolean inQuote = false;
@@ -156,13 +122,13 @@ public final class DoubleArrayParser implements ArrayView, FlatArrayView {
                         }
                         int depth = currentDimSizes.size() - 1;
                         int currentCount = currentDimSizes.getQuick(depth);
-                        if (dimensions.size() <= depth) {
-                            dimensions.extendAndSet(depth, currentCount);
+                        if (shape.size() <= depth) {
+                            shape.extendAndSet(depth, currentCount);
                         } else {
-                            int alreadyObservedCount = dimensions.getQuick(depth);
+                            int alreadyObservedCount = shape.getQuick(depth);
                             if (alreadyObservedCount == 0) {
                                 // first time we see this dimension
-                                dimensions.setQuick(depth, currentCount);
+                                shape.setQuick(depth, currentCount);
                             } else if (currentCount != alreadyObservedCount) {
                                 throw new IllegalArgumentException("inconsistent array [depth=" + depth + ", currentCount=" + currentCount + ", alreadyObservedCount=" + alreadyObservedCount + ", position=" + i + "]");
                             }

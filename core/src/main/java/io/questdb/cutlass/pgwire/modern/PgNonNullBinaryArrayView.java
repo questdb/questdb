@@ -29,22 +29,22 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cutlass.pgwire.PGOids;
-import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 
-final class PgNonNullBinaryArrayView implements ArrayView, FlatArrayView, Mutable {
-    private final IntList dimLens = new IntList();
-    private final IntList strides = new IntList();
-    private int flatElemCount = 1;
+final class PgNonNullBinaryArrayView extends ArrayView implements FlatArrayView, Mutable {
     private long hi;
     private long lo;
-    private int type;
+
+    public PgNonNullBinaryArrayView() {
+        this.flatViewLength = 1;
+        this.flatView = this;
+    }
 
     @Override
     public void appendToMem(MemoryA mem) {
-        int size = this.flatElemCount;
+        int size = this.flatViewLength;
         switch (ColumnType.decodeArrayElementType(type)) {
             case ColumnType.LONG:
                 for (int i = 0; i < size; i++) {
@@ -63,27 +63,12 @@ final class PgNonNullBinaryArrayView implements ArrayView, FlatArrayView, Mutabl
 
     @Override
     public void clear() {
-        dimLens.clear();
+        shape.clear();
         strides.clear();
-        flatElemCount = 1;
+        flatViewLength = 1;
         lo = 0;
         hi = 0;
         type = ColumnType.UNDEFINED;
-    }
-
-    @Override
-    public FlatArrayView flatView() {
-        return this;
-    }
-
-    @Override
-    public int getDimCount() {
-        return dimLens.size();
-    }
-
-    @Override
-    public int getDimLen(int dimension) {
-        return dimLens.getQuick(dimension);
     }
 
     @Override
@@ -95,11 +80,6 @@ final class PgNonNullBinaryArrayView implements ArrayView, FlatArrayView, Mutabl
     }
 
     @Override
-    public int getFlatViewLength() {
-        return flatElemCount;
-    }
-
-    @Override
     public long getLong(int flatIndex) {
         final long addr = lo + Integer.BYTES + ((long) flatIndex * (Long.BYTES + Integer.BYTES));
         assert addr < hi;
@@ -107,19 +87,9 @@ final class PgNonNullBinaryArrayView implements ArrayView, FlatArrayView, Mutabl
         return Numbers.bswap(networkOrderVal);
     }
 
-    @Override
-    public int getStride(int dimension) {
-        return strides.getQuick(dimension);
-    }
-
-    @Override
-    public int getType() {
-        return type;
-    }
-
     void addDimLen(int dimLen) {
-        dimLens.add(dimLen);
-        flatElemCount *= dimLen;
+        shape.add(dimLen);
+        flatViewLength *= dimLen;
     }
 
     void setPtrAndCalculateStrides(long lo, long hi, int pgOidType) {
@@ -137,13 +107,13 @@ final class PgNonNullBinaryArrayView implements ArrayView, FlatArrayView, Mutabl
 
         strides.clear();
         int stride = 1;
-        for (int i = dimLens.size() - 1; i > 0; i--) {
+        for (int i = shape.size() - 1; i > 0; i--) {
             strides.add(stride);
-            stride *= dimLens.getQuick(i);
+            stride *= shape.getQuick(i);
         }
         strides.add(stride);
         this.lo = lo;
         this.hi = hi;
-        this.type = ColumnType.encodeArrayType(componentNativeType, dimLens.size());
+        this.type = ColumnType.encodeArrayType(componentNativeType, shape.size());
     }
 }

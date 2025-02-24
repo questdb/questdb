@@ -27,7 +27,6 @@ package io.questdb.cairo.arr;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 
 /**
@@ -36,26 +35,14 @@ import io.questdb.std.Numbers;
  * You can change what slice of the underlying flat array it represents, as well as
  * transpose it.
  */
-public class BorrowedArrayView implements ArrayView {
-    private final IntList shape = new IntList(0);
-    private final IntList strides = new IntList(0);
-    private FlatArrayView flatView;
-    private int flatViewLength;
-    private int flatViewOffset;
-    // Encoded array type, contains element type class, type precision, and dimensionality
-    private int type = ColumnType.UNDEFINED;
+public class DerivedArrayView extends ArrayView {
 
     @Override
     public void appendToMem(MemoryA mem) {
         appendToMemRecursive(0, 0, mem);
     }
 
-    @Override
-    public FlatArrayView flatView() {
-        return flatView;
-    }
-
-    public void flattenDim(int dim, int argPos) {
+    public final void flattenDim(int dim, int argPos) {
         final int nDims = getDimCount();
         assert dim >= 0 && dim < nDims : "dim out of range: " + dim + ", nDims: " + nDims;
         if (getStride(dim) == 1) {
@@ -74,46 +61,6 @@ public class BorrowedArrayView implements ArrayView {
         }
         shape.set(dimToFlattenInto, shape.get(dimToFlattenInto) * shape.get(dim));
         removeDim(dim);
-    }
-
-    @Override
-    public int getDimCount() {
-        return shape.size();
-    }
-
-    @Override
-    public int getDimLen(int dim) {
-        assert dim >= 0 && dim < shape.size() : "dim out ouf range: " + dim;
-        return shape.getQuick(dim);
-    }
-
-    @Override
-    public int getFlatViewLength() {
-        return flatViewLength;
-    }
-
-    @Override
-    public int getFlatViewOffset() {
-        return flatViewOffset;
-    }
-
-    @Override
-    public int getStride(int dimension) {
-        return strides.get(dimension);
-    }
-
-    @Override
-    public int getType() {
-        return type;
-    }
-
-    /**
-     * The array is a typeless zero-dimensional array.
-     * <p>
-     * This maps to the <code>NULL</code> value in an array column.
-     */
-    public boolean isNull() {
-        return type == ColumnType.NULL;
     }
 
     public void of(ArrayView other) {
