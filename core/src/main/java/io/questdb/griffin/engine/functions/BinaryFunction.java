@@ -65,14 +65,14 @@ public interface BinaryFunction extends Function {
         return getLeft().isConstant() && getRight().isConstant();
     }
 
+    @Override
+    default boolean isNonDeterministic() {
+        return getLeft().isNonDeterministic() || getRight().isNonDeterministic();
+    }
+
     // used in generic toSink implementation
     default boolean isOperator() {
         return false;
-    }
-
-    @Override
-    default boolean isThreadSafe() {
-        return getLeft().isThreadSafe() && getRight().isThreadSafe();
     }
 
     @Override
@@ -80,6 +80,11 @@ public interface BinaryFunction extends Function {
         final Function l = getLeft();
         final Function r = getRight();
         return (l.isConstant() && r.isRuntimeConstant()) || (r.isConstant() && l.isRuntimeConstant()) || (l.isRuntimeConstant() && r.isRuntimeConstant());
+    }
+
+    @Override
+    default boolean isThreadSafe() {
+        return getLeft().isThreadSafe() && getRight().isThreadSafe();
     }
 
     @Override

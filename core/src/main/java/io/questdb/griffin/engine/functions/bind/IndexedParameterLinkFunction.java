@@ -25,8 +25,12 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -219,10 +223,6 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
         return getBase().getVarcharSize(rec);
     }
 
-    public int getVariableIndex() {
-        return variableIndex;
-    }
-
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         base = executionContext.getBindVariableService().getFunction(variableIndex);
@@ -231,6 +231,11 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
         }
         this.type = base.getType();
         base.init(symbolTableSource, executionContext);
+    }
+
+    @Override
+    public boolean isNonDeterministic() {
+        return true;
     }
 
     @Override

@@ -48,6 +48,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         System.arraycopy(other.buffer, 0, this.buffer, 0, pos);
     }
 
+    @SafeVarargs
     @SuppressWarnings("unchecked")
     public ObjList(T... other) {
         this.buffer = (T[]) new Object[Math.max(other.length, DEFAULT_ARRAY_SIZE)];
@@ -221,7 +222,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
 
     public int indexOfNull() {
         for (int i = 0, n = pos; i < n; i++) {
-            if (null == getQuick(i)) {
+            if (getQuick(i) == null) {
                 return i;
             }
         }

@@ -261,6 +261,10 @@ public interface CairoConfiguration {
 
     TimeZoneRules getLogTimestampTimezoneRules();
 
+    long getMatViewInsertAsSelectBatchSize();
+
+    int getMatViewMaxRecompileAttempts();
+
     int getMaxCrashFiles();
 
     int getMaxFileNameLength();
@@ -639,6 +643,10 @@ public interface CairoConfiguration {
 
     boolean isIOURingEnabled();
 
+    boolean isMatViewEnabled();
+
+    boolean isMatViewParallelSqlEnabled();
+
     boolean isMultiKeyDedupEnabled();
 
     boolean isO3QuickSortEnabled();
@@ -692,6 +700,8 @@ public interface CairoConfiguration {
     }
 
     boolean isWalApplyEnabled();
+
+    boolean isWalApplyParallelSqlEnabled();
 
     boolean isWalSupported();
 

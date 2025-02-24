@@ -127,7 +127,14 @@ public interface MetadataService {
 
     void dropIndex(@NotNull CharSequence columnName);
 
-    void enableDeduplicationWithUpsertKeys(LongList columnsIndexes);
+    /**
+     * Enables deduplication with the given upsert keys.
+     *
+     * @return returns true when dedup was already enabled on the table and the new upsert keys
+     * are a subset of the previous upsert keys. Implementations that don't have access
+     * to the table metadata always return false.
+     */
+    boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes);
 
     void forceRemovePartitions(LongList partitionTimestamps);
 
