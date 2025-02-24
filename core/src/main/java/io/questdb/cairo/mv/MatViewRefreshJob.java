@@ -545,15 +545,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         assert state.isLocked();
 
         final SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseTableToken);
-        final long lastBaseQueryableTxn = baseSeqTracker.getWriterTxn();
+        long toBaseTxn = baseSeqTracker.getWriterTxn();
 
-        final long appliedToParentTxn = state.getLastRefreshBaseTxn();
-        if (appliedToParentTxn >= 0 && appliedToParentTxn >= lastBaseQueryableTxn) {
+        final long fromBaseTxn = state.getLastRefreshBaseTxn();
+        if (fromBaseTxn >= 0 && fromBaseTxn >= toBaseTxn) {
+            // Already refreshed
             return false;
         }
-
-        long fromBaseTxn = appliedToParentTxn;
-        long toBaseTxn = lastBaseQueryableTxn;
 
         final MatViewDefinition viewDef = state.getViewDefinition();
         if (viewDef == null) {
@@ -569,19 +567,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // - write the result set to WAL (or directly to table writer O3 area)
         // - apply resulting commit
         // - update applied to txn in MatViewGraph
-        if (fromBaseTxn < 0) {
-            fromBaseTxn = state.getLastRefreshBaseTxn();
-            if (fromBaseTxn >= toBaseTxn/* && fromBaseTxn >= 0*/) {
-                // Already refreshed
-                return false;
-            }
-        }
-
-        SeqTxnTracker viewTxnTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
-        if (viewTxnTracker.shouldBackOffDueToMemoryPressure(microsecondClock.getTicks())) {
-            // rely on another pass of refresh job to re-try
-            return false;
-        }
 
         try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
             mvRefreshExecutionContext.of(baseTableReader);
