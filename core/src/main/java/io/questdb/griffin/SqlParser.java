@@ -814,7 +814,10 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
         final CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch' or 'materialized'");
-        if (isMaterializedKeyword(tok) && configuration.isMatViewEnabled()) {
+        if (isMaterializedKeyword(tok)) {
+            if (!configuration.isMatViewEnabled()) {
+                throw SqlException.$(lexer.lastTokenPosition(), "materialized view creation and refreshing is disabled");
+            }
             return parseCreateMatView(lexer, executionContext, sqlParserCallback);
         }
         return parseCreateTable(lexer, tok, executionContext, sqlParserCallback);
