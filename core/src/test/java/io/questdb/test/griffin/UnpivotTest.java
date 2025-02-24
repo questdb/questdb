@@ -253,12 +253,13 @@ public class UnpivotTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(query, "abc");
 
             assertSql("empid\tdept\tquarter\tmonth_1_sales\tmonth_2_sales\tmonth_3_sales\n" +
-                    "1\telectronics\tq1\t1\t2\t3\n" +
-                    "1\telectronics\tq2\t4\t5\t6\n" +
-                    "2\tclothes\tq1\t10\t20\t30\n" +
-                    "2\tclothes\tq2\t40\t50\t60\n" +
-                    "3\tcars\tq1\t100\t200\t300\n" +
-                    "3\tcars\tq2\t400\t500\t600\n", query);
+                            "1\telectronics\tq1\t1\t2\t3\n" +
+                            "1\telectronics\tq2\t4\t5\t6\n" +
+                            "2\tclothes\tq1\t10\t20\t30\n" +
+                            "2\tclothes\tq2\t40\t50\t60\n" +
+                            "3\tcars\tq1\t100\t200\t300\n" +
+                            "3\tcars\tq2\t400\t500\t600\n",
+                    query);
         });
     }
 }
