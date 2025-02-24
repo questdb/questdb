@@ -275,7 +275,11 @@ public abstract class BasePGTest extends AbstractCairoTest {
                         break;
                     case ARRAY:
                         Array array = rs.getArray(i);
-                        writeArrayContent(sink, array.getArray());
+                        if (array == null) {
+                            sink.put("null");
+                        } else {
+                            writeArrayContent(sink, array.getArray());
+                        }
                         break;
                     default:
                         assert false;

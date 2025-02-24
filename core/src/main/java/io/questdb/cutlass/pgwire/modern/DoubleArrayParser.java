@@ -23,6 +23,8 @@
  ******************************************************************************/
 
 package io.questdb.cutlass.pgwire.modern;
+// todo: move to another package, it's not PGWire-specific
+
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;

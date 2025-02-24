@@ -2926,15 +2926,57 @@ if __name__ == "__main__":
                 stmt.execute();
             }
 
+            // insert null
+            try (PreparedStatement stmt = connection.prepareStatement("insert into x values (null::string)")) {
+                stmt.execute();
+            }
+
             try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
                 sink.clear();
                 try (ResultSet rs = stmt.executeQuery()) {
                     assertResultSet("al[ARRAY]\n" +
-                                    "{{1.0,2.0},{3.0,4.0}}\n",
+                                    "{{1.0,2.0},{3.0,4.0}}\n" +
+                                    "null\n",
                             sink,
                             rs
                     );
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testInsertStringToArrayColum_negativeScenarios() throws Exception {
+        skipOnWalRun();
+        skipInLegacyMode();
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
+                stmt.execute();
+            }
+
+            // bad dimension count
+            try (PreparedStatement stmt = connection.prepareStatement("insert into x values ('{1,2,3,4}')")) {
+                stmt.execute();
+                Assert.fail("inserted 1D array into 2D column");
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "inconvertible value: `{1,2,3,4}` [STRING -> DOUBLE[][]]");
+            }
+
+            // inconsistent row sizes
+            try (PreparedStatement stmt = connection.prepareStatement("insert into x values ('{{1,2},{3,4,5}}')")) {
+                stmt.execute();
+                Assert.fail("inserted 2D array with different row sizes");
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "inconvertible value: `{{1,2},{3,4,5}}` [STRING -> DOUBLE[][]]");
+            }
+
+            // bad literal
+            try (PreparedStatement stmt = connection.prepareStatement("insert into x values ('{{1,2},{3,a}}')")) {
+                stmt.execute();
+                Assert.fail("inserted bad array literal");
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "inconvertible value: `{{1,2},{3,a}}` [STRING -> DOUBLE[][]]");
             }
         });
     }

@@ -1660,7 +1660,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     private void outColBinArr(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType) {
         ArrayView arrayView = record.getArray(columnIndex, columnType);
-        if (arrayView == null) {
+        if (arrayView.getDimCount() == 0) {
             utf8Sink.setNullValue();
             return;
         }
@@ -1882,7 +1882,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     private void outColTxtArr(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType) {
         ArrayView arrayView = record.getArray(columnIndex, columnType);
-        if (arrayView == null) {
+
+        // zero dimension array indicates NULL
+        if (arrayView.getDimCount() == 0) {
             utf8Sink.setNullValue();
             return;
         }
