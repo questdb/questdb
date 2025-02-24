@@ -98,10 +98,13 @@ public final class DoubleArrayParser implements ArrayView, FlatArrayView {
         values.clear();
         dimensions.clear();
         stridesOrTmpList.clear();
-        parse(input);
+        type = ColumnType.ARRAY; // todo: what's the right type when array is null?
+        if (input != null) {
+            parse(input);
+            type = ColumnType.encodeArrayType(ColumnType.DOUBLE, dimensions.size());
+        }
         stridesOrTmpList.clear();
         calculateStrides();
-        type = ColumnType.encodeArrayType(ColumnType.DOUBLE, dimensions.size());
     }
 
     private void addElement(CharSequence input, int numberStart, int i) {

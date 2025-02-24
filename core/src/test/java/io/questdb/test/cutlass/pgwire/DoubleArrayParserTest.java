@@ -35,6 +35,15 @@ import org.junit.Test;
 public class DoubleArrayParserTest extends AbstractTest {
 
     @Test
+    public void testParseNull() {
+        DoubleArrayParser parser = new DoubleArrayParser();
+        parser.of(null);
+
+        Assert.assertEquals(0, parser.getDimCount());
+        Assert.assertEquals(0, parser.getFlatViewLength());
+    }
+
+    @Test
     public void testInconsistentArray() {
         String input = "{{\"1\",\"2.0\"},{\"3.1\"}}";
         DoubleArrayParser parser = new DoubleArrayParser();
