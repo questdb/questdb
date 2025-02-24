@@ -2904,7 +2904,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             execute(
                     "insert into trades (timestamp, side, symbol) values " +
-                    "(0, 'sell', 'abc'), (0, 'buy', 'abc'), (0, 'buy', 'def'), (0, 'buy', 'fgh'), (1, 'sell', 'abc')"
+                            "(0, 'sell', 'abc'), (0, 'buy', 'abc'), (0, 'buy', 'def'), (0, 'buy', 'fgh'), (1, 'sell', 'abc')"
             );
             drainWalQueue();
             assertSql("timestamp\tside\tsymbol\n" +

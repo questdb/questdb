@@ -8448,9 +8448,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "s1\tts\n" +
-                    "S5\t1970-01-01T00:20:00.000000Z\n" +
-                    "S4\t1970-01-01T00:40:00.000000Z\n" +
-                    "S3\t1970-01-01T01:00:00.000000Z\n",
+                            "S5\t1970-01-01T00:20:00.000000Z\n" +
+                            "S4\t1970-01-01T00:40:00.000000Z\n" +
+                            "S3\t1970-01-01T01:00:00.000000Z\n",
                     query,
                     "ts",
                     true,
