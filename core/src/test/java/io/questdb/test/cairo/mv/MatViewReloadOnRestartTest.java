@@ -95,8 +95,9 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                             "price_1h order by ts, sym"
                     );
 
-                    execute(main1, "insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
-                            ",('gbpusd', 1.325, '2024-09-10T13:03')"
+                    execute(
+                            main1, "insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
+                                    ",('gbpusd', 1.325, '2024-09-10T13:03')"
                     );
                     drainWalQueue(main1.getEngine());
 
@@ -185,8 +186,9 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                             "price_1h order by ts, sym"
                     );
 
-                    execute(main1, "insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
-                            ",('gbpusd', 1.325, '2024-09-10T13:03')"
+                    execute(
+                            main1, "insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
+                                    ",('gbpusd', 1.325, '2024-09-10T13:03')"
                     );
                     drainWalQueue(main1.getEngine());
 
@@ -299,7 +301,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                         main2,
                         "count\n" +
                                 "0\n",
-                        "select count() from mat_views();"
+                        "select count() from materialized_views();"
                 );
             }
         });
@@ -368,7 +370,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                             main1,
                             "view_name\tview_status\tinvalidation_reason\n" +
                                     "price_1h\tinvalid\ttruncate operation\n",
-                            "select view_name, view_status, invalidation_reason from mat_views()"
+                            "select view_name, view_status, invalidation_reason from materialized_views()"
                     );
                 }
             }
@@ -381,7 +383,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                         main2,
                         "view_name\tview_status\tinvalidation_reason\n" +
                                 "price_1h\tinvalid\ttruncate operation\n",
-                        "select view_name, view_status, invalidation_reason from mat_views()"
+                        "select view_name, view_status, invalidation_reason from materialized_views()"
                 );
 
                 execute(main2, "refresh materialized view price_1h full;");
@@ -395,7 +397,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                         main2,
                         "view_name\tview_status\tinvalidation_reason\n" +
                                 "price_1h\tvalid\t\n",
-                        "select view_name, view_status, invalidation_reason from mat_views()"
+                        "select view_name, view_status, invalidation_reason from materialized_views()"
                 );
             }
 
@@ -407,7 +409,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                         main3,
                         "view_name\tview_status\tinvalidation_reason\n" +
                                 "price_1h\tvalid\t\n",
-                        "select view_name, view_status, invalidation_reason from mat_views()"
+                        "select view_name, view_status, invalidation_reason from materialized_views()"
                 );
             }
         });
@@ -470,7 +472,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                         main2,
                         "view_name\tview_status\n" +
                                 "price_1h\tinvalid\n",
-                        "select view_name, view_status from mat_views();"
+                        "select view_name, view_status from materialized_views();"
                 );
             }
         });
@@ -533,7 +535,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                         main2,
                         "view_name\tview_status\n" +
                                 "price_1h\tinvalid\n",
-                        "select view_name, view_status from mat_views();"
+                        "select view_name, view_status from materialized_views();"
                 );
             }
         });
@@ -598,7 +600,8 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     private Sender buildLineSender(Transport transport) {
         switch (transport) {
             case UDP:
-                return new LineUdpSender(NetworkFacadeImpl.INSTANCE,
+                return new LineUdpSender(
+                        NetworkFacadeImpl.INSTANCE,
                         0,
                         Net.parseIPv4("127.0.0.1"),
                         ILP_PORT, 200, 1
