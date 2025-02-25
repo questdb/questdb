@@ -71,7 +71,6 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
             CharSequence value = symbolFunc.getSymbol(null);
             long symbolConstant = value != null ? SqlUtil.implicitCastSymbolAsTimestamp(value) : Numbers.LONG_NULL;
 
-
             if (timestampFunc.isConstant()) {
                 return symbolConstant == timestampFunc.getLong(null) ? BooleanConstant.TRUE : BooleanConstant.FALSE;
             }
