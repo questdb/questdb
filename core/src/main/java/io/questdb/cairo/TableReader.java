@@ -73,7 +73,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final int maxOpenPartitions;
     private final MessageBus messageBus;
     private final TableReaderMetadata metadata;
-    private final LongList openPartitionInfo;
     private final ObjList<MemoryCMR> parquetPartitions;
     private final int partitionBy;
     private final PartitionOverwriteControl partitionOverwriteControl;
@@ -89,6 +88,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private LongList columnTops;
     private ObjList<MemoryCMR> columns;
     private int openPartitionCount;
+    private LongList openPartitionInfo;
     private int partitionCount;
     private long rowCount;
     private TableToken tableToken;
@@ -458,26 +458,39 @@ public class TableReader implements Closeable, SymbolTableSource {
         assert srcReader.isOpen() && srcReader.isActive();
         assert tableToken.equals(srcReader.getTableToken());
 
-        if (partitionOverwriteControl != null) {
-            // Mark partitions as unused before releasing txn in scoreboard
-            // to avoid false positives in partition overwrite control
-            partitionOverwriteControl.releasePartitions(this);
+        // We may need to downgrade from newer txn to an older one.
+        final boolean isDowngrade = txn > srcReader.txn;
+        if (isDowngrade) {
+            prepareForDowngrade();
         }
-        // close all partitions
-        if (PartitionBy.isPartitioned(partitionBy)) {
-            for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-                final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
-                long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
-                if (partitionSize > -1) {
-                    closePartition(partitionIndex);
-                }
-            }
-        }
-
+        // Copy source reader's state.
         reloadAtTxn(srcReader);
+        if (isDowngrade) {
+            // TODO(puzpuzpuz): reuse code
+            txPartitionVersion = 0;
+            txColumnVersion = 0;
+            txTruncateVersion = 0;
+            columnCount = metadata.getColumnCount();
+            columnCountShl = getColumnBits(columnCount);
+            openSymbolMaps();
+            partitionCount = txFile.getPartitionCount();
 
-        reconcileOpenPartitions(0, 0, 0);
+            int capacity = getColumnBase(partitionCount);
+            parquetPartitions.setAll(partitionCount, NullMemoryCMR.INSTANCE);
+            columns = new ObjList<>(capacity + 2);
+            columns.setPos(capacity + 2);
+            columns.setQuick(0, NullMemoryCMR.INSTANCE);
+            columns.setQuick(1, NullMemoryCMR.INSTANCE);
+            bitmapIndexes = new ObjList<>(capacity + 2);
+            bitmapIndexes.setPos(capacity + 2);
 
+            openPartitionInfo = initOpenPartitionInfo();
+            columnTops = new LongList(capacity / 2);
+            columnTops.setPos(capacity / 2);
+        }
+        // Reload partitions.
+        reconcileOpenPartitions(txPartitionVersion, txColumnVersion, txTruncateVersion);
+        // Save transaction details which impact the reloading. Do not rely on txReader, it can be reloaded outside this method.
         txPartitionVersion = txFile.getPartitionTableVersion();
         txColumnVersion = txFile.getColumnVersion();
         txTruncateVersion = txFile.getTruncateVersion();
@@ -1180,6 +1193,28 @@ public class TableReader implements Closeable, SymbolTableSource {
         return path;
     }
 
+    private void prepareForDowngrade() {
+        if (partitionOverwriteControl != null) {
+            // Mark partitions as unused before releasing txn in scoreboard
+            // to avoid false positives in partition overwrite control
+            partitionOverwriteControl.releasePartitions(this);
+        }
+        // close all latest partitions
+        if (PartitionBy.isPartitioned(partitionBy)) {
+            for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+                final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
+                long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
+                if (partitionSize > -1) {
+                    closePartition(partitionIndex);
+                }
+            }
+        }
+        freeSymbolMapReaders();
+        freeBitmapIndexCache();
+        freeColumns();
+        freeParquetPartitions();
+    }
+
     private void prepareForLazyOpen(int partitionIndex) {
         closePartition(partitionIndex);
     }
@@ -1384,17 +1419,14 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void reloadAtTxn(TableReader srcReader) {
-        // TODO: check for same txn, newer txn
-        if (metadata.getMetadataVersion() != srcReader.metadata.getMetadataVersion()) {
-            metadata.loadFrom(srcReader.metadata);
-        }
-        final long txn = srcReader.getTxn();
         releaseTxn();
-        if (!txnScoreboard.acquireTxn(txn)) {
-            throw CairoException.critical(0).put("could not acquire txn when copying table reader state [txn=").put(txn).put(']');
+        final long txn = srcReader.getTxn();
+        if (!txnScoreboard.incrementTxn(txn)) {
+            throw CairoException.critical(0).put("could not increment txn when copying table reader state [txn=").put(txn).put(']');
         }
         this.txn = txn;
         txnAcquired = true;
+        metadata.loadFrom(srcReader.metadata);
         txFile.loadAllFrom(srcReader.txFile);
         columnVersionReader.readFrom(srcReader.columnVersionReader);
     }

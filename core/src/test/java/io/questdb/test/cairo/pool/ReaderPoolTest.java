@@ -513,7 +513,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopyOfRefreshesNewerTxnReader() throws Exception {
+    public void testCopyOfReloadsNewerTxnReader() throws Exception {
         assertWithPool(pool -> {
             final String tableName = "test";
             TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
@@ -567,7 +567,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopyOfRefreshesOlderTxnReader() throws Exception {
+    public void testCopyOfReloadsOlderTxnReader() throws Exception {
         assertWithPool(pool -> {
             final String tableName = "test";
             TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
