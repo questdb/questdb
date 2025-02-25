@@ -73,7 +73,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.Assert.fail;
 
 public class ReaderPoolTest extends AbstractCairoTest {
-
     private TableToken uTableToken;
 
     @Before

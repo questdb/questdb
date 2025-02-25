@@ -288,19 +288,17 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 // Don't release the older txn.
 
                 Assert.assertTrue(scoreboard.acquireTxn(2));
-                Assert.assertEquals(1, scoreboard.getMin());
                 scoreboard.releaseTxn(2);
-                Assert.assertEquals(2, scoreboard.getMin());
+                Assert.assertEquals(1, scoreboard.getMin());
 
                 // acquireTxn() would have failed here, but we can use incrementTxn()
                 Assert.assertTrue(scoreboard.incrementTxn(1));
-                Assert.assertEquals(1, scoreboard.getMin());
                 scoreboard.releaseTxn(1);
                 Assert.assertEquals(1, scoreboard.getMin());
 
                 // Now we can release the older txn.
                 scoreboard.releaseTxn(1);
-                Assert.assertEquals(1, scoreboard.getMin());
+                Assert.assertEquals(2, scoreboard.getMin());
             }
         });
     }

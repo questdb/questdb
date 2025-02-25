@@ -73,7 +73,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final int maxOpenPartitions;
     private final MessageBus messageBus;
     private final TableReaderMetadata metadata;
-    private final ObjList<MemoryCMR> parquetPartitions;
     private final int partitionBy;
     private final PartitionOverwriteControl partitionOverwriteControl;
     private final Path path;
@@ -89,6 +88,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private ObjList<MemoryCMR> columns;
     private int openPartitionCount;
     private LongList openPartitionInfo;
+    private ObjList<MemoryCMR> parquetPartitions;
     private int partitionCount;
     private long rowCount;
     private TableToken tableToken;
@@ -137,27 +137,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             txFile = new TxReader(ff).ofRO(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), partitionBy);
             path.trimTo(rootLen);
             reloadSlow(false);
-            txPartitionVersion = txFile.getPartitionTableVersion();
-            txColumnVersion = txFile.getColumnVersion();
-            txTruncateVersion = txFile.getTruncateVersion();
-            columnCount = metadata.getColumnCount();
-            columnCountShl = getColumnBits(columnCount);
-            openSymbolMaps();
-            partitionCount = txFile.getPartitionCount();
-
-            int capacity = getColumnBase(partitionCount);
-            parquetPartitions = new ObjList<>(partitionCount);
-            parquetPartitions.setAll(partitionCount, NullMemoryCMR.INSTANCE);
-            columns = new ObjList<>(capacity + 2);
-            columns.setPos(capacity + 2);
-            columns.setQuick(0, NullMemoryCMR.INSTANCE);
-            columns.setQuick(1, NullMemoryCMR.INSTANCE);
-            bitmapIndexes = new ObjList<>(capacity + 2);
-            bitmapIndexes.setPos(capacity + 2);
-
-            openPartitionInfo = initOpenPartitionInfo();
-            columnTops = new LongList(capacity / 2);
-            columnTops.setPos(capacity / 2);
+            init();
 
             this.partitionOverwriteControl = partitionOverwriteControl;
             if (partitionOverwriteControl != null) {
@@ -209,24 +189,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             txPartitionVersion = txFile.getPartitionTableVersion();
             txColumnVersion = txFile.getColumnVersion();
             txTruncateVersion = txFile.getTruncateVersion();
-            columnCount = metadata.getColumnCount();
-            columnCountShl = getColumnBits(columnCount);
-            openSymbolMaps();
-            partitionCount = txFile.getPartitionCount();
-
-            int capacity = getColumnBase(partitionCount);
-            parquetPartitions = new ObjList<>(partitionCount);
-            parquetPartitions.setAll(partitionCount, NullMemoryCMR.INSTANCE);
-            columns = new ObjList<>(capacity + 2);
-            columns.setPos(capacity + 2);
-            columns.setQuick(0, NullMemoryCMR.INSTANCE);
-            columns.setQuick(1, NullMemoryCMR.INSTANCE);
-            bitmapIndexes = new ObjList<>(capacity + 2);
-            bitmapIndexes.setPos(capacity + 2);
-
-            openPartitionInfo = initOpenPartitionInfo();
-            columnTops = new LongList(capacity / 2);
-            columnTops.setPos(capacity / 2);
+            init();
 
             this.partitionOverwriteControl = partitionOverwriteControl;
             if (partitionOverwriteControl != null) {
@@ -466,27 +429,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         // Copy source reader's state.
         reloadAtTxn(srcReader);
         if (isDowngrade) {
-            // TODO(puzpuzpuz): reuse code
-            txPartitionVersion = 0;
-            txColumnVersion = 0;
-            txTruncateVersion = 0;
-            columnCount = metadata.getColumnCount();
-            columnCountShl = getColumnBits(columnCount);
-            openSymbolMaps();
-            partitionCount = txFile.getPartitionCount();
-
-            int capacity = getColumnBase(partitionCount);
-            parquetPartitions.setAll(partitionCount, NullMemoryCMR.INSTANCE);
-            columns = new ObjList<>(capacity + 2);
-            columns.setPos(capacity + 2);
-            columns.setQuick(0, NullMemoryCMR.INSTANCE);
-            columns.setQuick(1, NullMemoryCMR.INSTANCE);
-            bitmapIndexes = new ObjList<>(capacity + 2);
-            bitmapIndexes.setPos(capacity + 2);
-
-            openPartitionInfo = initOpenPartitionInfo();
-            columnTops = new LongList(capacity / 2);
-            columnTops.setPos(capacity / 2);
+            // We need to re-init txn versions and all lists.
+            init();
         }
         // Reload partitions.
         reconcileOpenPartitions(txPartitionVersion, txColumnVersion, txTruncateVersion);
@@ -964,6 +908,31 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (tempMem8b != 0) {
             tempMem8b = Unsafe.free(tempMem8b, Long.BYTES, MemoryTag.NATIVE_TABLE_READER);
         }
+    }
+
+    private void init() {
+        txPartitionVersion = txFile.getPartitionTableVersion();
+        txColumnVersion = txFile.getColumnVersion();
+        txTruncateVersion = txFile.getTruncateVersion();
+
+        columnCount = metadata.getColumnCount();
+        columnCountShl = getColumnBits(columnCount);
+        openSymbolMaps();
+        partitionCount = txFile.getPartitionCount();
+
+        int capacity = getColumnBase(partitionCount);
+        parquetPartitions = new ObjList<>(partitionCount);
+        parquetPartitions.setAll(partitionCount, NullMemoryCMR.INSTANCE);
+        columns = new ObjList<>(capacity + 2);
+        columns.setPos(capacity + 2);
+        columns.setQuick(0, NullMemoryCMR.INSTANCE);
+        columns.setQuick(1, NullMemoryCMR.INSTANCE);
+        bitmapIndexes = new ObjList<>(capacity + 2);
+        bitmapIndexes.setPos(capacity + 2);
+
+        openPartitionInfo = initOpenPartitionInfo();
+        columnTops = new LongList(capacity / 2);
+        columnTops.setPos(capacity / 2);
     }
 
     private @NotNull LongList initOpenPartitionInfo() {
@@ -1592,7 +1561,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
 
             assert !reshuffleColumns || metadata.getColumnCount() == this.columnCount;
-            TableReaderMetadataTransitionIndex transitionIndex = metadata.applyTransition();
+            final TableReaderMetadataTransitionIndex transitionIndex = metadata.applyTransition();
             if (reshuffleColumns) {
                 final int columnCount = metadata.getColumnCount();
 
