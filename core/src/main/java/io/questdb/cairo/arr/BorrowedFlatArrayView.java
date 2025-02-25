@@ -63,8 +63,8 @@ public class BorrowedFlatArrayView implements DirectSequence, FlatArrayView {
     }
 
     public BorrowedFlatArrayView of(long ptr, int size) {
-        assert ptr > 0;
-        assert size > 0;
+        assert ptr > 0 : "ptr <= 0";
+        assert size > 0 : "size <= 0";
         this.ptr = ptr;
         this.size = size;
         return this;

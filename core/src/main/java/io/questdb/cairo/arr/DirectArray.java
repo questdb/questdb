@@ -30,35 +30,28 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
-import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
-
-import java.util.Arrays;
 
 /**
  * Mutable array that owns its backing native memory.
  */
-public class DirectArray implements ArrayView, ArraySink, Mutable, QuietCloseable {
+public class DirectArray extends ArrayView implements ArraySink, Mutable {
     private static final long DOUBLE_BYTES = 8;
-    private static final int[] EMPTY_INTS = new int[0];
     private static final long LONG_BYTES = 8;
     private static final int MEM_TAG = MemoryTag.NATIVE_ND_ARRAY;
     private final CairoConfiguration configuration;
-    private final BorrowedFlatArrayView flatView = new BorrowedFlatArrayView();
+    private final int maxArrayElementCount;
     private long capacity;
-    private int flatViewLength = 0;
-    private int maxArrayElementCount;
     private long ptr = 0;
-    private int[] shape;
-    private int[] strides;
-    private int type = ColumnType.UNDEFINED;
 
     public DirectArray(CairoConfiguration configuration) {
+        this.flatView = new BorrowedFlatArrayView();
         this.configuration = configuration;
         this.maxArrayElementCount = configuration.maxArrayElementCount();
     }
 
     public DirectArray(int maxArrayElementCount) {
+        this.flatView = new BorrowedFlatArrayView();
         this.configuration = null;
         this.maxArrayElementCount = maxArrayElementCount;
     }
@@ -70,40 +63,39 @@ public class DirectArray implements ArrayView, ArraySink, Mutable, QuietCloseabl
 
     @Override
     public void applyShape(int errorPosition) {
-        assert strides.length == shape.length;
+        assert strides.size() == shape.size();
 
         int maxArrayElementCount = configuration != null ? configuration.maxArrayElementCount() : this.maxArrayElementCount;
-        int flatElemCount = 1;
-        for (int i = 0, n = shape.length; i < n; i++) {
-            flatElemCount *= shape[i];
-            if (flatElemCount > maxArrayElementCount) {
+        int flatLength = 1;
+        for (int i = 0, n = shape.size(); i < n; i++) {
+            flatLength *= shape.getQuick(i);
+            if (flatLength > maxArrayElementCount) {
                 throw CairoException.nonCritical().position(errorPosition)
-                        .put("resulting array is too large [elementCount=").put(flatElemCount)
+                        .put("resulting array is too large [flatLength=").put(flatLength)
                         .put(", dimensionsLeft=").put(n - i - 1)
                         .put(", max=").put(maxArrayElementCount)
                         .put(']');
             }
-            assert flatElemCount > 0;
+            assert flatLength > 0;
         }
-        int byteSize = flatElemCount << ColumnType.pow2SizeOf(ColumnType.decodeArrayElementType(type));
+        int byteSize = flatLength << ColumnType.pow2SizeOf(ColumnType.decodeArrayElementType(type));
         ensureCapacity(byteSize);
-        this.flatViewLength = flatElemCount;
-        flatView.of(ptr, byteSize);
-
+        this.flatViewLength = flatLength;
+        borrowedFlatView().of(ptr, byteSize);
         int stride = 1;
-        for (int i = shape.length - 1; i >= 0; i--) {
-            strides[i] = stride;
-            stride *= shape[i];
+        for (int i = shape.size() - 1; i >= 0; i--) {
+            strides.set(i, stride);
+            stride *= shape.getQuick(i);
         }
     }
 
     @Override
     public void clear() {
         flatViewLength = 0;
-        flatView.reset();
-        if (shape != null) {
-            Arrays.fill(shape, 0);
-            Arrays.fill(strides, 0);
+        borrowedFlatView().reset();
+        for (int n = getDimCount(), i = 0; i < n; i++) {
+            shape.set(i, 0);
+            strides.set(i, 0);
         }
     }
 
@@ -113,51 +105,17 @@ public class DirectArray implements ArrayView, ArraySink, Mutable, QuietCloseabl
         ptr = Unsafe.free(ptr, capacity, MEM_TAG);
         flatViewLength = 0;
         capacity = 0;
-        shape = null;
-        strides = null;
+        shape.clear();
+        strides.clear();
         assert ptr == 0;
-    }
-
-    @Override
-    public FlatArrayView flatView() {
-        return flatView;
-    }
-
-    @Override
-    public int getDimCount() {
-        return shape.length;
-    }
-
-    @Override
-    public int getDimLen(int dimension) {
-        return shape[dimension];
-    }
-
-    @Override
-    public int getFlatViewLength() {
-        return flatViewLength;
-    }
-
-    public int[] getShape() {
-        return shape;
-    }
-
-    @Override
-    public int getStride(int dimension) {
-        return strides[dimension];
-    }
-
-    @Override
-    public int getType() {
-        return type;
     }
 
     public void ofNull() {
         flatViewLength = 0;
         type = ColumnType.UNDEFINED;
-        flatView.reset();
-        shape = EMPTY_INTS;
-        strides = EMPTY_INTS;
+        borrowedFlatView().reset();
+        shape.clear();
+        strides.clear();
     }
 
     @Override
@@ -200,7 +158,7 @@ public class DirectArray implements ArrayView, ArraySink, Mutable, QuietCloseabl
 
     @Override
     public void setDimLen(int dimension, int length) {
-        shape[dimension] = length;
+        shape.set(dimension, length);
     }
 
     @Override
@@ -209,12 +167,11 @@ public class DirectArray implements ArrayView, ArraySink, Mutable, QuietCloseabl
 
         int nDims = ColumnType.decodeArrayDimensionality(encodedType);
         this.type = encodedType;
-        if (shape == null || shape.length != nDims) {
-            shape = new int[nDims];
-            strides = new int[nDims];
-        } else {
-            Arrays.fill(shape, 0);
-            Arrays.fill(strides, 0);
+        shape.clear();
+        strides.clear();
+        for (int i = 0; i < nDims; i++) {
+            shape.add(0);
+            strides.add(0);
         }
     }
 

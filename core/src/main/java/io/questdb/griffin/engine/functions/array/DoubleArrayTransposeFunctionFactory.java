@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.BorrowedArrayView;
+import io.questdb.cairo.arr.DerivedArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -57,7 +57,7 @@ public class DoubleArrayTransposeFunctionFactory implements FunctionFactory {
 
     private static class TransposeDoubleArrayFunction extends ArrayFunction {
 
-        private final BorrowedArrayView borrowedView = new BorrowedArrayView();
+        private final DerivedArrayView borrowedView = new DerivedArrayView();
         private Function arrayFunc;
 
         public TransposeDoubleArrayFunction(Function arrayFunc) {

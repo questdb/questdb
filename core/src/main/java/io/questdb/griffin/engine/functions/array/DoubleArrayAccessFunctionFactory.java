@@ -28,7 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.BorrowedArrayView;
+import io.questdb.cairo.arr.DerivedArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -179,7 +179,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
     static class SliceDoubleArrayFunction extends ArrayFunction {
 
         private final IntList argPositions;
-        private final BorrowedArrayView borrowedView = new BorrowedArrayView();
+        private final DerivedArrayView borrowedView = new DerivedArrayView();
         private final ObjList<Function> rangeArgs;
         private Function arrayArg;
 
