@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.std.BitSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -45,6 +46,7 @@ import io.questdb.std.ObjList;
  * in fact, this is the only comparison that is supported
  */
 public class EqSymTimestampFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "=(KN)";
@@ -62,29 +64,87 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
 
-        Function fn0 = args.getQuick(0);
-        if (!fn0.isConstant()) {
-            return new VariableSymbolAndTimestampFunction(args.getQuick(0), args.getQuick(1));
+        Function symbolFunc = args.getQuick(0);
+        Function timestampFunc = args.getQuick(1);
+
+        if (symbolFunc.isConstant()) {
+            CharSequence value = symbolFunc.getSymbol(null);
+            long symbolConstant = value != null ? SqlUtil.implicitCastSymbolAsTimestamp(value) : Numbers.LONG_NULL;
+
+
+            if (timestampFunc.isConstant()) {
+                return symbolConstant == timestampFunc.getLong(null) ? BooleanConstant.TRUE : BooleanConstant.FALSE;
+            }
+
+            return new ConstSymbolVarTimestampFunction(symbolFunc, timestampFunc, symbolConstant);
         }
 
-        long symbolTimestampEpoch;
-
-        CharSequence value = fn0.getSymbol(null);
-        symbolTimestampEpoch = value != null ? SqlUtil.implicitCastSymbolAsTimestamp(value) : Numbers.LONG_NULL;
-
-        Function timestampFn = args.getQuick(1);
-
-        if (timestampFn.isConstant()) {
-            return symbolTimestampEpoch == timestampFn.getLong(null) ? BooleanConstant.TRUE : BooleanConstant.FALSE;
+        if (timestampFunc.isConstant()) {
+            return new VarSymbolConstTimestampFunction(symbolFunc, timestampFunc, timestampFunc.getTimestamp(null));
         }
 
-        return new VariableTimestampFunction(fn0, timestampFn, symbolTimestampEpoch);
+        return new VarSymbolVarTimestampFunction(symbolFunc, timestampFunc);
     }
 
-    private static class VariableSymbolAndTimestampFunction extends AbstractEqBinaryFunction {
+    private static class ConstSymbolVarTimestampFunction extends AbstractEqBinaryFunction {
+        private final long symbolConstant;
 
-        public VariableSymbolAndTimestampFunction(Function symFn, Function timestampFn) {
-            super(symFn, timestampFn);
+        public ConstSymbolVarTimestampFunction(Function symbolFunc, Function timestampFunc, long symbolConstant) {
+            super(symbolFunc, timestampFunc);
+            this.symbolConstant = symbolConstant;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            long timestamp = right.getTimestamp(rec);
+            return negated == (timestamp != symbolConstant);
+        }
+    }
+
+    private static class VarSymbolConstTimestampFunction extends AbstractEqBinaryFunction {
+        private final BitSet hits;
+        private final BitSet misses;
+        private final long timestampConstant;
+
+        public VarSymbolConstTimestampFunction(Function symbolFunc, Function timestampFunc, long timestampConstant) {
+            super(symbolFunc, timestampFunc);
+            this.timestampConstant = timestampConstant;
+            this.hits = new BitSet();
+            this.misses = new BitSet();
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+
+            int id = left.getInt(rec);
+
+            if (hits.get(id)) {
+                return true;
+            }
+
+            if (misses.get(id)) {
+                return false;
+            }
+
+            long symbol = left.getTimestamp(rec);
+            boolean result = negated == (symbol != timestampConstant);
+
+            if (id <= 1048576) {
+                if (result) {
+                    hits.set(id);
+                } else {
+                    misses.set(id);
+                }
+            }
+
+            return result;
+        }
+    }
+
+    private static class VarSymbolVarTimestampFunction extends AbstractEqBinaryFunction {
+
+        public VarSymbolVarTimestampFunction(Function symbolFunc, Function timestampFunc) {
+            super(symbolFunc, timestampFunc);
         }
 
         @Override
@@ -92,21 +152,6 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
             long symbol = left.getTimestamp(rec);
             long timestamp = right.getTimestamp(rec);
             return negated == (symbol != timestamp);
-        }
-    }
-
-    private static class VariableTimestampFunction extends AbstractEqBinaryFunction {
-        private final long symbolTimestampEpoch;
-
-        public VariableTimestampFunction(Function symFn, Function timestampFn, long symbolTimestampEpoch) {
-            super(symFn, timestampFn);
-            this.symbolTimestampEpoch = symbolTimestampEpoch;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            long value = right.getTimestamp(rec);
-            return negated == (value != symbolTimestampEpoch);
         }
     }
 }
