@@ -753,8 +753,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         break skipAssigningType;
                 }
                 undefinedArg.assignType(assignType, sqlExecutionContext.getBindVariableService());
-                // Now that that type is assigned, we can return the first argument, no additional cast needed
-                return undefinedArg;
+                if (assignType == castToType) {
+                    // Now that that type is assigned, we can return the first argument, no additional cast needed
+                    return undefinedArg;
+                }
             }
         }
 
