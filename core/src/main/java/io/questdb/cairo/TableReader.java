@@ -185,7 +185,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     .I$();
             txFile = new TxReader(ff).ofRO(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), partitionBy);
             path.trimTo(rootLen);
-            reloadAtTxn(srcReader);
+            reloadAtTxn(srcReader, false);
             txPartitionVersion = txFile.getPartitionTableVersion();
             txColumnVersion = txFile.getColumnVersion();
             txTruncateVersion = txFile.getTruncateVersion();
@@ -427,7 +427,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             prepareForDowngrade();
         }
         // Copy source reader's state.
-        reloadAtTxn(srcReader);
+        reloadAtTxn(srcReader, true);
         if (isDowngrade) {
             // We need to re-init txn versions and all lists.
             init();
@@ -1387,7 +1387,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    private void reloadAtTxn(TableReader srcReader) {
+    private void reloadAtTxn(TableReader srcReader, boolean reshuffle) {
         releaseTxn();
         final long txn = srcReader.getTxn();
         if (!txnScoreboard.incrementTxn(txn)) {
@@ -1395,9 +1395,9 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         this.txn = txn;
         txnAcquired = true;
-        metadata.loadFrom(srcReader.metadata);
         txFile.loadAllFrom(srcReader.txFile);
         columnVersionReader.readFrom(srcReader.columnVersionReader);
+        reloadMetadataFrom(srcReader.metadata, reshuffle);
     }
 
     private void reloadColumnAt(
@@ -1563,24 +1563,22 @@ public class TableReader implements Closeable, SymbolTableSource {
             assert !reshuffleColumns || metadata.getColumnCount() == this.columnCount;
             final TableReaderMetadataTransitionIndex transitionIndex = metadata.applyTransition();
             if (reshuffleColumns) {
-                final int columnCount = metadata.getColumnCount();
-
-                int columnCountShl = getColumnBits(columnCount);
-                // when a column is added we cannot easily reshuffle columns in-place
-                // the reason is that we'd have to create gaps in columns list between
-                // partitions. It is possible in theory, but this could be an algo for
-                // another day.
-                if (columnCountShl > this.columnCountShl) {
-                    createNewColumnList(columnCount, transitionIndex, columnCountShl);
-                } else {
-                    reshuffleColumns(columnCount, transitionIndex);
-                }
-                // rearrange symbol map reader list
-                reshuffleSymbolMapReaders(transitionIndex, columnCount);
-                this.columnCount = columnCount;
-                reloadSymbolMapCounts();
+                reshuffleColumns(transitionIndex);
             }
             return true;
+        }
+    }
+
+    private void reloadMetadataFrom(TableReaderMetadata srcMeta, boolean reshuffleColumns) {
+        // create transition index, which will help us reuse already open resources
+        if (srcMeta.getMetadataVersion() == metadata.getMetadataVersion()) {
+            return;
+        }
+
+        assert !reshuffleColumns || metadata.getColumnCount() == this.columnCount;
+        final TableReaderMetadataTransitionIndex transitionIndex = metadata.applyTransitionFrom(srcMeta);
+        if (reshuffleColumns) {
+            reshuffleColumns(transitionIndex);
         }
     }
 
@@ -1638,6 +1636,25 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
         }
         symbolMapReaders.setQuick(columnIndex, reader);
+    }
+
+    private void reshuffleColumns(TableReaderMetadataTransitionIndex transitionIndex) {
+        final int columnCount = metadata.getColumnCount();
+
+        int columnCountShl = getColumnBits(columnCount);
+        // when a column is added we cannot easily reshuffle columns in-place
+        // the reason is that we'd have to create gaps in columns list between
+        // partitions. It is possible in theory, but this could be an algo for
+        // another day.
+        if (columnCountShl > this.columnCountShl) {
+            createNewColumnList(columnCount, transitionIndex, columnCountShl);
+        } else {
+            reshuffleColumns(columnCount, transitionIndex);
+        }
+        // rearrange symbol map reader list
+        reshuffleSymbolMapReaders(transitionIndex, columnCount);
+        this.columnCount = columnCount;
+        reloadSymbolMapCounts();
     }
 
     private void reshuffleColumns(int columnCount, TableReaderMetadataTransitionIndex transitionIndex) {
