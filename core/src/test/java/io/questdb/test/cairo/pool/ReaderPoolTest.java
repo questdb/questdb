@@ -42,6 +42,7 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -265,6 +266,88 @@ public class ReaderPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConcurrentGetAndGetCopyOf() throws Exception {
+        final int readerThreadCount = 4;
+        final int readerIterations = 1000;
+        final int writerIterations = 100;
+        final int writerBatchSize = 100;
+        final String tableName = "test";
+
+        assertWithPool((ReaderPool pool) -> {
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                    .col("sym", ColumnType.SYMBOL)
+                    .timestamp("ts");
+            AbstractCairoTest.create(model);
+
+            final CyclicBarrier barrier = new CyclicBarrier(readerThreadCount + 1);
+            final CountDownLatch halt = new CountDownLatch(readerThreadCount + 1);
+            final AtomicInteger errors = new AtomicInteger();
+
+            new Thread(() -> {
+                final Rnd rnd = new Rnd();
+                try {
+                    barrier.await();
+                    try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
+                        for (int i = 0; i < writerIterations; i++) {
+                            for (int j = 0; j < writerBatchSize; j++) {
+                                TableWriter.Row r = writer.newRow(Timestamps.SECOND_MICROS * i);
+                                r.putSym(0, rnd.nextString(rnd.nextInt(32)));
+                                r.append();
+                            }
+                            writer.commit();
+                        }
+                    }
+                } catch (Exception e) {
+                    errors.incrementAndGet();
+                    e.printStackTrace(System.out);
+                } finally {
+                    halt.countDown();
+                }
+            }).start();
+
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            for (int t = 0; t < readerThreadCount; t++) {
+                new Thread(() -> {
+                    final StringSink sink = new StringSink();
+                    final Rnd rnd = new Rnd();
+                    try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()) {
+                        barrier.await();
+                        for (int i = 0; i < readerIterations; i++) {
+                            TableReader copiedReader = null;
+                            TableReader reader = null;
+                            try {
+                                if (rnd.nextBoolean()) {
+                                    reader = pool.get(tableToken);
+                                } else {
+                                    copiedReader = pool.get(tableToken);
+                                    Os.sleep(1); // wait a bit
+                                    reader = pool.getCopyOf(copiedReader);
+                                }
+
+                                // Just read the table contents.
+                                cursor.of(reader);
+                                println(reader.getMetadata(), cursor, sink);
+                            } finally {
+                                Misc.free(copiedReader);
+                                Misc.free(reader);
+                            }
+                        }
+                    } catch (Exception e) {
+                        errors.incrementAndGet();
+                        e.printStackTrace(System.out);
+                    } finally {
+                        halt.countDown();
+                    }
+                }).start();
+            }
+
+            halt.await();
+            Assert.assertEquals(0, halt.getCount());
+            Assert.assertEquals(0, errors.get());
+        });
+    }
+
+    @Test
     public void testConcurrentOpenAndClose() throws Exception {
         final int readerCount = 5;
         int threadCount = 2;
@@ -292,7 +375,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
                         for (int i1 = 0; i1 < iterations; i1++) {
                             TableToken m = names[rnd.nextPositiveInt() % readerCount];
-
                             try (TableReader ignored = pool.get(m)) {
                                 Os.pause();
                             }
@@ -354,7 +436,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
             for (int k = 0; k < threadCount; k++) {
                 new Thread(new Runnable() {
-
                     final ObjHashSet<TableReader> readers = new ObjHashSet<>();
                     final StringSink sink = new StringSink();
 
