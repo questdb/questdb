@@ -25,16 +25,16 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 /**
@@ -65,16 +65,13 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
 
         Function fn0 = args.getQuick(0);
         if (!fn0.isConstant()) {
-            throw SqlException.$(argPositions.getQuick(0), "constant symbol expression is expected");
+            return new VariableSymbolAndTimestampFunction(args.getQuick(0), args.getQuick(1));
         }
 
         long symbolTimestampEpoch;
-        try {
-            CharSequence value = fn0.getSymbol(null);
-            symbolTimestampEpoch = value != null ? IntervalUtils.parseFloorPartialTimestamp(value) : Numbers.LONG_NULL;
-        } catch (NumericException e) {
-            throw SqlException.$(argPositions.getQuick(0), "invalid timestamp: ").put(fn0.getSymbol(null));
-        }
+
+        CharSequence value = fn0.getSymbol(null);
+        symbolTimestampEpoch = value != null ? SqlUtil.implicitCastSymbolAsTimestamp(value, ColumnType.SYMBOL) : Numbers.LONG_NULL;
 
         Function timestampFn = args.getQuick(1);
 
@@ -83,6 +80,20 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
         }
 
         return new VariableTimestampFunction(fn0, timestampFn, symbolTimestampEpoch);
+    }
+
+    private static class VariableSymbolAndTimestampFunction extends AbstractEqBinaryFunction {
+
+        public VariableSymbolAndTimestampFunction(Function symFn, Function timestampFn) {
+            super(symFn, timestampFn);
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            long symbol = left.getTimestamp(rec);
+            long timestamp = right.getTimestamp(rec);
+            return negated == (symbol != timestamp);
+        }
     }
 
     private static class VariableTimestampFunction extends AbstractEqBinaryFunction {
