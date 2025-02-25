@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.eq;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -76,6 +77,11 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
             }
 
             return new ConstSymbolVarTimestampFunction(symbolFunc, timestampFunc, symbolConstant);
+        }
+
+
+        if (timestampFunc.isRuntimeConstant()) {
+            return new VarSymbolRuntimeConstTimestampFunction(symbolFunc, timestampFunc);
         }
 
         if (timestampFunc.isConstant()) {
@@ -137,6 +143,27 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
             }
 
             return result;
+        }
+    }
+
+    private static class VarSymbolRuntimeConstTimestampFunction extends AbstractEqBinaryFunction {
+        private VarSymbolConstTimestampFunction innerFunc;
+
+        public VarSymbolRuntimeConstTimestampFunction(Function symbolFunc, Function timestampFunc) {
+            super(symbolFunc, timestampFunc);
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return this.innerFunc.getBool(rec);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+
+            long timestampConstant = right.getTimestamp(null);
+            this.innerFunc = new VarSymbolConstTimestampFunction(left, right, timestampConstant);
         }
     }
 

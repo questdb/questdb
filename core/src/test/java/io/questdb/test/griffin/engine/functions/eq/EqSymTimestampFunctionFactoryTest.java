@@ -26,11 +26,11 @@ package io.questdb.test.griffin.engine.functions.eq;
 
 
 import io.questdb.griffin.SqlException;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
-
 
     @Test
     public void testBasicConstant() throws SqlException {
@@ -125,6 +125,22 @@ public class EqSymTimestampFunctionFactoryTest extends AbstractCairoTest {
                         "10\n",
                 "select x from long_sequence(10) where rnd_symbol('1','3','5') = 3::timestamp"
         ));
+    }
+
+    @Test
+    public void testOptimisationWithARuntimeConstantTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (select rnd_timestamp(0, 86400000, 0) t from long_sequence(10))");
+            execute("alter table x add column sym symbol");
+            execute("update x set sym = t::symbol");
+
+            String query = "select sym, t from x where sym = $1";
+
+            bindVariableService.setTimestamp(0, TimestampFormatUtils.parseTimestamp("1970-01-01T00:00:37.847040Z"));
+            assertQuery("sym\tt\n" +
+                    "37847040\t1970-01-01T00:00:37.847040Z\n", query, "", true, false);
+
+        });
     }
 
     @Test
