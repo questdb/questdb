@@ -67,6 +67,8 @@ public class MetadataCacheTest extends AbstractCairoTest {
     private static final String xMetaString = "MetadataCache [tableCount=1]\n" +
             "\t" + xMetaStringSansHeader + "\n";
 
+    private static final String xMetaStringId2SansHeader = xMetaStringSansHeader.replace("id=1", "id=2");
+
     private static final String yMetaString = "MetadataCache [tableCount=1]\n" +
             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=1]\n" +
             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=0]\n";
@@ -674,7 +676,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             x = cache.get("x");
             sink.clear();
             x.toSink(sink);
-            TestUtils.assertEquals(xMetaStringSansHeader, sink);
+            TestUtils.assertEquals(xMetaStringId2SansHeader, sink);
         });
     }
 
