@@ -814,7 +814,10 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
         final CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch' or 'materialized'");
-        if (isMaterializedKeyword(tok) && configuration.isMatViewEnabled()) {
+        if (isMaterializedKeyword(tok)) {
+            if (!configuration.isMatViewEnabled()) {
+                throw SqlException.$(lexer.lastTokenPosition(), "materialized view creation and refreshing is disabled");
+            }
             return parseCreateMatView(lexer, executionContext, sqlParserCallback);
         }
         return parseCreateTable(lexer, tok, executionContext, sqlParserCallback);
@@ -884,15 +887,33 @@ public class SqlParser {
             // parse mat view query
             final QueryModel qm = parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback, null);
             final QueryModel nestedModel = qm.getNestedModel();
-            if (nestedModel.getSampleByFrom() != null) {
-                throw SqlException.position(lexer.getPosition()).put("FROM is not supported for materialized views");
-            }
-            if (nestedModel.getSampleByTo() != null) {
-                throw SqlException.position(lexer.getPosition()).put("TO is not supported for materialized views");
+
+            // check for all nested models
+            QueryModel m = nestedModel;
+            while (m != null) {
+                ExpressionNode sampleByFrom = m.getSampleByFrom();
+                if (sampleByFrom != null) {
+                    throw SqlException.position(sampleByFrom.position).put("FROM is not supported for materialized views");
+                }
+                m = m.getNestedModel();
             }
 
-            if (nestedModel.getSampleByFill() != null && nestedModel.getSampleByFill().size() > 0) {
-                throw SqlException.position(lexer.getPosition()).put("FILL is not supported for materialized views");
+            m = nestedModel;
+            while (m != null) {
+                ExpressionNode sampleByTo = m.getSampleByTo();
+                if (sampleByTo != null) {
+                    throw SqlException.position(sampleByTo.position).put("TO is not supported for materialized views");
+                }
+                m = m.getNestedModel();
+            }
+
+            m = nestedModel;
+            while (m != null) {
+                ObjList<ExpressionNode> sampleByFill = m.getSampleByFill();
+                if (sampleByFill != null && sampleByFill.size() > 0) {
+                    throw SqlException.position(sampleByFill.get(0).position).put("FILL is not supported for materialized views");
+                }
+                m = m.getNestedModel();
             }
 
             if (nestedModel.getSampleByTimezoneName() != null) {
@@ -1789,6 +1810,7 @@ public class SqlParser {
                 // show datestyle
                 // show time zone
                 // show create table tab
+                // show create materialized view tab
                 if (isTablesKeyword(tok)) {
                     showKind = QueryModel.SHOW_TABLES;
                 } else if (isColumnsKeyword(tok)) {
@@ -1822,8 +1844,16 @@ public class SqlParser {
                 } else if (isServerVersionNumKeyword(tok)) {
                     showKind = QueryModel.SHOW_SERVER_VERSION_NUM;
                 } else if (isCreateKeyword(tok)) {
-                    parseShowCreateTable(lexer, model);
-                    showKind = QueryModel.SHOW_CREATE_TABLE;
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok != null && (isTableKeyword(tok) || isMaterializedKeyword(tok))) {
+                        if (isMaterializedKeyword(tok)) {
+                            expectTok(lexer, "view");
+                        }
+                        parseTableName(lexer, model);
+                        showKind = QueryModel.SHOW_CREATE_TABLE;
+                    } else {
+                        throw SqlException.position(lexer.getPosition()).put("expected 'TABLE' or 'MATERIALIZED VIEW'");
+                    }
                 } else {
                     showKind = sqlParserCallback.parseShowSql(lexer, model, tok, expressionNodePool);
                 }
@@ -3085,15 +3115,6 @@ public class SqlParser {
             default:
                 throw SqlException.$(expr.position, "function, literal or constant is expected");
         }
-    }
-
-    /**
-     * For use with `SHOW CREATE TABLE my_table`.
-     * Expects that we already checked the `CREATE`.
-     */
-    private void parseShowCreateTable(GenericLexer lexer, QueryModel model) throws SqlException {
-        expectTok(lexer, "table");
-        parseTableName(lexer, model);
     }
 
     private int parseSymbolCapacity(GenericLexer lexer) throws SqlException {

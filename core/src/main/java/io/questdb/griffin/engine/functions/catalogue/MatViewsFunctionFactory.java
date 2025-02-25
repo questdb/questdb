@@ -51,7 +51,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "mat_views()";
+        return "materialized_views()";
     }
 
     @Override
@@ -102,7 +102,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("mat_views()");
+            sink.val("materialized_views()");
         }
 
         private static class ViewsListCursor implements NoRandomAccessRecordCursor {

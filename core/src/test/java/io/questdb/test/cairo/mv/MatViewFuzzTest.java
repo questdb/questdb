@@ -202,7 +202,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 assertSql(
                         "count\n" +
                                 "1\n",
-                        "select count() from mat_views where view_name = '" + mvName + "' and view_status = 'valid';"
+                        "select count() from materialized_views where view_name = '" + mvName + "' and view_status = 'valid';"
                 );
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     TestUtils.assertSqlCursors(
@@ -362,7 +362,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 assertSql(
                         "count\n" +
                                 "1\n",
-                        "select count() from mat_views where view_name = '" + mvName + "' and view_status = 'valid';"
+                        "select count() from materialized_views where view_name = '" + mvName + "' and view_status = 'valid';"
                 );
                 TestUtils.assertSqlCursors(
                         compiler,
@@ -408,28 +408,30 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
     private Thread startRefreshJob(int workerId, AtomicBoolean stop, Rnd outsideRnd) {
         Rnd rnd = new Rnd(outsideRnd.nextLong(), outsideRnd.nextLong());
-        Thread th = new Thread(() -> {
-            try {
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(workerId, engine)) {
-                    while (!stop.get()) {
-                        refreshJob.run(workerId);
-                        Os.sleep(rnd.nextInt(1000));
-                    }
+        Thread th = new Thread(
+                () -> {
+                    try {
+                        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(workerId, engine)) {
+                            while (!stop.get()) {
+                                refreshJob.run(workerId);
+                                Os.sleep(rnd.nextInt(1000));
+                            }
 
-                    // Run one final time before stopping
-                    try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-                        do {
-                            drainWalQueue(walApplyJob);
-                        } while (refreshJob.run(workerId));
+                            // Run one final time before stopping
+                            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                                do {
+                                    drainWalQueue(walApplyJob);
+                                } while (refreshJob.run(workerId));
+                            }
+                        }
+                    } catch (Throwable throwable) {
+                        LOG.error().$("Refresh job failed: ").$(throwable).$();
+                    } finally {
+                        Path.clearThreadLocals();
+                        LOG.info().$("Refresh job stopped").$();
                     }
-                }
-            } catch (Throwable throwable) {
-                LOG.error().$("Refresh job failed: ").$(throwable).$();
-            } finally {
-                Path.clearThreadLocals();
-                LOG.info().$("Refresh job stopped").$();
-            }
-        }, "refresh-job" + workerId);
+                }, "refresh-job" + workerId
+        );
         th.start();
         return th;
     }

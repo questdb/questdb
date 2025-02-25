@@ -33,6 +33,9 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -46,6 +49,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final int N_DDL_COL = 0;
@@ -101,7 +105,11 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("show_create_table");
+        if (tableToken.isMatView()) {
+            sink.type("show_create_materialized_view");
+        } else {
+            sink.type("show_create_table");
+        }
         sink.meta("of").val(tableToken.getTableName());
     }
 
@@ -109,6 +117,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         protected final Utf8StringSink sink = new Utf8StringSink();
         private final ShowCreateTableRecord record = new ShowCreateTableRecord();
         protected SqlExecutionContext executionContext;
+        protected @Nullable MatViewDefinition matViewDefinition;
         protected CairoTable table;
         private boolean hasRun;
         private TableToken tableToken;
@@ -128,40 +137,11 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
             if (!hasRun) {
                 sink.clear();
                 final CairoConfiguration config = executionContext.getCairoEngine().getConfiguration();
-
-                // CREATE TABLE table_name
-                putCreateTable();
-
-                // column_name TYPE
-                putColumns(config);
-
-                // timestamp(ts)
-                if (table.getTimestampIndex() != -1) {
-                    putTimestamp();
-
-                    // PARTITION BY unit
-                    putPartitionBy();
-
-                    // TTL n unit
-                    putTtl();
-
-                    // (BYPASS) WAL
-                    putWal();
+                if (tableToken.isMatView()) {
+                    showCreateMatView(config);
+                } else {
+                    showCreateTable(config);
                 }
-
-                // WITH maxUncommittedRows=123, o3MaxLag=456s
-                putWith();
-
-                // IN VOLUME OTHER_VOLUME
-                putInVolume(config);
-
-                // DEDUP UPSERT(key1, key2)
-                putDedup();
-
-                // placeholder
-                putAdditional();
-
-                sink.putAscii(';');
 
                 hasRun = true;
                 return true;
@@ -181,6 +161,27 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                     throw TableReferenceOutOfDateException.of(this.tableToken);
                 }
             }
+
+            if (tableToken.isMatView()) {
+                CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
+                Path path = Path.getThreadLocal(configuration.getDbRoot());
+                final int pathLen = path.size();
+                try (BlockFileReader reader = new BlockFileReader(configuration)) {
+                    if (TableUtils.isMatViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
+                        try {
+                            this.matViewDefinition = MatViewDefinition.readFrom(
+                                    reader,
+                                    path,
+                                    pathLen,
+                                    tableToken
+                            );
+                        } catch (Exception e) {
+                            throw CairoException.critical(0).put("could not read materialized view definition [table=").put(tableToken).put(']');
+                        }
+                    }
+                }
+            }
+
             toTop();
             return this;
         }
@@ -196,8 +197,73 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
             hasRun = false;
         }
 
+        private void putMatView() {
+            assert matViewDefinition != null;
+            sink.putAscii("CREATE MATERIALIZED VIEW '")
+                    .put(tableToken.getTableName())
+                    .putAscii("' with base '")
+                    .put(matViewDefinition.getBaseTableName())
+                    .putAscii("' as ( ")
+                    .putAscii('\n');
+            sink.put(matViewDefinition.getMatViewSql());
+            sink.putAscii('\n');
+            sink.putAscii(')');
+        }
+
         private void putTtl() {
             ttlToSink(table.getTtlHoursOrMonths(), sink);
+        }
+
+        private void showCreateMatView(CairoConfiguration config) {
+            putMatView();
+
+            if (table.getTimestampIndex() != -1) {
+                putTimestamp();
+                putPartitionBy();
+                putTtl();
+                putWal();
+            }
+
+            putInVolume(config);
+            putAdditional();
+
+            sink.putAscii(';');
+        }
+
+        private void showCreateTable(CairoConfiguration config) {
+            // CREATE TABLE table_name
+            putCreateTable();
+
+            // column_name TYPE
+            putColumns(config);
+
+            // timestamp(ts)
+            if (table.getTimestampIndex() != -1) {
+                putTimestamp();
+
+                // PARTITION BY unit
+                putPartitionBy();
+
+                // TTL n unit
+                putTtl();
+
+                // (BYPASS) WAL
+                putWal();
+            }
+
+            // WITH maxUncommittedRows=123, o3MaxLag=456s
+            putWith();
+
+            // IN VOLUME OTHER_VOLUME
+            putInVolume(config);
+
+            // DEDUP UPSERT(key1, key2)
+            putDedup();
+
+            // placeholder
+            putAdditional();
+
+            sink.putAscii(';');
         }
 
         // placeholder, do not remove!
