@@ -63,6 +63,7 @@ public class DerivedArrayView extends ArrayView {
         this.flatView = other.flatView();
         this.flatViewOffset = other.getFlatViewOffset();
         this.flatViewLength = other.getFlatViewLength();
+        this.isVanilla = other.isVanilla;
         shape.clear();
         strides.clear();
         int nDims = other.getDimCount();
