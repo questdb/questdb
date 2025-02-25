@@ -25,7 +25,6 @@
 package io.questdb.cairo.arr;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
 import io.questdb.std.Numbers;
 
 /**
@@ -106,6 +105,9 @@ public class DerivedArrayView extends ArrayView {
                     .put(", lowerBound=").put(lo)
                     .put(", upperBound=").put(hi)
                     .put(']');
+        }
+        if (lo == 0 && hi == dimLen) {
+            return;
         }
         isVanilla = false;
         flatViewOffset += lo * getStride(dim);
