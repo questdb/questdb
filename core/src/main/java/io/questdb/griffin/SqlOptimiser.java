@@ -4686,17 +4686,9 @@ public class SqlOptimiser implements Mutable {
                 final ExpressionNode orderBy = orderByNodes.getQuick(i);
                 final CharSequence column = orderBy.token;
 
-                // assess whether the expression is entirely numeric, or not
-                boolean containsAlphabet = false;
-                for (int j = 0, m = column.length(); j < m; j++) {
-                    char c = column.charAt(j);
-                    if (c < '0' || c > '9') {
-                        containsAlphabet = true;
-                        break;
-                    }
-                }
-
-                if (containsAlphabet) {
+                // fast check to rule out an obvious non-numeric
+                char first = column.charAt(0);
+                if (first < '0' || first > '9') {
                     continue;
                 }
 
@@ -4715,7 +4707,7 @@ public class SqlOptimiser implements Mutable {
                             )
                     );
                 } catch (NumericException e) {
-                    throw SqlException.invalidColumn(orderBy.position, column);
+                    // fallback when not a valid numeric
                 }
             }
         }
