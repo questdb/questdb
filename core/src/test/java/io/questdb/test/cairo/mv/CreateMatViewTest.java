@@ -936,6 +936,44 @@ public class CreateMatViewTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testShowCreateMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+            execute("create materialized view test as (" + query + ") partition by day TTL 3 WEEKS");
+            assertSql(
+                    "ddl\n" +
+                            "CREATE MATERIALIZED VIEW 'test' with base 'table1' as ( \n" +
+                            "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
+                            ") timestamp(ts) PARTITION BY DAY TTL 3 WEEKS WAL;\n",
+                    "show create materialized view test"
+            );
+        });
+    }
+
+    @Test
+    public void testShowCreateMatViewFail() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+            execute("create materialized view test as (" + query + ") partition by day");
+            try {
+                assertSql(
+                        "ddl\n" +
+                                "CREATE MATERIALIZED VIEW 'test' with base 'table1' as ( \n" +
+                                "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
+                                ") timestamp(ts) PARTITION BY DAY WAL;\n",
+                        "show create materialized test"
+                );
+
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "'view' expected");
+            }
+        });
+    }
+
     private static void assertMatViewDefinition(
             String name,
             String query,

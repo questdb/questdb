@@ -1810,6 +1810,7 @@ public class SqlParser {
                 // show datestyle
                 // show time zone
                 // show create table tab
+                // show create materialized view tab
                 if (isTablesKeyword(tok)) {
                     showKind = QueryModel.SHOW_TABLES;
                 } else if (isColumnsKeyword(tok)) {
@@ -1843,8 +1844,16 @@ public class SqlParser {
                 } else if (isServerVersionNumKeyword(tok)) {
                     showKind = QueryModel.SHOW_SERVER_VERSION_NUM;
                 } else if (isCreateKeyword(tok)) {
-                    parseShowCreateTable(lexer, model);
-                    showKind = QueryModel.SHOW_CREATE_TABLE;
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok != null && (isTableKeyword(tok) || isMaterializedKeyword(tok))) {
+                        if (isMaterializedKeyword(tok)) {
+                            expectTok(lexer, "view");
+                        }
+                        parseTableName(lexer, model);
+                        showKind = QueryModel.SHOW_CREATE_TABLE;
+                    } else {
+                        throw SqlException.position(lexer.getPosition()).put("expected 'TABLE' or 'MATERIALIZED VIEW'");
+                    }
                 } else {
                     showKind = sqlParserCallback.parseShowSql(lexer, model, tok, expressionNodePool);
                 }
@@ -3106,15 +3115,6 @@ public class SqlParser {
             default:
                 throw SqlException.$(expr.position, "function, literal or constant is expected");
         }
-    }
-
-    /**
-     * For use with `SHOW CREATE TABLE my_table`.
-     * Expects that we already checked the `CREATE`.
-     */
-    private void parseShowCreateTable(GenericLexer lexer, QueryModel model) throws SqlException {
-        expectTok(lexer, "table");
-        parseTableName(lexer, model);
     }
 
     private int parseSymbolCapacity(GenericLexer lexer) throws SqlException {
