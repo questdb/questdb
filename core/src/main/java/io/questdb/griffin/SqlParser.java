@@ -887,15 +887,33 @@ public class SqlParser {
             // parse mat view query
             final QueryModel qm = parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback, null);
             final QueryModel nestedModel = qm.getNestedModel();
-            if (nestedModel.getSampleByFrom() != null) {
-                throw SqlException.position(lexer.getPosition()).put("FROM is not supported for materialized views");
-            }
-            if (nestedModel.getSampleByTo() != null) {
-                throw SqlException.position(lexer.getPosition()).put("TO is not supported for materialized views");
+
+            // check for all nested models
+            QueryModel m = nestedModel;
+            while (m != null) {
+                ExpressionNode sampleByFrom = m.getSampleByFrom();
+                if (sampleByFrom != null) {
+                    throw SqlException.position(sampleByFrom.position).put("FROM is not supported for materialized views");
+                }
+                m = m.getNestedModel();
             }
 
-            if (nestedModel.getSampleByFill() != null && nestedModel.getSampleByFill().size() > 0) {
-                throw SqlException.position(lexer.getPosition()).put("FILL is not supported for materialized views");
+            m = nestedModel;
+            while (m != null) {
+                ExpressionNode sampleByTo = m.getSampleByTo();
+                if (sampleByTo != null) {
+                    throw SqlException.position(sampleByTo.position).put("TO is not supported for materialized views");
+                }
+                m = m.getNestedModel();
+            }
+
+            m = nestedModel;
+            while (m != null) {
+                ObjList<ExpressionNode> sampleByFill = m.getSampleByFill();
+                if (sampleByFill != null && sampleByFill.size() > 0) {
+                    throw SqlException.position(sampleByFill.get(0).position).put("FILL is not supported for materialized views");
+                }
+                m = m.getNestedModel();
             }
 
             if (nestedModel.getSampleByTimezoneName() != null) {
