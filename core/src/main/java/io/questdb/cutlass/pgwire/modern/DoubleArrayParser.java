@@ -37,6 +37,9 @@ import io.questdb.std.NumericException;
 
 public final class DoubleArrayParser extends ArrayView implements FlatArrayView {
     private final DoubleList values = new DoubleList();
+    private static final int STATE_IDLE = 0;
+    private static final int STATE_IN_QUOTE = 1;
+    private static final int STATE_IN_NUMBER = 2;
 
     public DoubleArrayParser() {
         this.flatView = this;
@@ -72,7 +75,7 @@ public final class DoubleArrayParser extends ArrayView implements FlatArrayView 
         calculateStrides();
     }
 
-    private void addElement(CharSequence input, int numberStart, int i) {
+    private void parseAndAddNumber(CharSequence input, int numberStart, int i) {
         try {
             values.add(Numbers.parseDouble(input, numberStart, i - numberStart));
             flatViewLength++;
@@ -95,68 +98,78 @@ public final class DoubleArrayParser extends ArrayView implements FlatArrayView 
         IntList currentDimSizes = strides;
         assert currentDimSizes.size() == 0;
 
-        boolean inQuote = false;
         int numberStart = -1;
-        boolean inNumber = false;
+        int state = STATE_IDLE;
 
-        for (int i = 0; i < input.length(); i++) {
-            char c = input.charAt(i);
+        for (int position = 0; position < input.length(); position++) {
+            char c = input.charAt(position);
 
             if (c == '"') {
-                inQuote = !inQuote;
-                if (inQuote) {
-                    numberStart = i + 1;
+                if (state == STATE_IN_QUOTE) {
+                    parseAndAddNumber(input, numberStart, position);
+                    state = STATE_IDLE;
                 } else {
-                    addElement(input, numberStart, i);
-                    inNumber = false;
+                    numberStart = position + 1;
+                    state = STATE_IN_QUOTE;
                 }
-            } else if (!inQuote) {
-                switch (c) {
-                    case '{':
-                        currentDimSizes.add(1);
-                        break;
-                    case '}':
-                        if (inNumber) {
-                            addElement(input, numberStart, i);
-                            inNumber = false;
-                        }
-                        int depth = currentDimSizes.size() - 1;
-                        int currentCount = currentDimSizes.getQuick(depth);
-                        if (shape.size() <= depth) {
-                            shape.extendAndSet(depth, currentCount);
-                        } else {
-                            int alreadyObservedCount = shape.getQuick(depth);
-                            if (alreadyObservedCount == 0) {
-                                // first time we see this dimension
-                                shape.setQuick(depth, currentCount);
-                            } else if (currentCount != alreadyObservedCount) {
-                                throw new IllegalArgumentException("inconsistent array [depth=" + depth + ", currentCount=" + currentCount + ", alreadyObservedCount=" + alreadyObservedCount + ", position=" + i + "]");
-                            }
-                        }
-                        currentDimSizes.removeIndex(depth);
-                        break;
-                    case ',':
-                        if (inNumber) {
-                            addElement(input, numberStart, i);
-                            inNumber = false;
-                        }
-                        int lastIndex = currentDimSizes.size() - 1;
-                        currentDimSizes.increment(lastIndex);
-                        break;
+                continue;
+            }
 
-                    // Skip whitespace. {\r{1,2.0}, {3.1,\n0.4}} is a legal input
-                    case ' ':
-                    case '\t':
-                    case '\n':
-                    case '\r':
-                        break;
+            if (state == STATE_IN_QUOTE) {
+                continue;
+            }
 
-                    default:
-                        if (!inNumber) {
-                            numberStart = i;
-                            inNumber = true;
-                        }
-                }
+            switch (c) {
+                case '{':
+                    currentDimSizes.add(1);
+                    break;
+                case '}':
+                    if (state == STATE_IN_NUMBER) {
+                        parseAndAddNumber(input, numberStart, position);
+                        state = STATE_IDLE;
+                    }
+
+                    int depth = currentDimSizes.size() - 1;
+                    int currentCount = currentDimSizes.getQuick(depth);
+                    updateShapeInfo(depth, currentCount, position);
+                    currentDimSizes.removeIndex(depth);
+                    break;
+                case ',':
+                    if (state == STATE_IN_NUMBER) {
+                        parseAndAddNumber(input, numberStart, position);
+                        state = STATE_IDLE;
+                    }
+
+                    int lastIndex = currentDimSizes.size() - 1;
+                    currentDimSizes.increment(lastIndex);
+                    break;
+
+                // Skip whitespace. {\r{1,2.0}, {3.1,\n0.4}} is a legal input
+                case ' ':
+                case '\t':
+                case '\n':
+                case '\r':
+                    break;
+
+                default:
+                    if (state != STATE_IN_NUMBER) {
+                        numberStart = position;
+                        state = STATE_IN_NUMBER;
+                    }
+            }
+        }
+    }
+
+    private void updateShapeInfo(int depth, int currentCount, int position) {
+        if (shape.size() <= depth) {
+            shape.extendAndSet(depth, currentCount);
+        } else {
+            int alreadyObservedCount = shape.getQuick(depth);
+            if (alreadyObservedCount == 0) {
+                // first time we see this dimension
+                shape.setQuick(depth, currentCount);
+            } else if (currentCount != alreadyObservedCount) {
+                throw new IllegalArgumentException("inconsistent array [depth=" + depth + ", currentCount=" + currentCount + ", alreadyObservedCount=" + alreadyObservedCount + ", position=" + position + "]");
             }
         }
     }
