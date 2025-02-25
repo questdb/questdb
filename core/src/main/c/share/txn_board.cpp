@@ -162,11 +162,11 @@ public:
 
     // txn must be > 0
     inline bool txn_increment(int64_t txn) {
-        auto counter = get_counter(txn).load();
-        if (counter > 0 && get_counter(txn).compare_exchange_strong(counter, counter + 1)) {
-            return true;
+        auto count = get_counter(txn).load();
+        while (count > 0 && !get_counter(txn).compare_exchange_strong(count, count + 1)) {
+            count = get_counter(txn).load();
         }
-        return false;
+        return count > 0;
     }
 
     void init(uint32_t entry_count) {
