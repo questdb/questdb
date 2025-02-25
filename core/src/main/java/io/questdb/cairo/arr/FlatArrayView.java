@@ -27,7 +27,7 @@ package io.questdb.cairo.arr;
 import io.questdb.cairo.vm.api.MemoryA;
 
 public interface FlatArrayView {
-    void appendToMem(MemoryA mem);
+    void appendToMemFlat(MemoryA mem);
 
     double getDouble(int elemIndex);
 

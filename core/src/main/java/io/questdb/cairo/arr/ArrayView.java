@@ -35,9 +35,21 @@ public abstract class ArrayView implements QuietCloseable {
     protected FlatArrayView flatView;
     protected int flatViewLength;
     protected int flatViewOffset;
+    protected boolean isVanilla;
     protected int type = ColumnType.UNDEFINED;
 
-    public abstract void appendToMem(MemoryA mem);
+    public final void appendToMem(MemoryA mem) {
+        if (isVanilla) {
+            if (flatView instanceof BorrowedFlatArrayView) {
+                // Ensure a dedicated, inlineable call site
+                ((BorrowedFlatArrayView) flatView).appendToMemFlat(mem);
+            } else {
+                flatView.appendToMemFlat(mem);
+            }
+        } else {
+            appendToMemRecursive(0, 0, mem);
+        }
+    }
 
     @Override
     public void close() {
@@ -101,6 +113,25 @@ public abstract class ArrayView implements QuietCloseable {
      */
     public final int getType() {
         return type;
+    }
+
+    private void appendToMemRecursive(int dim, int flatIndex, MemoryA mem) {
+        assert ColumnType.isDouble(ColumnType.decodeArrayElementType(this.type)) : "implemented only for double";
+
+        final int count = getDimLen(dim);
+        final int stride = getStride(dim);
+        final boolean atDeepestDim = dim == getDimCount() - 1;
+        if (atDeepestDim) {
+            for (int i = 0; i < count; i++) {
+                mem.putDouble(flatView.getDouble(flatViewOffset + flatIndex));
+                flatIndex += stride;
+            }
+        } else {
+            for (int i = 0; i < count; i++) {
+                appendToMemRecursive(dim + 1, flatIndex, mem);
+                flatIndex += stride;
+            }
+        }
     }
 
     protected final BorrowedFlatArrayView borrowedFlatView() {

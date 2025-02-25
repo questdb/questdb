@@ -26,7 +26,6 @@ package io.questdb.cairo.arr;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.Numbers;
 
 /**
@@ -36,11 +35,6 @@ import io.questdb.std.Numbers;
  * transpose it.
  */
 public class DerivedArrayView extends ArrayView {
-
-    @Override
-    public void appendToMem(MemoryA mem) {
-        appendToMemRecursive(0, 0, mem);
-    }
 
     public final void flattenDim(int dim, int argPos) {
         final int nDims = getDimCount();
@@ -59,6 +53,7 @@ public class DerivedArrayView extends ArrayView {
         } else {
             dimToFlattenInto = getStride(dim - 1) < getStride(dim + 1) ? dim - 1 : dim + 1;
         }
+        isVanilla = false;
         shape.set(dimToFlattenInto, shape.get(dimToFlattenInto) * shape.get(dim));
         removeDim(dim);
     }
@@ -79,6 +74,7 @@ public class DerivedArrayView extends ArrayView {
 
     public void removeDim(int dim) {
         assert dim >= 0 && dim < shape.size() : "dim out of range: " + dim;
+        isVanilla = false;
         shape.removeIndex(dim);
         strides.removeIndex(dim);
     }
@@ -121,6 +117,7 @@ public class DerivedArrayView extends ArrayView {
                     .put(", upperBound=").put(hi)
                     .put(']');
         }
+        isVanilla = false;
         flatViewOffset += lo * getStride(dim);
         shape.set(dim, hi - lo);
     }
@@ -128,22 +125,5 @@ public class DerivedArrayView extends ArrayView {
     public void transpose() {
         strides.reverse();
         shape.reverse();
-    }
-
-    private void appendToMemRecursive(int dim, int flatIndex, MemoryA mem) {
-        final int count = getDimLen(dim);
-        final int stride = getStride(dim);
-        final boolean atDeepestDim = dim == getDimCount() - 1;
-        if (atDeepestDim) {
-            for (int i = 0; i < count; i++) {
-                mem.putDouble(flatView.getDouble(flatViewOffset + flatIndex));
-                flatIndex += stride;
-            }
-        } else {
-            for (int i = 0; i < count; i++) {
-                appendToMemRecursive(dim + 1, flatIndex, mem);
-                flatIndex += stride;
-            }
-        }
     }
 }

@@ -43,7 +43,7 @@ final class PgNonNullBinaryArrayView extends ArrayView implements FlatArrayView,
     }
 
     @Override
-    public void appendToMem(MemoryA mem) {
+    public void appendToMemFlat(MemoryA mem) {
         int size = this.flatViewLength;
         switch (ColumnType.decodeArrayElementType(type)) {
             case ColumnType.LONG:

@@ -46,7 +46,7 @@ public final class DoubleArrayParser extends ArrayView implements FlatArrayView 
     }
 
     @Override
-    public void appendToMem(MemoryA mem) {
+    public void appendToMemFlat(MemoryA mem) {
         for (int i = 0, n = values.size(); i < n; i++) {
             mem.putDouble(values.getQuick(i));
         }

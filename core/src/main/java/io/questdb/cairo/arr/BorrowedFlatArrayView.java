@@ -34,12 +34,12 @@ import io.questdb.std.bytes.DirectSequence;
  * It can access an array of any element type. This means that there isn't one definite
  * length of the array it represents -- it depends on the assumed element type.
  */
-public class BorrowedFlatArrayView implements DirectSequence, FlatArrayView {
+public final class BorrowedFlatArrayView implements DirectSequence, FlatArrayView {
     private long ptr = 0;
     private int size = 0;
 
     @Override
-    public void appendToMem(MemoryA mem) {
+    public void appendToMemFlat(MemoryA mem) {
         assert ptr != 0;
         mem.putBlockOfBytes(ptr, size);
     }

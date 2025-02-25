@@ -25,7 +25,6 @@
 package io.questdb.cairo.arr;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.DirectIntSlice;
 import io.questdb.std.Unsafe;
 
@@ -50,11 +49,6 @@ public class MmappedArray extends ArrayView {
 
     public MmappedArray() {
         this.flatView = new BorrowedFlatArrayView();
-    }
-
-    @Override
-    public void appendToMem(MemoryA mem) {
-        flatView.appendToMem(mem);
     }
 
     public MmappedArray of(

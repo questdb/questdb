@@ -46,7 +46,7 @@ public class FunctionArray extends ArrayView implements FlatArrayView {
     }
 
     @Override
-    public void appendToMem(MemoryA mem) {
+    public void appendToMemFlat(MemoryA mem) {
         final short elemType = ColumnType.decodeArrayElementType(type);
         final Function[] functions = functions();
         int elemCount = getFlatViewLength();
