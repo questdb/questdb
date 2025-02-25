@@ -26,7 +26,6 @@ package io.questdb.cairo.arr;
 
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.Unsafe;
-import io.questdb.std.bytes.DirectSequence;
 
 /**
  * Immutable view over the backing native memory of an array. Does not own the memory.
@@ -34,7 +33,7 @@ import io.questdb.std.bytes.DirectSequence;
  * It can access an array of any element type. This means that there isn't one definite
  * length of the array it represents -- it depends on the assumed element type.
  */
-public final class BorrowedFlatArrayView implements DirectSequence, FlatArrayView {
+public final class BorrowedFlatArrayView implements FlatArrayView {
     private long ptr = 0;
     private int size = 0;
 
@@ -70,26 +69,8 @@ public final class BorrowedFlatArrayView implements DirectSequence, FlatArrayVie
         return this;
     }
 
-    /**
-     * Address of the start of the buffer
-     */
-    @Override
-    public long ptr() {
-        assert ptr != 0;
-        return ptr;
-    }
-
     public void reset() {
         ptr = 0;
         size = 0;
-    }
-
-    /**
-     * Buffer size, as byte count. Do not confuse with <i>length</i>, which is
-     * the number of elements.
-     */
-    @Override
-    public int size() {
-        return size;
     }
 }

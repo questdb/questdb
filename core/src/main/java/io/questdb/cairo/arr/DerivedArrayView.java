@@ -79,17 +79,6 @@ public class DerivedArrayView extends ArrayView {
         strides.removeIndex(dim);
     }
 
-    /**
-     * Reset to an invalid array.
-     */
-    public void reset() {
-        this.type = ColumnType.UNDEFINED;
-        this.shape.clear();
-        this.strides.clear();
-        this.flatViewOffset = 0;
-        this.flatViewLength = 0;
-    }
-
     public void slice(int dim, int lo, int hi, int argPos) {
         if (dim < 0 || dim >= getDimCount()) {
             throw CairoException.nonCritical().position(argPos)
