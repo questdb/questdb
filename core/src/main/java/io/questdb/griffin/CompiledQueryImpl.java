@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.CreateMatViewOperation;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.ops.DoneOperationFuture;
 import io.questdb.griffin.engine.ops.Operation;
@@ -107,19 +108,18 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         switch (type) {
             case INSERT:
                 return insertOp.execute(sqlExecutionContext);
-            case CREATE_TABLE:
-            case CREATE_TABLE_AS_SELECT:
-                assert false;
-                doneFuture.of(0);
             case UPDATE:
                 updateOp.withSqlStatement(sqlStatement);
                 return updateOperationDispatcher.execute(updateOp, sqlExecutionContext, eventSubSeq, closeOnDone);
             case ALTER:
                 alterOp.withSqlStatement(sqlStatement);
                 return alterOperationDispatcher.execute(alterOp, sqlExecutionContext, eventSubSeq, closeOnDone);
+            case CREATE_TABLE:
+            case CREATE_MAT_VIEW:
+            case CREATE_TABLE_AS_SELECT:
             case DROP:
                 assert false;
-                // fall thru
+                // fall through
             default:
                 return doneFuture.of(0);
         }
@@ -221,6 +221,12 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = true;
     }
 
+    public void ofCreateMatView(CreateMatViewOperation createMatViewOp) {
+        of(CREATE_MAT_VIEW);
+        this.operation = createMatViewOp;
+        this.isExecutedAtParseTime = false;
+    }
+
     public void ofCreateTable(CreateTableOperation createTableOp) {
         of(createTableOp.getRecordCursorFactory() == null ? CREATE_TABLE : CREATE_TABLE_AS_SELECT);
         this.operation = createTableOp;
@@ -278,6 +284,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.recordCursorFactory = factory;
         this.affectedRowsCount = -1;
         this.isExecutedAtParseTime = false;
+    }
+
+    public void ofRefreshMatView() {
+        type = REFRESH_MAT_VIEW;
+        this.isExecutedAtParseTime = true;
     }
 
     public void ofRenameTable() {

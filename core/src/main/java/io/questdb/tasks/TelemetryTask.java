@@ -34,6 +34,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.ObjectFactory;
 
 public class TelemetryTask implements AbstractTelemetryTask {
+    public static final String NAME = "TABLE TELEMETRY";
     public static final String TABLE_NAME = "telemetry";
 
     private static final Log LOG = LogFactory.getLog(TelemetryTask.class);
@@ -51,6 +52,11 @@ public class TelemetryTask implements AbstractTelemetryTask {
                             "origin SHORT" +
                             ") TIMESTAMP(created) PARTITION BY DAY TTL 1 WEEK BYPASS WAL"
                     );
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
         }
 
         @Override

@@ -386,9 +386,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     }
 
     class RegisteredRecordCursor implements RecordCursor {
-
         private RecordCursor base;
-
         private boolean isOpen = false;
 
         @Override

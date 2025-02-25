@@ -58,12 +58,17 @@ class Long256BindVariable extends Long256Function implements ScalarFunction, Mut
     }
 
     @Override
-    public boolean isThreadSafe() {
+    public boolean isNonDeterministic() {
         return true;
     }
 
     @Override
     public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
+    public boolean isThreadSafe() {
         return true;
     }
 
