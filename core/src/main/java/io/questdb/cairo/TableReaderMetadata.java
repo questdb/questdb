@@ -460,7 +460,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                         transitionIndex.markReplaced(existingIndex);
                     }
                 }
-                this.columnNameIndexMap.put(newName, outIndex);
+                columnNameIndexMap.put(newName, outIndex);
                 if (timestampIndex == writerIndex) {
                     this.timestampIndex = outIndex;
                 }

@@ -49,6 +49,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
@@ -268,9 +269,9 @@ public class ReaderPoolTest extends AbstractCairoTest {
     @Test
     public void testConcurrentGetAndGetCopyOf() throws Exception {
         final int readerThreadCount = 4;
-        final int readerIterations = 1000;
-        final int writerIterations = 100;
-        final int writerBatchSize = 100;
+        final int readerIterations = 200;
+        final int writerIterations = 50;
+        final int writerBatchSize = 10;
         final String tableName = "test";
 
         assertWithPool((ReaderPool pool) -> {
@@ -288,13 +289,27 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 try {
                     barrier.await();
                     try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
+                        boolean columnsAdded = false;
                         for (int i = 0; i < writerIterations; i++) {
-                            for (int j = 0; j < writerBatchSize; j++) {
-                                TableWriter.Row r = writer.newRow(Timestamps.SECOND_MICROS * i);
-                                r.putSym(0, rnd.nextString(rnd.nextInt(32)));
-                                r.append();
+                            final int prob = rnd.nextInt(100);
+                            if (prob >= 95 && columnsAdded) {
+                                writer.removeColumn("sym2");
+                                writer.removeColumn("int2");
+                                writer.removeColumn("bool2");
+                                columnsAdded = false;
+                            } else if (prob >= 90 && !columnsAdded) {
+                                writer.addColumn("sym2", ColumnType.SYMBOL, 256, true, true, 256, false);
+                                writer.addColumn("int2", ColumnType.INT);
+                                writer.addColumn("bool2", ColumnType.BOOLEAN);
+                                columnsAdded = true;
+                            } else {
+                                for (int j = 0; j < writerBatchSize; j++) {
+                                    TableWriter.Row r = writer.newRow(Timestamps.SECOND_MICROS * i);
+                                    r.putSym(0, rnd.nextString(rnd.nextInt(32)));
+                                    r.append();
+                                }
+                                writer.commit();
                             }
-                            writer.commit();
                         }
                     }
                 } catch (Exception e) {
@@ -302,6 +317,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     e.printStackTrace(System.out);
                 } finally {
                     halt.countDown();
+                    Path.clearThreadLocals();
                 }
             }).start();
 
@@ -337,6 +353,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         e.printStackTrace(System.out);
                     } finally {
                         halt.countDown();
+                        Path.clearThreadLocals();
                     }
                 }).start();
             }
