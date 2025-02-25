@@ -449,16 +449,16 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     TableReader ogReader = pool.get(tableToken);
                     TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
             ) {
-                cursor.of(ogReader);
-                println(ogReader.getMetadata(), cursor);
-                final String expected = sink.toString();
-
                 try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
                     TableWriter.Row r = writer.newRow(Timestamps.DAY_MICROS + 1);
                     r.putSym(0, "bar");
                     r.append();
                     writer.commit();
                 }
+
+                cursor.of(ogReader);
+                println(ogReader.getMetadata(), cursor);
+                final String expected = sink.toString();
 
                 TableReader copyReaderRef;
                 try (TableReader copyReader = pool.getCopyOf(ogReader)) {
@@ -471,20 +471,49 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 }
 
                 // This is the same instance as copyReader, but this time it's fully up-to-date.
-                try (TableReader newerReader = pool.get(tableToken)) {
-                    Assert.assertSame(copyReaderRef, newerReader);
-                    cursor.of(newerReader);
-                    println(newerReader.getMetadata(), cursor);
-                    final String newerActual = sink.toString();
+                try (TableReader newerTxnReader = pool.get(tableToken)) {
+                    Assert.assertSame(copyReaderRef, newerTxnReader);
+                    cursor.of(newerTxnReader);
+                    println(newerTxnReader.getMetadata(), cursor);
+                    final String newerTxnActual = sink.toString();
 
-                    Assert.assertNotEquals(expected, newerActual);
+                    Assert.assertNotEquals(expected, newerTxnActual);
                 }
             }
         });
     }
 
     @Test
-    public void testCopyOfRefreshesNewerReader() throws Exception {
+    public void testCopyOfEmptyTable() throws Exception {
+        assertWithPool(pool -> {
+            final String tableName = "test";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                    .col("sym", ColumnType.SYMBOL)
+                    .timestamp("ts");
+            AbstractCairoTest.create(model);
+
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            try (
+                    TableReader ogReader = pool.get(tableToken);
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
+            ) {
+                cursor.of(ogReader);
+                println(ogReader.getMetadata(), cursor);
+                final String expected = sink.toString();
+
+                try (TableReader copyReader = pool.getCopyOf(ogReader)) {
+                    cursor.of(copyReader);
+                    println(copyReader.getMetadata(), cursor);
+                    final String copyActual = sink.toString();
+
+                    Assert.assertEquals(expected, copyActual);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCopyOfRefreshesNewerTxnReader() throws Exception {
         assertWithPool(pool -> {
             final String tableName = "test";
             TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
@@ -515,13 +544,18 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     writer.commit();
                 }
 
-                TableReader newerReaderRef;
-                try (TableReader newerReader = pool.get(tableToken)) {
-                    newerReaderRef = newerReader;
+                TableReader newerTxnReaderRef;
+                try (TableReader newerTxnReader = pool.get(tableToken)) {
+                    newerTxnReaderRef = newerTxnReader;
+                    cursor.of(newerTxnReader);
+                    println(newerTxnReader.getMetadata(), cursor);
+                    final String newerTxnActual = sink.toString();
+
+                    Assert.assertNotEquals(expected, newerTxnActual);
                 }
 
                 try (TableReader copyReader = pool.getCopyOf(ogReader)) {
-                    Assert.assertSame(newerReaderRef, copyReader);
+                    Assert.assertSame(newerTxnReaderRef, copyReader);
                     cursor.of(copyReader);
                     println(copyReader.getMetadata(), cursor);
                     final String copyActual = sink.toString();
@@ -533,7 +567,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopyOfRefreshesStaleReader() throws Exception {
+    public void testCopyOfRefreshesOlderTxnReader() throws Exception {
         assertWithPool(pool -> {
             final String tableName = "test";
             TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
@@ -579,6 +613,54 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 final String expected = sink.toString();
 
                 try (TableReader copyReader = pool.getCopyOf(ogReader)) {
+                    cursor.of(copyReader);
+                    println(copyReader.getMetadata(), cursor);
+                    final String copyActual = sink.toString();
+
+                    Assert.assertEquals(expected, copyActual);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCopyOfReturnsSameTxnReader() throws Exception {
+        assertWithPool(pool -> {
+            final String tableName = "test";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                    .col("sym", ColumnType.SYMBOL)
+                    .timestamp("ts");
+            AbstractCairoTest.create(model);
+
+            try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
+                TableWriter.Row r = writer.newRow(1);
+                r.putSym(0, "foo");
+                r.append();
+                writer.commit();
+            }
+
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            try (
+                    TableReader ogReader = pool.get(tableToken);
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
+            ) {
+                cursor.of(ogReader);
+                println(ogReader.getMetadata(), cursor);
+                final String expected = sink.toString();
+
+                TableReader sameTxnReaderRef;
+                try (TableReader sameTxnReader = pool.get(tableToken)) {
+                    sameTxnReaderRef = sameTxnReader;
+                    cursor.of(sameTxnReader);
+                    println(sameTxnReader.getMetadata(), cursor);
+                    final String sameTxnActual = sink.toString();
+
+                    Assert.assertEquals(expected, sameTxnActual);
+                }
+
+                // We should get the same reader as before since getCopyOf() is no-op in this case.
+                try (TableReader copyReader = pool.getCopyOf(ogReader)) {
+                    Assert.assertSame(sameTxnReaderRef, copyReader);
                     cursor.of(copyReader);
                     println(copyReader.getMetadata(), cursor);
                     final String copyActual = sink.toString();
