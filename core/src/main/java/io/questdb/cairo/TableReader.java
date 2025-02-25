@@ -422,19 +422,41 @@ public class TableReader implements Closeable, SymbolTableSource {
         assert tableToken.equals(srcReader.getTableToken());
 
         // We may need to downgrade from newer txn to an older one.
-        final boolean isDowngrade = txn > srcReader.txn;
-        if (isDowngrade) {
-            prepareForDowngrade();
+        final boolean needsDowngrade = txn > srcReader.txn;
+        if (needsDowngrade) {
+            // Prepare for downgrade.
+            if (partitionOverwriteControl != null) {
+                // Mark partitions as unused before releasing txn in scoreboard
+                // to avoid false positives in partition overwrite control
+                partitionOverwriteControl.releasePartitions(this);
+            }
+            // close all latest partitions
+            if (PartitionBy.isPartitioned(partitionBy)) {
+                for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+                    final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
+                    long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
+                    if (partitionSize > -1) {
+                        closePartition(partitionIndex);
+                    }
+                }
+            }
+            freeSymbolMapReaders();
+            freeBitmapIndexCache();
+            freeColumns();
+            freeParquetPartitions();
+            // Don't forget to copy source metadata upfront - we don't need to deal with metadata transition index.
+            metadata.loadFrom(srcReader.metadata);
         }
         // Copy source reader's state.
         reloadAtTxn(srcReader, true);
-        if (isDowngrade) {
+        if (needsDowngrade) {
             // We need to re-init txn versions and all lists.
             init();
         }
         // Reload partitions.
         reconcileOpenPartitions(txPartitionVersion, txColumnVersion, txTruncateVersion);
-        // Save transaction details which impact the reloading. Do not rely on txReader, it can be reloaded outside this method.
+        // Save transaction details which impact the reloading.
+        // Do not rely on txReader, it can be reloaded outside this method.
         txPartitionVersion = txFile.getPartitionTableVersion();
         txColumnVersion = txFile.getColumnVersion();
         txTruncateVersion = txFile.getTruncateVersion();
@@ -520,7 +542,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             // applyTruncate for non-partitioned tables only
             reconcileOpenPartitions(txPartitionVersion, txColumnVersion, txTruncateVersion);
 
-            // Save transaction details which impact the reloading. Do not rely on txReader, it can be reloaded outside this method.
+            // Save transaction details which impact the reloading.
+            // Do not rely on txReader, it can be reloaded outside this method.
             txPartitionVersion = txFile.getPartitionTableVersion();
             txColumnVersion = txFile.getColumnVersion();
             txTruncateVersion = txFile.getTruncateVersion();
@@ -1160,28 +1183,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     private Path pathGenParquetPartition(int partitionIndex, long nameTxn) {
         formatParquetPartitionFileName(partitionIndex, path.slash(), nameTxn);
         return path;
-    }
-
-    private void prepareForDowngrade() {
-        if (partitionOverwriteControl != null) {
-            // Mark partitions as unused before releasing txn in scoreboard
-            // to avoid false positives in partition overwrite control
-            partitionOverwriteControl.releasePartitions(this);
-        }
-        // close all latest partitions
-        if (PartitionBy.isPartitioned(partitionBy)) {
-            for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-                final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
-                long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
-                if (partitionSize > -1) {
-                    closePartition(partitionIndex);
-                }
-            }
-        }
-        freeSymbolMapReaders();
-        freeBitmapIndexCache();
-        freeColumns();
-        freeParquetPartitions();
     }
 
     private void prepareForLazyOpen(int partitionIndex) {
