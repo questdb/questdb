@@ -1746,7 +1746,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 SymbolMapReader rdr = symbolMapReaders.getQuick(replaceWith);
                 renewSymbolMapReader(rdr, i);
             } else if (replaceWith != Integer.MIN_VALUE) {
-                // New instance
+                // new instance
                 renewSymbolMapReader(null, i);
             }
         }
