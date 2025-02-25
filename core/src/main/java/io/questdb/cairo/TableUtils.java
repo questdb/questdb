@@ -1924,23 +1924,23 @@ public final class TableUtils {
         return true;
     }
 
-    static void buildWriterOrderMap(MemoryR metaMem, IntList columnOrderMap, MemoryR newMeta, int newColumnCount) {
+    static void buildWriterOrderMap(MemoryR newMetaMem, IntList columnOrderMap, int newColumnCount) {
         int nameOffset = (int) TableUtils.getColumnNameOffset(newColumnCount);
         columnOrderMap.clear();
 
         int denseSymbolIndex = 0;
         for (int i = 0; i < newColumnCount; i++) {
-            int strLen = TableUtils.getInt(newMeta, newMeta.size(), nameOffset);
+            int strLen = TableUtils.getInt(newMetaMem, newMetaMem.size(), nameOffset);
             if (strLen == TableUtils.NULL_LEN) {
-                throw validationException(metaMem).put("NULL column name at [").put(i).put(']');
+                throw validationException(newMetaMem).put("NULL column name at [").put(i).put(']');
             }
             if (strLen < 1 || strLen > 255) {
                 // EXT4 and many others do not allow file name length > 255 bytes
-                throw validationException(metaMem).put("String length of ").put(strLen).put(" is invalid at offset ").put(nameOffset);
+                throw validationException(newMetaMem).put("String length of ").put(strLen).put(" is invalid at offset ").put(nameOffset);
             }
             int nameLen = (int) Vm.getStorageLength(strLen);
-            int newOrderIndex = TableUtils.getReplacingColumnIndex(newMeta, i);
-            boolean isSymbol = ColumnType.isSymbol(TableUtils.getColumnType(newMeta, i));
+            int newOrderIndex = TableUtils.getReplacingColumnIndex(newMetaMem, i);
+            boolean isSymbol = ColumnType.isSymbol(TableUtils.getColumnType(newMetaMem, i));
 
             if (newOrderIndex > -1 && newOrderIndex < newColumnCount - 1) {
                 // Replace the column index

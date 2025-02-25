@@ -97,12 +97,11 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         MemoryMR temp = this.metaMem;
         this.metaMem = this.transitionMeta;
         transitionMeta = temp;
+        isCopy = false;
         Misc.free(transitionMeta); // memory is safe to double close, do not assign null to transitionMeta
         Misc.free(metaCopyMem); // close copy memory in case if it was in-use
-        columnNameIndexMap.clear();
-        int existingColumnCount = this.columnCount;
 
-        return applyTransition0(metaMem, existingColumnCount);
+        return applyTransition0(metaMem, columnCount);
     }
 
     public TableReaderMetadataTransitionIndex applyTransitionFrom(TableReaderMetadata srcMeta) {
@@ -110,9 +109,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         isCopy = true;
         Misc.free(metaMem);
         Misc.free(transitionMeta);
-        int existingColumnCount = this.columnCount;
 
-        return applyTransition0(metaCopyMem, existingColumnCount);
+        return applyTransition0(metaCopyMem, columnCount);
     }
 
     @Override
@@ -352,6 +350,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     private TableReaderMetadataTransitionIndex applyTransition0(MemoryR metaMem, int existingColumnCount) {
+        columnNameIndexMap.clear();
+
         int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
         assert columnCount >= existingColumnCount;
         columnMetadata.setPos(columnCount);
@@ -477,8 +477,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         return transitionIndex;
     }
 
-    private void buildWriterOrderMap(MemoryR newMeta, int newColumnCount) {
-        TableUtils.buildWriterOrderMap(metaMem, columnOrderMap, newMeta, newColumnCount);
+    private void buildWriterOrderMap(MemoryR newMetaMem, int newColumnCount) {
+        TableUtils.buildWriterOrderMap(newMetaMem, columnOrderMap, newColumnCount);
     }
 
     private void copyMemFrom(TableReaderMetadata srcMeta) {
