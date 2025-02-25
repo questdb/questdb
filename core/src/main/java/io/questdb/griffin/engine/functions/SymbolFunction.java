@@ -177,7 +177,7 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     @Override
     public final long getTimestamp(Record rec) {
         final CharSequence value = getSymbol(rec);
-        return SqlUtil.implicitCastSymbolAsTimestamp(value, ColumnType.SYMBOL);
+        return SqlUtil.implicitCastSymbolAsTimestamp(value);
     }
 
     @Override

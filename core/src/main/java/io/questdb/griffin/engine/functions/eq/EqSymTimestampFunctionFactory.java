@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -71,7 +70,7 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
         long symbolTimestampEpoch;
 
         CharSequence value = fn0.getSymbol(null);
-        symbolTimestampEpoch = value != null ? SqlUtil.implicitCastSymbolAsTimestamp(value, ColumnType.SYMBOL) : Numbers.LONG_NULL;
+        symbolTimestampEpoch = value != null ? SqlUtil.implicitCastSymbolAsTimestamp(value) : Numbers.LONG_NULL;
 
         Function timestampFn = args.getQuick(1);
 
