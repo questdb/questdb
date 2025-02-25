@@ -29,11 +29,22 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 
 public class FuzzRenameColumnOperation implements FuzzTransactionOperation {
     private final String columName;
     private final String newColName;
+
+    @Override
+    public String toString() {
+        StringSink sink = new StringSink();
+        sink.put("FuzzRenameColumnOperation(");
+        sink.put("columName=").put(columName);
+        sink.put(", newColName=").put(newColName);
+        sink.put(")");
+        return sink.toString();
+    }
 
     public FuzzRenameColumnOperation(Rnd rnd, String columName, String newColName) {
         this.columName = TestUtils.randomiseCase(rnd, columName);

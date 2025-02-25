@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 
 public class FuzzStableInsertOperation implements FuzzTransactionOperation {
@@ -37,6 +38,19 @@ public class FuzzStableInsertOperation implements FuzzTransactionOperation {
     private final String symbol;
     private final long timestamp;
     private final Utf8StringSink utf8String;
+
+    @Override
+    public String toString() {
+        StringSink sink = new StringSink();
+        sink.put("FuzzStableInsertOperation(");
+        sink.put("columnType=").put(columnType);
+        sink.put(", commit=").put(commit);
+        sink.put(", symbol=").put(symbol);
+        sink.put(", timestamp=").put(timestamp);
+        sink.put(", utf8String=").put(utf8String);
+        sink.put(")");
+        return sink.toString();
+    }
 
     public FuzzStableInsertOperation(long timestamp, int commit) {
         this.timestamp = timestamp;

@@ -29,6 +29,7 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 
 public class FuzzDropColumnOperation implements FuzzTransactionOperation {
@@ -47,5 +48,14 @@ public class FuzzDropColumnOperation implements FuzzTransactionOperation {
         ).ofDropColumn(columnName).build();
         wApi.apply(alterOp, true);
         return true;
+    }
+
+    @Override
+    public String toString() {
+        StringSink sink = new StringSink();
+        sink.put("FuzzDropColumnOperation(");
+        sink.put("columnName=").put(columnName);
+        sink.put(")");
+        return sink.toString();
     }
 }

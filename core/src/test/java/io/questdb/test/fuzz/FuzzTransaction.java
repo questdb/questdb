@@ -25,6 +25,7 @@
 package io.questdb.test.fuzz;
 
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 
 public class FuzzTransaction {
     public ObjList<FuzzTransactionOperation> operationList = new ObjList<>();
@@ -34,4 +35,15 @@ public class FuzzTransaction {
     public boolean waitAllDone;
     public int waitBarrierVersion;
 
+    @Override
+    public String toString() {
+        StringSink sink = new StringSink();
+        sink.put("operationsList=(").put(operationList.size()).put(")");
+        sink.put(", reopenTable=").put(reopenTable);
+        sink.put(", rollback=").put(rollback);
+        sink.put(", structureVersion=").put(structureVersion);
+        sink.put(", waitAllDone=").put(waitAllDone);
+        sink.put(", waitBarrierVersion=").put(waitBarrierVersion);
+        return sink.toString();
+    }
 }

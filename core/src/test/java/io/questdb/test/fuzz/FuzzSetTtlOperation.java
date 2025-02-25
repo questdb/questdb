@@ -35,10 +35,20 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 
 public class FuzzSetTtlOperation implements FuzzTransactionOperation {
 
     private final int ttlDays;
+
+    @Override
+    public String toString() {
+        StringSink sink = new StringSink();
+        sink.put("FuzzSetTtlOperation(");
+        sink.put("ttlDays=").put(ttlDays);
+        sink.put(")");
+        return sink.toString();
+    }
 
     public FuzzSetTtlOperation(int ttlDays) {
         this.ttlDays = ttlDays;

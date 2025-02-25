@@ -342,10 +342,13 @@ public class FuzzRunner {
             WalWriter writer = writers.getQuick(applyRnd.nextPositiveInt() % walWriterCount);
             writer.goActive();
             FuzzTransaction transaction = transactions.getQuick(i);
+            LOG.info().$("applying transaction: ").$(transaction).$(" [[[[").$();
             for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
                 FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
+                LOG.info().$("OP: ").$(operation).$();
                 operation.apply(tempRnd, engine, writer, -1);
             }
+            LOG.info().$("]]]] applied transactions").$();
 
             if (transaction.reopenTable) {
                 // Table is dropped, reopen all writers.

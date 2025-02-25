@@ -25,8 +25,10 @@
 package io.questdb.test.fuzz;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 
 public class FuzzAddColumnOperation implements FuzzTransactionOperation {
 
@@ -48,5 +50,18 @@ public class FuzzAddColumnOperation implements FuzzTransactionOperation {
     public boolean apply(Rnd tempRnd, CairoEngine engine, TableWriterAPI wApi, int virtualTimestampIndex) {
         wApi.addColumn(newColName, newType, 256, symbolTableStatic, indexFlag, indexValueBlockCapacity, false);
         return true;
+    }
+
+    @Override
+    public String toString() {
+        StringSink sink = new StringSink();
+        sink.put("FuzzAddColumnOperation(");
+        sink.put("indexFlag=").put(indexFlag);
+        sink.put(", indexValueBlockCapacity=").put(indexValueBlockCapacity);
+        sink.put(", newColName=").put(newColName);
+        sink.put(", newType=").put(ColumnType.nameOf(newType));
+        sink.put(", symbolTableStatic=").put(symbolTableStatic);
+        sink.put(")");
+        return sink.toString();
     }
 }

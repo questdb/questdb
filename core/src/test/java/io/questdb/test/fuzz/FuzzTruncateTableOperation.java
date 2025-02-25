@@ -27,8 +27,14 @@ package io.questdb.test.fuzz;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 
 public class FuzzTruncateTableOperation implements FuzzTransactionOperation {
+    @Override
+    public String toString() {
+        return "FuzzTruncateTableOperation()";
+    }
+
     @Override
     public boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI tableWriter, int virtualTimestampIndex) {
         tableWriter.truncateSoft();

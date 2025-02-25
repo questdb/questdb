@@ -36,11 +36,21 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 
 public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
 
     private final long cutoffTimestamp;
+
+    @Override
+    public String toString() {
+        StringSink sink = new StringSink();
+        sink.put("FuzzDropPartitionOperation(");
+        sink.put("cutoffTimestamp=").put(cutoffTimestamp);
+        sink.put(")");
+        return sink.toString();
+    }
 
     public FuzzDropPartitionOperation(long cutoffTimestamp) {
         this.cutoffTimestamp = cutoffTimestamp;

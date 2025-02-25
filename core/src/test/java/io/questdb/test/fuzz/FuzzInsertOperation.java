@@ -31,6 +31,7 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.cairo.TestRecord;
 
@@ -69,6 +70,28 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
     private final double strLen;
     private final String[] symbols;
     private final long timestamp;
+
+    @Override
+    public String toString() {
+        StringSink sink = new StringSink();
+        sink.put("FuzzInsertOperation(");
+        sink.put("cancelRows=").put(cancelRows);
+        sink.put(", notSet=").put(notSet);
+        sink.put(", nullSet=").put(nullSet);
+        sink.put(", s0=").put(s0);
+        sink.put(", s1=").put(s1);
+        sink.put(", strLen=").put(strLen);
+        sink.put(", symbols=[");
+        for (int i = 0; i < symbols.length; i++) {
+            if (i > 0) {
+                sink.put(',');
+            }
+            sink.put(symbols[i]);
+        }
+        sink.put("]");
+        sink.put(")");
+        return sink.toString();
+    }
 
     public FuzzInsertOperation(
             long seed1,

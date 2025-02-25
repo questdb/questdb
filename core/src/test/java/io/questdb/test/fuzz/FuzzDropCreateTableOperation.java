@@ -30,12 +30,16 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.TextPlanSink;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 
 public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
     static final Log LOG = LogFactory.getLog(FuzzDropCreateTableOperation.class);
@@ -43,6 +47,19 @@ public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
     private RecordMetadata recreateTableMetadata;
     private String tableName;
     private boolean dedupTsColumn;
+
+    @Override
+    public String toString() {
+        StringSink sink = new StringSink();
+        sink.put("FuzzDropCreateTableOperation(");
+        sink.put("isWal=").put(isWal);
+        sink.put(", recreateTableMetadata=");
+        recreateTableMetadata.toJson(sink);
+        sink.put(", tableName=").put(tableName);
+        sink.put(", dedupTsColumn=").put(dedupTsColumn);
+        sink.put(")");
+        return sink.toString();
+    }
 
     @Override
     public boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI tableWriter, int virtualTimestampIndex) {
