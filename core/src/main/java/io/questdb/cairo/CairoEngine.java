@@ -184,9 +184,9 @@ public class CairoEngine implements Closeable, WriterSource {
             this.tableMetadataPool = new TableMetadataPool(configuration);
             this.walWriterPool = new WalWriterPool(configuration, this);
             this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
-            this.telemetry = new Telemetry<>(TelemetryTask.TELEMETRY, configuration);
-            this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMETRY, configuration);
-            this.telemetryMatView = new Telemetry<>(TelemetryMatViewTask.MAT_VIEW_TELEMETRY, configuration);
+            this.telemetry = createTelemetry(TelemetryTask.TELEMETRY, configuration);
+            this.telemetryWal = createTelemetry(TelemetryWalTask.WAL_TELEMETRY, configuration);
+            this.telemetryMatView = createTelemetry(TelemetryMatViewTask.MAT_VIEW_TELEMETRY, configuration);
             this.telemetries = new ObjList<>(telemetry, telemetryWal, telemetryMatView);
             this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
             this.checkpointAgent = new DatabaseCheckpointAgent(this);
@@ -1667,6 +1667,12 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.tableDoesNotExist(tableName);
         }
         return token;
+    }
+
+    protected @NotNull <T extends AbstractTelemetryTask> Telemetry<T> createTelemetry(
+            Telemetry.TelemetryTypeBuilder<T> builder, CairoConfiguration configuration
+    ) {
+        return new Telemetry<>(builder, configuration);
     }
 
     protected TableFlagResolver newTableFlagResolver(CairoConfiguration configuration) {
