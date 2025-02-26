@@ -188,6 +188,27 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewExpressionKeyCaseInsensitivity() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            // notice upper-case column names
+            final String query = "select TS, K || '10' as k, max(v) as v_max from " + TABLE1 + " sample by 30s";
+            execute("CREATE MATERIALIZED VIEW test AS (" + query + ") PARTITION BY WEEK TTL 3 WEEKS;");
+            assertMatViewDefinition("test", query, TABLE1, 30, 's');
+            assertMatViewMetadata("test", query, TABLE1, 30, 's');
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
+                assertEquals(0, metadata.getTimestampIndex());
+                assertTrue(metadata.isDedupKey(0));
+                assertTrue(metadata.isDedupKey(1));
+                assertFalse(metadata.isDedupKey(2));
+                assertEquals(3 * 7 * 24, metadata.getTtlHoursOrMonths());
+            }
+        });
+    }
+
+    @Test
     public void testCreateMatViewFunctionKey() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
