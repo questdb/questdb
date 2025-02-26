@@ -29,11 +29,9 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -42,6 +40,11 @@ public class EqDoubleArrayFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "=(D[]D[])";
+    }
+
+    @Override
+    public boolean isBoolean() {
+        return true;
     }
 
     @Override
@@ -62,19 +65,15 @@ public class EqDoubleArrayFunctionFactory implements FunctionFactory {
         return BooleanConstant.FALSE;
     }
 
-    private static class DoubleArrayEqualsFunction extends NegatableBooleanFunction implements BinaryFunction {
-
-        private final Function left;
-        private final Function right;
+    private static class DoubleArrayEqualsFunction extends AbstractEqBinaryFunction implements BinaryFunction {
 
         public DoubleArrayEqualsFunction(Function left, Function right) {
-            this.left = left;
-            this.right = right;
+            super(left, right);
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return left.getArray(rec).arrayEquals(right.getArray(rec));
+            return negated != left.getArray(rec).arrayEquals(right.getArray(rec));
         }
 
         @Override
@@ -83,17 +82,17 @@ public class EqDoubleArrayFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getRight() {
-            return right;
+        public final String getName() {
+            if (negated) {
+                return "!=";
+            } else {
+                return "=";
+            }
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(left);
-            if (negated) {
-                sink.val('!');
-            }
-            sink.val('=').val(right);
+        public Function getRight() {
+            return right;
         }
     }
 }
