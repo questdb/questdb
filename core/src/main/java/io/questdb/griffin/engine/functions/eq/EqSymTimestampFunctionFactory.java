@@ -80,11 +80,11 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
         }
 
 
-        if (timestampFunc.isRuntimeConstant()) {
+        if (timestampFunc.isRuntimeConstant() && !symbolFunc.isNonDeterministic()) {
             return new VarSymbolRuntimeConstTimestampFunction(symbolFunc, timestampFunc);
         }
 
-        if (timestampFunc.isConstant()) {
+        if (timestampFunc.isConstant() && !symbolFunc.isNonDeterministic()) {
             return new VarSymbolConstTimestampFunction(symbolFunc, timestampFunc, timestampFunc.getTimestamp(null));
         }
 
