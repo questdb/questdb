@@ -363,6 +363,16 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLevelTwoPrice() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ask_price DOUBLE[], ask_size DOUBLE[])");
+            execute("INSERT INTO tango VALUES (ARRAY[1.0, 2], ARRAY[1.0, 1])");
+            assertSql("l2\n1.0\n", "SELECT l2price_arr(1.0, ask_price, ask_size) l2 FROM tango");
+            assertSql("l2\n1.5\n", "SELECT l2price_arr(2.0, ask_price, ask_size) l2 FROM tango");
+        });
+    }
+
+    @Test
     public void testMultiplyArray() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (left DOUBLE[][], right DOUBLE[][])");
