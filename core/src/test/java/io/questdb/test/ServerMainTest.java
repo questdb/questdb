@@ -655,7 +655,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.context.ilp.ping\tQDB_HTTP_CONTEXT_ILP_PING\t\tdefault\tfalse\tfalse\n" +
                                     "http.context.settings\tQDB_HTTP_CONTEXT_SETTINGS\t\tdefault\tfalse\tfalse\n" +
                                     "http.context.warnings\tQDB_HTTP_CONTEXT_WARNINGS\t\tdefault\tfalse\tfalse\n" +
-                                    "cairo.max.array.element.count\tQDB_CAIRO_MAX_ARRAY_ELEMENT_COUNT\t10000000\tdefault\tfalse\tfalse"
+                                    "cairo.max.array.element.count\tQDB_CAIRO_MAX_ARRAY_ELEMENT_COUNT\t10000000\tdefault\tfalse\tfalse\n" +
+                                    "telemetry.db.size.estimate.timeout\tQDB_TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT\t1000\tdefault\tfalse\tfalse\n"
                             )
                                     .split("\n");
 

@@ -441,6 +441,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     TELEMETRY_DISABLE_COMPLETELY("telemetry.disable.completely"),
     TELEMETRY_QUEUE_CAPACITY("telemetry.queue.capacity"),
     TELEMETRY_HIDE_TABLES("telemetry.hide.tables"),
+    TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT("telemetry.db.size.estimate.timeout"),
     PG_UPDATE_CACHE_ENABLED("pg.update.cache.enabled"),
     PG_UPDATE_CACHE_BLOCK_COUNT("pg.update.cache.block.count"),
     PG_UPDATE_CACHE_ROW_COUNT("pg.update.cache.row.count"),
