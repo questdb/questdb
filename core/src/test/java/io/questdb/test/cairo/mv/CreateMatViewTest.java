@@ -161,7 +161,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "materialized view creation and refreshing is disabled");
+                TestUtils.assertContains(e.getFlyweightMessage(), "materialized views are disabled");
             }
             assertNull(getMatViewDefinition("test"));
         });
@@ -514,7 +514,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (" + fill + ") partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "FILL is not supported for materialized view");
+                TestUtils.assertContains(e.getFlyweightMessage(), "FILL is not supported for materialized views");
             }
         });
     }
@@ -529,13 +529,13 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (" + from + ") partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "FROM is not supported for materialized view");
+                TestUtils.assertContains(e.getFlyweightMessage(), "FROM-TO is not supported for materialized views");
             }
             try {
                 execute("create materialized view test as (" + to + ") partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "TO is not supported for materialized view");
+                TestUtils.assertContains(e.getFlyweightMessage(), "FROM-TO is not supported for materialized views");
             }
         });
     }
@@ -549,7 +549,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (" + fill + ") partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "FILL is not supported for materialized view");
+                TestUtils.assertContains(e.getFlyweightMessage(), "FILL is not supported for materialized views");
             }
         });
     }
@@ -564,13 +564,13 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (" + from + ") partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "FROM is not supported for materialized view");
+                TestUtils.assertContains(e.getFlyweightMessage(), "FROM-TO is not supported for materialized views");
             }
             try {
                 execute("create materialized view test as (" + to + ") partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "TO is not supported for materialized view");
+                TestUtils.assertContains(e.getFlyweightMessage(), "FROM-TO is not supported for materialized views");
             }
         });
     }

@@ -816,7 +816,7 @@ public class SqlParser {
         final CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch' or 'materialized'");
         if (isMaterializedKeyword(tok)) {
             if (!configuration.isMatViewEnabled()) {
-                throw SqlException.$(lexer.lastTokenPosition(), "materialized view creation and refreshing is disabled");
+                throw SqlException.$(lexer.lastTokenPosition(), "materialized views are disabled");
             }
             return parseCreateMatView(lexer, executionContext, sqlParserCallback);
         }
@@ -891,36 +891,24 @@ public class SqlParser {
             // check for all nested models
             QueryModel m = nestedModel;
             while (m != null) {
-                ExpressionNode sampleByFrom = m.getSampleByFrom();
-                if (sampleByFrom != null) {
-                    throw SqlException.position(sampleByFrom.position).put("FROM is not supported for materialized views");
+                if (m.getSampleByFrom() != null || m.getSampleByTo() != null) {
+                    final int position = m.getSampleByFrom() != null ? m.getSampleByFrom().position : m.getSampleByTo().position;
+                    throw SqlException.position(position).put("FROM-TO is not supported for materialized views");
                 }
-                m = m.getNestedModel();
-            }
-
-            m = nestedModel;
-            while (m != null) {
-                ExpressionNode sampleByTo = m.getSampleByTo();
-                if (sampleByTo != null) {
-                    throw SqlException.position(sampleByTo.position).put("TO is not supported for materialized views");
-                }
-                m = m.getNestedModel();
-            }
-
-            m = nestedModel;
-            while (m != null) {
-                ObjList<ExpressionNode> sampleByFill = m.getSampleByFill();
+                final ObjList<ExpressionNode> sampleByFill = m.getSampleByFill();
                 if (sampleByFill != null && sampleByFill.size() > 0) {
                     throw SqlException.position(sampleByFill.get(0).position).put("FILL is not supported for materialized views");
                 }
                 m = m.getNestedModel();
             }
 
-            if (nestedModel.getSampleByTimezoneName() != null) {
-                builder.setTimeZone(unquote(nestedModel.getSampleByTimezoneName().token).toString());
-            }
-            if (nestedModel.getSampleByOffset() != null) {
-                builder.setTimeZoneOffset(unquote(nestedModel.getSampleByOffset().token).toString());
+            if (nestedModel != null) {
+                if (nestedModel.getSampleByTimezoneName() != null) {
+                    builder.setTimeZone(unquote(nestedModel.getSampleByTimezoneName().token).toString());
+                }
+                if (nestedModel.getSampleByOffset() != null) {
+                    builder.setTimeZoneOffset(unquote(nestedModel.getSampleByOffset().token).toString());
+                }
             }
 
             // optimize mat view query
@@ -964,7 +952,8 @@ public class SqlParser {
                 throw SqlException.position(timestamp.position).put("TIMESTAMP column does not exist [name=").put(timestamp.token).put(']');
             }
             final int timestampType = timestampModel.getColumnType();
-            if (timestampType != ColumnType.TIMESTAMP && timestampType != ColumnType.UNDEFINED) { // type can be -1 for create table as select because types aren't known yet
+            // type can be -1 for create table as select because types aren't known yet
+            if (timestampType != ColumnType.TIMESTAMP && timestampType != ColumnType.UNDEFINED) {
                 throw SqlException.position(timestamp.position).put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampType)).put(']');
             }
             createTableOperationBuilder.setTimestampExpr(timestamp);
