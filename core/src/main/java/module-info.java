@@ -202,6 +202,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.eq.EqGeoHashStrFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqUuidFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqUuidStrFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqDoubleArrayFunctionFactory,
 
             //contains
             io.questdb.griffin.engine.functions.eq.ContainsIPv4StrFunctionFactory,

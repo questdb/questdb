@@ -51,6 +51,13 @@ public abstract class ArrayView implements QuietCloseable {
         }
     }
 
+    public boolean arrayEquals(ArrayView other) {
+        if (this.getDimCount() != other.getDimCount() || !this.shape.equals(other.shape)) {
+            return false;
+        }
+        return arrayEqualsRecursive(0, 0, other, 0);
+    }
+
     @Override
     public void close() {
     }
@@ -132,6 +139,34 @@ public abstract class ArrayView implements QuietCloseable {
                 flatIndex += stride;
             }
         }
+    }
+
+    private boolean arrayEqualsRecursive(int dim, int flatIndexThis, ArrayView other, int flatIndexOther) {
+        assert ColumnType.isDouble(ColumnType.decodeArrayElementType(this.type)) : "implemented only for double";
+
+        final int count = getDimLen(dim);
+        final int strideThis = getStride(dim);
+        final int strideOther = other.getStride(dim);
+        final boolean atDeepestDim = dim == getDimCount() - 1;
+        if (atDeepestDim) {
+            for (int i = 0; i < count; i++) {
+                if (flatView.getDouble(flatViewOffset + flatIndexThis) != other.flatView.getDouble(
+                        other.flatViewOffset + flatIndexOther)) {
+                    return false;
+                }
+                flatIndexThis += strideThis;
+                flatIndexOther += strideOther;
+            }
+        } else {
+            for (int i = 0; i < count; i++) {
+                if (!arrayEqualsRecursive(dim + 1, flatIndexThis, other, flatIndexOther)) {
+                    return false;
+                }
+                flatIndexThis += strideThis;
+                flatIndexOther += strideOther;
+            }
+        }
+        return true;
     }
 
     protected final BorrowedFlatArrayView borrowedFlatView() {

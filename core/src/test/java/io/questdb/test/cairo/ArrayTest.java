@@ -280,6 +280,32 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEqualsDifferentDimensionality() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (left DOUBLE[][], right DOUBLE[])");
+            execute("INSERT INTO tango VALUES (ARRAY[[1.0, 3]], ARRAY[1.0, 3])"
+            );
+            assertSql("eq\nfalse\n", "SELECT (left = right) eq FROM tango");
+        });
+    }
+
+    @Test
+    public void testEqualsSameDimensionality() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (left DOUBLE[][], right DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[1.0, 3]], ARRAY[[1.0, 3]]), " +
+                    "(ARRAY[[1.0, 3], [5, 7]], ARRAY[[1.0, 3], [5, 7]]), " +
+                    "(ARRAY[[1.0, 3]], ARRAY[[1.0, 4]]), " +
+                    "(ARRAY[[1.0, 3]], ARRAY[[1.0, 3, 3]]), " +
+                    "(ARRAY[[1.0, 3, 3]], ARRAY[[1.0, 3]])"
+
+            );
+            assertSql("eq\ntrue\ntrue\nfalse\nfalse\nfalse\n", "SELECT (left = right) eq FROM tango");
+        });
+    }
+
+    @Test
     public void testInsertAsSelectDoubleNoWAL() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table blah (a double[][])");
