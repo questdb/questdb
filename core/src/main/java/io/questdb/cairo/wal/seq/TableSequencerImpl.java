@@ -87,11 +87,11 @@ public class TableSequencerImpl implements TableSequencer {
         final FilesFacade ff = configuration.getFilesFacade();
         try {
             path = new Path();
-            path.of(configuration.getRoot());
+            path.of(configuration.getDbRoot());
             path.concat(tableToken.getDirName()).concat(SEQ_DIR);
             rootLen = path.size();
 
-            metadata = new SequencerMetadata(ff);
+            metadata = new SequencerMetadata(ff, configuration.getCommitMode());
             metadataSvc = new SequencerMetadataService(metadata, tableToken);
             walIdGenerator = new IDGenerator(configuration, WAL_INDEX_FILE_NAME);
             tableTransactionLog = new TableTransactionLog(configuration);

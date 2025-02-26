@@ -147,6 +147,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
             return enablePgWire;
         }
     };
+    private final WorkerPoolConfiguration confMatViewRefreshPool;
     private final WorkerPoolConfiguration confWalApplyPool;
     private final int workerCountHttp;
     private final HttpServerConfiguration confHttpMin = new DefaultHttpServerConfiguration() {
@@ -157,7 +158,8 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     };
 
     public TestServerConfiguration(
-            CharSequence root,
+            CharSequence dbRoot,
+            CharSequence installRoot,
             boolean enableHttp,
             boolean enableLineTcp,
             boolean enablePgWire,
@@ -167,7 +169,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
             int workerCountLineTcpWriter,
             FactoryProvider factoryProvider
     ) {
-        super(root);
+        super(dbRoot, installRoot);
         // something we can override in test
         this.workerCountHttp = workerCountHttp;
         this.enableHttp = enableHttp;
@@ -181,7 +183,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
                 return false;
             }
         };
-        this.cairoConfiguration = new DefaultCairoConfiguration(root) {
+        this.cairoConfiguration = new DefaultCairoConfiguration(dbRoot) {
             @Override
             public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                 return circuitBreakerConfiguration;
@@ -198,6 +200,7 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
                 return TestUtils.getCsvRoot();
             }
         };
+        this.confMatViewRefreshPool = () -> 0; // shared pool
         this.confWalApplyPool = () -> 0;
         this.confSharedPool = () -> workerCountShared;
         this.confLineTcpIOPool = () -> workerCountLineTcpIO;
@@ -237,6 +240,11 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     @Override
     public PGWireConfiguration getPGWireConfiguration() {
         return confPgWire;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
+        return confMatViewRefreshPool;
     }
 
     @Override

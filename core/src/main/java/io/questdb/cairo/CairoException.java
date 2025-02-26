@@ -47,7 +47,8 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static final int METADATA_VALIDATION_RECOVERABLE = TABLE_DROPPED - 1;
     public static final int PARTITION_MANIPULATION_RECOVERABLE = METADATA_VALIDATION_RECOVERABLE - 1;
     public static final int TABLE_DOES_NOT_EXIST = PARTITION_MANIPULATION_RECOVERABLE - 1;
-    public static final int APPLY_TXN_BLOCK_FAILED = TABLE_DOES_NOT_EXIST - 1;
+    public static final int MAT_VIEW_DOES_NOT_EXIST = TABLE_DOES_NOT_EXIST - 1;
+    public static final int APPLY_TXN_BLOCK_FAILED = MAT_VIEW_DOES_NOT_EXIST - 1;
     public static final int NON_CRITICAL = -1;
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
@@ -118,6 +119,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public static boolean isCairoOomError(Throwable t) {
         return t instanceof CairoException && ((CairoException) t).isOutOfMemory();
+    }
+
+    public static CairoException matViewDoesNotExist(CharSequence matViewName) {
+        return critical(MAT_VIEW_DOES_NOT_EXIST).put("materialized view does not exist [view=").put(matViewName).put(']');
     }
 
     public static CairoException nonCritical() {
@@ -324,6 +329,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public CairoException setOutOfMemory(boolean outOfMemory) {
         this.outOfMemory = outOfMemory;
         return this;
+    }
+
+    public boolean tableDoesNotExist() {
+        return errno == TABLE_DOES_NOT_EXIST;
     }
 
     @Override

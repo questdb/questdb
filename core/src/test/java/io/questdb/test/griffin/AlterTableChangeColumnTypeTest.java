@@ -24,7 +24,11 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -33,7 +37,12 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8String;
@@ -49,7 +58,6 @@ import org.junit.runners.Parameterized;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 @RunWith(Parameterized.class)
@@ -845,7 +853,6 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     public void testSymbolToFixedConversions() throws Exception {
         assertMemoryLeak(() -> {
             assumeNonWal();
-
             testConvertFixedToVar("symbol");
         });
     }
@@ -873,10 +880,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             TableToken xTbl = engine.verifyTableName("x");
 
-            Path path = Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(xTbl).concat("wal1").concat("0").concat("s.d");
+            Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(xTbl).concat("wal1").concat("0").concat("s.d");
             Assert.assertTrue(Files.exists(path.$()));
 
-            path = Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(xTbl).concat("wal1").concat("0").concat("s.i");
+            path = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(xTbl).concat("wal1").concat("0").concat("s.i");
             Assert.assertFalse(Files.exists(path.$()));
 
             execute("insert into x(s, timestamp) values(1, '2024-02-04T00:00:00.000Z')", sqlExecutionContext);
@@ -964,13 +971,13 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         execute("alter table x alter column f64 type " + varTypeName, sqlExecutionContext);
         execute("alter table x alter column f32 type " + varTypeName, sqlExecutionContext);
         execute("alter table x alter column ch type " + varTypeName, sqlExecutionContext);
+        execute("alter table x alter column b type " + varTypeName, sqlExecutionContext);
         execute("alter table x alter column ts type " + varTypeName, sqlExecutionContext);
         execute("alter table x alter column dt type " + varTypeName, sqlExecutionContext);
-        execute("alter table x alter column b type " + varTypeName, sqlExecutionContext);
 
         assertSqlCursorsConvertedStrings(
-                "select * from x",
-                "select * from y"
+                "select * from y",
+                "select * from x"
         );
     }
 
@@ -998,7 +1005,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         execute("insert into x(timestamp) values('2018-01-03T23:23')", sqlExecutionContext);
 
         execute("create table y as (" +
-                "select cast(guid as " + varType + ") as guid," +
+                "select" +
+                " cast(guid as " + varType + ") as guid," +
                 " cast(cast(rint as string) as " + varType + ") as rint," +
                 " cast(cast(ip as string) as " + varType + ") as ip," +
                 " cast(cast(i64 as string) as " + varType + ") as i64," +
@@ -1014,7 +1022,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                 "timestamp (timestamp) partition by DAY;", sqlExecutionContext);
 
         // Insert garbage data
-        execute("insert into y(guid, rint, ip, i64, i8, i16, f64, f32, ch, ts, dt, timestamp) values('abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', '2018-01-03T23:23:10')", sqlExecutionContext);
+        execute("insert into y(guid, rint, ip, i64, i8, i16, f64, f32, ch, ts, dt, timestamp) values('abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', '', 'abc', 'abc', '2018-01-03T23:23:10')", sqlExecutionContext);
         // Expect nulls
         execute("insert into x(timestamp) values('2018-01-03T23:23:10')", sqlExecutionContext);
 

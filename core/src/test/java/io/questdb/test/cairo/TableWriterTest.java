@@ -657,7 +657,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
         };
 
-        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(AbstractCairoTest.configuration.getRoot()) {
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(AbstractCairoTest.configuration.getDbRoot()) {
             @Override
             public @NotNull FilesFacade getFilesFacade() {
                 return ff;
@@ -682,7 +682,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
         };
 
-        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(AbstractCairoTest.configuration.getRoot()) {
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(AbstractCairoTest.configuration.getDbRoot()) {
             @Override
             public @NotNull FilesFacade getFilesFacade() {
                 return ff;
@@ -2893,36 +2893,36 @@ public class TableWriterTest extends AbstractCairoTest {
                 // create random directories
                 FilesFacade ff = configuration.getFilesFacade();
 
-                path.of(configuration.getRoot()).concat(PRODUCT_FS).concat("somethingortheother").slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT_FS).concat("somethingortheother").slash$();
                 Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
 
-                path.of(configuration.getRoot()).concat(PRODUCT_FS).concat("default").slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT_FS).concat("default").slash$();
                 Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
 
-                path.of(configuration.getRoot()).concat(PRODUCT_FS).concat("0001-01-01.123").slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT_FS).concat("0001-01-01.123").slash$();
                 Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
 
-                path.of(configuration.getRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR).slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR).slash$();
                 Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
 
-                path.of(configuration.getRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR_DEPRECATED).slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR_DEPRECATED).slash$();
                 Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
 
                 newOffPoolWriter(configuration, PRODUCT).close();
 
-                path.of(configuration.getRoot()).concat(PRODUCT_FS).concat("default").slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT_FS).concat("default").slash$();
                 Assert.assertTrue(ff.exists(path.$()));
 
-                path.of(configuration.getRoot()).concat(PRODUCT_FS).concat("somethingortheother").slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT_FS).concat("somethingortheother").slash$();
                 Assert.assertTrue(ff.exists(path.$()));
 
-                path.of(configuration.getRoot()).concat(PRODUCT_FS).concat("0001-01-01.123").slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT_FS).concat("0001-01-01.123").slash$();
                 Assert.assertFalse(ff.exists(path.$()));
 
-                path.of(configuration.getRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR).slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR).slash$();
                 Assert.assertTrue(ff.exists(path.$()));
 
-                path.of(configuration.getRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR_DEPRECATED).slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR_DEPRECATED).slash$();
                 Assert.assertTrue(ff.exists(path.$()));
             }
         });
@@ -2937,36 +2937,36 @@ public class TableWriterTest extends AbstractCairoTest {
                 // create random directories
                 FilesFacade ff = configuration.getFilesFacade();
 
-                path.of(configuration.getRoot()).concat(PRODUCT).concat("somethingortheother").slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT).concat("somethingortheother").slash$();
                 Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
 
-                path.of(configuration.getRoot()).concat(PRODUCT).concat("default").slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT).concat("default").slash$();
                 Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
 
-                path.of(configuration.getRoot()).concat(PRODUCT).concat("0001-01-01.123").slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT).concat("0001-01-01.123").slash$();
                 Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
 
-                path.of(configuration.getRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR).slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR).slash$();
                 Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
 
-                path.of(configuration.getRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR_DEPRECATED).slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR_DEPRECATED).slash$();
                 Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
 
                 newOffPoolWriter(configuration, PRODUCT).close();
 
-                path.of(configuration.getRoot()).concat(PRODUCT).concat("default").slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT).concat("default").slash$();
                 Assert.assertTrue(ff.exists(path.$()));
 
-                path.of(configuration.getRoot()).concat(PRODUCT).concat("somethingortheother").slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT).concat("somethingortheother").slash$();
                 Assert.assertTrue(ff.exists(path.$()));
 
-                path.of(configuration.getRoot()).concat(PRODUCT).concat("0001-01-01.123").slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT).concat("0001-01-01.123").slash$();
                 Assert.assertTrue(ff.exists(path.$()));
 
-                path.of(configuration.getRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR).slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR).slash$();
                 Assert.assertTrue(ff.exists(path.$()));
 
-                path.of(configuration.getRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR_DEPRECATED).slash$();
+                path.of(configuration.getDbRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR_DEPRECATED).slash$();
                 Assert.assertTrue(ff.exists(path.$()));
             }
         });

@@ -105,7 +105,7 @@ public class TableReadFailTest extends AbstractCairoTest {
 
                 // home path at txn file
                 TableToken tableToken = engine.verifyTableName(x);
-                path.of(configuration.getRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
+                path.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
 
                 try (TableWriter writer = newOffPoolWriter(configuration, x)) {
                     for (int i = 0; i < N; i++) {

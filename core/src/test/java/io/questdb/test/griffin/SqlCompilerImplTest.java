@@ -44,8 +44,9 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
-import io.questdb.griffin.engine.ops.DropTableOperationBuilder;
+import io.questdb.griffin.engine.ops.GenericDropOperationBuilder;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
@@ -70,6 +71,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -106,6 +108,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAX_RECURSION, 512);
+        node1.setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
         super.setUp();
     }
 
@@ -5670,7 +5673,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}", sink);
                     }
                 }
-                engine.dropTable(path, tt);
+                engine.dropTableOrMatView(path, tt);
             }
         });
     }
@@ -5926,7 +5929,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     }
                 } catch (Exception e) {
                     ddlError.set(true);
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                 } finally {
                     Path.clearThreadLocals();
                     TestUtils.await(barrier);
@@ -6508,6 +6511,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 } catch (Exception e) {
                     Assert.assertTrue(compiler.createTableSuffixCalled);
                 }
+
+                try {
+                    execute(compiler, "create table base_price (sym varchar, price double, ts timestamp) timestamp(ts) partition by DAY WAL", sqlExecutionContext);
+                    execute(compiler, "create materialized view price_1h as (select sym, last(price) as price, ts from base_price sample by 1h) partition by DAY foobar", sqlExecutionContext);
+                    Assert.fail();
+                } catch (Exception e) {
+                    Assert.assertTrue(compiler.createMatViewSuffixCalled);
+                }
             }
         });
     }
@@ -6845,6 +6856,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         boolean addColumnSuffixCalled;
         boolean compileDropOtherCalled;
         boolean compileDropTableExtCalled;
+        boolean createMatViewSuffixCalled;
         boolean createTableSuffixCalled;
         boolean dropTableCalled;
         boolean parseShowSqlCalled;
@@ -6856,11 +6868,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
+        public CreateMatViewOperationBuilder parseCreateMatViewExt(
+                GenericLexer lexer,
+                SecurityContext securityContext,
+                CreateMatViewOperationBuilder builder,
+                @Nullable CharSequence tok
+        ) throws SqlException {
+            createMatViewSuffixCalled = true;
+            return super.parseCreateMatViewExt(lexer, securityContext, builder, tok);
+        }
+
+        @Override
         public CreateTableOperationBuilder parseCreateTableExt(
                 GenericLexer lexer,
                 SecurityContext securityContext,
                 CreateTableOperationBuilder builder,
-                CharSequence tok
+                @Nullable CharSequence tok
         ) throws SqlException {
             createTableSuffixCalled = true;
             return super.parseCreateTableExt(lexer, securityContext, builder, tok);
@@ -6890,20 +6913,20 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
-        protected void compileDropOther(@NotNull SqlExecutionContext executionContext, @NotNull CharSequence tok, int position) throws SqlException {
-            compileDropOtherCalled = true;
-            super.compileDropOther(executionContext, tok, position);
-        }
-
-        @Override
-        protected void compileDropTableExt(
+        protected void compileDropExt(
                 @NotNull SqlExecutionContext executionContext,
-                @NotNull DropTableOperationBuilder opBuilder,
+                @NotNull GenericDropOperationBuilder opBuilder,
                 @NotNull CharSequence tok,
                 int position
         ) throws SqlException {
             compileDropTableExtCalled = true;
-            super.compileDropTableExt(executionContext, opBuilder, tok, position);
+            super.compileDropExt(executionContext, opBuilder, tok, position);
+        }
+
+        @Override
+        protected void compileDropOther(@NotNull SqlExecutionContext executionContext, @NotNull CharSequence tok, int position) throws SqlException {
+            compileDropOtherCalled = true;
+            super.compileDropOther(executionContext, tok, position);
         }
 
         @Override

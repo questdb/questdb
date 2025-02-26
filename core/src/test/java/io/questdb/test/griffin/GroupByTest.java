@@ -70,12 +70,23 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test2FailOnAggregateFunctionAliasInGroupByClause() throws Exception {
+    public void test2FailOnAggregateFunctionAliasInGroupByClause1() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x long, y long);");
             assertError(
                     "select x, avg(x) as agx, avg(y) from t group by agx ",
                     "[48] aggregate functions are not allowed in GROUP BY"
+            );
+        });
+    }
+
+    @Test
+    public void test2FailOnAggregateFunctionAliasInGroupByClause2() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, y long);");
+            assertError(
+                    "select x, 2*avg(y) agy from t group by agy;",
+                    "[39] aggregate functions are not allowed in GROUP BY"
             );
         });
     }
@@ -2424,7 +2435,8 @@ public class GroupByTest extends AbstractCairoTest {
                 true,
                 true
         );
-        assertSql(expected,
+        assertSql(
+                expected,
                 "WITH x_sample AS (\n" +
                         "  SELECT id, uuid, url, sum(metric) m_sum\n" +
                         "  FROM x\n" +
@@ -2433,7 +2445,8 @@ public class GroupByTest extends AbstractCairoTest {
                         ")\n" +
                         "SELECT url, count(distinct uuid) u_count, count() cnt, avg(m_sum) avg_m_sum\n" +
                         "FROM x_sample\n" +
-                        "GROUP BY url");
+                        "GROUP BY url"
+        );
     }
 
     @Test

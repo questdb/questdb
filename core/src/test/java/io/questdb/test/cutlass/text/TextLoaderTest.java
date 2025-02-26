@@ -2283,7 +2283,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
             try (Path path = new Path()) {
                 CharSequence dirName = "test" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-                path.of(configuration.getRoot()).concat(dirName).$();
+                path.of(configuration.getDbRoot()).concat(dirName).$();
                 Files.touch(path.$());
             }
 

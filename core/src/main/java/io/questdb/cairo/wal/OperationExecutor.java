@@ -72,7 +72,10 @@ class OperationExecutor implements Closeable {
         Misc.free(executionContext);
     }
 
-    public void executeAlter(TableWriter tableWriter, CharSequence alterSql, long seqTxn) throws SqlException {
+    /**
+     * Returns result of underlying {@link AlterOperation#matViewInvalidationReason()}.
+     */
+    public String executeAlter(TableWriter tableWriter, CharSequence alterSql, long seqTxn) throws SqlException {
         final TableToken tableToken = tableWriter.getTableToken();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             executionContext.remapTableNameResolutionTo(tableToken);
@@ -80,6 +83,7 @@ class OperationExecutor implements Closeable {
             try (AlterOperation alterOp = compiledQuery.getAlterOperation()) {
                 alterOp.withContext(executionContext);
                 tableWriter.apply(alterOp, seqTxn);
+                return alterOp.matViewInvalidationReason();
             }
         } catch (SqlException ex) {
             tableWriter.markSeqTxnCommitted(seqTxn);

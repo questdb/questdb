@@ -357,7 +357,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             // Apply Job should handle inconsistencies between _event and _event.i files
             // as long as both have the committed transactions.
             try (Path path = new Path()) {
-                path.concat(configuration.getRoot()).concat(engine.verifyTableName(tableName))
+                path.concat(configuration.getDbRoot()).concat(engine.verifyTableName(tableName))
                         .concat(WalUtils.WAL_NAME_BASE).put("1").concat("0")
                         .concat(WalUtils.EVENT_FILE_NAME).$();
                 FilesFacade ff = engine.getConfiguration().getFilesFacade();
@@ -394,7 +394,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
         TableToken tt = engine.verifyTableName(tableName);
         try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
-            Path p = Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(tt).concat(TXN_FILE_NAME);
+            Path p = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(tt).concat(TXN_FILE_NAME);
             tw.ofRW(p.$(), PartitionBy.DAY);
             tw.setLagTxnCount(1);
             tw.setLagRowCount(1000);
@@ -408,7 +408,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
         engine.load();
 
         try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
-            Path p = Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(tt).concat(TXN_FILE_NAME);
+            Path p = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(tt).concat(TXN_FILE_NAME);
             tw.ofRW(p.$(), PartitionBy.DAY);
             Assert.assertEquals(0, tw.getLagRowCount());
             Assert.assertEquals(0, tw.getLagTxnCount());
@@ -428,7 +428,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
         engine.load();
 
         try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
-            Path p = Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(tt).concat(TXN_FILE_NAME);
+            Path p = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(tt).concat(TXN_FILE_NAME);
             tw.ofRW(p.$(), PartitionBy.DAY);
             Assert.assertEquals(0, tw.getLagRowCount());
             Assert.assertEquals(0, tw.getLagTxnCount());
@@ -1821,21 +1821,21 @@ public class WalTableSqlTest extends AbstractCairoTest {
     }
 
     private void checkTableFilesExist(TableToken sysTableName, String partition, String fileName, boolean value) {
-        Path sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName).concat(TXN_FILE_NAME);
+        Path sysPath = Path.PATH.get().of(configuration.getDbRoot()).concat(sysTableName).concat(TXN_FILE_NAME);
         Assert.assertEquals(Utf8s.toString(sysPath), value, Files.exists(sysPath.$()));
 
-        sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName).concat(COLUMN_VERSION_FILE_NAME);
+        sysPath = Path.PATH.get().of(configuration.getDbRoot()).concat(sysTableName).concat(COLUMN_VERSION_FILE_NAME);
         Assert.assertEquals(Utf8s.toString(sysPath), value, Files.exists(sysPath.$()));
 
-        sysPath.of(configuration.getRoot()).concat(sysTableName).concat("sym.c");
+        sysPath.of(configuration.getDbRoot()).concat(sysTableName).concat("sym.c");
         Assert.assertEquals(Utf8s.toString(sysPath), value, Files.exists(sysPath.$()));
 
-        sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName).concat(partition).concat(fileName);
+        sysPath = Path.PATH.get().of(configuration.getDbRoot()).concat(sysTableName).concat(partition).concat(fileName);
         Assert.assertEquals(Utf8s.toString(sysPath), value, Files.exists(sysPath.$()));
     }
 
     private void checkWalFilesRemoved(TableToken sysTableName) {
-        Path sysPath = Path.PATH.get().of(configuration.getRoot()).concat(sysTableName).concat(WalUtils.WAL_NAME_BASE).put(1);
+        Path sysPath = Path.PATH.get().of(configuration.getDbRoot()).concat(sysTableName).concat(WalUtils.WAL_NAME_BASE).put(1);
         Assert.assertTrue(Utf8s.toString(sysPath), Files.exists(sysPath.$()));
 
         engine.releaseInactiveTableSequencers();
@@ -1843,10 +1843,10 @@ public class WalTableSqlTest extends AbstractCairoTest {
             job.run(0);
         }
 
-        sysPath.of(configuration.getRoot()).concat(sysTableName).concat(WalUtils.WAL_NAME_BASE).put(1);
+        sysPath.of(configuration.getDbRoot()).concat(sysTableName).concat(WalUtils.WAL_NAME_BASE).put(1);
         Assert.assertFalse(Utf8s.toString(sysPath), Files.exists(sysPath.$()));
 
-        sysPath.of(configuration.getRoot()).concat(sysTableName).concat(SEQ_DIR);
+        sysPath.of(configuration.getDbRoot()).concat(sysTableName).concat(SEQ_DIR);
         Assert.assertFalse(Utf8s.toString(sysPath), Files.exists(sysPath.$()));
     }
 

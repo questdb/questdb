@@ -266,14 +266,14 @@ public class Bootstrap {
     }
 
     public static void reportCrashFiles(CairoConfiguration cairoConfiguration, Log log) {
-        final CharSequence dbRoot = cairoConfiguration.getRoot();
+        final CharSequence dbRoot = cairoConfiguration.getDbRoot();
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         final int maxFiles = cairoConfiguration.getMaxCrashFiles();
         DirectUtf8StringZ name = new DirectUtf8StringZ();
-        try (
-                Path path = new Path().of(dbRoot).slash();
-                Path other = new Path().of(dbRoot).slash()
-        ) {
+        try (Path path = new Path(); Path other = new Path()) {
+            path.of(dbRoot).slash();
+            other.of(dbRoot).slash();
+
             int plen = path.size();
             AtomicInteger counter = new AtomicInteger(0);
             FilesFacadeImpl.INSTANCE.iterateDir(path.$(), (pUtf8NameZ, type) -> {
@@ -468,7 +468,7 @@ public class Bootstrap {
 
     private static void verifyFileOpts(Path path, CairoConfiguration cairoConfiguration) {
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
-        path.of(cairoConfiguration.getRoot()).concat("_verify_").put(cairoConfiguration.getRandom().nextPositiveInt()).put(".d").$();
+        path.of(cairoConfiguration.getDbRoot()).concat("_verify_").put(cairoConfiguration.getRandom().nextPositiveInt()).put(".d").$();
         long fd = ff.openRW(path.$(), cairoConfiguration.getWriterFileOpenOpts());
         try {
             if (fd > -1) {
@@ -561,7 +561,7 @@ public class Bootstrap {
             log.advisoryW().$(" - THIS IS READ ONLY INSTANCE").$();
         }
         try (Path path = new Path()) {
-            verifyFileSystem(path, cairoConfig.getRoot(), "db", true);
+            verifyFileSystem(path, cairoConfig.getDbRoot(), "db", true);
             verifyFileSystem(path, cairoConfig.getBackupRoot(), "backup", true);
             verifyFileSystem(path, cairoConfig.getCheckpointRoot(), TableUtils.CHECKPOINT_DIRECTORY, true);
             verifyFileSystem(path, cairoConfig.getLegacyCheckpointRoot(), TableUtils.LEGACY_CHECKPOINT_DIRECTORY, true);

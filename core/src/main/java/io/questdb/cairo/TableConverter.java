@@ -64,7 +64,7 @@ public class TableConverter {
             return null;
         }
 
-        final Path path = Path.getThreadLocal(configuration.getRoot());
+        final Path path = Path.getThreadLocal(configuration.getDbRoot());
         final int rootLen = path.size();
         final Utf8StringSink dirNameSink = Misc.getThreadLocalUtf8Sink();
         final FilesFacade ff = configuration.getFilesFacade();
@@ -95,7 +95,7 @@ public class TableConverter {
                             } else {
                                 final String tableName;
                                 try (final MemoryCMR mem = Vm.getCMRInstance()) {
-                                    final String name = TableUtils.readTableName(path.of(configuration.getRoot()).concat(dirNameSink), rootLen, mem, ff);
+                                    final String name = TableUtils.readTableName(path.of(configuration.getDbRoot()).concat(dirNameSink), rootLen, mem, ff);
                                     tableName = name != null ? name : dirName;
                                 }
 
@@ -103,7 +103,8 @@ public class TableConverter {
                                 boolean isProtected = tableFlagResolver.isProtected(tableName);
                                 boolean isSystem = tableFlagResolver.isSystem(tableName);
                                 boolean isPublic = tableFlagResolver.isPublic(tableName);
-                                final TableToken token = new TableToken(tableName, dirName, tableId, walEnabled, isSystem, isProtected, isPublic);
+                                boolean isMatView = isMatViewDefinitionFileExists(configuration, path, dirName);
+                                final TableToken token = new TableToken(tableName, dirName, tableId, isMatView, walEnabled, isSystem, isProtected, isPublic);
 
                                 if (txWriter == null) {
                                     txWriter = new TxWriter(ff, configuration);
@@ -168,6 +169,8 @@ public class TableConverter {
             final byte walType = ff.readNonNegativeByte(fd, 0);
             switch (walType) {
                 case TABLE_TYPE_WAL:
+                    // fall through
+                case TABLE_TYPE_MAT:
                     return true;
                 case TABLE_TYPE_NON_WAL:
                     return false;

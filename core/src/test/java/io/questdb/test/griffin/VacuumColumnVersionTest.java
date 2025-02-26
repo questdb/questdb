@@ -365,12 +365,12 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
                 String tableName = "testPurge2";
                 String[] partitions = update3ColumnsWithOpenReader(purgeJob, tableName);
 
-                Path path = Path.getThreadLocal(configuration.getRoot());
+                Path path = Path.getThreadLocal(configuration.getDbRoot());
                 TableToken tableToken = engine.verifyTableName(tableName);
                 path.concat(tableToken).concat(partitions[0]).concat("invalid_file.d");
                 FilesFacade ff = configuration.getFilesFacade();
                 ff.touch(path.$());
-                path.of(configuration.getRoot()).concat(tableToken).concat(partitions[0]).concat("x.d.abcd");
+                path.of(configuration.getDbRoot()).concat(tableToken).concat(partitions[0]).concat("x.d.abcd");
                 ff.touch(path.$());
 
                 String[] files = {"x.d"};
@@ -380,10 +380,10 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
                 assertFilesExist(partitions, tableName, files, ".2", false);
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
 
-                path.of(configuration.getRoot()).concat(tableToken).concat(partitions[0]).concat("x.d.abcd");
+                path.of(configuration.getDbRoot()).concat(tableToken).concat(partitions[0]).concat("x.d.abcd");
                 Assert.assertTrue(ff.exists(path.$()));
 
-                path.of(configuration.getRoot()).concat(tableToken).concat(partitions[0]).concat("invalid_file.d");
+                path.of(configuration.getDbRoot()).concat(tableToken).concat(partitions[0]).concat("invalid_file.d");
                 Assert.assertTrue(ff.exists(path.$()));
             }
         });
@@ -396,13 +396,13 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
                 String tableName = "testPurge3";
                 String[] partitions = update3ColumnsWithOpenReader(purgeJob, tableName);
 
-                Path path = Path.getThreadLocal(configuration.getRoot());
+                Path path = Path.getThreadLocal(configuration.getDbRoot());
                 TableToken tableToken = engine.verifyTableName(tableName);
                 path.concat(tableToken).concat("abcd").put(Files.SEPARATOR);
                 FilesFacade ff = configuration.getFilesFacade();
                 ff.mkdirs(path, configuration.getMkDirMode());
 
-                path.of(configuration.getRoot()).concat(tableToken).concat("2020-01-04.abcd").put(Files.SEPARATOR);
+                path.of(configuration.getDbRoot()).concat(tableToken).concat("2020-01-04.abcd").put(Files.SEPARATOR);
                 ff.mkdirs(path, configuration.getMkDirMode());
 
                 String[] files = {"x.d"};
@@ -412,11 +412,11 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
                 assertFilesExist(partitions, tableName, files, ".2", false);
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
 
-                path = Path.getThreadLocal(configuration.getRoot());
+                path = Path.getThreadLocal(configuration.getDbRoot());
                 path.concat(tableToken).concat("abcd").put(Files.SEPARATOR);
                 Assert.assertTrue(ff.exists(path.$()));
 
-                path.of(configuration.getRoot()).concat(tableToken).concat("2020-01-04.abcd").put(Files.SEPARATOR);
+                path.of(configuration.getDbRoot()).concat(tableToken).concat("2020-01-04.abcd").put(Files.SEPARATOR);
                 Assert.assertTrue(ff.exists(path.$()));
             }
         });
@@ -430,12 +430,12 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
     }
 
     private void assertFilesExist(String tableName, String partition, String[] files, String colSuffix, boolean exist) {
-        Path path = Path.getThreadLocal(configuration.getRoot());
+        Path path = Path.getThreadLocal(configuration.getDbRoot());
         TableToken tableToken = engine.verifyTableName(tableName);
 
         for (int i = files.length - 1; i > -1; i--) {
             String file = files[i];
-            path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat(file).put(colSuffix).$();
+            path.of(configuration.getDbRoot()).concat(tableToken).concat(partition).concat(file).put(colSuffix).$();
             Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
         }
     }

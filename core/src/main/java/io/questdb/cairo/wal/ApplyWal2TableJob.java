@@ -36,11 +36,14 @@ import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -81,6 +84,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final int lookAheadTransactionCount;
     private final WalMetrics metrics;
     private final MicrosecondClock microClock;
+    private final MatViewRefreshTask mvRefreshTask = new MatViewRefreshTask();
     private final OperationExecutor operationExecutor;
     private final long tableTimeQuotaMicros;
     private final Telemetry<TelemetryTask> telemetry;
@@ -117,7 +121,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         // Clean all the files inside table folder name except WAL directories and SEQ_DIR directory
         boolean allClean = true;
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken);
+        tempPath.of(engine.getConfiguration().getDbRoot()).concat(tableToken);
         int rootLen = tempPath.size();
 
         long p = ff.findFirst(tempPath.$());
@@ -197,7 +201,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             TableWriter writerToClose = null;
             try {
                 final CairoConfiguration configuration = engine.getConfiguration();
-                if (writer == null && TableUtils.exists(configuration.getFilesFacade(), tempPath, configuration.getRoot(), tableToken.getDirName()) == TABLE_EXISTS) {
+                if (writer == null && TableUtils.exists(configuration.getFilesFacade(), tempPath, configuration.getDbRoot(), tableToken.getDirName()) == TABLE_EXISTS) {
                     try {
                         writer = writerToClose = engine.getWriterUnsafe(tableToken, WAL_2_TABLE_WRITE_REASON);
                     } catch (EntryUnavailableException ex) {
@@ -229,7 +233,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
     private static boolean removeOrLog(Path path, FilesFacade ff) {
         if (!ff.removeQuiet(path.$())) {
-            LOG.info().$("could not remove, will retry [path=").utf8(", errno=").$(ff.errno()).I$();
+            LOG.info().$("could not remove, will retry [path=").$(path).$(", errno=").$(ff.errno()).I$();
             return false;
         }
         return true;
@@ -259,6 +263,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         final TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
         boolean isTerminating;
         boolean finishedAll = true;
+        long initialSeqTxn = writer.getSeqTxn();
+        // Default to incremental mat view refresh.
+        mvRefreshTask.clear();
+        mvRefreshTask.operation = MatViewRefreshTask.INCREMENTAL_REFRESH;
+        mvRefreshTask.baseTableToken = writer.getTableToken();
 
         try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, writer.getAppliedSeqTxn())) {
             TableMetadataChangeLog structuralChangeCursor = null;
@@ -269,7 +278,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 long physicalRowsAdded = 0;
                 long insertTimespan = 0;
 
-                tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken).slash();
+                tempPath.of(engine.getConfiguration().getDbRoot()).concat(tableToken).slash();
 
                 // Populate transactionMeta with timestamps of future transactions
                 // to avoid O3 commits by pre-calculating safe to commit timestamp for every commit.
@@ -290,7 +299,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         final long commitTimestamp = transactionLogCursor.getCommitTimestamp();
                         final long seqTxn = transactionLogCursor.getTxn();
 
-                        this.lastAttemptSeqTxn = seqTxn;
+                        lastAttemptSeqTxn = seqTxn;
                         if (seqTxn != writer.getAppliedSeqTxn() + 1) {
                             throw CairoException.critical(0)
                                     .put("unexpected sequencer transaction, expected ").put(writer.getAppliedSeqTxn() + 1)
@@ -322,7 +331,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     walTelemetryFacade.store(WAL_TXN_APPLY_START, tableToken, walId, seqTxn, -1L, -1L, start - commitTimestamp);
                                     writer.setSeqTxn(seqTxn);
                                     try {
-                                        structuralChangeCursor.next().apply(writer, true);
+                                        final TableMetadataChange metadataChangeOp = structuralChangeCursor.next();
+                                        metadataChangeOp.apply(writer, true);
+                                        final String matViewInvalidationReason = metadataChangeOp.matViewInvalidationReason();
+                                        if (matViewInvalidationReason != null) {
+                                            mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
+                                            mvRefreshTask.invalidationReason = matViewInvalidationReason;
+                                        }
                                     } catch (Throwable th) {
                                         // Don't mark transaction as applied if exception occurred
                                         writer.setSeqTxn(seqTxn - 1);
@@ -352,7 +367,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             default:
                                 // Always set full path when using thread static path
                                 operationExecutor.setNowAndFixClock(commitTimestamp);
-                                tempPath.of(engine.getConfiguration().getRoot()).concat(tableToken).slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+                                tempPath.of(engine.getConfiguration().getDbRoot()).concat(tableToken).slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                                 final long start = microClock.getTicks();
 
                                 long lastLoadedTxnDetails = writer.getWalTnxDetails().getLastSeqTxn();
@@ -419,6 +434,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             .$("ms, rate=").$(rowsAdded * 1000000L / Math.max(1, insertTimespan))
                             .$("rows/s, ampl=").$(Math.round(100.0 * physicalRowsAdded / rowsAdded) / 100.0)
                             .I$();
+                }
+
+                if (initialSeqTxn < writer.getSeqTxn()) {
+                    engine.notifyMatViewBaseCommit(mvRefreshTask, writer.getSeqTxn());
                 }
             } catch (Throwable th) {
                 // We could have been applying multiple txns, and we failed somewhere in the middle. The writer will
@@ -551,6 +570,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     writer.markSeqTxnCommitted(seqTxn);
                 }
                 lastCommittedRows = 0;
+                // Invalidate dependent mat views on truncate.
+                mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
+                mvRefreshTask.invalidationReason = "truncate operation";
                 return 1;
             default:
                 throw new UnsupportedOperationException("Unsupported WAL txn type: " + walTxnType);
@@ -567,10 +589,18 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 try {
                     switch (cmdType) {
                         case CMD_ALTER_TABLE:
-                            operationExecutor.executeAlter(tableWriter, sql, seqTxn);
+                            final String matViewInvalidationReason = operationExecutor.executeAlter(tableWriter, sql, seqTxn);
+                            if (matViewInvalidationReason != null) {
+                                mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
+                                mvRefreshTask.invalidationReason = matViewInvalidationReason;
+                            }
                             return;
                         case CMD_UPDATE_TABLE:
-                            operationExecutor.executeUpdate(tableWriter, sql, seqTxn);
+                            final long rowsAffected = operationExecutor.executeUpdate(tableWriter, sql, seqTxn);
+                            if (rowsAffected > 0) {
+                                mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
+                                mvRefreshTask.invalidationReason = UpdateOperation.MAT_VIEW_INVALIDATION_REASON;
+                            }
                             return;
                         default:
                             throw new UnsupportedOperationException("Unsupported command type: " + cmdType);
@@ -596,7 +626,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         // This is definitely dropped table.
                         throw CairoException.tableDropped(tableToken);
                     }
-                    // No progress, same token or no token and it's not dropped.
+                    // No progress, same token or no token, and it's not dropped.
                     // Stop processing WAL transactions for this table, switch to the next table.
                     LOG.info().$("failed to compile SQL, table rename not fully applied, will retry [table=").$(tableToken).I$();
                     throw EjectApplyWalException.INSTANCE;
@@ -677,7 +707,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     if (tableBusy.getReason() != NO_LOCK_REASON
                             && !WAL_2_TABLE_WRITE_REASON.equals(tableBusy.getReason())
                             && !WAL_2_TABLE_RESUME_REASON.equals(tableBusy.getReason())) {
-                        LOG.critical().$("unsolicited table lock [table=").utf8(tableToken.getDirName()).$(", lockReason=").$(tableBusy.getReason()).I$();
+                        LOG.critical().$("unsolicited table lock [table=").utf8(tableToken.getDirName())
+                                .$(", lockReason=").$(tableBusy.getReason())
+                                .I$();
                         // This is abnormal termination but table is not set to suspended state.
                         // Reset state of SeqTxnTracker so that next CheckWalTransactionJob run will send job notification if necessary.
                         engine.notifyWalTxnRepublisher(tableToken);

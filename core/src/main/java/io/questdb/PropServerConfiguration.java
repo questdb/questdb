@@ -190,6 +190,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int createAsSelectRetryCount;
     private final int dateAdapterPoolCapacity;
     private final String dbDirectory;
+    private final String dbRoot;
     private final int defaultSeqPartTxnCount;
     private final boolean defaultSymbolCacheFlag;
     private final int defaultSymbolCapacity;
@@ -240,6 +241,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long inactiveWriterTTL;
     private final int indexValueBlockSize;
     private final InputFormatConfiguration inputFormatConfiguration;
+    private final String installRoot;
     private final long instanceHashHi;
     private final long instanceHashLo;
     private final boolean interruptOnClosedConnection;
@@ -279,6 +281,18 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final DateLocale logTimestampLocale;
     private final String logTimestampTimezone;
     private final TimeZoneRules logTimestampTimezoneRules;
+    private final boolean matViewEnabled;
+    private final long matViewInsertAsSelectBatchSize;
+    private final int matViewMaxRecompileAttempts;
+    private final boolean matViewParallelExecutionEnabled;
+    private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewRefreshPoolConfiguration();
+    private final long matViewRefreshSleepTimeout;
+    private final int[] matViewRefreshWorkerAffinity;
+    private final int matViewRefreshWorkerCount;
+    private final boolean matViewRefreshWorkerHaltOnError;
+    private final long matViewRefreshWorkerNapThreshold;
+    private final long matViewRefreshWorkerSleepThreshold;
+    private final long matViewRefreshWorkerYieldThreshold;
     private final int maxFileNameLength;
     private final long maxHttpQueryResponseRowLimit;
     private final double maxRequiredDelimiterStdDev;
@@ -334,7 +348,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int rndFunctionMemoryPageSize;
     private final int rollBufferLimit;
     private final int rollBufferSize;
-    private final String root;
     private final long sequencerCheckInterval;
     private final int[] sharedWorkerAffinity;
     private final int sharedWorkerCount;
@@ -435,6 +448,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long systemWriterDataAppendPageSize;
     private final boolean tableTypeConversionEnabled;
     private final TelemetryConfiguration telemetryConfiguration = new PropTelemetryConfiguration();
+    private final long telemetryDbSizeEstimateTimeout;
     private final boolean telemetryDisableCompletely;
     private final boolean telemetryEnabled;
     private final boolean telemetryHideTables;
@@ -465,6 +479,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long walMaxLagSize;
     private final int walMaxLagTxnCount;
     private final int walMaxSegmentFileDescriptorsCache;
+    private final boolean walParallelExecutionEnabled;
     private final long walPurgeInterval;
     private final int walPurgeWaitBeforeDelete;
     private final int walRecreateDistressedSequencerAttempts;
@@ -612,14 +627,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long symbolCacheWaitBeforeReload;
 
     public PropServerConfiguration(
-            String root,
+            String installRoot,
             Properties properties,
             @Nullable Map<String, String> env,
             Log log,
             BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
         this(
-                root,
+                installRoot,
                 properties,
                 null,
                 env,
@@ -633,7 +648,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public PropServerConfiguration(
-            String root,
+            String installRoot,
             Properties properties,
             @Nullable Set<? extends ConfigPropertyKey> dynamicProperties,
             @Nullable Map<String, String> env,
@@ -644,7 +659,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             FactoryProviderFactory fpf
     ) throws ServerConfigurationException, JsonException {
         this(
-                root,
+                installRoot,
                 properties,
                 dynamicProperties,
                 env,
@@ -658,7 +673,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public PropServerConfiguration(
-            String root,
+            String installRoot,
             Properties properties,
             @Nullable Map<String, String> env,
             Log log,
@@ -668,7 +683,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             FactoryProviderFactory fpf
     ) throws ServerConfigurationException, JsonException {
         this(
-                root,
+                installRoot,
                 properties,
                 null,
                 env,
@@ -682,7 +697,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     public PropServerConfiguration(
-            String root,
+            String installRoot,
             Properties properties,
             @Nullable Set<? extends ConfigPropertyKey> dynamicProperties,
             @Nullable Map<String, String> env,
@@ -774,21 +789,22 @@ public class PropServerConfiguration implements ServerConfiguration {
                     .put(tempRenamePendingTablePrefix).put(']');
         }
 
+        this.installRoot = installRoot;
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
         String tmpRoot;
         boolean absDbDir = new File(this.dbDirectory).isAbsolute();
         if (absDbDir) {
-            this.root = this.dbDirectory;
-            this.confRoot = rootSubdir(this.root, CONFIG_DIRECTORY); // ../conf
-            this.checkpointRoot = rootSubdir(this.root, TableUtils.CHECKPOINT_DIRECTORY); // ../.checkpoint
-            this.legacyCheckpointRoot = rootSubdir(this.root, TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
-            tmpRoot = rootSubdir(this.root, TMP_DIRECTORY); // ../tmp
+            this.dbRoot = this.dbDirectory;
+            this.confRoot = rootSubdir(this.dbRoot, CONFIG_DIRECTORY); // ../conf
+            this.checkpointRoot = rootSubdir(this.dbRoot, TableUtils.CHECKPOINT_DIRECTORY); // ../.checkpoint
+            this.legacyCheckpointRoot = rootSubdir(this.dbRoot, TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
+            tmpRoot = rootSubdir(this.dbRoot, TMP_DIRECTORY); // ../tmp
         } else {
-            this.root = new File(root, this.dbDirectory).getAbsolutePath();
-            this.confRoot = new File(root, CONFIG_DIRECTORY).getAbsolutePath();
-            this.checkpointRoot = new File(root, TableUtils.CHECKPOINT_DIRECTORY).getAbsolutePath();
-            this.legacyCheckpointRoot = new File(root, TableUtils.LEGACY_CHECKPOINT_DIRECTORY).getAbsolutePath();
-            tmpRoot = new File(root, TMP_DIRECTORY).getAbsolutePath();
+            this.dbRoot = new File(installRoot, this.dbDirectory).getAbsolutePath();
+            this.confRoot = new File(installRoot, CONFIG_DIRECTORY).getAbsolutePath();
+            this.checkpointRoot = new File(installRoot, TableUtils.CHECKPOINT_DIRECTORY).getAbsolutePath();
+            this.legacyCheckpointRoot = new File(installRoot, TableUtils.LEGACY_CHECKPOINT_DIRECTORY).getAbsolutePath();
+            tmpRoot = new File(installRoot, TMP_DIRECTORY).getAbsolutePath();
         }
 
         String configuredCairoSqlCopyRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, "import");
@@ -797,15 +813,15 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.cairoSqlCopyRoot = configuredCairoSqlCopyRoot;
             } else {
                 if (absDbDir) {
-                    this.cairoSqlCopyRoot = rootSubdir(this.root, configuredCairoSqlCopyRoot); // ../import
+                    this.cairoSqlCopyRoot = rootSubdir(this.dbRoot, configuredCairoSqlCopyRoot); // ../import
                 } else {
-                    this.cairoSqlCopyRoot = new File(root, configuredCairoSqlCopyRoot).getAbsolutePath();
+                    this.cairoSqlCopyRoot = new File(installRoot, configuredCairoSqlCopyRoot).getAbsolutePath();
                 }
             }
             String cairoSqlCopyWorkRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, tmpRoot);
             this.cairoSqlCopyWorkRoot = getCanonicalPath(cairoSqlCopyWorkRoot);
-            if (pathEquals(root, this.cairoSqlCopyWorkRoot)
-                    || pathEquals(this.root, this.cairoSqlCopyWorkRoot)
+            if (pathEquals(installRoot, this.cairoSqlCopyWorkRoot)
+                    || pathEquals(this.dbRoot, this.cairoSqlCopyWorkRoot)
                     || pathEquals(this.confRoot, this.cairoSqlCopyWorkRoot)
                     || pathEquals(this.checkpointRoot, this.cairoSqlCopyWorkRoot)) {
                 throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath() + " can't point to root, data, conf or snapshot dirs. ");
@@ -856,9 +872,9 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         try (Path path = new Path()) {
-            volumeDefinitions.of(getString(properties, env, PropertyKey.CAIRO_VOLUMES, null), path, root);
-            ff.mkdirs(path.of(this.root).slash(), this.mkdirMode);
-            path.of(this.root).concat(TableUtils.TAB_INDEX_FILE_NAME);
+            volumeDefinitions.of(getString(properties, env, PropertyKey.CAIRO_VOLUMES, null), path, installRoot);
+            ff.mkdirs(path.of(this.dbRoot).slash(), this.mkdirMode);
+            path.of(this.dbRoot).concat(TableUtils.TAB_INDEX_FILE_NAME);
             final long tableIndexFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
             final long fileSize = ff.length(tableIndexFd);
             if (fileSize < Long.BYTES) {
@@ -1087,7 +1103,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (new File(publicDirectory).isAbsolute()) {
                 this.publicDirectory = publicDirectory;
             } else {
-                this.publicDirectory = new File(root, publicDirectory).getAbsolutePath();
+                this.publicDirectory = new File(installRoot, publicDirectory).getAbsolutePath();
             }
 
             this.defaultSeqPartTxnCount = getInt(properties, env, PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 0);
@@ -1156,7 +1172,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     httpNetBindPort = p;
                 });
                 // load mime types
-                path.of(new File(new File(root, CONFIG_DIRECTORY), "mime.types").getAbsolutePath());
+                path.of(new File(new File(installRoot, CONFIG_DIRECTORY), "mime.types").getAbsolutePath());
                 this.mimeTypesCache = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path.$());
             }
 
@@ -1248,6 +1264,17 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.walApplySleepTimeout = getMillis(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_TIMEOUT, 10);
             this.walApplyWorkerYieldThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_YIELD_THRESHOLD, 1000);
 
+            // reuse wal apply defaults for mat view workers
+            this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, false);
+            this.matViewMaxRecompileAttempts = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_SQL_MAX_RECOMPILE_ATTEMPTS, 10);
+            this.matViewRefreshWorkerCount = getInt(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT, cpuWalApplyWorkers);
+            this.matViewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_AFFINITY, matViewRefreshWorkerCount);
+            this.matViewRefreshWorkerHaltOnError = getBoolean(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_HALT_ON_ERROR, false);
+            this.matViewRefreshWorkerNapThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_NAP_THRESHOLD, 7_000);
+            this.matViewRefreshWorkerSleepThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD, 10_000);
+            this.matViewRefreshSleepTimeout = getMillis(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT, 10);
+            this.matViewRefreshWorkerYieldThreshold = getLong(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD, 1000);
+
             this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
             this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_AS_SELECT_RETRY_COUNT, 5);
             this.defaultSymbolCacheFlag = getBoolean(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_CACHE_FLAG, true);
@@ -1304,6 +1331,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlWithClauseModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_WITH_CLAUSE_MODEL_POOL_CAPACITY, 128);
             this.sqlInsertModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_INSERT_MODEL_POOL_CAPACITY, 64);
             this.sqlInsertModelBatchSize = getLong(properties, env, PropertyKey.CAIRO_SQL_INSERT_MODEL_BATCH_SIZE, 1_000_000);
+            this.matViewInsertAsSelectBatchSize = getLong(properties, env, PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE, sqlInsertModelBatchSize);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.columnPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 128);
             this.columnPurgeTaskPoolCapacity = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY, 256);
@@ -1370,7 +1398,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
             this.writerFileOpenOpts = lopts;
 
-            this.writerMixedIOEnabled = getBoolean(properties, env, PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, ff.allowMixedIO(this.root));
+            this.writerMixedIOEnabled = getBoolean(properties, env, PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, ff.allowMixedIO(this.dbRoot));
 
             this.inputFormatConfiguration = new InputFormatConfiguration(
                     new DateFormatFactory(),
@@ -1446,6 +1474,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.telemetryDisableCompletely = getBoolean(properties, env, PropertyKey.TELEMETRY_DISABLE_COMPLETELY, false);
             this.telemetryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.TELEMETRY_QUEUE_CAPACITY, 512));
             this.telemetryHideTables = getBoolean(properties, env, PropertyKey.TELEMETRY_HIDE_TABLES, true);
+            this.telemetryDbSizeEstimateTimeout = getLong(properties, env, PropertyKey.TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT, Timestamps.SECOND_MILLIS);
             this.o3PartitionPurgeListCapacity = getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY, 1);
             this.ioURingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_IO_URING_ENABLED, true);
             this.cairoMaxCrashFiles = getInt(properties, env, PropertyKey.CAIRO_MAX_CRASH_FILES, 100);
@@ -1616,6 +1645,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelReadParquetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, defaultParallelSqlEnabled);
+            this.walParallelExecutionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_APPLY_PARALLEL_SQL_ENABLED, true);
+            this.matViewParallelExecutionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, true);
             this.sqlParallelWorkStealingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 16);
             // TODO(puzpuzpuz): consider increasing default Parquet cache capacity
             this.sqlParquetFrameCacheCapacity = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, 3), 3);
@@ -1704,6 +1735,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
         return lineUdpReceiverConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
+        return matViewRefreshPoolConfiguration;
     }
 
     @Override
@@ -2681,6 +2717,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public @NotNull String getDbRoot() {
+            return dbRoot;
+        }
+
+        @Override
         public @NotNull DateLocale getDefaultDateLocale() {
             return locale;
         }
@@ -2816,6 +2857,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public @NotNull String getInstallRoot() {
+            return installRoot;
+        }
+
+        @Override
         public int getLatestByQueueCapacity() {
             return latestByQueueCapacity;
         }
@@ -2853,6 +2899,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public TimeZoneRules getLogTimestampTimezoneRules() {
             return logTimestampTimezoneRules;
+        }
+
+        @Override
+        public long getMatViewInsertAsSelectBatchSize() {
+            return matViewInsertAsSelectBatchSize;
+        }
+
+        @Override
+        public int getMatViewMaxRecompileAttempts() {
+            return matViewMaxRecompileAttempts;
         }
 
         @Override
@@ -3058,11 +3114,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getRndFunctionMemoryPageSize() {
             return rndFunctionMemoryPageSize;
-        }
-
-        @Override
-        public @NotNull String getRoot() {
-            return root;
         }
 
         @Override
@@ -3590,6 +3641,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isMatViewEnabled() {
+            return matViewEnabled;
+        }
+
+        @Override
+        public boolean isMatViewParallelSqlEnabled() {
+            return matViewParallelExecutionEnabled;
+        }
+
+        @Override
         public boolean isMultiKeyDedupEnabled() {
             return false;
         }
@@ -3667,6 +3728,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isWalApplyEnabled() {
             return walApplyEnabled;
+        }
+
+        @Override
+        public boolean isWalApplyParallelSqlEnabled() {
+            return walParallelExecutionEnabled;
         }
 
         public boolean isWalSupported() {
@@ -4731,6 +4797,58 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
+    private class PropMatViewRefreshPoolConfiguration implements WorkerPoolConfiguration {
+        @Override
+        public Metrics getMetrics() {
+            return metrics;
+        }
+
+        @Override
+        public long getNapThreshold() {
+            return matViewRefreshWorkerNapThreshold;
+        }
+
+        @Override
+        public String getPoolName() {
+            return "mat-view-refresh";
+        }
+
+        @Override
+        public long getSleepThreshold() {
+            return matViewRefreshWorkerSleepThreshold;
+        }
+
+        @Override
+        public long getSleepTimeout() {
+            return matViewRefreshSleepTimeout;
+        }
+
+        @Override
+        public int[] getWorkerAffinity() {
+            return matViewRefreshWorkerAffinity;
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return matViewRefreshWorkerCount;
+        }
+
+        @Override
+        public long getYieldThreshold() {
+            return matViewRefreshWorkerYieldThreshold;
+        }
+
+        @Override
+        public boolean haltOnError() {
+            return matViewRefreshWorkerHaltOnError;
+        }
+
+        @Override
+        public boolean isEnabled() {
+            return matViewRefreshWorkerCount > 0;
+        }
+    }
+
     private class PropMetricsConfiguration implements MetricsConfiguration {
 
         @Override
@@ -5165,6 +5283,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropTelemetryConfiguration implements TelemetryConfiguration {
+
+        @Override
+        public long getDbSizeEstimateTimeout() {
+            return telemetryDbSizeEstimateTimeout;
+        }
 
         @Override
         public boolean getDisableCompletely() {

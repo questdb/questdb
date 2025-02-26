@@ -189,7 +189,7 @@ public class Overrides {
         this.rostiAllocFacade = rostiAllocFacade;
     }
 
-    private static CairoConfiguration getTestConfiguration(String root, Properties defaultProperties, Properties properties) {
+    private static CairoConfiguration getTestConfiguration(String installRoot, Properties defaultProperties, Properties properties) {
         Properties props = new Properties();
         props.putAll(defaultProperties);
         if (properties != null) {
@@ -199,7 +199,7 @@ public class Overrides {
         PropServerConfiguration propCairoConfiguration;
         try {
             propCairoConfiguration = new PropServerConfiguration(
-                    root,
+                    installRoot,
                     props,
                     null,
                     new HashMap<>(),

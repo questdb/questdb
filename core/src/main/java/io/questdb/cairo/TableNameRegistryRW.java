@@ -35,7 +35,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
         super(engine, tableFlagResolver);
         if (!nameStore.lock()) {
             if (!engine.getConfiguration().getAllowTableRegistrySharedWrite()) {
-                throw CairoException.critical(0).put("cannot lock table name registry file [path=").put(engine.getConfiguration().getRoot()).put(']');
+                throw CairoException.critical(0).put("cannot lock table name registry file [path=").put(engine.getConfiguration().getDbRoot()).put(']');
             }
         }
         this.tableNameToTableTokenMap = new ConcurrentHashMap<>(false);
@@ -80,13 +80,13 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
-    public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isWal) {
+    public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isMatView, boolean isWal) {
         final TableToken registeredRecord = tableNameToTableTokenMap.putIfAbsent(tableName, LOCKED_TOKEN);
         if (registeredRecord == null) {
             boolean isProtected = tableFlagResolver.isProtected(tableName);
             boolean isSystem = tableFlagResolver.isSystem(tableName);
             boolean isPublic = tableFlagResolver.isPublic(tableName);
-            return new TableToken(tableName, dirName, tableId, isWal, isSystem, isProtected, isPublic);
+            return new TableToken(tableName, dirName, tableId, isMatView, isWal, isSystem, isProtected, isPublic);
         } else {
             return null;
         }

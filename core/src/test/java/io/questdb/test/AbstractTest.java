@@ -28,9 +28,11 @@ import io.questdb.Bootstrap;
 import io.questdb.Metrics;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Zip;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.AfterClass;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
@@ -38,6 +40,8 @@ import org.junit.Rule;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
 import org.junit.runner.OrderWith;
+
+import java.io.File;
 
 @OrderWith(RandomOrder.class)
 public class AbstractTest {
@@ -51,6 +55,7 @@ public class AbstractTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         TestOs.init();
+        Zip.init();
         // it is necessary to initialise logger before tests start
         // logger doesn't relinquish memory until JVM stops
         // which causes memory leak detector to fail should logger be

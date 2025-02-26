@@ -284,9 +284,9 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         long walChunk = Math.max(0, rnd.nextInt((int) (3.5 * txnCount)) - txnCount);
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, walChunk);
 
-        // Make call to move random even if will not be used
-        // To avoid zfs runs being very different to the non-zfs
-        // with the same seeds
+        // Make call to move random even if it will not be used.
+        // To avoid ZFS runs being very different to the non-ZFS
+        // with the same seeds.
         boolean allowMixedIO = rnd.nextBoolean();
         if (configuration.getFilesFacade().allowMixedIO(root)) {
             node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, allowMixedIO);

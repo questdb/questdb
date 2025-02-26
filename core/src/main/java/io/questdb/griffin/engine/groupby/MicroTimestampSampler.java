@@ -64,6 +64,4 @@ public class MicroTimestampSampler implements TimestampSampler {
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii("MicroTsSampler");
     }
-
-
 }

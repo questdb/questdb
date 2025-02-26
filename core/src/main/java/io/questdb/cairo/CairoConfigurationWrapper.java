@@ -242,6 +242,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public @NotNull String getDbRoot() {
+        return getDelegate().getDbRoot();
+    }
+
+    @Override
     public @NotNull DateLocale getDefaultDateLocale() {
         return getDelegate().getDefaultDateLocale();
     }
@@ -377,6 +382,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public @NotNull String getInstallRoot() {
+        return getDelegate().getInstallRoot();
+    }
+
+    @Override
     public int getLatestByQueueCapacity() {
         return getDelegate().getLatestByQueueCapacity();
     }
@@ -414,6 +424,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public TimeZoneRules getLogTimestampTimezoneRules() {
         return getDelegate().getLogTimestampTimezoneRules();
+    }
+
+    @Override
+    public long getMatViewInsertAsSelectBatchSize() {
+        return getDelegate().getMatViewInsertAsSelectBatchSize();
+    }
+
+    @Override
+    public int getMatViewMaxRecompileAttempts() {
+        return getDelegate().getMatViewMaxRecompileAttempts();
     }
 
     @Override
@@ -624,11 +644,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getRndFunctionMemoryPageSize() {
         return getDelegate().getRndFunctionMemoryPageSize();
-    }
-
-    @Override
-    public @NotNull String getRoot() {
-        return getDelegate().getRoot();
     }
 
     @Override
@@ -1152,6 +1167,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewEnabled() {
+        return getDelegate().isMatViewEnabled();
+    }
+
+    @Override
+    public boolean isMatViewParallelSqlEnabled() {
+        return getDelegate().isMatViewParallelSqlEnabled();
+    }
+
+    @Override
     public boolean isMultiKeyDedupEnabled() {
         return getDelegate().isMultiKeyDedupEnabled();
     }
@@ -1229,6 +1254,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isWalApplyEnabled() {
         return getDelegate().isWalApplyEnabled();
+    }
+
+    @Override
+    public boolean isWalApplyParallelSqlEnabled() {
+        return getDelegate().isWalApplyParallelSqlEnabled();
     }
 
     public boolean isWalSupported() {

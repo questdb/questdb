@@ -665,7 +665,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                     null,
                     false,
                     DefaultLifecycleManager.INSTANCE,
-                    engine.getConfiguration().getRoot(),
+                    engine.getConfiguration().getDbRoot(),
                     engine.getDdlListener(tableToken),
                     engine.getCheckpointStatus(),
                     engine

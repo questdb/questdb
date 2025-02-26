@@ -59,6 +59,10 @@ public class IntList implements Mutable, Sinkable {
         System.arraycopy(that.data, 0, this.data, p, s);
     }
 
+    public void allocate(int size) {
+        checkCapacity(size);
+    }
+
     public void arrayCopy(int srcPos, int dstPos, int length) {
         System.arraycopy(data, srcPos, data, dstPos, length);
     }

@@ -613,7 +613,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 2, 1);
                 assertExceptionNoLeakCheck("Segment 2 should not exist");
             } catch (CairoException e) {
-                assertTrue(e.getMessage().endsWith("could not open, file does not exist: " + engine.getConfiguration().getRoot() +
+                assertTrue(e.getMessage().endsWith("could not open, file does not exist: " + engine.getConfiguration().getDbRoot() +
                         File.separatorChar + tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + "1" +
                         File.separatorChar + walName +
                         File.separatorChar + "2" +
@@ -873,7 +873,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 assertColumnMetadata(model, reader);
             }
 
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
                 assertWalFileExist(path, tableToken, walName, 0, "_meta");
                 assertWalFileExist(path, tableToken, walName, 0, "_event");
                 assertWalFileExist(path, tableToken, walName, 0, "a.d");
@@ -1145,7 +1145,7 @@ public class WalWriterTest extends AbstractCairoTest {
                         assertFalse(eventCursor.hasNext());
                     }
 
-                    try (Path path = new Path().of(configuration.getRoot())) {
+                    try (Path path = new Path().of(configuration.getDbRoot())) {
                         assertWalFileExist(path, tableToken, walName, 0, "_meta");
                         assertWalFileExist(path, tableToken, walName, 0, "_event");
                         assertWalFileExist(path, tableToken, walName, 0, "a.d");
@@ -1288,7 +1288,7 @@ public class WalWriterTest extends AbstractCairoTest {
                         assertFalse(eventCursor.hasNext());
                     }
 
-                    try (Path path = new Path().of(configuration.getRoot())) {
+                    try (Path path = new Path().of(configuration.getDbRoot())) {
                         assertWalFileExist(path, tableToken, walName, segmentId, "_meta");
                         assertWalFileExist(path, tableToken, walName, segmentId, "_event");
                         assertWalFileExist(path, tableToken, walName, segmentId, "a.d");
@@ -2065,7 +2065,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 1, 0);
                 assertExceptionNoLeakCheck("Segment 1 should not exist");
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "could not open, file does not exist: " + engine.getConfiguration().getRoot() +
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not open, file does not exist: " + engine.getConfiguration().getDbRoot() +
                         File.separatorChar + tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + "1" +
                         File.separatorChar + walName +
                         File.separatorChar + "1" +
@@ -2558,7 +2558,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 assertFalse(eventCursor.hasNext());
             }
 
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
                 assertWalFileExist(path, tableToken, walName, 0, "_meta");
                 assertWalFileExist(path, tableToken, walName, 0, "_event");
                 assertWalFileExist(path, tableToken, walName, 0, "a.d");
@@ -3095,7 +3095,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 assertFalse(eventCursor.hasNext());
             }
 
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
                 assertWalFileExist(path, tableToken, walName, 0, "_meta");
                 assertWalFileExist(path, tableToken, walName, 0, "_event");
                 assertWalFileExist(path, tableToken, walName, 0, "a.d");
