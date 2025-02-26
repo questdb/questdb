@@ -48,6 +48,8 @@ import io.questdb.std.ObjList;
  */
 public class EqSymTimestampFunctionFactory implements FunctionFactory {
 
+    public static final int BITSET_OPTIMISATION_THRESHOLD = 1048576;
+
     @Override
     public String getSignature() {
         return "=(KN)";
@@ -111,6 +113,7 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
         private final BitSet misses;
         private final long timestampConstant;
 
+
         public VarSymbolConstTimestampFunction(Function symbolFunc, Function timestampFunc, long timestampConstant) {
             super(symbolFunc, timestampFunc);
             this.timestampConstant = timestampConstant;
@@ -130,7 +133,7 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
 
             int id = left.getInt(rec);
 
-            if (id > 0) {
+            if (id >= 0 && id <= BITSET_OPTIMISATION_THRESHOLD) {
                 if (hits.get(id)) {
                     return true;
                 }
@@ -144,7 +147,7 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
             long symbol = left.getTimestamp(rec);
             boolean result = negated == (symbol != timestampConstant);
 
-            if (id <= 1048576 && id > 0) {
+            if (id >= 0 && id <= BITSET_OPTIMISATION_THRESHOLD) {
                 if (result) {
                     hits.set(id);
                 } else {
@@ -195,4 +198,5 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
             return negated == (symbol != timestamp);
         }
     }
+
 }
