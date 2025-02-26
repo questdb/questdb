@@ -2117,6 +2117,38 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinWideningCast() throws Exception {
+        String[] types = {"short", "int", "long"};
+        for (var tp : types) {
+            assertQuery(
+                    "x\ty\n" +
+                            "1\t1\n" +
+                            "2\t2\n" +
+                            "3\t3\n" +
+                            "4\t4\n" +
+                            "5\t5\n",
+                    "select x, y from long_sequence(5) ls join (select cast(x as " + tp + ") y from long_sequence(5)) as ls2 on ls.x = ls2.y",
+                    null,
+                    false,
+                    true
+            );
+
+            assertQuery(
+                    "x\ty\n" +
+                            "1\t1\n" +
+                            "2\t2\n" +
+                            "3\t3\n" +
+                            "4\t4\n" +
+                            "5\t5\n",
+                    "select x, y from (select cast(x as " + tp + ") y from long_sequence(5)) as ls2 join long_sequence(5) ls on ls.x = ls2.y",
+                    null,
+                    false,
+                    true
+            );
+        }
+    }
+
+    @Test
     public void testJoinOnExecutionOrder() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table l as( select x from long_sequence(100) )");
