@@ -501,7 +501,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // - update applied to txn in MatViewGraph
         try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
             // Operate SQL on a fixed reader that has known max transaction visible. The reader
-            // is used to initialize bast table readers returned from the mvRefreshExecutionContext.getReader()
+            // is used to initialize base table readers returned from the mvRefreshExecutionContext.getReader()
             // call, so that all of them are at the same txn.
             refreshExecutionContext.of(baseTableReader);
             try {
@@ -569,7 +569,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
             // Operate SQL on a fixed reader that has known max transaction visible. The reader
-            // is used to initialize bast table readers returned from the mvRefreshExecutionContext.getReader()
+            // is used to initialize base table readers returned from the mvRefreshExecutionContext.getReader()
             // call, so that all of them are at the same txn.
             refreshExecutionContext.of(baseTableReader);
             try {
