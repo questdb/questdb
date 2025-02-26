@@ -421,7 +421,8 @@ public class MetadataCache implements QuietCloseable {
 
                 if (
                         (cachedTable == null
-                                || cachedTable.getMetadataVersion() < latestTable.getMetadataVersion())
+                                || cachedTable.getMetadataVersion() < latestTable.getMetadataVersion()
+                                || cachedTable.getTableToken().getTableId() != latestTable.getTableToken().getTableId())
                                 && isVisibleTable(latestTable.getTableName())) {
                     localCache.put(latestTable.getTableName(), latestTable);
                 }
@@ -433,12 +434,6 @@ public class MetadataCache implements QuietCloseable {
 
                 if (latestTable == null) {
                     localCache.remove(cachedTable.getTableName());
-                    continue;
-                }
-
-                if (cachedTable.getMetadataVersion() < latestTable.getMetadataVersion()
-                        && isVisibleTable(cachedTable.getTableName())) {
-                    localCache.put(cachedTable.getTableName(), latestTable);
                 }
             }
 
