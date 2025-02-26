@@ -119,6 +119,13 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void clear() {
+            super.clear();
+            hits.clear();
+            misses.clear();
+        }
+
+        @Override
         public boolean getBool(Record rec) {
 
             int id = left.getInt(rec);
@@ -146,6 +153,11 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
             }
 
             return result;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
     }
 
