@@ -306,6 +306,22 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEqualsSliceSubarray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (left DOUBLE[][], right DOUBLE[][])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[[1.0, 3], [5, 7]], ARRAY[[1.0, 2], [5, 7]]), " +
+                    "(ARRAY[[1.0], [3]], ARRAY[[2.0], [3]]), " +
+                    "(ARRAY[[1.0], [3]], ARRAY[[2.0], [1]])"
+
+            );
+            assertSql("eq\ntrue\ntrue\nfalse\n", "SELECT (left[1] = right[1]) eq FROM tango");
+            assertSql("eq\ntrue\ntrue\nfalse\n", "SELECT (left[1:] = right[1:]) eq FROM tango");
+            assertSql("eq\nfalse\nfalse\ntrue\n", "SELECT (left[0:1] = right[1:]) eq FROM tango");
+        });
+    }
+
+    @Test
     public void testInsertAsSelectDoubleNoWAL() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table blah (a double[][])");

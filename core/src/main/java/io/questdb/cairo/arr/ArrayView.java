@@ -150,8 +150,9 @@ public abstract class ArrayView implements QuietCloseable {
         final boolean atDeepestDim = dim == getDimCount() - 1;
         if (atDeepestDim) {
             for (int i = 0; i < count; i++) {
-                if (flatView.getDouble(flatViewOffset + flatIndexThis) != other.flatView.getDouble(
-                        other.flatViewOffset + flatIndexOther)) {
+                if (flatView.getDouble(flatViewOffset + flatIndexThis) !=
+                        other.flatView.getDouble(other.flatViewOffset + flatIndexOther)
+                ) {
                     return false;
                 }
                 flatIndexThis += strideThis;
