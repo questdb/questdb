@@ -53,7 +53,7 @@ public final class DoubleArrayParser extends ArrayView implements FlatArrayView 
     }
 
     @Override
-    public int elemType() {
+    public short elemType() {
         return ColumnType.DOUBLE;
     }
 

@@ -35,7 +35,7 @@ import io.questdb.std.Unsafe;
  * length of the array it represents -- it depends on the assumed element type.
  */
 public final class BorrowedFlatArrayView implements FlatArrayView {
-    private int elemType = ColumnType.UNDEFINED;
+    private short elemType = ColumnType.UNDEFINED;
     private int length;
     private long ptr;
     private int size;
@@ -47,7 +47,7 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
     }
 
     @Override
-    public int elemType() {
+    public short elemType() {
         return elemType;
     }
 
@@ -70,7 +70,7 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
         return length;
     }
 
-    public BorrowedFlatArrayView of(long ptr, int elemType, int length) {
+    public BorrowedFlatArrayView of(long ptr, short elemType, int length) {
         assert ptr > 0 : "ptr <= 0";
         assert length > 0 : "length <= 0";
         this.elemType = elemType;

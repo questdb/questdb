@@ -72,8 +72,8 @@ final class PgNonNullBinaryArrayView extends PGWireArrayView implements FlatArra
     }
 
     @Override
-    public int elemType() {
-        return 0;
+    public short elemType() {
+        return ColumnType.decodeArrayElementType(type);
     }
 
     @Override

@@ -35,7 +35,7 @@ public interface FlatArrayView {
      * Returns the type of elements stored in this flat view,
      * one of the {@link io.questdb.cairo.ColumnType} constants.
      */
-    int elemType();
+    short elemType();
 
     default boolean flatEquals(FlatArrayView other) {
         int length = this.length();
