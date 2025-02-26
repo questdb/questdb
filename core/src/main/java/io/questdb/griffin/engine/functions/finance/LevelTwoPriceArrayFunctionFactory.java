@@ -42,7 +42,7 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "l2price_arr(DD[]D[])";
+        return "l2price(DD[]D[])";
     }
 
     @Override
