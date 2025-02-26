@@ -82,6 +82,11 @@ public class CompiledFilterSymbolBindVariable extends SymbolFunction implements 
     }
 
     @Override
+    public boolean isNonDeterministic() {
+        return true;
+    }
+
+    @Override
     public boolean isSymbolTableStatic() {
         return true;
     }

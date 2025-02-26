@@ -234,6 +234,11 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
+    public boolean isNonDeterministic() {
+        return true;
+    }
+
+    @Override
     public boolean isRuntimeConstant() {
         return true;
     }

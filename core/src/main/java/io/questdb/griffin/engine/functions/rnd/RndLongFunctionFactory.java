@@ -65,6 +65,11 @@ public class RndLongFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(SIGNATURE);
         }

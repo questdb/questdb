@@ -49,6 +49,11 @@ public class UuidBindVariable extends UuidFunction implements ScalarFunction, Mu
     }
 
     @Override
+    public boolean isNonDeterministic() {
+        return true;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return true;
     }

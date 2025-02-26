@@ -44,6 +44,11 @@ class DoubleBindVariable extends DoubleFunction implements ScalarFunction, Mutab
     }
 
     @Override
+    public boolean isNonDeterministic() {
+        return true;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return true;
     }

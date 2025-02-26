@@ -65,6 +65,11 @@ public interface BinaryFunction extends Function {
         return getLeft().isConstant() && getRight().isConstant();
     }
 
+    @Override
+    default boolean isNonDeterministic() {
+        return getLeft().isNonDeterministic() || getRight().isNonDeterministic();
+    }
+
     // used in generic toSink implementation
     default boolean isOperator() {
         return false;

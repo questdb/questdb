@@ -81,6 +81,14 @@ public interface QuaternaryFunction extends Function {
     }
 
     @Override
+    default boolean isNonDeterministic() {
+        return getFunc0().isNonDeterministic()
+                || getFunc1().isNonDeterministic()
+                || getFunc2().isNonDeterministic()
+                || getFunc3().isNonDeterministic();
+    }
+
+    @Override
     default boolean isThreadSafe() {
         return getFunc0().isThreadSafe()
                 && getFunc1().isThreadSafe()

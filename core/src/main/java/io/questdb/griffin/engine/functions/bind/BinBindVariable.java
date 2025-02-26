@@ -49,6 +49,11 @@ public class BinBindVariable extends BinFunction implements ScalarFunction {
     }
 
     @Override
+    public boolean isNonDeterministic() {
+        return true;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return true;
     }

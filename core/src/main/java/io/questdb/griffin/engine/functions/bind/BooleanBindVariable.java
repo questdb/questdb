@@ -44,6 +44,11 @@ public class BooleanBindVariable extends BooleanFunction implements ScalarFuncti
     }
 
     @Override
+    public boolean isNonDeterministic() {
+        return true;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return true;
     }

@@ -72,6 +72,11 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
+    default boolean isNonDeterministic() {
+        return getLeft().isNonDeterministic() || getCenter().isNonDeterministic() || getRight().isNonDeterministic();
+    }
+
+    @Override
     default boolean isThreadSafe() {
         return getLeft().isThreadSafe() && getCenter().isThreadSafe() && getRight().isThreadSafe();
     }

@@ -45,6 +45,11 @@ class DateBindVariable extends DateFunction implements ScalarFunction, Mutable {
     }
 
     @Override
+    public boolean isNonDeterministic() {
+        return true;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return true;
     }

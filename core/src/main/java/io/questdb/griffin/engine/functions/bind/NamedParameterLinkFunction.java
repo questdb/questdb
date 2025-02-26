@@ -232,6 +232,11 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
+    public boolean isNonDeterministic() {
+        return true;
+    }
+
+    @Override
     public boolean isRuntimeConstant() {
         return true;
     }

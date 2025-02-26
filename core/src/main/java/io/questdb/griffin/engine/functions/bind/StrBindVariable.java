@@ -90,6 +90,11 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
     }
 
     @Override
+    public boolean isNonDeterministic() {
+        return true;
+    }
+
+    @Override
     public boolean isRuntimeConstant() {
         return true;
     }

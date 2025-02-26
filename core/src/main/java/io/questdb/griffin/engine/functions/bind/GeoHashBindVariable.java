@@ -70,6 +70,11 @@ class GeoHashBindVariable extends AbstractGeoHashFunction implements ScalarFunct
     }
 
     @Override
+    public boolean isNonDeterministic() {
+        return true;
+    }
+
+    @Override
     public boolean isRuntimeConstant() {
         return true;
     }

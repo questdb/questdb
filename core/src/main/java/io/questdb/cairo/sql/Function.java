@@ -280,4 +280,8 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     default void toTop() {
         // no-op
     }
+
+    default boolean isNonDeterministic() {
+        return false;
+    }
 }

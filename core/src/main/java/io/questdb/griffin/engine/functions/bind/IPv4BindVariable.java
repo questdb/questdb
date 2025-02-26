@@ -55,6 +55,11 @@ public class IPv4BindVariable extends IPv4Function implements ScalarFunction, Mu
     }
 
     @Override
+    public boolean isNonDeterministic() {
+        return true;
+    }
+
+    @Override
     public boolean isRuntimeConstant() {
         return true;
     }

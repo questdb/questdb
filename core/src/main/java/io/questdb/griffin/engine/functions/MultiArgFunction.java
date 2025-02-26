@@ -64,6 +64,18 @@ public interface MultiArgFunction extends Function {
     }
 
     @Override
+    default boolean isNonDeterministic() {
+        final ObjList<Function> args = getArgs();
+        for (int i = 0, n = args.size(); i < n; i++) {
+            final Function function = args.getQuick(i);
+            if (function.isNonDeterministic()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Override
     default boolean isThreadSafe() {
         final ObjList<Function> args = getArgs();
         for (int i = 0, n = args.size(); i < n; i++) {

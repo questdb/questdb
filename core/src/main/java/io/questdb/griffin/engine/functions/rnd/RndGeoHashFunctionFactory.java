@@ -92,6 +92,11 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_geohash(").val(bits).val(')');
         }
@@ -120,6 +125,11 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return true;
         }
 
         @Override
@@ -154,6 +164,11 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_geohash(").val(bits).val(')');
         }
@@ -177,6 +192,11 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             this.rnd = executionContext.getRandom();
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return true;
         }
 
         @Override

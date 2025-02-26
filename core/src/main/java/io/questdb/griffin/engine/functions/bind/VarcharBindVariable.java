@@ -87,6 +87,11 @@ public class VarcharBindVariable extends VarcharFunction implements ScalarFuncti
     }
 
     @Override
+    public boolean isNonDeterministic() {
+        return true;
+    }
+
+    @Override
     public boolean isRuntimeConstant() {
         return true;
     }

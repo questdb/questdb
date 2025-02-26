@@ -60,6 +60,11 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
+    default boolean isNonDeterministic() {
+        return getArg().isNonDeterministic();
+    }
+
+    @Override
     default boolean isThreadSafe() {
         return getArg().isThreadSafe();
     }

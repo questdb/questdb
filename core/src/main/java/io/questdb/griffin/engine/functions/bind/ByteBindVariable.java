@@ -44,6 +44,11 @@ class ByteBindVariable extends ByteFunction implements ScalarFunction, Mutable {
     }
 
     @Override
+    public boolean isNonDeterministic() {
+        return true;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return true;
     }
