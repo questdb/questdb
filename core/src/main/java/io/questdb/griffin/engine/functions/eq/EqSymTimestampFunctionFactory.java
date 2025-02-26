@@ -123,18 +123,21 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
 
             int id = left.getInt(rec);
 
-            if (hits.get(id)) {
-                return true;
+            if (id > 0) {
+                if (hits.get(id)) {
+                    return true;
+                }
+
+                if (misses.get(id)) {
+                    return false;
+                }
             }
 
-            if (misses.get(id)) {
-                return false;
-            }
 
             long symbol = left.getTimestamp(rec);
             boolean result = negated == (symbol != timestampConstant);
 
-            if (id <= 1048576) {
+            if (id <= 1048576 && id > 0) {
                 if (result) {
                     hits.set(id);
                 } else {
