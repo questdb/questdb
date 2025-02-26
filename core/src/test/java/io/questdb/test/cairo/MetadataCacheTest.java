@@ -31,6 +31,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -45,8 +46,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 
 public class MetadataCacheTest extends AbstractCairoTest {
-    private static final String xMetaString = "MetadataCache [tableCount=1]\n" +
-            "\tCairoTable [name=x, id=1, directoryName=x~, isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=NONE, timestampIndex=3, timestampName=timestamp, ttlHours=0, walEnabled=false, columnCount=16]\n" +
+    private static final String xMetaStringSansHeader = "CairoTable [name=x, id=1, directoryName=x~, isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=NONE, timestampIndex=3, timestampName=timestamp, ttlHours=0, walEnabled=false, columnCount=16]\n" +
             "\t\tCairoColumn [name=i, position=0, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=0]\n" +
             "\t\tCairoColumn [name=sym, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, indexBlockCapacity=0, writerIndex=1]\n" +
             "\t\tCairoColumn [name=amt, position=2, type=DOUBLE, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=2]\n" +
@@ -62,7 +62,13 @@ public class MetadataCacheTest extends AbstractCairoTest {
             "\t\tCairoColumn [name=k, position=12, type=TIMESTAMP, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=12]\n" +
             "\t\tCairoColumn [name=l, position=13, type=BYTE, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=13]\n" +
             "\t\tCairoColumn [name=m, position=14, type=BINARY, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=14]\n" +
-            "\t\tCairoColumn [name=n, position=15, type=STRING, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=15]\n";
+            "\t\tCairoColumn [name=n, position=15, type=STRING, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=15]";
+
+    private static final String xMetaString = "MetadataCache [tableCount=1]\n" +
+            "\t" + xMetaStringSansHeader + "\n";
+
+    private static final String xMetaStringId2SansHeader = xMetaStringSansHeader.replace("id=1", "id=2");
+
     private static final String yMetaString = "MetadataCache [tableCount=1]\n" +
             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=1]\n" +
             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=0]\n";
@@ -641,6 +647,36 @@ public class MetadataCacheTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertException("table_columns('y')", -1, "table does not exist");
+        });
+    }
+
+    @Test
+    public void testDropAndRecreateTableRefreshSnapshots() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            CharSequenceObjHashMap<CairoTable> cache = new CharSequenceObjHashMap<>();
+            long tableCacheVersion = -1;
+
+            try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
+                tableCacheVersion = metadataRO.snapshot(cache, tableCacheVersion);
+            }
+
+            CairoTable x = cache.get("x");
+            sink.clear();
+            x.toSink(sink);
+            TestUtils.assertEquals(xMetaStringSansHeader, sink);
+
+            execute("DROP TABLE x");
+            createX();
+            drainWalQueue();
+
+            try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
+                metadataRO.snapshot(cache, tableCacheVersion);
+            }
+            x = cache.get("x");
+            sink.clear();
+            x.toSink(sink);
+            TestUtils.assertEquals(xMetaStringId2SansHeader, sink);
         });
     }
 
