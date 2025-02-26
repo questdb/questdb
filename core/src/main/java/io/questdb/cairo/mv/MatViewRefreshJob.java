@@ -578,7 +578,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
 
         SeqTxnTracker viewTxnTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
-        if (viewTxnTracker.shouldBackOffDueToMemoryPressure(microsecondClock.getTicks())) {
+        if (!viewTxnTracker.getMemPressureControl().isReadyToProcess()) {
             // rely on another pass of refresh job to re-try
             return false;
         }
