@@ -957,6 +957,53 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testQueryWithCte() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table exchanges (" +
+                            " uid symbol, amount double, ts timestamp " +
+                            ") timestamp(ts) partition by day wal;"
+            );
+            execute("create table aux_start_date (ts timestamp);");
+
+            execute(
+                    "insert into exchanges values('foo', 1.320, '2024-09-10T12:01')" +
+                            ",('foo', 1.323, '2024-09-10T12:02')" +
+                            ",('bar', 103.21, '2024-09-10T12:02')" +
+                            ",('foo', 1.321, '2024-09-10T13:02')"
+            );
+            execute("insert into aux_start_date values('2024-09-10')");
+            drainQueues();
+
+            final String expected = "ts\tuid\tamount\n" +
+                    "2000-01-01T00:00:00.000000Z\tbar\t103.21\n" +
+                    "2000-01-01T00:00:00.000000Z\tfoo\t1.321\n";
+            final String viewSql = "with starting_point as ( " +
+                    "  select ts from aux_start_date " +
+                    "  union " +
+                    "  select interval_start(yesterday()) " +
+                    "), " +
+                    "latest_query as ( " +
+                    "  select * " +
+                    "  from exchanges " +
+                    "  where ts >= (select min(ts) from starting_point) " +
+                    "  latest on ts partition by uid " +
+                    ") " +
+                    "select ts, uid, first(amount) as amount " +
+                    "from latest_query " +
+                    "sample by 100y";
+            assertSql(expected, viewSql);
+
+            execute(
+                    "create materialized view exchanges_100y as (" + viewSql + ") partition by year"
+            );
+            drainQueues();
+
+            assertSql(expected, "exchanges_100y");
+        });
+    }
+
+    @Test
     public void testRecursiveInvalidation() throws Exception {
         assertMemoryLeak(() -> {
             long startTs = TimestampFormatUtils.parseUTCTimestamp("2025-02-18T00:00:00.000000Z");

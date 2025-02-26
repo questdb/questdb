@@ -875,6 +875,13 @@ public class SqlParser {
             final int queryStartPos = lexer.getPosition();
 
             // parse mat view query
+            tok = tok(lexer, "'with' or 'select'");
+            if (isWithKeyword(tok)) {
+                parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, null);
+                // CTEs require SELECT to be specified
+                expectTok(lexer, "select");
+            }
+            lexer.unparseLast();
             final QueryModel qm = parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback, null);
             final QueryModel nestedModel = qm.getNestedModel();
 
@@ -1708,8 +1715,7 @@ public class SqlParser {
             }
 
             // check for decls
-            if (prevModel.getDecls() != null && prevModel.getDecls().size() > 0
-                    && decls == null) {
+            if (prevModel.getDecls() != null && prevModel.getDecls().size() > 0 && decls == null) {
                 decls = prevModel.getDecls();
             }
         }
@@ -2076,7 +2082,6 @@ public class SqlParser {
                 tok = setModelAliasAndTimestamp(lexer, model);
             }
         } else {
-
             lexer.unparseLast();
             parseSelectFrom(lexer, model, masterModel.getWithClauses(), sqlParserCallback);
             tok = setModelAliasAndTimestamp(lexer, model);
