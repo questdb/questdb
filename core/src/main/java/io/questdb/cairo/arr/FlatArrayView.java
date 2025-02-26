@@ -24,12 +24,48 @@
 
 package io.questdb.cairo.arr;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.Numbers;
 
 public interface FlatArrayView {
     void appendToMemFlat(MemoryA mem);
 
+    /**
+     * Returns the type of elements stored in this flat view,
+     * one of the {@link io.questdb.cairo.ColumnType} constants.
+     */
+    int elemType();
+
+    default boolean flatEquals(FlatArrayView other) {
+        int length = this.length();
+        if (length != other.length()) {
+            return false;
+        }
+        switch (elemType()) {
+            case ColumnType.DOUBLE:
+                for (int i = 0; i < length; i++) {
+                    if (!Numbers.equals(getDouble(i), other.getDouble(i))) {
+                        return false;
+                    }
+                }
+                break;
+            case ColumnType.LONG:
+                for (int i = 0; i < length; i++) {
+                    if (getLong(i) != other.getLong(i)) {
+                        return false;
+                    }
+                }
+                break;
+            default:
+                throw new UnsupportedOperationException("Only DOUBLE and LONG are supported");
+        }
+        return true;
+    }
+
     double getDouble(int elemIndex);
 
     long getLong(int elemIndex);
+
+    int length();
 }

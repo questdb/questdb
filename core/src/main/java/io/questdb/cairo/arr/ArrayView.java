@@ -51,9 +51,12 @@ public abstract class ArrayView implements QuietCloseable {
         }
     }
 
-    public boolean arrayEquals(ArrayView other) {
+    public final boolean arrayEquals(ArrayView other) {
         if (this.getDimCount() != other.getDimCount() || !this.shape.equals(other.shape)) {
             return false;
+        }
+        if (this.isVanilla && other.isVanilla) {
+            return this.flatView.flatEquals(other.flatView);
         }
         return arrayEqualsRecursive(0, 0, other, 0);
     }

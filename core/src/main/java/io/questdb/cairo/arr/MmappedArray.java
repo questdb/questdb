@@ -64,7 +64,8 @@ public class MmappedArray extends ArrayView {
         this.flatViewOffset = 0;
         shape.clear();
         strides.clear();
-        final int elementSize = ColumnType.sizeOf(ColumnType.decodeArrayElementType(columnType));
+        short elemType = ColumnType.decodeArrayElementType(columnType);
+        final int elemSize = ColumnType.sizeOf(elemType);
         final int nDims = ColumnType.decodeArrayDimensionality(columnType);
         assert nDims > 0 && nDims <= ColumnType.ARRAY_NDIMS_LIMIT;
 
@@ -82,16 +83,15 @@ public class MmappedArray extends ArrayView {
         final long dataEntryPtr = dataAddr + offset;
 
         validateAndInitShape(dataEntryPtr, nDims);
-        final int arrayByteSize = flatViewLength * elementSize;
         assert (dataEntryPtr + nDims * Integer.BYTES) <= dataLim : "dataEntryPtr + shapeSize > dataLim";
         resetToDefaultStrides();
 
         // Obtain the values ptr / len from the data.
         final long unalignedValuesOffset = offset + ((long) nDims * Integer.BYTES);
-        final long bytesToSkipForAlignment = bytesToSkipForAlignment(unalignedValuesOffset, elementSize);
+        final long bytesToSkipForAlignment = bytesToSkipForAlignment(unalignedValuesOffset, elemSize);
         final long valuesPtr = dataAddr + unalignedValuesOffset + bytesToSkipForAlignment;
-        assert valuesPtr + arrayByteSize <= dataLim;
-        borrowedFlatView().of(valuesPtr, arrayByteSize);
+        assert valuesPtr + (long) flatViewLength * elemSize <= dataLim;
+        borrowedFlatView().of(valuesPtr, elemType, flatViewLength);
         return this;
     }
 

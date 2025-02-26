@@ -280,6 +280,35 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEqualsArrayLiterals() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql("eq\ntrue\n", "SELECT (ARRAY[[1.0, 3]] = ARRAY[[1.0, 3]]) eq FROM long_sequence(1)");
+            assertSql("eq\ntrue\n", "SELECT (ARRAY[[1.0, 3], [5, 7]] = ARRAY[[1.0, 3], [5, 7]]) eq FROM long_sequence(1)");
+            assertSql("eq\nfalse\n", "SELECT (ARRAY[[1.0, 3]] = ARRAY[[1.0, 4]]) eq FROM long_sequence(1)");
+            assertSql("eq\nfalse\n", "SELECT (ARRAY[[1.0, 3]] = ARRAY[[1.0, 3, 3]]) eq FROM long_sequence(1)");
+            assertSql("eq\nfalse\n", "SELECT (ARRAY[[1.0, 3, 3]] = ARRAY[[1.0, 3]]) eq FROM long_sequence(1)");
+            assertSql("eq\nfalse\n", "SELECT (ARRAY[[1.0, 3]] = ARRAY[1.0, 3]) eq FROM long_sequence(1)");
+        });
+    }
+
+    @Test
+    public void testEqualsColumnAndLiteral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][])");
+            execute("INSERT INTO tango VALUES (ARRAY[[1.0, 3], [5, 7]])");
+            assertSql("eq\ntrue\n", "SELECT (arr = ARRAY[[1.0, 3], [5, 7]]) eq FROM tango");
+            assertSql("eq\nfalse\n", "SELECT (arr = ARRAY[[1.0, 4], [5, 7]]) eq FROM tango");
+            assertSql("eq\nfalse\n", "SELECT (arr = ARRAY[[1.0, 3, 3], [5, 7, 9]]) eq FROM tango");
+            assertSql("eq\nfalse\n", "SELECT (arr = ARRAY[[1.0, 3]]) eq FROM tango");
+
+            assertSql("eq\ntrue\n", "SELECT (ARRAY[[1.0, 3], [5, 7]] = arr) eq FROM tango");
+            assertSql("eq\nfalse\n", "SELECT (ARRAY[[1.0, 4], [5, 7]] = arr) eq FROM tango");
+            assertSql("eq\nfalse\n", "SELECT (ARRAY[[1.0, 3, 3], [5, 7, 9]] = arr) eq FROM tango");
+            assertSql("eq\nfalse\n", "SELECT (ARRAY[[1.0, 3]] = arr) eq FROM tango");
+        });
+    }
+
+    @Test
     public void testEqualsDifferentDimensionality() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (left DOUBLE[][], right DOUBLE[])");

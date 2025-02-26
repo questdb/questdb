@@ -137,6 +137,11 @@ public class FunctionArray extends ArrayView implements FlatArrayView {
     }
 
     @Override
+    public int elemType() {
+        return ColumnType.decodeArrayElementType(this.type);
+    }
+
+    @Override
     public double getDouble(int flatIndex) {
         return functions()[flatIndex].getDouble(record);
     }
@@ -148,6 +153,11 @@ public class FunctionArray extends ArrayView implements FlatArrayView {
     @Override
     public long getLong(int flatIndex) {
         return functions()[flatIndex].getLong(record);
+    }
+
+    @Override
+    public int length() {
+        return functions.length;
     }
 
     public void putFunction(int flatIndex, Function f) {

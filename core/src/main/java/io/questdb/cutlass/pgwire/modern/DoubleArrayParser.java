@@ -36,10 +36,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 
 public final class DoubleArrayParser extends ArrayView implements FlatArrayView {
-    private final DoubleList values = new DoubleList();
     private static final int STATE_IDLE = 0;
-    private static final int STATE_IN_QUOTE = 1;
     private static final int STATE_IN_NUMBER = 2;
+    private static final int STATE_IN_QUOTE = 1;
+    private final DoubleList values = new DoubleList();
 
     public DoubleArrayParser() {
         this.flatView = this;
@@ -53,6 +53,11 @@ public final class DoubleArrayParser extends ArrayView implements FlatArrayView 
     }
 
     @Override
+    public int elemType() {
+        return ColumnType.DOUBLE;
+    }
+
+    @Override
     public double getDouble(int elemIndex) {
         return values.getQuick(elemIndex);
     }
@@ -60,6 +65,11 @@ public final class DoubleArrayParser extends ArrayView implements FlatArrayView 
     @Override
     public long getLong(int elemIndex) {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int length() {
+        return values.size();
     }
 
     public void of(CharSequence input) {
@@ -73,15 +83,6 @@ public final class DoubleArrayParser extends ArrayView implements FlatArrayView 
         }
         strides.clear();
         calculateStrides();
-    }
-
-    private void parseAndAddNumber(CharSequence input, int numberStart, int i) {
-        try {
-            values.add(Numbers.parseDouble(input, numberStart, i - numberStart));
-            flatViewLength++;
-        } catch (NumericException e) {
-            throw new IllegalArgumentException("Invalid number format at position " + numberStart, e);
-        }
     }
 
     private void calculateStrides() {
@@ -157,6 +158,15 @@ public final class DoubleArrayParser extends ArrayView implements FlatArrayView 
                         state = STATE_IN_NUMBER;
                     }
             }
+        }
+    }
+
+    private void parseAndAddNumber(CharSequence input, int numberStart, int i) {
+        try {
+            values.add(Numbers.parseDouble(input, numberStart, i - numberStart));
+            flatViewLength++;
+        } catch (NumericException e) {
+            throw new IllegalArgumentException("Invalid number format at position " + numberStart, e);
         }
     }
 

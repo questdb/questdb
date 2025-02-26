@@ -75,7 +75,8 @@ public class DirectArray extends ArrayView implements ArraySink, Mutable {
         int byteSize = flatLength << ColumnType.pow2SizeOf(ColumnType.decodeArrayElementType(type));
         ensureCapacity(byteSize);
         this.flatViewLength = flatLength;
-        borrowedFlatView().of(ptr, byteSize);
+        int elemType = ColumnType.decodeArrayElementType(type);
+        borrowedFlatView().of(ptr, elemType, flatLength);
         int stride = 1;
         for (int i = shape.size() - 1; i >= 0; i--) {
             strides.set(i, stride);

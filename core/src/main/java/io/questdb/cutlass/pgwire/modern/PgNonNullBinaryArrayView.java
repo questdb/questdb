@@ -72,6 +72,11 @@ final class PgNonNullBinaryArrayView extends ArrayView implements FlatArrayView,
     }
 
     @Override
+    public int elemType() {
+        return 0;
+    }
+
+    @Override
     public double getDouble(int flatIndex) {
         final long addr = lo + Integer.BYTES + ((long) flatIndex * (Double.BYTES + Integer.BYTES));
         assert addr < hi;
@@ -85,6 +90,11 @@ final class PgNonNullBinaryArrayView extends ArrayView implements FlatArrayView,
         assert addr < hi;
         long networkOrderVal = Unsafe.getUnsafe().getLong(addr);
         return Numbers.bswap(networkOrderVal);
+    }
+
+    @Override
+    public int length() {
+        return 0;
     }
 
     void addDimLen(int dimLen) {

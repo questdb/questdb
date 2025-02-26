@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.arr;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.Unsafe;
 
@@ -34,8 +35,10 @@ import io.questdb.std.Unsafe;
  * length of the array it represents -- it depends on the assumed element type.
  */
 public final class BorrowedFlatArrayView implements FlatArrayView {
-    private long ptr = 0;
-    private int size = 0;
+    private int elemType = ColumnType.UNDEFINED;
+    private int length;
+    private long ptr;
+    private int size;
 
     @Override
     public void appendToMemFlat(MemoryA mem) {
@@ -44,33 +47,42 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
     }
 
     @Override
+    public int elemType() {
+        return elemType;
+    }
+
+    @Override
     public double getDouble(int elemIndex) {
-        assert elemIndex >= 0;
-        assert size % Double.BYTES == 0;
-        assert ((elemIndex + 1) * Double.BYTES) <= size;
+        assert elemIndex >= 0 && elemIndex < length;
         final long addr = ptr + ((long) elemIndex * Double.BYTES);
         return Unsafe.getUnsafe().getDouble(addr);
     }
 
     @Override
     public long getLong(int elemIndex) {
-        assert elemIndex >= 0;
-        assert size % Long.BYTES == 0;
-        assert ((elemIndex + 1) * Long.BYTES) <= size;
+        assert elemIndex >= 0 && elemIndex < length;
         final long addr = ptr + ((long) elemIndex * Long.BYTES);
         return Unsafe.getUnsafe().getLong(addr);
     }
 
-    public BorrowedFlatArrayView of(long ptr, int size) {
+    @Override
+    public int length() {
+        return length;
+    }
+
+    public BorrowedFlatArrayView of(long ptr, int elemType, int length) {
         assert ptr > 0 : "ptr <= 0";
-        assert size > 0 : "size <= 0";
+        assert length > 0 : "length <= 0";
+        this.elemType = elemType;
         this.ptr = ptr;
-        this.size = size;
+        this.length = length;
+        this.size = length * ColumnType.sizeOf(elemType);
         return this;
     }
 
     public void reset() {
-        ptr = 0;
-        size = 0;
+        this.ptr = 0;
+        this.length = 0;
+        this.size = 0;
     }
 }
