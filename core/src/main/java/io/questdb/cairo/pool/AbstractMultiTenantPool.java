@@ -50,30 +50,16 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
     private static final int NEXT_OPEN = 0;
     private static final long NEXT_STATUS = Unsafe.getFieldOffset(Entry.class, "nextStatus");
     private static final long UNLOCKED = -1L;
-    private static final ThreadLocal<TableTokenWrapper> tlTokenWrapper = ThreadLocal.withInitial(TableTokenWrapper::new);
     private final Log LOG = LogFactory.getLog(this.getClass());
     private final ConcurrentHashMap<Entry<T>> entries = new ConcurrentHashMap<>();
     private final int maxEntries;
     private final int maxSegments;
-    private final TenantFactory<T> newCopyOfTenantRef;
-    private final TenantFactory<T> newTenantRef;
-    private final TenantRefresher<T> refreshTenantAtRef;
-    private final TenantRefresher<T> refreshTenantRef;
     private final ThreadLocal<ResourcePoolSupervisor<T>> threadLocalPoolSupervisor = new ThreadLocal<>();
 
-    @SuppressWarnings("unchecked")
     public AbstractMultiTenantPool(CairoConfiguration configuration, int maxSegments, long inactiveTtlMillis) {
         super(configuration, inactiveTtlMillis);
         this.maxSegments = maxSegments;
         this.maxEntries = maxSegments * ENTRY_SIZE;
-
-        this.newTenantRef = (tokenSource, entry, index, supervisor)
-                -> AbstractMultiTenantPool.this.newTenant(tokenSource.getTableToken(), entry, index, supervisor);
-        this.refreshTenantRef = (tenant, tokenSource, supervisor) -> tenant.refresh(supervisor);
-
-        this.newCopyOfTenantRef = (srcTenant, entry, index, supervisor)
-                -> AbstractMultiTenantPool.this.newCopyOfTenant((T) srcTenant, entry, index, supervisor);
-        this.refreshTenantAtRef = (tenant, tokenSource, supervisor) -> tenant.refreshAt(supervisor, (T) tokenSource);
     }
 
     public void configureThreadLocalPoolSupervisor(@NotNull ResourcePoolSupervisor<T> poolSupervisor) {
@@ -86,8 +72,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
 
     @Override
     public T get(TableToken tableToken) {
-        final TableTokenWrapper tokenWrapper = tlTokenWrapper.get();
-        return get0(tokenWrapper.of(tableToken), newTenantRef, refreshTenantRef);
+        return get0(tableToken, null, false);
     }
 
     public int getBusyCount() {
@@ -213,8 +198,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         }
     }
 
-    private T get0(TableTokenSource tokenSource, TenantFactory<T> tenantFactory, TenantRefresher<T> tenantRefresher) {
-        final TableToken tableToken = tokenSource.getTableToken();
+    private T get0(TableToken tableToken, @Nullable T copyOfTenant, boolean isCopyOf) {
         Entry<T> e = getEntry(tableToken);
 
         long lockOwner = e.lockOwner;
@@ -238,7 +222,9 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                                     .$("open '").utf8(tableToken.getDirName())
                                     .$("' [at=").$(e.index).$(':').$(i)
                                     .I$();
-                            tenant = tenantFactory.newTenant(tokenSource, e, i, supervisor);
+                            tenant = isCopyOf
+                                    ? newCopyOfTenant(copyOfTenant, e, i, supervisor)
+                                    : newTenant(tableToken, e, i, supervisor);
                         } catch (CairoException ex) {
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                             throw ex;
@@ -248,7 +234,11 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                         notifyListener(thread, tableToken, PoolListener.EV_CREATE, e.index, i);
                     } else {
                         try {
-                            tenantRefresher.refresh(tenant, tokenSource, supervisor);
+                            if (isCopyOf) {
+                                tenant.refreshAt(supervisor, copyOfTenant);
+                            } else {
+                                tenant.refresh(supervisor);
+                            }
                         } catch (Throwable th) {
                             tenant.goodbye();
                             tenant.close();
@@ -353,11 +343,11 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         }
     }
 
-    protected T getCopyOf(T srcTenant) {
+    protected T getCopyOf(@NotNull T srcTenant) {
         if (!isCopyOfSupported()) {
             throw new UnsupportedOperationException("getCopyOf is not supported by this pool");
         }
-        return get0(srcTenant, newCopyOfTenantRef, refreshTenantAtRef);
+        return get0(srcTenant.getTableToken(), srcTenant, true);
     }
 
     protected abstract byte getListenerSrc();
@@ -468,19 +458,6 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         throw CairoException.critical(0).put("double close [table=").put(tableToken.getDirName()).put(", index=").put(index).put(']');
     }
 
-    private interface TenantFactory<T> {
-        T newTenant(
-                TableTokenSource tokenSource,
-                Entry<T> entry,
-                int index,
-                @Nullable ResourcePoolSupervisor<T> supervisor
-        );
-    }
-
-    private interface TenantRefresher<T> {
-        void refresh(T tenant, TableTokenSource tokenSource, @Nullable ResourcePoolSupervisor<T> supervisor);
-    }
-
     public static final class Entry<T> {
         private final long[] allocations = new long[ENTRY_SIZE];
         private final int index;
@@ -515,20 +492,6 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
 
         public T getTenant(int pos) {
             return tenants[pos];
-        }
-    }
-
-    private static class TableTokenWrapper implements TableTokenSource {
-        private TableToken tableToken;
-
-        @Override
-        public TableToken getTableToken() {
-            return tableToken;
-        }
-
-        TableTokenWrapper of(TableToken tableToken) {
-            this.tableToken = tableToken;
-            return this;
         }
     }
 }

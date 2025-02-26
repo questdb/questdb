@@ -608,7 +608,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (symbolToken == null) {
                         symbolToken = node.token;
                     } else if (!Chars.equalsIgnoreCase(symbolToken, node.token)) {
-                        return false; //more than one key symbol column
+                        return false; // more than one key symbol column
                     }
                 } else {
                     return false;
@@ -5358,10 +5358,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final IntrinsicModel intrinsicModel;
             if (withinExtracted != null) {
                 CharSequence preferredKeyColumn = null;
-
                 if (latestByColumnCount == 1) {
                     final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
-
                     if (ColumnType.isSymbol(myMeta.getColumnType(latestByIndex))) {
                         preferredKeyColumn = latestBy.getQuick(0).token;
                     }

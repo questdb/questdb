@@ -28,7 +28,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 
-public interface PoolTenant<T extends PoolTenant<T>> extends TableTokenSource, QuietCloseable {
+public interface PoolTenant<T extends PoolTenant<T>> extends QuietCloseable {
 
     /**
      * Pool tenant must keep track of the Entry it belongs to and provide this entry when requested. Entry is
@@ -52,7 +52,6 @@ public interface PoolTenant<T extends PoolTenant<T>> extends TableTokenSource, Q
      *
      * @return valid table name.
      */
-    @Override
     TableToken getTableToken();
 
     /**

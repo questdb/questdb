@@ -305,15 +305,15 @@ public class SqlParser {
                     // We've found a lowest-level model. Let's check if the column belongs to it.
                     final int dotIndex = Chars.indexOf(node.token, '.');
                     if (dotIndex > -1) {
-                        if (Chars.equals(model.getName(), node.token, 0, dotIndex)) {
-                            if (!Chars.equals(model.getTableName(), baseTableName)) {
+                        if (Chars.equalsIgnoreCase(model.getName(), node.token, 0, dotIndex)) {
+                            if (!Chars.equalsIgnoreCase(model.getTableName(), baseTableName)) {
                                 throw SqlException.$(node.position, "only base table columns can be used as keys").put(node.token);
                             }
                             target.add(Chars.toString(node.token, dotIndex + 1, node.token.length()));
                             return;
                         }
                     } else {
-                        if (!Chars.equals(model.getTableName(), baseTableName)) {
+                        if (!Chars.equalsIgnoreCase(model.getTableName(), baseTableName)) {
                             throw SqlException.$(node.position, "only base table columns can be used as keys").put(node.token);
                         }
                         target.add(node.token);
@@ -847,35 +847,25 @@ public class SqlParser {
                 assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition()), lexer.lastTokenPosition()
         ));
 
+        tok = tok(lexer, "'as' or 'with' or 'refresh'");
         CharSequence baseTableName = null;
-        boolean baseTableDefined = false;
-        boolean refreshDefined = false;
-        for (; ; ) {
-            tok = tok(lexer, "'as' or 'with' or 'refresh'");
-            if (isWithKeyword(tok)) {
-                expectTok(lexer, "base");
-                if (baseTableDefined) {
-                    throw SqlException.position(lexer.getPosition()).put("base table already defined");
-                }
-                baseTableName = Chars.toString(tok(lexer, "base table expected"));
-                baseTableDefined = true;
-            } else if (isRefreshKeyword(tok)) {
-                if (refreshDefined) {
-                    throw SqlException.position(lexer.getPosition()).put("refresh already defined");
-                }
-                tok = tok(lexer, "'incremental' or 'manual' or 'interval' expected");
-                if (isManualKeyword(tok)) {
-                    throw SqlException.position(lexer.lastTokenPosition()).put("manual refresh is not yet supported");
-                } else if (isIntervalKeyword(tok)) {
-                    throw SqlException.position(lexer.lastTokenPosition()).put("interval refresh is not yet supported");
-                } else if (!isIncrementalKeyword(tok)) {
-                    // For now, incremental refresh is the only supported behavior.
-                    throw SqlException.position(lexer.lastTokenPosition()).put("'incremental' or 'manual' or 'interval' expected");
-                }
-                refreshDefined = true;
-            } else {
-                break;
+        if (isWithKeyword(tok)) {
+            expectTok(lexer, "base");
+            baseTableName = Chars.toString(tok(lexer, "base table expected"));
+            tok = tok(lexer, "'as' or 'refresh'");
+        }
+
+        if (isRefreshKeyword(tok)) {
+            tok = tok(lexer, "'incremental' or 'manual' or 'interval' expected");
+            if (isManualKeyword(tok)) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("manual refresh is not yet supported");
+            } else if (isIntervalKeyword(tok)) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("interval refresh is not yet supported");
+            } else if (!isIncrementalKeyword(tok)) {
+                // For now, incremental refresh is the only supported behavior.
+                throw SqlException.position(lexer.lastTokenPosition()).put("'incremental' or 'manual' or 'interval' expected");
             }
+            tok = tok(lexer, "'as'");
         }
 
         final QueryModel queryModel;
@@ -933,7 +923,7 @@ public class SqlParser {
             createTableOperationBuilder.setQueryModel(queryModel);
             expectTok(lexer, ')');
         } else {
-            throw SqlException.position(lexer.getPosition()).put("'as' or 'with' or 'refresh' expected");
+            throw SqlException.position(lexer.getPosition()).put("'as' expected");
         }
 
         while ((tok = optTok(lexer)) != null && Chars.equals(tok, ',')) {
@@ -1834,12 +1824,13 @@ public class SqlParser {
                     showKind = QueryModel.SHOW_SERVER_VERSION_NUM;
                 } else if (isCreateKeyword(tok)) {
                     tok = SqlUtil.fetchNext(lexer);
-                    if (tok != null && (isTableKeyword(tok) || isMaterializedKeyword(tok))) {
-                        if (isMaterializedKeyword(tok)) {
-                            expectTok(lexer, "view");
-                        }
+                    if (tok != null && isTableKeyword(tok)) {
                         parseTableName(lexer, model);
                         showKind = QueryModel.SHOW_CREATE_TABLE;
+                    } else if (tok != null && isMaterializedKeyword(tok)) {
+                        expectTok(lexer, "view");
+                        parseTableName(lexer, model);
+                        showKind = QueryModel.SHOW_CREATE_MAT_VIEW;
                     } else {
                         throw SqlException.position(lexer.getPosition()).put("expected 'TABLE' or 'MATERIALIZED VIEW'");
                     }

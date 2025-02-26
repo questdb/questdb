@@ -558,8 +558,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
     public void testCreateMatViewSampleByNestedFromTo() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE2);
-            final String from = "with t as ( select ts, avg(v) from " + TABLE2 + " sample by 1d from '2024-03-01') select ts, avg(v) from t sample by 1d";
-            final String to = "with t as ( select ts, avg(v) from " + TABLE2 + " sample by 1d to '2024-06-30') select ts, avg(v) from t sample by 1d";
+            final String from = "with t as (select ts, avg(v) from " + TABLE2 + " sample by 1d from '2024-03-01') select ts, avg(v) from t sample by 1d";
+            final String to = "with t as (select ts, avg(v) from " + TABLE2 + " sample by 1d to '2024-06-30') select ts, avg(v) from t sample by 1d";
             try {
                 execute("create materialized view test as (" + from + ") partition by day");
                 fail("Expected SqlException missing");
@@ -748,7 +748,11 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     "create materialized view test with base x as (select t1.ts, t1.k2, avg(t1.v) from x as t1 join y as t2 on v sample by 1m) partition by day",
                     "create materialized view test with base x as (select t1.ts, t2.k1, avg(t1.v) from x as t1 join y as t2 on v sample by 1m) partition by day",
                     "create materialized view test with base x as (select \"t1\".\"ts\", \"t2\".\"k1\", avg(\"t1\".\"v\") from \"x\" as \"t1\" join \"y\" as \"t2\" on \"v\" sample by 1m) partition by day",
+                    // test table alias case-insensitivity
+                    "create materialized view test with base x as (select \"t1\".\"ts\", \"t2\".\"k1\", avg(\"t1\".\"v\") from \"x\" as \"T1\" join \"y\" as \"T2\" on \"v\" sample by 1m) partition by day",
                     "create materialized view test with base x as (select t1.ts, t2.k1, avg(t1.v) from x as t1 join y as t2 on v sample by 1m) partition by day",
+                    // test table name case-insensitivity
+                    "create materialized view test with base x as (select t1.ts, t2.k1, avg(t1.v) from x as T1 join y as T2 on v sample by 1m) partition by day",
             };
 
             for (String query : queries) {
@@ -944,9 +948,9 @@ public class CreateMatViewTest extends AbstractCairoTest {
             execute("create materialized view test as (" + query + ") partition by day TTL 3 WEEKS");
             assertSql(
                     "ddl\n" +
-                            "CREATE MATERIALIZED VIEW 'test' with base 'table1' as ( \n" +
+                            "CREATE MATERIALIZED VIEW 'test' WITH BASE 'table1' REFRESH INCREMENTAL AS ( \n" +
                             "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
-                            ") timestamp(ts) PARTITION BY DAY TTL 3 WEEKS WAL;\n",
+                            ") PARTITION BY DAY TTL 3 WEEKS;\n",
                     "show create materialized view test"
             );
         });
