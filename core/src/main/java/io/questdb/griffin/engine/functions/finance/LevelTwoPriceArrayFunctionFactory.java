@@ -32,10 +32,12 @@ import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
@@ -53,32 +55,44 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        assert args.size() == 3 : "args.size() should be 3";
-        for (int i = 1; i < 3; i++) {
-            if (ColumnType.decodeArrayDimensionality(args.getQuick(i).getType()) != 1) {
-                throw SqlException.$(argPositions.getQuick(i), "not a one-dimensional array");
+        try {
+            assert args.size() == 3 : "args.size() should be 3, but got " + args.size();
+            for (int i = 1; i < 3; i++) {
+                if (ColumnType.decodeArrayDimensionality(args.getQuick(i).getType()) != 1) {
+                    throw SqlException.$(argPositions.getQuick(i), "not a one-dimensional array");
+                }
             }
+            return new LevelTwoPriceArrayFunction(
+                    args.getQuick(0),
+                    args.getQuick(1),
+                    argPositions.getQuick(1),
+                    args.getQuick(2)
+            );
+        } catch (Throwable e) {
+            Misc.freeObjList(args);
+            throw e;
         }
-        return new LevelTwoPriceArrayFunction(
-                args.getQuick(0),
-                args.getQuick(1),
-                argPositions.getQuick(1),
-                args.getQuick(2)
-        );
     }
 
     private static class LevelTwoPriceArrayFunction extends DoubleFunction {
 
-        private final Function pricesArg;
         private final int pricesArgPos;
-        private final Function sizesArg;
-        private final Function targetArg;
+        private Function pricesArg;
+        private Function sizesArg;
+        private Function targetArg;
 
         public LevelTwoPriceArrayFunction(Function targetArg, Function pricesArg, int pricesArgPos, Function sizesArg) {
             this.targetArg = targetArg;
             this.pricesArg = pricesArg;
             this.pricesArgPos = pricesArgPos;
             this.sizesArg = sizesArg;
+        }
+
+        @Override
+        public void close() {
+            pricesArg = Misc.free(pricesArg);
+            sizesArg = Misc.free(sizesArg);
+            targetArg = Misc.free(targetArg);
         }
 
         @Override
@@ -130,6 +144,11 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
 
             // if never exceeded the target, then no price, since it can't be fulfilled
             return Double.NaN;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("l2price(").val(targetArg).val(", ").val(pricesArg).val(", ").val(sizesArg).val(')');
         }
     }
 }

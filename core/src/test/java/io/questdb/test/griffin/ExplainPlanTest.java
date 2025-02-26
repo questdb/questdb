@@ -84,6 +84,7 @@ import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.ByteConstant;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.constants.DateConstant;
+import io.questdb.griffin.engine.functions.constants.DoubleArray1dConstant;
 import io.questdb.griffin.engine.functions.constants.DoubleArray2dConstant;
 import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.griffin.engine.functions.constants.FloatConstant;
@@ -124,6 +125,7 @@ import io.questdb.griffin.engine.functions.eq.EqSymTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqTimestampCursorFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.NegContainsEqIPv4StrFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.NegContainsIPv4StrFunctionFactory;
+import io.questdb.griffin.engine.functions.finance.LevelTwoPriceArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.finance.LevelTwoPriceFunctionFactory;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.engine.functions.lt.LtIPv4StrFunctionFactory;
@@ -2496,7 +2498,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     }
                                 }
 
-                                if (isArray && !isConstant && sigArgType == ColumnType.DOUBLE) {
+                                if (factory instanceof LevelTwoPriceArrayFunctionFactory) {
+                                    args.add(new DoubleConstant(2.0));
+                                    args.add(new DoubleArray1dConstant(new double[]{1.0}));
+                                    args.add(new DoubleArray1dConstant(new double[]{1.0}));
+                                    break;
+                                } else if (isArray && !isConstant && sigArgType == ColumnType.DOUBLE) {
                                     args.add(new DoubleArray2dConstant(new double[][]{{1}, {1}}));
                                 } else if (factory instanceof SwitchFunctionFactory) {
                                     args.add(new IntConstant(1));
