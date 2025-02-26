@@ -29,10 +29,13 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.Numbers;
 
 public interface FlatArrayView {
+    /**
+     * Appends the contents of this flat array to the supplied memory block.
+     */
     void appendToMemFlat(MemoryA mem);
 
     /**
-     * Returns the type of elements stored in this flat view,
+     * Returns the type of elements stored in this flat array,
      * one of the {@link io.questdb.cairo.ColumnType} constants.
      */
     short elemType();
@@ -58,7 +61,7 @@ public interface FlatArrayView {
                 }
                 break;
             default:
-                throw new UnsupportedOperationException("Only DOUBLE and LONG are supported");
+                throw new UnsupportedOperationException("Implemented only for DOUBLE and LONG");
         }
         return true;
     }
@@ -67,5 +70,8 @@ public interface FlatArrayView {
 
     long getLong(int elemIndex);
 
+    /**
+     * Returns the number of elements in this flat array.
+     */
     int length();
 }
