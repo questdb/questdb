@@ -24,6 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -53,6 +57,39 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
                     true
             );
         });
+    }
+
+    @Test
+    public void testDropAndRecreateWithDifferentColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (old int)");
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery compile = compiler.compile("information_schema.columns()", sqlExecutionContext);
+
+                // we use a single instance of RecordCursorFactory before and after table drop
+                // this mimic behavior of a query cache.
+                try (RecordCursorFactory recordCursorFactory = compile.getRecordCursorFactory()) {
+                    try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
+                        assertCursor("table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
+                                        "qdb\tpublic\tx\told\t0\t\tyes\tinteger\n",
+                                false, true, true, cursor, recordCursorFactory.getMetadata(), false);
+                    }
+
+                    // re-create a table with the *same name* again
+                    execute("drop table x");
+                    execute("create table x (new long)"); // different column type and name
+                    drainWalQueue();
+
+                    try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
+                        assertCursor("table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
+                                        "qdb\tpublic\tx\tnew\t0\t\tyes\tbigint\n",
+                                false, true, true, cursor, recordCursorFactory.getMetadata(), false);
+                    }
+                }
+            }
+        });
+
     }
 
     @Test

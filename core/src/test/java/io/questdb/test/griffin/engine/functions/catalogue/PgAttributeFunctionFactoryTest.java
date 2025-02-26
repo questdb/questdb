@@ -24,6 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -339,6 +343,39 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                 null,
                 false
         );
+    }
+
+    @Test
+    public void testDropAndRecreateTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (old int)");
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery compile = compiler.compile("select * from pg_catalog.pg_attribute", sqlExecutionContext);
+
+                // we use a single instance of RecordCursorFactory before and after table drop
+                // this mimic behavior of a query cache.
+                try (RecordCursorFactory recordCursorFactory = compile.getRecordCursorFactory()) {
+                    try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
+                        assertCursor("attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
+                                        "1\told\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue\n",
+                                false, true, true, cursor, recordCursorFactory.getMetadata(), false);
+                    }
+
+                    // recreate the same table again, this time with a different column
+                    execute("drop table x");
+                    execute("create table x (new long)");
+                    drainWalQueue();
+
+                    try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
+                        // note the ID is 2 now!
+                        assertCursor("attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
+                                        "2\tnew\t1\t20\tfalse\t-1\t8\t\tfalse\ttrue\n",
+                                false, true, true, cursor, recordCursorFactory.getMetadata(), false);
+                    }
+                }
+            }
+        });
     }
 
     @Test
