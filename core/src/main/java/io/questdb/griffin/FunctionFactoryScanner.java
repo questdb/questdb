@@ -82,7 +82,13 @@ public class FunctionFactoryScanner {
             loadFunctionOrderMap(functionListFileName, classLoader, orderMap);
             // Function factories sometimes have conflict and have to be loaded in a specific order
             // For example RndSymbolFunctionFactory has to be before RndSymbolListFunctionFactory
-            functionFactories.sort((f1, f2) -> compareFactories(f1, f2, orderMap));
+            if (initialSize > 0) {
+                functionFactories
+                        .subList(initialSize, functionFactories.size())
+                        .sort((f1, f2) -> compareFactories(f1, f2, orderMap));
+            } else {
+                functionFactories.sort((f1, f2) -> compareFactories(f1, f2, orderMap));
+            }
 
             if (log != null) {
                 log.advisory().$("loaded ").$(functionFactories.size() - initialSize).$(" functions").$();
