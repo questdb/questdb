@@ -133,7 +133,7 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
 
             int id = left.getInt(rec);
 
-            if (id >= 0 && id <= BITSET_OPTIMISATION_THRESHOLD) {
+            if (id >= 0 && id < BITSET_OPTIMISATION_THRESHOLD) {
                 if (hits.get(id)) {
                     return true;
                 }
@@ -147,7 +147,7 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
             long symbol = left.getTimestamp(rec);
             boolean result = negated == (symbol != timestampConstant);
 
-            if (id >= 0 && id <= BITSET_OPTIMISATION_THRESHOLD) {
+            if (id >= 0 && id < BITSET_OPTIMISATION_THRESHOLD) {
                 if (result) {
                     hits.set(id);
                 } else {
