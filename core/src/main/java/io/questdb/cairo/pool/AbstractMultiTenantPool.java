@@ -72,7 +72,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
 
     @Override
     public T get(TableToken tableToken) {
-        return get0(tableToken, null, false);
+        return get0(tableToken, null);
     }
 
     public int getBusyCount() {
@@ -198,7 +198,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         }
     }
 
-    private T get0(TableToken tableToken, @Nullable T copyOfTenant, boolean isCopyOf) {
+    private T get0(TableToken tableToken, @Nullable T copyOfTenant) {
         Entry<T> e = getEntry(tableToken);
 
         long lockOwner = e.lockOwner;
@@ -222,7 +222,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                                     .$("open '").utf8(tableToken.getDirName())
                                     .$("' [at=").$(e.index).$(':').$(i)
                                     .I$();
-                            tenant = isCopyOf
+                            tenant = copyOfTenant != null
                                     ? newCopyOfTenant(copyOfTenant, e, i, supervisor)
                                     : newTenant(tableToken, e, i, supervisor);
                         } catch (CairoException ex) {
@@ -234,7 +234,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                         notifyListener(thread, tableToken, PoolListener.EV_CREATE, e.index, i);
                     } else {
                         try {
-                            if (isCopyOf) {
+                            if (copyOfTenant != null) {
                                 tenant.refreshAt(supervisor, copyOfTenant);
                             } else {
                                 tenant.refresh(supervisor);
@@ -347,7 +347,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         if (!isCopyOfSupported()) {
             throw new UnsupportedOperationException("getCopyOf is not supported by this pool");
         }
-        return get0(srcTenant.getTableToken(), srcTenant, true);
+        return get0(srcTenant.getTableToken(), srcTenant);
     }
 
     protected abstract byte getListenerSrc();
