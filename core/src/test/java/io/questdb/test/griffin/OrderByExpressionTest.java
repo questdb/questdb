@@ -62,7 +62,7 @@ public class OrderByExpressionTest extends AbstractCairoTest {
                 null,
                 null,
                 true,
-                false
+                true
         );
     }
 
@@ -127,7 +127,7 @@ public class OrderByExpressionTest extends AbstractCairoTest {
                 null,
                 null,
                 true,
-                false
+                true
         );
     }
 

@@ -1121,6 +1121,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public void resetFlags() {
+            sqlExecutionContext.resetFlags();
+        }
+
+        @Override
         public long getRequestFd() {
             return sqlExecutionContext.getRequestFd();
         }

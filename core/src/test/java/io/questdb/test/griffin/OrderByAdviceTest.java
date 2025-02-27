@@ -647,7 +647,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         "    ask int,\n" +
                         "    ts timestamp\n" +
                         ") timestamp(ts) partition by DAY",
-                "ts",
+                "ts###desc",
                 "insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
                         "        rnd_int() bid, \n" +
                         "        rnd_int() ask, \n" +

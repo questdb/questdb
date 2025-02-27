@@ -131,7 +131,8 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                             false,
                             columnIndexes,
                             columnSizes,
-                            true
+                            true,
+                            false
                     );
                     try (
                             SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine);
@@ -268,7 +269,8 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                             true,
                             columnIndexes,
                             columnSizes,
-                            true
+                            true,
+                            false
                     )) {
 
                         Assert.assertTrue(factory.supportsPageFrameCursor());
@@ -377,7 +379,8 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                             true,
                             columnIndexes,
                             columnSizes,
-                            true
+                            true,
+                            false
                     )) {
 
                         Assert.assertTrue(factory.supportsPageFrameCursor());

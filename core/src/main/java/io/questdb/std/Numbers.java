@@ -1425,12 +1425,12 @@ public final class Numbers {
 
     public static long parseLongQuiet(CharSequence sequence) {
         if (sequence == null) {
-            return Long.MIN_VALUE;
+            return LONG_NULL;
         }
         try {
             return parseLong0(sequence, 0, sequence.length());
         } catch (NumericException e) {
-            return Long.MIN_VALUE;
+            return LONG_NULL;
         }
     }
 
@@ -2033,6 +2033,10 @@ public final class Numbers {
         long signMask = valueBits & Numbers.SIGN_BIT_MASK;
         double absValue = Double.longBitsToDouble(valueBits & ~Numbers.SIGN_BIT_MASK);
         return Double.longBitsToDouble(Double.doubleToRawLongBits(roundUp00PosScale(absValue, scale)) | signMask);
+    }
+
+    public static boolean sameSign(long a, long b) {
+        return (a ^ b) >= 0;
     }
 
     public static int sinkSizeIPv4(int value) {

@@ -227,7 +227,7 @@ public class UnionTest extends AbstractCairoTest {
                         "except " +
                         "select 1  " +
                         "union all " +
-                        "select 3 from long_sequence(1) limit 1", null, null, false, false);
+                        "select 3 from long_sequence(1) limit 1", null, null, false, true);
     }
 
     @Test
@@ -247,7 +247,7 @@ public class UnionTest extends AbstractCairoTest {
                         "intersect " +
                         "select * from (select x from long_sequence(4) order by x limit 2) " +
                         "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, false);
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true);
     }
 
     @Test
@@ -257,7 +257,7 @@ public class UnionTest extends AbstractCairoTest {
                         "intersect " +
                         "select * from (select x from long_sequence(4) order by x limit 2) " +
                         "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, false);
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true);
     }
 
     @Test
@@ -268,7 +268,7 @@ public class UnionTest extends AbstractCairoTest {
                         "intersect " +
                         "select * from (select x from long_sequence(4) order by x*2 limit 2) " +
                         "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, false);
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true);
     }
 
     @Test
@@ -1316,6 +1316,6 @@ public class UnionTest extends AbstractCairoTest {
                         "intersect " +
                         "select * from (select x from long_sequence(4) order by x limit 2) " +
                         "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, false);
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true);
     }
 }

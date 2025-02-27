@@ -52,6 +52,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     private final boolean followsOrderByAdvice;
     private final boolean framingSupported;
     private final RowCursorFactory rowCursorFactory;
+    private final boolean singleRowFactory;
     private final boolean supportsRandomAccess;
     protected FwdTableReaderPageFrameCursor fwdPageFrameCursor;
     private BwdTableReaderPageFrameCursor bwdPageFrameCursor;
@@ -68,7 +69,8 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             boolean framingSupported,
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts,
-            boolean supportsRandomAccess
+            boolean supportsRandomAccess,
+            boolean singleRowFactory
     ) {
         super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
@@ -85,6 +87,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         this.filter = filter;
         this.framingSupported = framingSupported;
         this.supportsRandomAccess = supportsRandomAccess;
+        this.singleRowFactory = singleRowFactory;
     }
 
     @Override
@@ -106,6 +109,11 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
 
     @Override
     public int getScanDirection() {
+        if (singleRowFactory) {
+            // we only return single row, sometimes we use backward scan to do that
+            // even if we do, we mark single row factory to return data in ascending timestamp order
+            return SCAN_DIRECTION_FORWARD;
+        }
         switch (partitionFrameCursorFactory.getOrder()) {
             case ORDER_ASC:
                 return SCAN_DIRECTION_FORWARD;
