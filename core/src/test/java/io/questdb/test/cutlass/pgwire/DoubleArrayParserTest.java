@@ -35,15 +35,6 @@ import org.junit.Test;
 public class DoubleArrayParserTest extends AbstractTest {
 
     @Test
-    public void testParseNull() {
-        DoubleArrayParser parser = new DoubleArrayParser();
-        parser.of(null);
-
-        Assert.assertEquals(0, parser.getDimCount());
-        Assert.assertEquals(0, parser.getFlatViewLength());
-    }
-
-    @Test
     public void testInconsistentArray() {
         String input = "{{\"1\",\"2.0\"},{\"3.1\"}}";
         DoubleArrayParser parser = new DoubleArrayParser();
@@ -56,6 +47,15 @@ public class DoubleArrayParserTest extends AbstractTest {
     }
 
     @Test
+    public void testParseNull() {
+        DoubleArrayParser parser = new DoubleArrayParser();
+        parser.of(null);
+
+        Assert.assertEquals(0, parser.getDimCount());
+        Assert.assertEquals(0, parser.getFlatViewLength());
+    }
+
+    @Test
     public void testSmoke() {
         String input = "{{\"1\",\"2.0\"},{\"3.1\",\"0.4\"}}";
         int expectedType = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
@@ -65,8 +65,8 @@ public class DoubleArrayParserTest extends AbstractTest {
 
         Assert.assertEquals(4, parser.getFlatViewLength());
         Assert.assertEquals(0, parser.getFlatViewOffset());
-        Assert.assertEquals(1, parser.getStride(0));
-        Assert.assertEquals(2, parser.getStride(1));
+        Assert.assertEquals(2, parser.getStride(0));
+        Assert.assertEquals(1, parser.getStride(1));
         Assert.assertEquals(expectedType, parser.getType());
         Assert.assertEquals(2, parser.getDimCount());
 
@@ -87,8 +87,8 @@ public class DoubleArrayParserTest extends AbstractTest {
 
         Assert.assertEquals(4, parser.getFlatViewLength());
         Assert.assertEquals(0, parser.getFlatViewOffset());
-        Assert.assertEquals(1, parser.getStride(0));
-        Assert.assertEquals(2, parser.getStride(1));
+        Assert.assertEquals(2, parser.getStride(0));
+        Assert.assertEquals(1, parser.getStride(1));
         Assert.assertEquals(expectedType, parser.getType());
         Assert.assertEquals(2, parser.getDimCount());
 
