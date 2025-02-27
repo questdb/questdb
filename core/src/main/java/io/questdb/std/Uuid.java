@@ -85,6 +85,30 @@ public final class Uuid implements Sinkable {
         }
     }
 
+    // this method is used by byte-code generator
+    // Note that the arguments are of weird pattern: aLo, aHi, bHi, bLo
+    // this is because of alternation of the order when using getLong128Hi, getLong128Lo
+    // instead as A, B records.
+    public static int compare(long aLo, long bHi, long aHi, long bLo) {
+        // the impl intentionally uses unsigned comparisons
+        // note: there is a bug in OpenJDK impl: https://bugs.openjdk.org/browse/JDK-7025832
+        // so this method generates a different ordering than UUID compareTo() from JDK
+
+        // First, we need to check if either of the UUIDs is null
+        if (isNull(aLo, aHi)) {
+            return isNull(bLo, bHi) ? 0 : -1;
+        } else if (isNull(bLo, bHi)) {
+            return 1;
+        }
+
+        int compHi = Long.compareUnsigned(aHi, bHi);
+        if (compHi != 0) {
+            return compHi;
+        }
+
+        return Long.compareUnsigned(aLo, bLo);
+    }
+
     /**
      * Check if UUID is null.
      *

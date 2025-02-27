@@ -5225,6 +5225,12 @@ public class CastTest extends AbstractCairoTest {
     public void testShortToLong256Sort() throws Exception {
         assertQuery(
                 "x\n" +
+                        "0x1e3b\n" +
+                        "0x2d91\n" +
+                        "0x5217\n" +
+                        "0x5d72\n" +
+                        "0x60ee\n" +
+                        "0x75fa\n" +
                         "0xffffffffffff8059\n" +
                         "0xffffffffffff84c4\n" +
                         "0xffffffffffff9650\n" +
@@ -5238,13 +5244,7 @@ public class CastTest extends AbstractCairoTest {
                         "0xffffffffffffd341\n" +
                         "0xffffffffffffeb14\n" +
                         "0xffffffffffffecce\n" +
-                        "0xfffffffffffffa8a\n" +
-                        "0x1e3b\n" +
-                        "0x2d91\n" +
-                        "0x5217\n" +
-                        "0x5d72\n" +
-                        "0x60ee\n" +
-                        "0x75fa\n",
+                        "0xfffffffffffffa8a\n",
                 "select cast(a as long256) x from tt order by x",
                 "create table tt as (select rnd_short() a from long_sequence(20))",
                 null,
@@ -5808,10 +5808,6 @@ public class CastTest extends AbstractCairoTest {
                         "\n" +
                         "\n" +
                         "\n" +
-                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
-                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
-                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
-                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
                         "0x123455\n" +
                         "0x123455\n" +
                         "0x123455\n" +
@@ -5822,7 +5818,11 @@ public class CastTest extends AbstractCairoTest {
                         "0x8802ff90\n" +
                         "0x8802ff90\n" +
                         "0x8802ff90\n" +
-                        "0x8802ff90\n",
+                        "0x8802ff90\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n",
                 "select cast(a as long256) x from tt order by x",
                 "create table tt as (select rnd_str('0x00123455', '0x8802ff90', null, '0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926') a from long_sequence(20))",
                 null,
@@ -6035,10 +6035,6 @@ public class CastTest extends AbstractCairoTest {
                         "\n" +
                         "\n" +
                         "\n" +
-                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
-                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
-                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
-                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
                         "0x123455\n" +
                         "0x123455\n" +
                         "0x8802ff90\n" +
@@ -6047,7 +6043,11 @@ public class CastTest extends AbstractCairoTest {
                         "0x8802ff90\n" +
                         "0x8802ff90\n" +
                         "0x8802ff90\n" +
-                        "0x8802ff90\n",
+                        "0x8802ff90\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n",
                 true,
                 true,
                 false
@@ -6283,10 +6283,6 @@ public class CastTest extends AbstractCairoTest {
                         "\n" +
                         "\n" +
                         "\n" +
-                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
-                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
-                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
-                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
                         "0x123455\n" +
                         "0x123455\n" +
                         "0x123455\n" +
@@ -6297,7 +6293,11 @@ public class CastTest extends AbstractCairoTest {
                         "0x8802ff90\n" +
                         "0x8802ff90\n" +
                         "0x8802ff90\n" +
-                        "0x8802ff90\n",
+                        "0x8802ff90\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n" +
+                        "0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926\n",
                 "select cast(a as long256) x from tt order by x",
                 "create table tt as (select rnd_symbol('0x00123455', '0x8802ff90', null, '0x99193c2e0a9e76da695f8ae33a2cc2aa529d71aba0f6fec5172a489c48c26926') a from long_sequence(20))",
                 null,
