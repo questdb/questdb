@@ -321,7 +321,19 @@ public class SqlUtil {
             return 0;
         }
 
-        throw ImplicitCastException.inconvertibleValue(value, ColumnType.FLOAT, ColumnType.BYTE);
+        throw ImplicitCastException.inconvertibleValue(value, ColumnType.DOUBLE, ColumnType.BYTE);
+    }
+
+    public static byte implicitCastDoubleAsByte(double value, int fromType) {
+        if (value >= Byte.MIN_VALUE && value <= Byte.MAX_VALUE) {
+            return (byte) value;
+        }
+
+        if (Numbers.isNull(value)) {
+            return 0;
+        }
+
+        throw ImplicitCastException.inconvertibleValue(value, fromType, ColumnType.BYTE);
     }
 
     @SuppressWarnings("unused")
@@ -365,6 +377,18 @@ public class SqlUtil {
             return 0;
         }
         return implicitCastAsShort((long) value, ColumnType.LONG);
+    }
+
+    public static short implicitCastDoubleAsShort(double value, int fromType) {
+        if (value >= Short.MIN_VALUE && value <= Short.MAX_VALUE) {
+            return (short) value;
+        }
+
+        if (Numbers.isNull(value)) {
+            return 0;
+        }
+
+        throw ImplicitCastException.inconvertibleValue(value, fromType, ColumnType.SHORT);
     }
 
     @SuppressWarnings("unused")
