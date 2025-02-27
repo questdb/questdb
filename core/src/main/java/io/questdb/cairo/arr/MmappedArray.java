@@ -93,13 +93,14 @@ public class MmappedArray extends MutableArray {
                            int valueSize) {
         assert valueSize > 0;
         this.type = columnType;
+        short elemType = ColumnType.decodeArrayElementType(columnType);
         this.flatViewOffset = 0;
         shape.clear();
         strides.clear();
         validateAndInitShape(shapeAddr, dims);
-        assert ColumnType.sizeOf(ColumnType.decodeArrayElementType(columnType)) * flatViewLength == valueSize;
+        assert ColumnType.sizeOf(elemType) * flatViewLength == valueSize;
         resetToDefaultStrides();
-        borrowedFlatView().of(valuePtr, valueSize);
+        borrowedFlatView().of(valuePtr, elemType, valueSize);
         return this;
     }
 
