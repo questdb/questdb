@@ -6638,9 +6638,9 @@ public class SqlOptimiser implements Mutable {
                     // case
                     if (pivotForSize == 1) {
                         caseExpr.args.add(inValue);
-                        caseExpr.args.add(forInExpr.args.getLast());
+                        caseExpr.args.add(rewritePivotGetAppropriateNameFromInExpr(forInExpr));
                     } else {
-                        // A == B AND C == D etc.
+//                     A == B AND C == D etc.
                         caseExpr.args.add(caseValue);
                     }
 

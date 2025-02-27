@@ -76,7 +76,7 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
         this.base = base;
         this.inColumnIndex = inColumnIndex;
         this.valueColumnIndex = valueColumnIndex;
-        this.valueColumnType = baseMetadata.getColumnType(valueColumnIndex);
+        this.valueColumnType = unpivotMetadata.getColumnType(valueColumnIndex);
         this.unpivotForIndices = unpivotForIndices;
         this.passthroughIndicesMap = passthroughIndicesMap;
         this.unpivotForNames = unpivotForNames;

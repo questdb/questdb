@@ -553,6 +553,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return new ExplainPlanFactory(recordCursorFactory, format);
     }
 
+    public BytecodeAssembler getAsm() {
+        return asm;
+    }
+
+    public EntityColumnFilter getEntityColumnFilter() {
+        return entityColumnFilter;
+    }
+
+    public ListColumnFilter getIndexColumnFilter() {
+        return listColumnFilterA;
+    }
+
+    public RecordComparatorCompiler getRecordComparatorCompiler() {
+        return recordComparatorCompiler;
+    }
+
     public IntList toOrderIndices(RecordMetadata m, ObjList<ExpressionNode> orderBy, IntList orderByDirection) throws SqlException {
         final IntList indices = intListPool.next();
         for (int i = 0, n = orderBy.size(); i < n; i++) {
@@ -573,22 +589,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             indices.add(index);
         }
         return indices;
-    }
-
-    public BytecodeAssembler getAsm() {
-        return asm;
-    }
-
-    public EntityColumnFilter getEntityColumnFilter() {
-        return entityColumnFilter;
-    }
-
-    public ListColumnFilter getIndexColumnFilter() {
-        return listColumnFilterA;
-    }
-
-    public RecordComparatorCompiler getRecordComparatorCompiler() {
-        return recordComparatorCompiler;
     }
 
     private static boolean allGroupsFirstLastWithSingleSymbolFilter(QueryModel model, RecordMetadata metadata) {
@@ -5977,7 +5977,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // build a set of the for expr names
             for (int i = 0, n = forExpr.paramCount - 1; i < n; i++) {
-                forNamesSet.add(forExpr.args.getQuick(i).token.toString().toLowerCase());
+                CharSequence arg = forExpr.args.getQuick(i).token; // todo: review string here
+                if (Chars.isQuoted(arg)) {
+                    arg = arg.subSequence(1, arg.length() - 1);
+                }
+                forNamesSet.add(arg);
             }
 
             // for every column in base metadata, check what we need to pull up
@@ -6014,7 +6018,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             // add the 'in' column i.e the column that will contain the column names
-            ExpressionNode inExpr = forExpr.args.getLast();
+            ExpressionNode inExpr = forExpr.args.getLast(); // todo - handle with fewer args, like in pivot
             TableColumnMetadata inColumnMetadata = new TableColumnMetadata(inExpr.token.toString(), ColumnType.SYMBOL, false, -1, false, null);
             unpivotMetadata.add(inColumnMetadata);
 

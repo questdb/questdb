@@ -2712,6 +2712,11 @@ public class SqlParser {
 
             model.addPivotColumn(col);
 
+
+            if (tok == null) {
+                throw SqlException.$(lexer.lastTokenPosition(), "unexpected end of expression");
+            }
+
             if (isForKeyword(tok)) {
                 break;
             } else if (Chars.equals(tok, ",")) {
@@ -3394,7 +3399,7 @@ public class SqlParser {
     }
 
     private CharSequence parseUnpivot(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
-        // FROM monthly_sales UNPIVOT (
+        // monthly_sales UNPIVOT (
         //      sales
         //      FOR month IN (jan, feb, mar, apr, may, jun)
         lexer.unparseLast();
@@ -3454,7 +3459,7 @@ public class SqlParser {
                 tok = SqlUtil.fetchNext(lexer);
             }
 
-        } while (tok != null && tok != ")");
+        } while (tok != null && tok != ")" && !isForKeyword(tok));
 
         if (expectCloseParen) {
             if (!Chars.equals(tok, ")")) {
@@ -3479,7 +3484,7 @@ public class SqlParser {
                 break;
             }
 
-            if (expr.type != ExpressionNode.FUNCTION || !Chars.equals(expr.token, "in")) {
+            if (expr.type != ExpressionNode.FUNCTION || !Chars.equalsIgnoreCase(expr.token, "in")) {
                 throw SqlException.$(expr.position, "expected `IN` clause");
             }
 
