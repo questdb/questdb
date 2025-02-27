@@ -576,6 +576,91 @@ public class LimitTest extends AbstractCairoTest {
                                     "                    Frame backward scan on: x\n",
                             "explain with cte as (select * from x order by ts, a desc limit -4) select * from (y order by ts, a limit -10) y asof join cte "
                     );
+
+                    // as-of data, timestamp order is asc
+                    assertQuery(
+                            "a\tts\ta1\tts1\n" +
+                                    "1100812407\t1970-01-01T00:00:00.009010Z\tnull\t\n" +
+                                    "-889224806\t1970-01-01T00:00:00.009110Z\tnull\t\n" +
+                                    "1362833895\t1970-01-01T00:00:00.009210Z\tnull\t\n" +
+                                    "576104460\t1970-01-01T00:00:00.009310Z\tnull\t\n" +
+                                    "-805434743\t1970-01-01T00:00:00.009410Z\tnull\t\n" +
+                                    "1503763988\t1970-01-01T00:00:00.009510Z\tnull\t\n" +
+                                    "-640305320\t1970-01-01T00:00:00.009610Z\t-1538602195\t1970-01-01T00:00:00.009600Z\n" +
+                                    "372462435\t1970-01-01T00:00:00.009710Z\t-360860352\t1970-01-01T00:00:00.009700Z\n" +
+                                    "1751526583\t1970-01-01T00:00:00.009810Z\t-372268574\t1970-01-01T00:00:00.009800Z\n" +
+                                    "-101516094\t1970-01-01T00:00:00.009910Z\t-235358133\t1970-01-01T00:00:00.009900Z\n",
+                            "with cte as (select * from x order by ts, a desc limit -4) select * from (y order by ts, a limit -10) y lt join cte order by y.ts, y.a ",
+                            "ts",
+                            true,
+                            true
+                    );
+
+                    assertQuery(
+                            "a\tts\ta1\tts1\n" +
+                                    "-101516094\t1970-01-01T00:00:00.009910Z\t-235358133\t1970-01-01T00:00:00.009900Z\n" +
+                                    "1751526583\t1970-01-01T00:00:00.009810Z\t-372268574\t1970-01-01T00:00:00.009800Z\n" +
+                                    "372462435\t1970-01-01T00:00:00.009710Z\t-360860352\t1970-01-01T00:00:00.009700Z\n" +
+                                    "-640305320\t1970-01-01T00:00:00.009610Z\t-1538602195\t1970-01-01T00:00:00.009600Z\n" +
+                                    "1503763988\t1970-01-01T00:00:00.009510Z\tnull\t\n" +
+                                    "-805434743\t1970-01-01T00:00:00.009410Z\tnull\t\n" +
+                                    "576104460\t1970-01-01T00:00:00.009310Z\tnull\t\n" +
+                                    "1362833895\t1970-01-01T00:00:00.009210Z\tnull\t\n" +
+                                    "-889224806\t1970-01-01T00:00:00.009110Z\tnull\t\n" +
+                                    "1100812407\t1970-01-01T00:00:00.009010Z\tnull\t\n",
+                            "with cte as (select * from x order by ts, a desc limit -4) select * from (y order by ts, a limit -10) y lt join cte order by y.ts desc, y.a ",
+                            "ts###desc",
+                            true,
+                            true
+                    );
+
+                    assertSql(
+                            "QUERY PLAN\n" +
+                                    "Union All\n" +
+                                    "    Sort light\n" +
+                                    "      keys: [ts, a desc]\n" +
+                                    "        Sort light lo: 4 partiallySorted: true\n" +
+                                    "          keys: [ts desc, a]\n" +
+                                    "            PageFrame\n" +
+                                    "                Row backward scan\n" +
+                                    "                Frame backward scan on: x\n" +
+                                    "    Sort light\n" +
+                                    "      keys: [ts, a]\n" +
+                                    "        Sort light lo: 10 partiallySorted: true\n" +
+                                    "          keys: [ts desc, a desc]\n" +
+                                    "            PageFrame\n" +
+                                    "                Row backward scan\n" +
+                                    "                Frame backward scan on: y\n",
+                            "explain " +
+                                    "(select * from x order by ts, a desc limit -4)" +
+                                    " union all " +
+                                    "(select * from y order by ts, a limit -10)"
+                    );
+
+                    // last 4 + last 10 rows
+                    assertQuery(
+                            "a\tts\n" +
+                                    "-1538602195\t1970-01-01T00:00:00.009600Z\n" +
+                                    "-360860352\t1970-01-01T00:00:00.009700Z\n" +
+                                    "-372268574\t1970-01-01T00:00:00.009800Z\n" +
+                                    "-235358133\t1970-01-01T00:00:00.009900Z\n" +
+                                    "1100812407\t1970-01-01T00:00:00.009010Z\n" +
+                                    "-889224806\t1970-01-01T00:00:00.009110Z\n" +
+                                    "1362833895\t1970-01-01T00:00:00.009210Z\n" +
+                                    "576104460\t1970-01-01T00:00:00.009310Z\n" +
+                                    "-805434743\t1970-01-01T00:00:00.009410Z\n" +
+                                    "1503763988\t1970-01-01T00:00:00.009510Z\n" +
+                                    "-640305320\t1970-01-01T00:00:00.009610Z\n" +
+                                    "372462435\t1970-01-01T00:00:00.009710Z\n" +
+                                    "1751526583\t1970-01-01T00:00:00.009810Z\n" +
+                                    "-101516094\t1970-01-01T00:00:00.009910Z\n",
+                            "(select * from x order by ts, a desc limit -4)" +
+                                    " union all " +
+                                    "(select * from y order by ts, a limit -10)",
+                            null,
+                            false,
+                            true
+                    );
                 }
         );
     }
