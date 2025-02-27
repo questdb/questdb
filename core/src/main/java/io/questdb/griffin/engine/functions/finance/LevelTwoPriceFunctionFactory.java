@@ -44,7 +44,7 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "l2price(DDV)";
+        return "l2price(DDDV)";
     }
 
     @Override

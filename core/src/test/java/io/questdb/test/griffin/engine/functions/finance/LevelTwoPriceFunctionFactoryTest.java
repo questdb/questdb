@@ -186,7 +186,7 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testLevelTwoPriceFailsWithEvenArgs() throws Exception {
-        assertException("select l2price(35, 8);", 19, "l2price requires an odd number of arguments.");
+        assertException("select l2price(35, 8, 7, 6);", 25, "l2price requires an odd number of arguments.");
     }
 
     /**
