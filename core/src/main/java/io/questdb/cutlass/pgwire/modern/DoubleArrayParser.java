@@ -162,12 +162,21 @@ public final class DoubleArrayParser extends ArrayView implements FlatArrayView 
     }
 
     private void parseAndAddNumber(CharSequence input, int numberStart, int i) {
-        try {
-            values.add(Numbers.parseDouble(input, numberStart, i - numberStart));
-            flatViewLength++;
-        } catch (NumericException e) {
-            throw new IllegalArgumentException("Invalid number format at position " + numberStart, e);
+        int len = i - numberStart;
+        if (len == 4
+                && (input.charAt(numberStart) | 32) == 'n'
+                && (input.charAt(numberStart + 1) | 32) == 'u'
+                && (input.charAt(numberStart + 2) | 32) == 'l'
+                && (input.charAt(numberStart + 3) | 32) == 'l') {
+            values.add(Double.NaN);
+        } else {
+            try {
+                values.add(Numbers.parseDouble(input, numberStart, len));
+            } catch (NumericException e) {
+                throw new IllegalArgumentException("Invalid number format at position " + numberStart, e);
+            }
         }
+        flatViewLength++;
     }
 
     private void updateShapeInfo(int depth, int currentCount, int position) {

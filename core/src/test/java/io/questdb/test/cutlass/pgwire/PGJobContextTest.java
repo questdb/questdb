@@ -1382,6 +1382,35 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
+    public void testArrayBindWithNull() throws Exception {
+        skipOnWalRun();
+        skipInLegacyMode();
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[])")) {
+                stmt.execute();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("insert into x values (?)")) {
+                Array arr = connection.createArrayOf("int8", new Double[]{1d, 2d, 3d, null, 5d});
+                stmt.setArray(1, arr);
+                stmt.execute();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("al[ARRAY]\n" +
+                                    "{1.0,2.0,3.0,null,5.0}\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testArrayResultSet() throws Exception {
         sendBufferSize = 1000 * 1024; // use large enough buffer, otherwise we will get fragmented messages and this currently leads to non-deterministic results of rnd_double_array
 
