@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileReader;
@@ -962,6 +963,57 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReadDefinitionThrowsOnUnknownRefreshType() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                createTable(TABLE1);
+
+                final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+                execute("create materialized view test as (" + query + ") partition by day");
+
+                final TableToken matViewToken = engine.getTableTokenIfExists("test");
+                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                assertNotNull(matViewDefinition);
+
+                try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
+                    writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                    MatViewDefinition unknownDefinition = new MatViewDefinition(
+                            MatViewDefinition.INCREMENTAL_REFRESH_TYPE + 1,
+                            matViewToken,
+                            matViewDefinition.getMatViewSql(),
+                            TABLE1,
+                            matViewDefinition.getSamplingInterval(),
+                            matViewDefinition.getSamplingIntervalUnit(),
+                            matViewDefinition.getTimeZone(),
+                            matViewDefinition.getTimeZoneOffset()
+                    );
+                    AppendableBlock block = writer.append();
+                    MatViewDefinition.append(unknownDefinition, block);
+                    block.commit(MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE);
+                    writer.commit();
+                }
+
+                // Reader should throw due to unknown refresh type.
+                try (BlockFileReader reader = new BlockFileReader(configuration)) {
+                    path.of(configuration.getDbRoot());
+                    final int rootLen = path.size();
+                    try {
+                        MatViewDefinition.readFrom(
+                                reader,
+                                path,
+                                rootLen,
+                                matViewToken
+                        );
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "unsupported refresh strategy");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testShowCreateMatView() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -1010,6 +1062,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     ) {
         final MatViewDefinition matViewDefinition = getMatViewDefinition(name);
         assertNotNull(matViewDefinition);
+        assertEquals(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, matViewDefinition.getRefreshType());
         assertTrue(matViewDefinition.getMatViewToken().isMatView());
         assertTrue(matViewDefinition.getMatViewToken().isWal());
         assertEquals(query, matViewDefinition.getMatViewSql());

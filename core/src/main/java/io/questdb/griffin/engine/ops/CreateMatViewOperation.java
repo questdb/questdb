@@ -36,6 +36,8 @@ public interface CreateMatViewOperation extends TableStructure, Operation {
 
     CreateTableOperation getCreateTableOperation();
 
+    int getRefreshType();
+
     CharSequence getSqlText();
 
     int getTableNamePosition();

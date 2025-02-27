@@ -89,12 +89,12 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 try {
                     serverMain.getEngine();
                 } catch (IllegalStateException ex) {
-                    assertContains("close was called", ex.getMessage());
+                    assertContains(ex.getMessage(), "close was called");
                 }
                 try {
                     serverMain.getWorkerPoolManager();
                 } catch (IllegalStateException ex) {
-                    assertContains("close was called", ex.getMessage());
+                    assertContains(ex.getMessage(), "close was called");
                 }
                 serverMain.start(); // <== no effect
                 serverMain.close(); // <== no effect

@@ -44,6 +44,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     private final CharSequenceHashSet baseKeyColumnNames = new CharSequenceHashSet();
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
     private String baseTableName;
+    private int refreshType = -1;
     private long samplingInterval = -1;
     private char samplingIntervalUnit = '\0';
     private String timeZone;
@@ -55,6 +56,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         final CreateTableOperation createTableOperation = createTableOperationBuilder.build(compiler, sqlExecutionContext, sqlText);
         return new CreateMatViewOperationImpl(
                 createTableOperation,
+                refreshType,
                 baseTableName,
                 baseKeyColumnNames,
                 samplingInterval,
@@ -69,6 +71,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     public void clear() {
         createTableOperationBuilder.clear();
         baseKeyColumnNames.clear();
+        refreshType = -1;
         baseTableName = null;
         samplingInterval = -1;
         samplingIntervalUnit = '\0';
@@ -101,6 +104,10 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
 
     public void setBaseTableName(String baseTableName) {
         this.baseTableName = baseTableName;
+    }
+
+    public void setRefreshType(int refreshType) {
+        this.refreshType = refreshType;
     }
 
     public void setSamplingInterval(long samplingInterval) {
