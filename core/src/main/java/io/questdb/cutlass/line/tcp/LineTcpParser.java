@@ -25,11 +25,13 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.arr.DirectArray;
-import io.questdb.cutlass.line.tcp.ArrayParser.ParseException;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.MmappedArray;
+import io.questdb.cutlass.line.tcp.ArrayNativeFormatParser.ParseException;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -38,33 +40,34 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
+import org.jetbrains.annotations.Nullable;
 
 public class LineTcpParser implements QuietCloseable {
 
     public static final byte ENTITY_TYPE_BOOLEAN = 6;
-    public static final byte ENTITY_TYPE_BYTE = 17;
+    public static final byte ENTITY_TYPE_BYTE = 18;
     public static final byte ENTITY_TYPE_CACHED_TAG = 8;
-    public static final byte ENTITY_TYPE_CHAR = 19;
-    public static final byte ENTITY_TYPE_DATE = 18;
-    public static final byte ENTITY_TYPE_DOUBLE = 15;
+    public static final byte ENTITY_TYPE_CHAR = 20;
+    public static final byte ENTITY_TYPE_DATE = 19;
+    public static final byte ENTITY_TYPE_DOUBLE = 16;
     public static final byte ENTITY_TYPE_FLOAT = 2;
     public static final byte ENTITY_TYPE_GEOBYTE = 9;
     public static final byte ENTITY_TYPE_GEOINT = 11;
     public static final byte ENTITY_TYPE_GEOLONG = 12;
     public static final byte ENTITY_TYPE_GEOSHORT = 10;
     public static final byte ENTITY_TYPE_INTEGER = 3;
-    public static final byte ENTITY_TYPE_LONG = 14;
+    public static final byte ENTITY_TYPE_LONG = 15;
     public static final byte ENTITY_TYPE_LONG256 = 7;
-    public static final byte ENTITY_TYPE_ND_ARRAY = 22;
     public static final byte ENTITY_TYPE_NONE = (byte) 0xff; // visible for testing
     public static final byte ENTITY_TYPE_NULL = 0;
-    public static final byte ENTITY_TYPE_SHORT = 16;
+    public static final byte ENTITY_TYPE_SHORT = 17;
     public static final byte ENTITY_TYPE_STRING = 4;
     public static final byte ENTITY_TYPE_SYMBOL = 5;
     public static final byte ENTITY_TYPE_TAG = 1;
     public static final byte ENTITY_TYPE_TIMESTAMP = 13;
-    public static final byte ENTITY_TYPE_UUID = 20;
-    public static final byte ENTITY_TYPE_VARCHAR = 21;
+    public static final byte ENTITY_TYPE_ND_ARRAY = 14;
+    public static final byte ENTITY_TYPE_UUID = 21;
+    public static final byte ENTITY_TYPE_VARCHAR = 22;
     public static final byte ENTITY_UNIT_NONE = 0;
     public static final byte ENTITY_UNIT_NANO = ENTITY_UNIT_NONE + 1;
     public static final byte ENTITY_UNIT_MICRO = ENTITY_UNIT_NANO + 1;
@@ -73,8 +76,8 @@ public class LineTcpParser implements QuietCloseable {
     public static final byte ENTITY_UNIT_MINUTE = ENTITY_UNIT_SECOND + 1;
     public static final byte ENTITY_UNIT_HOUR = ENTITY_UNIT_MINUTE + 1;
     public static final long NULL_TIMESTAMP = Numbers.LONG_NULL;
-    public static final int N_ENTITY_TYPES = ENTITY_TYPE_TIMESTAMP + 1;
-    public static final int N_MAPPED_ENTITY_TYPES = ENTITY_TYPE_ND_ARRAY + 1;
+    public static final int N_ENTITY_TYPES = ENTITY_TYPE_ND_ARRAY + 1;
+    public static final int N_MAPPED_ENTITY_TYPES = ENTITY_TYPE_VARCHAR + 1;
     private static final byte ENTITY_HANDLER_NAME = 1;
     private static final byte ENTITY_HANDLER_NEW_LINE = 4;
     private static final byte ENTITY_HANDLER_TABLE = 0;
@@ -84,6 +87,7 @@ public class LineTcpParser implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(LineTcpParser.class);
 
     private static final boolean[] controlBytes;
+    private static final IntHashSet nativeFormatSupportType = new IntHashSet();
     private final CairoConfiguration cairoConfiguration;
     private final DirectUtf8String charSeq = new DirectUtf8String();
     private final ObjList<ProtoEntity> entityCache = new ObjList<>();
@@ -103,6 +107,7 @@ public class LineTcpParser implements QuietCloseable {
     private boolean tagsComplete;
     private long timestamp;
     private byte timestampUnit;
+    private NativeFormatStreamStep nativeFormatStreamStep = NativeFormatStreamStep.NotINNativeFormat;
 
     public LineTcpParser(CairoConfiguration configuration) {
         this.cairoConfiguration = configuration;
@@ -189,10 +194,17 @@ public class LineTcpParser implements QuietCloseable {
             }
             nQuoteCharacters = 0;
             bufAt++;
+        } else if (nativeFormatStreamStep != NativeFormatStreamStep.NotINNativeFormat) {
+            if (!expectNativeFormat(bufHi)) {
+                if (errorCode == ErrorCode.INVALID_FIELD_VALUE_STR_UNDERFLOW) {
+                    return ParseResult.BUFFER_UNDERFLOW;
+                }
+                return ParseResult.ERROR;
+            }
+            nativeFormatStreamStep = NativeFormatStreamStep.NotINNativeFormat;
         }
 
         // Main parsing loop
-        int bracketCount = 0;
         while (bufAt < bufHi) {
             byte b = Unsafe.getUnsafe().getByte(bufAt);
 
@@ -215,12 +227,9 @@ public class LineTcpParser implements QuietCloseable {
                     endOfLine = true;
                     b = '\n';
                 case ',':
-                    if (bracketCount > 0) {
-                        appendByte = true;
-                        break;
-                    }
                 case '=':
                 case ' ':
+                case ':':
                     isQuotedFieldValue = false;
                     if (!completeEntity(b, bufHi)) {
                         // parse of key or value is unsuccessful
@@ -245,7 +254,9 @@ public class LineTcpParser implements QuietCloseable {
                         return ParseResult.ERROR;
                     }
                     // skip the separator
-                    bufAt++;
+                    if (b != ':') {
+                        bufAt++;
+                    }
                     if (!isQuotedFieldValue) {
                         // reset few indicators
                         nEscapedChars = 0;
@@ -292,21 +303,6 @@ public class LineTcpParser implements QuietCloseable {
                     } else if (isQuotedFieldValue) {
                         return getError(bufHi);
                     }
-
-                case '[':
-                    if (tagsComplete && entityHandler == ENTITY_HANDLER_VALUE) {
-                        ++bracketCount;
-                        appendByte = true;
-                        break;
-                    }
-
-                case ']':
-                    if (tagsComplete && entityHandler == ENTITY_HANDLER_VALUE) {
-                        --bracketCount;
-                        appendByte = true;
-                        break;
-                    }
-
                 default:
                     appendByte = true;
                     nextValueCanBeOpenQuote = false;
@@ -377,6 +373,7 @@ public class LineTcpParser implements QuietCloseable {
         scape = false;
         nextValueCanBeOpenQuote = false;
         asciiSegment = true;
+        nativeFormatStreamStep = NativeFormatStreamStep.NotINNativeFormat;
     }
 
     private boolean completeEntity(byte endOfEntityByte, long bufHi) {
@@ -401,7 +398,9 @@ public class LineTcpParser implements QuietCloseable {
     }
 
     private boolean expectEntityName(byte endOfEntityByte, long bufHi) {
-        if (endOfEntityByte == (byte) '=') {
+        // '=' represents text value format following
+        // ':' represents native byte value format following, which only supported in fieldVale
+        if (endOfEntityByte == (byte) '=' || endOfEntityByte == (byte) ':') {
             if (bufAt - entityLo - nEscapedChars == 0) { // no tag/field name
                 errorCode = tagsComplete ? ErrorCode.INCOMPLETE_FIELD : ErrorCode.INCOMPLETE_TAG;
                 return false;
@@ -410,24 +409,38 @@ public class LineTcpParser implements QuietCloseable {
             currentEntity = popEntity();
             nEntities++;
             currentEntity.setName();
-            entityHandler = ENTITY_HANDLER_VALUE;
-            if (tagsComplete) {
-                if (bufAt + 3 < bufHi) { // peek oncoming value's 1st byte, only caring for valid strings (2 quotes plus a follow-up byte)
-                    long candidateQuoteIdx = bufAt + 1;
-                    byte b = Unsafe.getUnsafe().getByte(candidateQuoteIdx);
-                    if (b == (byte) '"') {
-                        nEscapedChars = 0;
-                        nQuoteCharacters++;
-                        bufAt += 2;
-                        return prepareQuotedEntity(candidateQuoteIdx, bufHi);// go to first byte of the string, past the '"'
+            if (endOfEntityByte == (byte) '=') {
+                entityHandler = ENTITY_HANDLER_VALUE;
+                if (tagsComplete) {
+                    if (bufAt + 3 < bufHi) { // peek oncoming value's 1st byte, only caring for valid strings (2 quotes plus a follow-up byte)
+                        long candidateQuoteIdx = bufAt + 1;
+                        byte b = Unsafe.getUnsafe().getByte(candidateQuoteIdx);
+                        if (b == (byte) '"') {
+                            nEscapedChars = 0;
+                            nQuoteCharacters++;
+                            bufAt += 2;
+                            return prepareQuotedEntity(candidateQuoteIdx, bufHi);// go to first byte of the string, past the '"'
+                        } else {
+                            nextValueCanBeOpenQuote = false;
+                        }
                     } else {
-                        nextValueCanBeOpenQuote = false;
+                        nextValueCanBeOpenQuote = true;
                     }
-                } else {
-                    nextValueCanBeOpenQuote = true;
                 }
+                return true;
+            } else {
+                if (tagsComplete) {
+                    nativeFormatStreamStep = NativeFormatStreamStep.INNativeFormat;
+                    bufAt++;
+                    if (expectNativeFormat(bufHi)) {
+                        nativeFormatStreamStep = NativeFormatStreamStep.NotINNativeFormat;
+                        return true;
+                    }
+                    return false;
+                }
+                errorCode = ErrorCode.INVALID_COLUMN_NAME;
+                return false;
             }
-            return true;
         }
 
         boolean emptyEntity = bufAt == entityLo;
@@ -548,6 +561,38 @@ public class LineTcpParser implements QuietCloseable {
         }
     }
 
+    private boolean expectNativeFormat(long bufHi) {
+        assert nativeFormatStreamStep != NativeFormatStreamStep.NotINNativeFormat;
+        if (nativeFormatStreamStep == NativeFormatStreamStep.INNativeFormat) {
+            if (!currentEntity.parseNativeFormat(bufHi)) {
+                return false;
+            }
+            nativeFormatStreamStep = NativeFormatStreamStep.ExpectFieldSeparator;
+        }
+
+        if (bufAt + 1 < bufHi) {
+            bufAt++;
+            byte expectSeparator = Unsafe.getUnsafe().getByte(bufAt);
+            if (expectSeparator == (byte) ' ') {
+                entityHandler = ENTITY_HANDLER_TIMESTAMP;
+                bufAt++;
+                entityLo = bufAt;
+                return true;
+            } else if (expectSeparator == (byte) ',' || expectSeparator == (byte) '\n' || expectSeparator == (byte) '\r') {
+                entityHandler = ENTITY_HANDLER_NAME;
+                bufAt++;
+                entityLo = bufAt;
+                return true;
+            } else {
+                entityLo = bufAt;
+                errorCode = ErrorCode.INVALID_FIELD_SEPARATOR;
+                return false;
+            }
+        }
+        errorCode = ErrorCode.INVALID_FIELD_VALUE_STR_UNDERFLOW;
+        return false;
+    }
+
     private ParseResult getError(long bufHi) {
         switch (entityHandler) {
             case ENTITY_HANDLER_NAME:
@@ -572,7 +617,7 @@ public class LineTcpParser implements QuietCloseable {
     private ProtoEntity popEntity() {
         ProtoEntity currentEntity;
         if (entityCache.size() <= nEntities) {
-            currentEntity = new ProtoEntity(cairoConfiguration);
+            currentEntity = new ProtoEntity();
             entityCache.add(currentEntity);
         } else {
             currentEntity = entityCache.get(nEntities);
@@ -645,21 +690,12 @@ public class LineTcpParser implements QuietCloseable {
         INVALID_COLUMN_NAME,
         MISSING_FIELD_VALUE,
         MISSING_TAG_VALUE,
-
-        /**
-         * Unexpected early end of input
-         */
-        ND_ARR_PREMATURE_END,
-
-        /**
-         * Unexpected token found
-         */
-        ND_ARR_UNEXPECTED_TOKEN,
+        UNSUPPORTED_NATIVE_FORMAT,
 
         /**
          * Array literal specifies an irregular (jagged) array shape. E.g. {{1, 2}, {1, 2, 3}}
          */
-        ND_ARR_IRREGULAR_SHAPE,
+        ND_ARR_LARGE_DIMENSIONS,
 
         /**
          * Parsing of the array datatype failed.
@@ -674,7 +710,7 @@ public class LineTcpParser implements QuietCloseable {
     }
 
     public class ProtoEntity implements QuietCloseable {
-        private final ArrayParser arrayParser;
+        private final ArrayNativeFormatParser arrayNativeParser = new ArrayNativeFormatParser();
         private final DirectUtf8String name = new DirectUtf8String();
         private final DirectUtf8String value = new DirectUtf8String();
         private boolean booleanValue;
@@ -683,17 +719,13 @@ public class LineTcpParser implements QuietCloseable {
         private byte type = ENTITY_TYPE_NONE;
         private byte unit = ENTITY_UNIT_NONE;
 
-        public ProtoEntity(CairoConfiguration configuration) {
-            arrayParser = new ArrayParser(configuration);
-        }
-
         @Override
         public void close() {
-            Misc.free(arrayParser);
+            Misc.free(arrayNativeParser);
         }
 
-        public DirectArray getArray() {
-            return arrayParser.getArray();
+        public @Nullable MmappedArray getArray() {
+            return arrayNativeParser.getArray();
         }
 
         public boolean getBooleanValue() {
@@ -727,6 +759,7 @@ public class LineTcpParser implements QuietCloseable {
         public void shl(long shl) {
             name.shl(shl);
             value.shl(shl);
+            arrayNativeParser.shl(shl);
         }
 
         private void clear() {
@@ -811,17 +844,6 @@ public class LineTcpParser implements QuietCloseable {
                     type = ENTITY_TYPE_SYMBOL;
                     return false;
                 }
-                case ']': {
-                    try {
-                        arrayParser.parse(value);
-                        type = ENTITY_TYPE_ND_ARRAY;
-                        errorCode = ErrorCode.NONE;
-                        return true;
-                    } catch (ParseException e) {
-                        errorCode = e.errorCode();
-                        return false;
-                    }
-                }
                 // fall through
                 default:
                     try {
@@ -832,6 +854,88 @@ public class LineTcpParser implements QuietCloseable {
                         return false;
                     }
                     return true;
+            }
+        }
+
+        private boolean parseNativeFormat(long bufHi) {
+            try {
+                while (bufAt < bufHi) {
+                    if (type == ENTITY_TYPE_NONE) {
+                        type = Unsafe.getUnsafe().getByte(bufAt);
+                        if (!nativeFormatSupportType.contains(type)) {
+                            errorCode = ErrorCode.UNSUPPORTED_NATIVE_FORMAT;
+                            return false;
+                        }
+                        if (type == ENTITY_TYPE_ND_ARRAY) {
+                            arrayNativeParser.reset();
+                        }
+                        bufAt++;
+                        entityLo = bufAt;
+                        continue;
+                    }
+
+                    switch (type) {
+                        case ENTITY_TYPE_BOOLEAN:
+                            booleanValue = Unsafe.getUnsafe().getByte(entityLo) == 1;
+                            bufAt++;
+                            return true;
+                        case ENTITY_TYPE_FLOAT:
+                            bufAt++;
+                            if (bufAt - entityLo == 4) {
+                                floatValue = Unsafe.getUnsafe().getFloat(entityLo);
+                                return true;
+                            }
+                            break;
+                        case ENTITY_TYPE_DOUBLE:
+                            bufAt++;
+                            if (bufAt - entityLo == 8) {
+                                type = ENTITY_TYPE_FLOAT;
+                                floatValue = Unsafe.getUnsafe().getDouble(entityLo);
+                                return true;
+                            }
+                            break;
+                        case ENTITY_TYPE_INTEGER:
+                            if (bufAt - entityLo == 4) {
+                                longValue = Unsafe.getUnsafe().getInt(entityLo);
+                                bufAt++;
+                                return true;
+                            }
+                            bufAt++;
+                            break;
+                        case ENTITY_TYPE_LONG:
+                            if (bufAt - entityLo == 8) {
+                                type = ENTITY_TYPE_INTEGER;
+                                longValue = Unsafe.getUnsafe().getLong(entityLo);
+                                bufAt++;
+                                return true;
+                            }
+                            bufAt++;
+                            break;
+                        case ENTITY_TYPE_TIMESTAMP:
+                            if (bufAt - entityLo == 9) {
+                                unit = Unsafe.getUnsafe().getByte(entityLo);
+                                longValue = Unsafe.getUnsafe().getLong(entityLo + 1);
+                                bufAt++;
+                                return true;
+                            }
+                            bufAt++;
+                            break;
+                        case ENTITY_TYPE_ND_ARRAY:
+                            if (bufAt - entityLo + 1 == arrayNativeParser.getNextExpectSize()) {
+                                if (arrayNativeParser.processNextBinaryPart(entityLo)) {
+                                    return true;
+                                }
+                                entityLo = bufAt + 1;
+                            }
+                            bufAt++;
+                    }
+                }
+
+                errorCode = ErrorCode.INVALID_FIELD_VALUE_STR_UNDERFLOW;
+                return false;
+            } catch (ParseException e) {
+                errorCode = e.errorCode();
+                return false;
             }
         }
 
@@ -878,8 +982,14 @@ public class LineTcpParser implements QuietCloseable {
         }
     }
 
+    private enum NativeFormatStreamStep {
+        NotINNativeFormat,
+        ExpectFieldSeparator,
+        INNativeFormat,
+    }
+
     static {
-        char[] chars = new char[]{'\n', '\r', '=', ',', ' ', '\\', '"', '\0', '/', '[', ']'};
+        char[] chars = new char[]{'\n', '\r', '=', ',', ' ', '\\', '"', '\0', '/', ':'};
         controlBytes = new boolean[256];
         for (char ch : chars) {
             controlBytes[ch] = true;
@@ -888,5 +998,13 @@ public class LineTcpParser implements QuietCloseable {
         for (int i = 128; i < 256; i++) {
             controlBytes[i] = true;
         }
+
+        nativeFormatSupportType.add(ENTITY_TYPE_BOOLEAN);
+        nativeFormatSupportType.add(ENTITY_TYPE_FLOAT);
+        nativeFormatSupportType.add(ENTITY_TYPE_DOUBLE);
+        nativeFormatSupportType.add(ENTITY_TYPE_INTEGER);
+        nativeFormatSupportType.add(ENTITY_TYPE_LONG);
+        nativeFormatSupportType.add(ENTITY_TYPE_TIMESTAMP);
+        nativeFormatSupportType.add(ENTITY_TYPE_ND_ARRAY);
     }
 }

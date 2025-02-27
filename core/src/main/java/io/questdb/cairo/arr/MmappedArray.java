@@ -95,12 +95,39 @@ public class MmappedArray extends ArrayView {
         return this;
     }
 
+    public MmappedArray of(int columnType,
+                           int dims,
+                           long shapeAddr,
+                           long valuePtr,
+                           int valueSize) {
+        assert valueSize > 0;
+        this.type = columnType;
+        short elemType = ColumnType.decodeArrayElementType(columnType);
+        this.flatViewOffset = 0;
+        shape.clear();
+        strides.clear();
+        validateAndInitShape(shapeAddr, dims);
+        assert ColumnType.sizeOf(elemType) * flatViewLength == valueSize;
+        resetToDefaultStrides();
+        borrowedFlatView().of(valuePtr, elemType, valueSize);
+        return this;
+    }
+
     /**
      * Sets to a null array.
      */
     public void ofNull() {
         reset();
         type = ColumnType.NULL;
+    }
+
+    /**
+     * The array is a typeless zero-dimensional array.
+     * <p>
+     * This maps to the <code>NULL</code> value in an array column.
+     */
+    public boolean isNull() {
+        return type == ColumnType.NULL;
     }
 
     /**
