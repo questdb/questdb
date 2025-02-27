@@ -479,6 +479,108 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNegativeLimitMultipleTOrderTermsRewriteInJoins() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    execute("create table x as (select rnd_int() a, timestamp_sequence(0, 100) ts from long_sequence(100)) timestamp(ts)");
+                    execute("create table y as (select rnd_int() a, timestamp_sequence(10, 100) ts from long_sequence(100)) timestamp(ts)");
+
+                    assertQuery(
+                            "a\tts\n" +
+                                    "1100812407\t1970-01-01T00:00:00.009010Z\n" +
+                                    "-889224806\t1970-01-01T00:00:00.009110Z\n" +
+                                    "1362833895\t1970-01-01T00:00:00.009210Z\n" +
+                                    "576104460\t1970-01-01T00:00:00.009310Z\n" +
+                                    "-805434743\t1970-01-01T00:00:00.009410Z\n" +
+                                    "1503763988\t1970-01-01T00:00:00.009510Z\n" +
+                                    "-640305320\t1970-01-01T00:00:00.009610Z\n" +
+                                    "372462435\t1970-01-01T00:00:00.009710Z\n" +
+                                    "1751526583\t1970-01-01T00:00:00.009810Z\n" +
+                                    "-101516094\t1970-01-01T00:00:00.009910Z\n",
+                            "y order by ts, a limit -10",
+                            "ts",
+                            true,
+                            true
+                    );
+
+                    // here the last order by (after join) confused the optimiser into removing ordering of
+                    // the left part of as-of join
+                    assertSql(
+                            "QUERY PLAN\n" +
+                                    "Sort\n" +
+                                    "  keys: [ts, a]\n" +
+                                    "    SelectedRecord\n" +
+                                    "        AsOf Join\n" +
+                                    "            Sort light\n" +
+                                    "              keys: [ts, a]\n" +
+                                    "                Sort light lo: 10 partiallySorted: true\n" +
+                                    "                  keys: [ts desc, a desc]\n" +
+                                    "                    PageFrame\n" +
+                                    "                        Row backward scan\n" +
+                                    "                        Frame backward scan on: y\n" +
+                                    "            Sort light\n" +
+                                    "              keys: [ts, a desc]\n" +
+                                    "                Sort light lo: 4 partiallySorted: true\n" +
+                                    "                  keys: [ts desc, a]\n" +
+                                    "                    PageFrame\n" +
+                                    "                        Row backward scan\n" +
+                                    "                        Frame backward scan on: x\n",
+                            "explain with cte as (select * from x order by ts, a desc limit -4) select * from (y order by ts, a limit -10) y asof join cte order by y.ts, y.a "
+                    );
+
+                    // here the last order by (after join) confused the optimiser into removing ordering of
+                    // the left part of lt-join. There could be an optimisation opportunity here to remove
+                    assertSql(
+                            "QUERY PLAN\n" +
+                                    "Sort\n" +
+                                    "  keys: [ts, a]\n" +
+                                    "    SelectedRecord\n" +
+                                    "        Lt Join\n" +
+                                    "            Sort light\n" +
+                                    "              keys: [ts, a]\n" +
+                                    "                Sort light lo: 10 partiallySorted: true\n" +
+                                    "                  keys: [ts desc, a desc]\n" +
+                                    "                    PageFrame\n" +
+                                    "                        Row backward scan\n" +
+                                    "                        Frame backward scan on: y\n" +
+                                    "            Sort light\n" +
+                                    "              keys: [ts, a desc]\n" +
+                                    "                Sort light lo: 4 partiallySorted: true\n" +
+                                    "                  keys: [ts desc, a]\n" +
+                                    "                    PageFrame\n" +
+                                    "                        Row backward scan\n" +
+                                    "                        Frame backward scan on: x\n",
+                            "explain with cte as (select * from x order by ts, a desc limit -4) select * from (y order by ts, a limit -10) y lt join cte order by y.ts, y.a "
+                    );
+
+                    // here the result of as-of join is not specifically ordered, but
+                    // the plan for as-of join incorrect. The left side of the join is
+                    // required to be presented in ascending timestamp order.
+                    assertSql(
+                            "QUERY PLAN\n" +
+                                    "SelectedRecord\n" +
+                                    "    AsOf Join\n" +
+                                    "        Sort light\n" +
+                                    "          keys: [ts, a]\n" +
+                                    "            Sort light lo: 10 partiallySorted: true\n" +
+                                    "              keys: [ts desc, a desc]\n" +
+                                    "                PageFrame\n" +
+                                    "                    Row backward scan\n" +
+                                    "                    Frame backward scan on: y\n" +
+                                    "        Sort light\n" +
+                                    "          keys: [ts, a desc]\n" +
+                                    "            Sort light lo: 4 partiallySorted: true\n" +
+                                    "              keys: [ts desc, a]\n" +
+                                    "                PageFrame\n" +
+                                    "                    Row backward scan\n" +
+                                    "                    Frame backward scan on: x\n",
+                            "explain with cte as (select * from x order by ts, a desc limit -4) select * from (y order by ts, a limit -10) y asof join cte "
+                    );
+                }
+        );
+    }
+
+    @Test
     public void testNegativeLimitOnIndexedSymbolFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute(

@@ -197,7 +197,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "min(val) OVER (PARTITION BY 1=1 ORDER BY ts DESC) " +
                             "FROM tab " +
                             "ORDER BY ts DESC",
-                    "ts",
+                    "ts###desc",
                     false,
                     true
             );
@@ -4140,7 +4140,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "        Row backward scan\n" +
                             "        Frame backward scan on: tab\n",
                     "ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
-                    "ts",
+                    "ts###desc",
                     true,
                     false
             );
@@ -4192,7 +4192,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "        Row backward scan\n" +
                             "        Frame backward scan on: tab\n",
                     "ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
-                    "ts",
+                    "ts###desc",
                     true,
                     false
             );
@@ -4244,7 +4244,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "        Row backward scan\n" +
                             "        Frame backward scan on: tab\n",
                     "ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
-                    "ts",
+                    "ts###desc",
                     true,
                     false
             );
@@ -4297,7 +4297,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "        Row backward scan\n" +
                             "        Frame backward scan on: tab\n",
                     "ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
-                    "ts",
+                    "ts###desc",
                     false,
                     true
             );
@@ -4408,7 +4408,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "          filter: sym='X'\n" +
                             "        Frame backward scan on: tab\n",
                     "ts\ti\tj\trow_number\n",
-                    "ts",
+                    "ts###desc",
                     false,
                     false
             );
@@ -4454,7 +4454,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "          filter: sym='X'\n" +
                             "        Frame backward scan on: tab\n",
                     "ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n",
-                    "ts",
+                    "ts###desc",
                     true,
                     false
             );

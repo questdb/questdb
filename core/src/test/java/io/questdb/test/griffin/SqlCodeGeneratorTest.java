@@ -6824,6 +6824,28 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testResolveUnionOrderByPositionInJoinModel() throws Exception {
+        execute("create table t1 (id symbol, value double, timestamp timestamp) timestamp(timestamp)");
+        execute("create table t2 (id symbol, value double, value_max double, timestamp timestamp) timestamp(timestamp)");
+        execute("insert into t1 (id, value, timestamp) values ('id1', 2, '2024-12-26T14:30:00Z');\n");
+        execute("insert into t2 (id, value, value_max, timestamp) values ('id2', 1, 10, '2024-12-26T14:30:00Z');\n");
+        assertQueryNoLeakCheck("delta\ttimestamp\n" +
+                        "0.0\t2024-12-26T14:30:00.000000Z\n" +
+                        "1.0\t2024-12-26T14:30:00.000000Z\n" +
+                        "-1.0\t2024-12-26T14:30:00.000000Z\n" +
+                        "0.0\t2024-12-26T14:30:00.000000Z\n",
+                "with base as ( select max(value) as val, timestamp from t1 sample by 1m " +
+                        "UNION select max(value) as val, timestamp from t2 sample by 1m ), " +
+                        "sub as ( select min(value) as val, timestamp from t1 sample by 1m " +
+                        "UNION select min(value) as val, timestamp from t2 sample by 1m ) " +
+                        "select (base.val - sub.val) as delta, base.timestamp from base join sub on timestamp;",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testSampleByFillLinearEmptyCursor() throws Exception {
         assertQuery(
                 "b\tsum\tk\n",
@@ -8157,28 +8179,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "), index(sym) timestamp(ts)",
                 28,
                 "WITHIN clause requires LATEST BY clause"
-        );
-    }
-
-    @Test
-    public void testResolveUnionOrderByPositionInJoinModel() throws Exception {
-        execute("create table t1 (id symbol, value double, timestamp timestamp) timestamp(timestamp)");
-        execute("create table t2 (id symbol, value double, value_max double, timestamp timestamp) timestamp(timestamp)");
-        execute("insert into t1 (id, value, timestamp) values ('id1', 2, '2024-12-26T14:30:00Z');\n");
-        execute("insert into t2 (id, value, value_max, timestamp) values ('id2', 1, 10, '2024-12-26T14:30:00Z');\n");
-        assertQueryNoLeakCheck("delta\ttimestamp\n" +
-                        "0.0\t2024-12-26T14:30:00.000000Z\n" +
-                        "1.0\t2024-12-26T14:30:00.000000Z\n" +
-                        "-1.0\t2024-12-26T14:30:00.000000Z\n" +
-                        "0.0\t2024-12-26T14:30:00.000000Z\n",
-                "with base as ( select max(value) as val, timestamp from t1 sample by 1m " +
-                        "UNION select max(value) as val, timestamp from t2 sample by 1m ), " +
-                        "sub as ( select min(value) as val, timestamp from t1 sample by 1m " +
-                        "UNION select min(value) as val, timestamp from t2 sample by 1m ) " +
-                        "select (base.val - sub.val) as delta, base.timestamp from base join sub on timestamp;",
-                null,
-                false,
-                true
         );
     }
 

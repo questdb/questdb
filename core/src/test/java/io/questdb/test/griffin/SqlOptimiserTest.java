@@ -2017,7 +2017,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             " limit 10" +
                             ") " +
                             "order by ts desc",
-                    "ts",
+                    "ts###desc",
                     false,
                     true
             );

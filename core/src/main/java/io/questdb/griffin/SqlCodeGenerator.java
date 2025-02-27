@@ -2419,6 +2419,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, "ASOF");
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getContext(), masterMetadata, slaveMetadata);
+                                validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
                                         RecordSink masterSink = RecordSinkFactory.getInstance(
@@ -2491,7 +2492,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 masterAlias = null;
                                 // if we fail after this step, master will release slave
                                 releaseSlave = false;
-                                validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 break;
                             case JOIN_LT:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
@@ -2938,6 +2938,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 false,
                                 columnIndexes,
                                 columnSizeShifts,
+                                true,
                                 true
                         );
                     }
@@ -5625,7 +5626,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 false,
                                 columnIndexes,
                                 columnSizeShifts,
-                                supportsRandomAccess
+                                supportsRandomAccess,
+                                false
                         );
                     }
 
@@ -5776,7 +5778,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     true,
                     columnIndexes,
                     columnSizeShifts,
-                    supportsRandomAccess
+                    supportsRandomAccess,
+                    false
             );
         }
 
@@ -5806,7 +5809,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     true,
                     columnIndexes,
                     columnSizeShifts,
-                    supportsRandomAccess
+                    supportsRandomAccess,
+                    false
             );
         }
 

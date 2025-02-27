@@ -2240,7 +2240,13 @@ public class SqlOptimiser implements Mutable {
         return null;
     }
 
-    private void fixAndCollectExprToken(ExpressionNode node, CharSequence old, CharSequence newToken, CharSequenceHashSet set, CharSequenceHashSet set2) {
+    private void fixAndCollectExprToken(
+            ExpressionNode node,
+            CharSequence old,
+            CharSequence newToken,
+            CharSequenceHashSet set,
+            CharSequenceHashSet set2
+    ) {
         sqlNodeStack.clear();
         while (node != null) {
             if (node.type == LITERAL) {
@@ -2277,7 +2283,6 @@ public class SqlOptimiser implements Mutable {
     }
 
     private Function getLoFunction(ExpressionNode limit, SqlExecutionContext executionContext) throws SqlException {
-        // todo: this need not be a function (waste of resources)
         final Function func = functionParser.parseFunction(limit, EmptyRecordMetadata.INSTANCE, executionContext);
         final int type = func.getType();
         if (limitTypes.excludes(type)) {
@@ -3624,17 +3629,16 @@ public class SqlOptimiser implements Mutable {
         // if there's a join, we need to handle it differently.
         if (jm2 != null) {
             final int joinType = jm2.getJoinType();
-            if (joinType == QueryModel.JOIN_ASOF) {// For asof join, we only propagate advice if its ordered beginning with the designated timestamp
-                CharSequence token = advice.getQuick(0).token;
-                QueryColumn qc = jm1.getAliasToColumnMap().get(token);
-                // if there is a matching column, and it is the designated timestamp, then propagate advice
-                if (qc != null
-                        && qc.getColumnType() == ColumnType.TIMESTAMP
-                        && Chars.equalsIgnoreCase(jm1.getTimestamp().token, qc.getAst().token)) {
+            switch (joinType) {
+                case JOIN_ASOF:
+                case JOIN_LT:
+                    // asof joins required ascending timestamp order, external advice must not
+                    // influence them, especially passing INVARIANT mnemonic is dangerous,
+                    // because existing ordering might be omitted
+                    orderByMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
+                    break;
+                default:
                     orderByMnemonic = setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
-                }
-            } else {
-                orderByMnemonic = setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
             }
         } else {
             // fallback to copy the advice to primary
@@ -4228,8 +4232,6 @@ public class SqlOptimiser implements Mutable {
                 // first, copy the order by up
                 for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
                     model.addOrderBy(nested.getOrderBy().get(i), nested.getOrderByDirection().get(i));
-                    model.getOrderByAdvice().add(nested.getOrderBy().get(i));
-                    model.getOrderByDirectionAdvice().add(nested.getOrderByDirection().get(i));
                 }
 
 
@@ -4257,8 +4259,11 @@ public class SqlOptimiser implements Mutable {
 
                 // remove limit from outer
                 model.setLimit(null, null);
+                rewriteMultipleTermLimitedOrderByPart1(nested.getNestedModel());
+
+            } else {
+                rewriteMultipleTermLimitedOrderByPart1(model.getNestedModel());
             }
-            rewriteMultipleTermLimitedOrderByPart1(model.getNestedModel());
             final ObjList<QueryModel> joinModels = model.getJoinModels();
             for (int i = 1, n = joinModels.size(); i < n; i++) {
                 rewriteMultipleTermLimitedOrderByPart1(joinModels.getQuick(i));
