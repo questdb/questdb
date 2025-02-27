@@ -100,6 +100,9 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
             final double t = targetArg.getDouble(rec);
             final ArrayView pricesArr = pricesArg.getArray(rec);
             final ArrayView sizesArr = sizesArg.getArray(rec);
+            if (pricesArr.isNull() || sizesArr.isNull()) {
+                return Double.NaN;
+            }
             final int len = pricesArr.getDimLen(0);
             if (sizesArr.getDimLen(0) != len) {
                 throw CairoException.nonCritical().position(pricesArgPos)

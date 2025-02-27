@@ -213,6 +213,10 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             @NotNull String nullLiteral,
             ArrayState arrayState
     ) {
+        if (ColumnType.isNull(array.getType())) {
+            sink.putAscii(nullLiteral);
+            return;
+        }
         arrayToText(array, 0, 0, sink, appender, openChar, closeChar, nullLiteral, arrayState);
     }
 
@@ -646,6 +650,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             case ColumnType.DOUBLE:
                 return VALUE_APPENDER_DOUBLE;
             case ColumnType.LONG:
+            case ColumnType.NULL:
                 return VALUE_APPENDER_LONG;
             default:
                 throw new AssertionError("No appender for ColumnType " + elemType);

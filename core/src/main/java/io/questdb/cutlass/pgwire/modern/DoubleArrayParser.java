@@ -76,10 +76,11 @@ public final class DoubleArrayParser extends ArrayView implements FlatArrayView 
         values.clear();
         shape.clear();
         strides.clear();
-        type = ColumnType.ARRAY; // todo: what's the right type when array is null?
         if (input != null) {
             parse(input);
             type = ColumnType.encodeArrayType(ColumnType.DOUBLE, shape.size());
+        } else {
+            type = ColumnType.NULL;
         }
         resetToDefaultStrides();
     }

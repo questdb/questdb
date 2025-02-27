@@ -110,7 +110,6 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                             .put("invalid argument type [type=").put(argType).put(']');
                 }
             }
-
             return resultNDims == 0
                     ? new AccessDoubleArrayFunction(arrayArg, args, argPositions)
                     : new SliceDoubleArrayFunction(arrayArg, resultNDims, args, argPositions);
@@ -148,9 +147,11 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             ArrayView array = arrayArg.getArray(rec);
-            int nDims = indexArgs.size();
+            if (array.isNull()) {
+                return Double.NaN;
+            }
             int flatIndex = 0;
-            for (int dim = 0; dim < nDims; dim++) {
+            for (int n = indexArgs.size(), dim = 0; dim < n; dim++) {
                 int indexAtDim = indexArgs.getQuick(dim).getInt(rec);
                 int strideAtDim = array.getStride(dim);
                 int dimLen = array.getDimLen(dim);
@@ -179,7 +180,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
     static class SliceDoubleArrayFunction extends ArrayFunction {
 
         private final IntList argPositions;
-        private final DerivedArrayView borrowedView = new DerivedArrayView();
+        private final DerivedArrayView derivedArray = new DerivedArrayView();
         private final ObjList<Function> rangeArgs;
         private Function arrayArg;
 
@@ -202,7 +203,10 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         @Override
         public ArrayView getArray(Record rec) {
             ArrayView array = arrayArg.getArray(rec);
-            borrowedView.of(array);
+            derivedArray.of(array);
+            if (derivedArray.isNull()) {
+                return derivedArray;
+            }
             int dim = 0;
             for (int n = rangeArgs.size(), i = 0; i < n; i++) {
                 Function rangeFn = rangeArgs.getQuick(i);
@@ -219,10 +223,10 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                         assert hi == hiLong : "int overflow on interval upper bound: " + hiLong;
                     }
                     assert lo == loLong : "int overflow on interval lower bound: " + loLong;
-                    borrowedView.slice(dim++, lo, hi, argPos);
+                    derivedArray.slice(dim++, lo, hi, argPos);
                 } else {
                     int index = rangeFn.getInt(rec);
-                    int dimLen = borrowedView.getDimLen(dim);
+                    int dimLen = derivedArray.getDimLen(dim);
                     if (index < 0 || index >= dimLen) {
                         throw CairoException.nonCritical()
                                 .position(argPos)
@@ -231,11 +235,11 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                                 .put(", dimLen=").put(dimLen)
                                 .put(']');
                     }
-                    borrowedView.slice(dim, index, index + 1, argPos);
-                    borrowedView.removeDim(dim);
+                    derivedArray.slice(dim, index, index + 1, argPos);
+                    derivedArray.removeDim(dim);
                 }
             }
-            return borrowedView;
+            return derivedArray;
         }
 
         @Override

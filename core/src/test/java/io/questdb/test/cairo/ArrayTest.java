@@ -480,6 +480,20 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullArray() throws Exception {
+        execute("CREATE TABLE tango (arr DOUBLE[])");
+        execute("CREATE TABLE samba (left DOUBLE[][], right DOUBLE[][])");
+        execute("INSERT INTO tango VALUES (null)");
+        execute("INSERT INTO samba VALUES (null, null)");
+        execute("INSERT INTO samba VALUES (ARRAY[[1.0],[2]], null)");
+        execute("INSERT INTO samba VALUES (null, ARRAY[[1.0],[2]])");
+        assertSql("arr\nnull\n", "tango");
+        assertSql("arr\nnull\n", "SELECT arr FROM tango");
+        assertSql("arr\nnull\n", "SELECT t(arr) arr FROM tango");
+        assertSql("arr\nnull\n", "SELECT l2price(1.0, arr, arr) arr FROM tango");
+    }
+
+    @Test
     public void testRndDoubleFunctionEdgeCases() throws Exception {
         assertMemoryLeak(() -> {
             assertExceptionNoLeakCheck(

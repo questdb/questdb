@@ -87,7 +87,6 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
                 throw SqlException.position(rightArgPos).put("right array is not two-dimensional");
             }
             this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
-            arrayOut.setType(type);
         }
 
         @Override
@@ -101,6 +100,10 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
         public ArrayView getArray(Record rec) {
             ArrayView left = leftFn.getArray(rec);
             ArrayView right = rightFn.getArray(rec);
+            if (left.isNull() || right.isNull()) {
+                arrayOut.ofNull();
+                return arrayOut;
+            }
             int commonDimLen = left.getDimLen(1);
             if (right.getDimLen(0) != commonDimLen) {
                 throw CairoException.nonCritical().position(leftArgPos)
@@ -119,6 +122,7 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
             FlatArrayView rightFlatView = right.flatView();
             int leftIndexOffset = left.getFlatViewOffset();
             int rightIndexOffset = right.getFlatViewOffset();
+            arrayOut.setType(type);
             arrayOut.clear();
             arrayOut.setDimLen(0, outRowCount);
             arrayOut.setDimLen(1, outColCount);

@@ -165,6 +165,9 @@ public final class ColumnType {
     }
 
     public static int decodeArrayDimensionality(int encodedType) {
+        if (ColumnType.isNull(encodedType)) {
+            return 0;
+        }
         assert ColumnType.isArray(encodedType) : "typeTag of encodedType is not ARRAY";
         return ((encodedType >> ARRAY_NDIMS_FIELD_POS) & ARRAY_NDIMS_FIELD_MASK) + 1;
     }
@@ -173,6 +176,9 @@ public final class ColumnType {
      * Returns the int constant denoting the type of the elements in an array of the given encoded type.
      */
     public static short decodeArrayElementType(int encodedType) {
+        if (ColumnType.isNull(encodedType)) {
+            return ColumnType.NULL;
+        }
         assert ColumnType.isArray(encodedType) : "typeTag of encodedType is not ARRAY";
         return (short) ((encodedType >> ARRAY_ELEMTYPE_FIELD_POS) & ARRAY_ELEMTYPE_FIELD_MASK);
     }

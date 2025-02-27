@@ -34,7 +34,7 @@ import io.questdb.std.Unsafe;
 /**
  * Mutable array that owns its backing native memory.
  */
-public class DirectArray extends ArrayView implements ArraySink, Mutable {
+public final class DirectArray extends ArrayView implements ArraySink, Mutable {
     private static final long DOUBLE_BYTES = 8;
     private static final long LONG_BYTES = 8;
     private static final int MEM_TAG = MemoryTag.NATIVE_ND_ARRAY;
@@ -107,7 +107,7 @@ public class DirectArray extends ArrayView implements ArraySink, Mutable {
 
     public void ofNull() {
         flatViewLength = 0;
-        type = ColumnType.UNDEFINED;
+        type = ColumnType.NULL;
         borrowedFlatView().reset();
         shape.clear();
         strides.clear();

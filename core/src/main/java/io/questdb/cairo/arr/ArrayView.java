@@ -39,6 +39,9 @@ public abstract class ArrayView implements QuietCloseable {
     protected int type = ColumnType.UNDEFINED;
 
     public final void appendToMem(MemoryA mem) {
+        if (isNull()) {
+            return;
+        }
         if (isVanilla) {
             if (flatView instanceof BorrowedFlatArrayView) {
                 // Ensure a dedicated, inlineable call site
@@ -123,6 +126,10 @@ public abstract class ArrayView implements QuietCloseable {
      */
     public final int getType() {
         return type;
+    }
+
+    public final boolean isNull() {
+        return ColumnType.isNull(type);
     }
 
     private void appendToMemRecursive(int dim, int flatIndex, MemoryA mem) {
