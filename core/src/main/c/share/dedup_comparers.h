@@ -24,7 +24,7 @@
 #ifndef QUESTDB_DEDUP_COMPARERS_H
 #define QUESTDB_DEDUP_COMPARERS_H
 
-#include <stddef.h>
+#include <cstddef>
 #include "dedup.h"
 #include "column_type.h"
 #include <algorithm>
@@ -36,11 +36,11 @@ template<typename T>
 class MergeColumnComparer : dedup_column {
 public:
     inline int operator()(int64_t col_index, int64_t index_index) const {
-        const T l_val = col_index >= column_top
-                        ? reinterpret_cast<T *>(column_data)[col_index]
-                        : *reinterpret_cast<const T *>(&null_value);
+        const T l_val = col_index >= this->get_column_top()
+                        ? this->get_column_data<T>()[col_index]
+                        : this->get_null_value<T>();
 
-        const T r_val = reinterpret_cast<T *>(o3_data)[index_index];
+        const T r_val = this->get_o3_data<T>()[index_index];
 
         // One of the values can be MIN of the type (null value)
         // and subtraction can result in type overflow
@@ -53,12 +53,12 @@ class SortColumnComparer : dedup_column {
 public:
     inline int operator()(int64_t l, int64_t r) const {
         const T l_val = l > -1
-                        ? reinterpret_cast<T *>(column_data)[l]
-                        : reinterpret_cast<T *>(o3_data)[l & ~(1ull << 63)];
+                        ? this->get_column_data<T>()[l]
+                        : this->get_o3_data<T>()[l & ~(1ull << 63)];
 
         const T r_val = r > -1
-                        ? reinterpret_cast<T *>(column_data)[r]
-                        : reinterpret_cast<T *>(o3_data)[r & ~(1ull << 63)];
+                        ? this->get_column_data<T>()[r]
+                        : this->get_o3_data<T>()[r & ~(1ull << 63)];
 
         // One of the values can be MIN of the type (null value)
         // and subtraction can result in type overflow
@@ -67,7 +67,7 @@ public:
 };
 
 template<typename T, uint16_t SegmentBits, typename TIdx>
-class SortColumnComparerManyAddresses : dedup_column_many_addresses {
+class SortColumnComparerManyAddresses : dedup_column {
 public:
     inline int operator()(index_tr_i<TIdx> l, index_tr_i<TIdx> r) const {
         constexpr uint64_t segment_mask = (1ULL << SegmentBits) - 1;
@@ -78,15 +78,14 @@ public:
         auto r_row_index = r.i >> SegmentBits;
         auto r_src_index = r.i & segment_mask;
 
-        const T l_val = reinterpret_cast<T *>(column_data[l_src_index])[l_row_index];
-        const T r_val = reinterpret_cast<T *>(column_data[r_src_index])[r_row_index];
+        const T l_val = this->get_column_data_2d<T>()[l_src_index][l_row_index];
+        const T r_val = this->get_column_data_2d<T>()[r_src_index][r_row_index];
 
         // One of the values can be MIN of the type (null value)
         // and subtraction can result in type overflow
         return (l_val > r_val) - (l_val < r_val);
     }
 };
-
 
 const int32_t HEADER_FLAGS_WIDTH = 4;
 const int32_t MIN_INLINE_CHARS = 6;
@@ -127,17 +126,6 @@ get_tail_chars_ptr(const uint8_t *l_val_aux, int32_t size, const uint8_t *l_val_
 
     return data;
 }
-
-
-// This struct represents repated pointers in dedup_column
-// Sometimes it's better to view dedup_column struct as if it has an array of 2 data_point(s)
-#pragma pack (push, 1)
-struct data_point {
-    uint8_t *aux_data;
-    uint8_t *var_data;
-    int64_t var_data_len;
-};
-#pragma pack(pop)
 
 inline int compare_varchar(
         const uint8_t *l_aux, const uint8_t *l_var_data, int64_t l_var_data_len, int64_t l_offset,
@@ -182,7 +170,7 @@ inline int compare_varchar(
     }
 }
 
-inline int compare_varchar(const data_point *l_col, int64_t l_offset, const data_point *r_col, int64_t r_offset) {
+inline int compare_varchar(const column_pointer *l_col, int64_t l_offset, const column_pointer *r_col, int64_t r_offset) {
 
     return compare_varchar(
             l_col->aux_data, l_col->var_data, l_col->var_data_len, l_offset,
@@ -195,7 +183,7 @@ class SortVarcharColumnComparer : dedup_column {
 
 public:
     inline int operator()(int64_t l, int64_t r) const {
-        auto cols = reinterpret_cast<const data_point *>(&this->column_data);
+        auto cols = this->get_column_data_pointers();
         auto l_col = &cols[l < 0];
         auto r_col = &cols[r < 0];
         return compare_varchar(l_col, l & ~(1ull << 63), r_col, r & ~(1ull << 63));
@@ -206,14 +194,14 @@ public:
 class MergeVarcharColumnComparer : dedup_column {
 public:
     inline int operator()(int64_t l_offset, int64_t r_offset) const {
-        const auto cols = reinterpret_cast<const data_point *>(&this->column_data);
+        const auto cols = this->get_column_data_pointers();
 
-        if (l_offset >= column_top) {
+        if (l_offset >= this->get_column_top()) {
             return compare_varchar(&cols[0], l_offset, &cols[1], r_offset);
         } else {
             // left value is null, read right header null flag
             auto r_header_null =
-                    reinterpret_cast<const VarcharAuxEntrySplit *>(this->o3_data)[r_offset].header & HEADER_FLAG_NULL;
+                    this->get_o3_data<VarcharAuxEntrySplit>()[r_offset].header & HEADER_FLAG_NULL;
             // if right is null, then 0 (equals), otherwise -1 (left null is first)
             return r_header_null ? 0 : -1;
         }
@@ -222,12 +210,12 @@ public:
 
 
 template<uint16_t SegmentBits, typename TIdx>
-class SortVarcharColumnComparerManyAddresses : dedup_column_many_addresses {
+class SortVarcharColumnComparerManyAddresses : dedup_column {
 
 public:
     inline int operator()(index_tr_i<TIdx> l, index_tr_i<TIdx> r) const {
-        auto column_aux = reinterpret_cast<uint8_t **>(this->column_data);
-        auto column_var_data = reinterpret_cast<uint8_t **>(this->column_var_data);
+        auto column_aux = this->get_column_data_2d<uint8_t>();
+        auto column_var_data = this->get_column_var_data_2d<uint8_t>();
         constexpr uint64_t segment_mask = (1ULL << SegmentBits) - 1;
 
         auto l_row_index = l.i >> SegmentBits;
@@ -268,7 +256,7 @@ class SortStrBinColumnComparer : dedup_column {
 
 public:
     inline int operator()(int64_t l, int64_t r) const {
-        const auto cols = reinterpret_cast<const data_point *>(&this->column_data);
+        const auto cols = this->get_column_data_pointers();
         const auto l_col = &cols[l < 0];
         const auto r_col = &cols[r < 0];
 
@@ -286,12 +274,12 @@ public:
 };
 
 template<typename T, int ItemSize, int SegmentBits, typename TIdx>
-class SortStrBinColumnComparerManyAddresses : dedup_column_many_addresses {
+class SortStrBinColumnComparerManyAddresses : dedup_column {
 
 public:
     inline int operator()(index_tr_i<TIdx> l, index_tr_i<TIdx> r) const {
-        auto column_aux = reinterpret_cast<int64_t **>(this->column_data);
-        auto column_var_data = reinterpret_cast<uint8_t **>(this->column_var_data);
+        auto column_aux = this->get_column_data_2d<int64_t>();
+        auto column_var_data = this->get_column_var_data_2d<uint8_t>();
 
         constexpr uint64_t segment_mask = (1ULL << SegmentBits) - 1;
 
@@ -315,11 +303,11 @@ public:
 };
 
 template<typename TIdx>
-class SortRemappedSymbolComparer : dedup_column_many_addresses {
+class SortRemappedSymbolComparer : dedup_column {
 
 public:
     inline int operator()(index_tr_i<TIdx> l, index_tr_i<TIdx> r) const {
-        auto column_data = reinterpret_cast<const int32_t *>(this->column_data);
+        auto column_data = this->get_column_data<int32_t>();
 
         auto l_val = column_data[l.ri];
         auto r_val = column_data[r.ri];
@@ -332,18 +320,18 @@ template<typename T, int ItemSize>
 class MergeStrBinColumnComparer : dedup_column {
 public:
     inline int operator()(int64_t col_index, int64_t index_index) const {
-        const T l_val_offset = col_index >= column_top
-                               ? reinterpret_cast<int64_t *>(column_data)[col_index]
+        const T l_val_offset = col_index >= this->get_column_top()
+                               ? this->get_column_data<int64_t>()[col_index]
                                : -1;
 
-        assertm(l_val_offset < column_var_data_len, "ERROR: column aux data point beyond var data buffer");
-        const uint8_t *l_val_ptr = col_index >= column_top ?
-                                   reinterpret_cast<const uint8_t *>(column_var_data) + l_val_offset
-                                                           : null_value;
+        assertm(l_val_offset < this->get_column_var_data_len(), "ERROR: column aux data point beyond var data buffer");
+        const uint8_t *l_val_ptr = col_index >= this->get_column_top() ?
+                                   this->get_column_var_data<uint8_t>() + l_val_offset
+                                                                       : &this->get_null_value<uint8_t>();
 
-        const auto r_val_offset = reinterpret_cast<int64_t *>(o3_data)[index_index];
-        assertm(r_val_offset < o3_var_data_len, "ERROR: column aux data point beyond var data buffer");
-        const uint8_t *r_val_ptr = reinterpret_cast<const uint8_t *>(o3_var_data) + r_val_offset;
+        const auto r_val_offset = this->get_o3_data<int64_t>()[index_index];
+        assertm(r_val_offset < this->get_o3_var_data_len(), "ERROR: column aux data point beyond var data buffer");
+        const uint8_t *r_val_ptr = this->get_o3_var_data<uint8_t>() + r_val_offset;
 
         return compare_str_bin<T, ItemSize>(l_val_ptr, r_val_ptr);
     }

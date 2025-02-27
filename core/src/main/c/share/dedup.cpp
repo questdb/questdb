@@ -301,14 +301,14 @@ int64_t dedup_sorted_timestamp_index_many_addresses(
         const int64_t index_count,
         index_tr<TIdx> *index_temp,
         int32_t dedup_key_count,
-        const dedup_column_many_addresses *src_keys
+        const dedup_column *src_keys
 ) {
     if (dedup_key_count == 0) {
         return dedup_sorted_timestamp_index(index_in, index_count, index_out);
     }
     const auto diff_l = [&](const index_tr_i<TIdx> l, const index_tr_i<TIdx> r) {
-        for (size_t c = 0; c < dedup_key_count; c++) {
-            const dedup_column_many_addresses *col_key = &src_keys[c];
+        for (int32_t c = 0; c < dedup_key_count; c++) {
+            const dedup_column *col_key = &src_keys[c];
             int diff;
             switch (col_key->value_size_bytes) {
                 case 1: {
@@ -403,7 +403,7 @@ int64_t dedup_sorted_timestamp_index_many_addresses_segment_bits(
         const int64_t index_count,
         jlong indexTemp,
         int32_t dedup_key_count,
-        const dedup_column_many_addresses *src_keys
+        const dedup_column *src_keys
 ) {
 
     auto index_out = reinterpret_cast<index_tr<TIdx> *>(indexOut);
@@ -448,7 +448,7 @@ int64_t dedup_sorted_timestamp_index_many_addresses_segment_bits_clean(
         const int64_t row_count,
         jlong indexTemp,
         int32_t dedup_key_count,
-        const dedup_column_many_addresses *src_keys
+        const dedup_column *src_keys
 ) {
     static_assert(std::is_integral_v<TIdx> && std::is_unsigned_v<TIdx>, "TRevIdx must be an unsigned integer");
 
@@ -513,7 +513,7 @@ int64_t dedup_sorted_timestamp_index_many_addresses_segment_bits_row_encoding(
         const jlong index_format,
         jlong indexTemp,
         int32_t dedup_key_count,
-        const dedup_column_many_addresses *src_keys
+        const dedup_column *src_keys
 ) {
 
     auto rows_bytes = read_reverse_index_format_bytes(index_format);
@@ -966,7 +966,7 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndexManyAddresses(
         return merge_index_format(-1, 0, 0, 0);
     }
 
-    const auto src_keys = reinterpret_cast<const dedup_column_many_addresses *>(dedupColBuffs);
+    const auto src_keys = reinterpret_cast<const dedup_column *>(dedupColBuffs);
     auto dedup_row_count = (int64_t) dedup_sorted_timestamp_index_many_addresses_segment_bits_row_encoding(
             segment_bytes,
             pIndexIn,
