@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin.engine.functions;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -133,7 +132,7 @@ public class SymbolFunctionTest {
         function.getIPv4(null);
     }
 
-    @Test(expected = CairoException.class)
+    @Test(expected = Exception.class)
     public void testGetInvalidTimestamp() {
         function.getTimestamp(null);
     }

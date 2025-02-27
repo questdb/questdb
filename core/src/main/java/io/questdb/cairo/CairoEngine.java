@@ -72,6 +72,7 @@ import io.questdb.cutlass.text.CopyContext;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.FunctionFactoryCacheBuilder;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerFactory;
@@ -113,7 +114,6 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.Map;
-import java.util.ServiceLoader;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -169,7 +169,7 @@ public class CairoEngine implements Closeable, WriterSource {
         try {
             ffCache = new FunctionFactoryCache(
                     configuration,
-                    ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
+                    getFunctionFactories()
             );
             this.tableFlagResolver = newTableFlagResolver(configuration);
             this.configuration = configuration;
@@ -184,9 +184,9 @@ public class CairoEngine implements Closeable, WriterSource {
             this.tableMetadataPool = new TableMetadataPool(configuration);
             this.walWriterPool = new WalWriterPool(configuration, this);
             this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
-            this.telemetry = new Telemetry<>(TelemetryTask.TELEMETRY, configuration);
-            this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMETRY, configuration);
-            this.telemetryMatView = new Telemetry<>(TelemetryMatViewTask.MAT_VIEW_TELEMETRY, configuration);
+            this.telemetry = createTelemetry(TelemetryTask.TELEMETRY, configuration);
+            this.telemetryWal = createTelemetry(TelemetryWalTask.WAL_TELEMETRY, configuration);
+            this.telemetryMatView = createTelemetry(TelemetryMatViewTask.MAT_VIEW_TELEMETRY, configuration);
             this.telemetries = new ObjList<>(telemetry, telemetryWal, telemetryMatView);
             this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
             this.checkpointAgent = new DatabaseCheckpointAgent(this);
@@ -1655,6 +1655,16 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.tableDoesNotExist(tableName);
         }
         return token;
+    }
+
+    protected Iterable<FunctionFactory> getFunctionFactories() {
+        return new FunctionFactoryCacheBuilder().scan(LOG).build();
+    }
+
+    protected @NotNull <T extends AbstractTelemetryTask> Telemetry<T> createTelemetry(
+            Telemetry.TelemetryTypeBuilder<T> builder, CairoConfiguration configuration
+    ) {
+        return new Telemetry<>(builder, configuration);
     }
 
     protected TableFlagResolver newTableFlagResolver(CairoConfiguration configuration) {
