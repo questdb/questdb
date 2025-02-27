@@ -5951,22 +5951,22 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
         assertQuery(expected, "select * from x order by b, a",
                 "create table x as " +
-                "(" +
-                "select" +
-                " rnd_long256() a," +
-                " rnd_char() b," +
-                " timestamp_sequence(0, 100000000000) k" +
-                " from" +
-                " long_sequence(20)" +
-                ") timestamp(k) partition by DAY",
+                        "(" +
+                        "select" +
+                        " rnd_long256() a," +
+                        " rnd_char() b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
                 null,
                 "insert into x select * from (" +
-                "select" +
-                " rnd_long256()," +
-                " 'W'," +
-                " to_timestamp('1971', 'yyyy') t" +
-                " from long_sequence(1)" +
-                ") timestamp(t)",
+                        "select" +
+                        " rnd_long256()," +
+                        " 'W'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
                 expected2,
                 true, true, false);
     }
