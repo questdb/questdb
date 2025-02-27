@@ -35,10 +35,10 @@
 
 #define assertm(exp, msg) assert(((void)msg, exp))
 
-template<uint16_t Sh, uint16_t TxnBits, typename TRevIdx>
+template<uint16_t TxnBits, typename TRevIdx>
 void radix_shuffle_clean(
         uint64_t *counts, const index_tr<TRevIdx> *src, index_l *dest, const uint64_t size,
-        int64_t min_value, uint8_t result_format
+        int64_t min_value, uint8_t result_format, uint16_t sh
 ) {
     MM_PREFETCH_T0(counts);
 
@@ -51,7 +51,7 @@ void radix_shuffle_clean(
         auto dest_rev_idx = reinterpret_cast<TRevIdx *>(&row_count_addr[1]);
 
         for (uint64_t x = 0; x < size; x++) {
-            const auto digit = (src[x].ts >> Sh) & 0xffu;
+            const auto digit = (src[x].ts >> sh) & 0xffu;
             dest[counts[digit]].ts = (int64_t) (min_value + (src[x].ts >> TxnBits));
             dest[counts[digit]].i = src[x].i.i;
             dest_rev_idx[src[x].i.ri] = counts[digit];
@@ -64,7 +64,7 @@ void radix_shuffle_clean(
         // Every record contains an absolute index to copy the records from
         auto dest_raw = reinterpret_cast<index_tr<TRevIdx> * >(dest);
         for (uint64_t x = 0; x < size; x++) {
-            const auto digit = (src[x].ts >> Sh) & 0xffu;
+            const auto digit = (src[x].ts >> sh) & 0xffu;
             dest_raw[counts[digit]].ts = (int64_t) (min_value + (src[x].ts >> TxnBits));
             dest_raw[counts[digit]].i = src[x].i;
             counts[digit]++;
@@ -73,12 +73,12 @@ void radix_shuffle_clean(
     }
 }
 
-template<uint16_t Sh, typename T>
-inline void radix_shuffle(uint64_t *counts, const T *src, index_l *dest, const uint64_t size, int64_t min_value) {
+template<typename T>
+inline void radix_shuffle(uint64_t *counts, const T *src, index_l *dest, const uint64_t size, int64_t min_value, uint16_t sh) {
     MM_PREFETCH_T0(counts);
 
     for (uint64_t x = 0; x < size; x++) {
-        const auto digit = (src[x] >> Sh) & 0xffu;
+        const auto digit = (src[x] >> sh) & 0xffu;
         dest[counts[digit]].ts = (int64_t) (min_value + src[x].ts);
         dest[counts[digit]].i = src[x].i;
         counts[digit]++;
@@ -86,11 +86,11 @@ inline void radix_shuffle(uint64_t *counts, const T *src, index_l *dest, const u
     }
 }
 
-template<uint16_t Sh, typename T>
-inline void radix_shuffle(uint64_t *counts, const T *src, T *dest, const uint64_t size) {
+template<typename T>
+inline void radix_shuffle(uint64_t *counts, const T *src, T *dest, const uint64_t size, uint16_t sh) {
     MM_PREFETCH_T0(counts);
     for (uint64_t x = 0; x < size; x++) {
-        const auto digit = (src[x] >> Sh) & 0xffu;
+        const auto digit = (src[x] >> sh) & 0xffu;
         dest[counts[digit]] = src[x];
         counts[digit]++;
         MM_PREFETCH_T2(src + x + 64);
@@ -184,48 +184,48 @@ radix_copy_segments_index_asc(
         }
 
         if constexpr (n > 1) {
-            radix_shuffle<0u>(counts[n - 1], buff1, buff2, size);
+            radix_shuffle(counts[n - 1], buff1, buff2, size, 0u);
             if constexpr (n > 2) {
-                radix_shuffle<8u>(counts[n - 2], buff2, buff1, size);
+                radix_shuffle(counts[n - 2], buff2, buff1, size, 8u);
                 if constexpr (n > 3) {
-                    radix_shuffle<16u>(counts[n - 3], buff1, buff2, size);
+                    radix_shuffle(counts[n - 3], buff1, buff2, size, 16u);
                     if constexpr (n > 4) {
-                        radix_shuffle<24u>(counts[n - 4], buff2, buff1, size);
+                        radix_shuffle(counts[n - 4], buff2, buff1, size, 24u);
                         if constexpr (n > 5) {
-                            radix_shuffle<32u>(counts[n - 5], buff1, buff2, size);
+                            radix_shuffle(counts[n - 5], buff1, buff2, size, 32u);
                             if constexpr (n > 6) {
-                                radix_shuffle<40u>(counts[n - 6], buff2, buff1, size);
+                                radix_shuffle(counts[n - 6], buff2, buff1, size, 40u);
                                 if constexpr (n > 7) {
-                                    radix_shuffle<48u>(counts[n - 7], buff1, buff2, size);
-                                    radix_shuffle_clean<56u, TxnBits, TRevIdx>(
+                                    radix_shuffle(counts[n - 7], buff1, buff2, size, 48u);
+                                    radix_shuffle_clean<TxnBits, TRevIdx>(
                                             counts[n - 8], buff2, out, size,
-                                            min_value, result_format);
+                                            min_value, result_format, 56u);
                                 } else {
-                                    radix_shuffle_clean<48u, TxnBits, TRevIdx>(
+                                    radix_shuffle_clean<TxnBits, TRevIdx>(
                                             counts[n - 7], buff1, out, size,
-                                            min_value, result_format);
+                                            min_value, result_format, 48u);
                                 }
                             } else {
-                                radix_shuffle_clean<40u, TxnBits, TRevIdx>(
-                                        counts[n - 6], buff2, out, size, min_value, result_format);
+                                radix_shuffle_clean<TxnBits, TRevIdx>(
+                                        counts[n - 6], buff2, out, size, min_value, result_format, 40u);
                             }
                         } else {
-                            radix_shuffle_clean<32u, TxnBits, TRevIdx>(
-                                    counts[n - 5], buff1, out, size, min_value, result_format);
+                            radix_shuffle_clean<TxnBits, TRevIdx>(
+                                    counts[n - 5], buff1, out, size, min_value, result_format, 32u);
                         }
                     } else {
-                        radix_shuffle_clean<24u, TxnBits, TRevIdx>(
-                                counts[n - 4], buff2, out, size, min_value, result_format);
+                        radix_shuffle_clean<TxnBits, TRevIdx>(
+                                counts[n - 4], buff2, out, size, min_value, result_format, 24u);
                     }
                 } else {
-                    radix_shuffle_clean<16u, TxnBits, TRevIdx>(
-                            counts[n - 3], buff1, out, size, min_value, result_format);
+                    radix_shuffle_clean<TxnBits, TRevIdx>(
+                            counts[n - 3], buff1, out, size, min_value, result_format, 16u);
                 }
             } else {
-                radix_shuffle_clean<8u, TxnBits, TRevIdx>(counts[n - 2], buff2, out, size, min_value, result_format);
+                radix_shuffle_clean<TxnBits, TRevIdx>(counts[n - 2], buff2, out, size, min_value, result_format, 8u);
             }
         } else {
-            radix_shuffle_clean<0u, TxnBits, TRevIdx>(counts[n - 1], buff1, out, size, min_value, result_format);
+            radix_shuffle_clean<TxnBits, TRevIdx>(counts[n - 1], buff1, out, size, min_value, result_format, 0u);
         }
         return size;
     }

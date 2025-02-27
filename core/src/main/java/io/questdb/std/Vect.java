@@ -322,6 +322,8 @@ public final class Vect {
     // This is not In Place sort, to be renamed later
     public static native void radixSortLongIndexAscInPlace(long pLongData, long count, long pCpy);
 
+    public static native void radixSortLongIndexAscInPlaceBounded(long pLongData, long count, long pCpy, long min, long max);
+
     public static long readIndexResultRowCount(long indexFormat) {
         return indexFormat & 0xFFFFFFFFFFFFL;
     }

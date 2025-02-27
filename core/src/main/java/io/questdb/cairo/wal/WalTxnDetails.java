@@ -554,22 +554,24 @@ public class WalTxnDetails implements QuietCloseable {
                 txnOrder.setCapacity(txnsToLoad * 4L);
 
                 // Load the map of outstanding WAL transactions to load necessary details from WAL-E files efficiently.
-                long max = 0;
+                long max = Long.MIN_VALUE, min = Long.MAX_VALUE;
                 int txn;
                 for (txn = 0; txn < txnsToLoad && transactionLogCursor.hasNext(); txn++) {
                     long long1 = Numbers.encodeLowHighInts(transactionLogCursor.getSegmentId(), transactionLogCursor.getWalId() - MIN_WAL_ID);
-                    max |= long1;
+                    max = Math.max(max, long1);
+                    min = Math.min(min, long1);
                     txnOrder.add(long1);
                     txnOrder.add(Numbers.encodeLowHighInts(transactionLogCursor.getSegmentTxn(), txn));
                 }
                 txnsToLoad = txn;
 
                 // We specify min as 0, so we expect the highest bit to be 0
-                assert max >= 0;
-                Vect.radixSortLongIndexAscInPlace(
+                Vect.radixSortLongIndexAscInPlaceBounded(
                         txnOrder.getAddress(),
                         txnsToLoad,
-                        txnOrder.getAddress() + txnsToLoad * 2L * Long.BYTES
+                        txnOrder.getAddress() + txnsToLoad * 2L * Long.BYTES,
+                        min,
+                        max
                 );
 
                 int lastWalId = -1;
@@ -889,18 +891,23 @@ public class WalTxnDetails implements QuietCloseable {
         public WalTxnDetailsSlice of(long lo, int count) {
             txnOrder.clear();
             // Rserve double capacity to use with radix sort
-            txnOrder.setCapacity(count * 2L * 2L);
+            txnOrder.setCapacity(count * 4L);
 
+            long min = Long.MAX_VALUE, max = Long.MIN_VALUE;
             for (long i = lo, n = lo + count; i < n; i++) {
                 long segWalId = transactionMeta.get((int) ((i - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_WAL_SEG_ID_OFFSET));
+                min = Math.min(min, segWalId);
+                max = Math.max(max, segWalId);
                 txnOrder.add(segWalId);
                 txnOrder.add(i);
             }
 
-            Vect.radixSortLongIndexAscInPlace(
+            Vect.radixSortLongIndexAscInPlaceBounded(
                     txnOrder.getAddress(),
                     count,
-                    txnOrder.getAddress() + count * 2L * Long.BYTES
+                    txnOrder.getAddress() + count * 2L * Long.BYTES,
+                    min,
+                    max
             );
 
             return this;

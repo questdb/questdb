@@ -67,9 +67,8 @@ struct long_3x {
 
 #if RADIX_SHUFFLE == 0
 
-template<uint16_t sh>
 inline void radix_shuffle_ab(uint64_t *counts, const int64_t *srcA, const uint64_t sizeA, const index_l *srcB,
-                             const uint64_t sizeB, index_t *dest, int64_t minValue) {
+                             const uint64_t sizeB, index_t *dest, int64_t minValue, uint16_t sh) {
     MM_PREFETCH_T0(counts);
     for (uint64_t x = 0; x < sizeA; x++) {
         const uint64_t value = srcA[x] - minValue;
@@ -87,6 +86,28 @@ inline void radix_shuffle_ab(uint64_t *counts, const int64_t *srcA, const uint64
         dest[counts[digit]].i = srcB[x].i;
         counts[digit]++;
         MM_PREFETCH_T2(srcB + x + 64);
+    }
+}
+
+inline void radix_shuffle_ab_one_pass(uint64_t *counts, const int64_t *src_a, const uint64_t size_a, const index_l *src_b,
+                                      const uint64_t size_b, index_t *dest, int64_t min_value) {
+    MM_PREFETCH_T0(counts);
+    for (uint64_t x = 0; x < size_a; x++) {
+        const uint64_t value = src_a[x] - min_value;
+        const auto digit = value & 0xffu;
+        dest[counts[digit]].ts = value + min_value;
+        dest[counts[digit]].i = x | (1ull << 63);
+        counts[digit]++;
+        MM_PREFETCH_T2(src_a + x + 64);
+    }
+
+    for (uint64_t x = 0; x < size_b; x++) {
+        const uint64_t value = src_b[x].ts - min_value;
+        const auto digit = value & 0xffu;
+        dest[counts[digit]].ts = value + min_value;
+        dest[counts[digit]].i = src_b[x].i;
+        counts[digit]++;
+        MM_PREFETCH_T2(src_b + x + 64);
     }
 }
 
@@ -224,14 +245,14 @@ void radix_sort_long_index_asc_in_place(T *array, uint64_t size, T *cpy) {
     }
 
     // radix
-    radix_shuffle<0u>(counts.c8, array, cpy, size);
-    radix_shuffle<8u>(counts.c7, cpy, array, size);
-    radix_shuffle<16u>(counts.c6, array, cpy, size);
-    radix_shuffle<24u>(counts.c5, cpy, array, size);
-    radix_shuffle<32u>(counts.c4, array, cpy, size);
-    radix_shuffle<40u>(counts.c3, cpy, array, size);
-    radix_shuffle<48u>(counts.c2, array, cpy, size);
-    radix_shuffle<56u>(counts.c1, cpy, array, size);
+    radix_shuffle(counts.c8, array, cpy, size, 0u);
+    radix_shuffle(counts.c7, cpy, array, size, 8u);
+    radix_shuffle(counts.c6, array, cpy, size, 16u);
+    radix_shuffle(counts.c5, cpy, array, size, 24u);
+    radix_shuffle(counts.c4, array, cpy, size, 32u);
+    radix_shuffle(counts.c3, cpy, array, size, 40u);
+    radix_shuffle(counts.c2, array, cpy, size, 48u);
+    radix_shuffle(counts.c1, cpy, array, size, 56u);
 }
 
 
@@ -287,51 +308,47 @@ radix_sort_ab_long_index_asc(const int64_t *arrayA, const uint64_t sizeA, const 
     auto size = sizeA + sizeB;
     auto *ucpy = (index_t *) cpy;
     auto *uout = (index_t *) out;
-    radix_shuffle_ab<0u>(counts[N - 1], arrayA, sizeA, arrayB, sizeB, ucpy, minValue);
 
-    if constexpr (N > 2) {
-        radix_shuffle<8u>(counts[N - 2], ucpy, uout, size);
-        if constexpr (N > 3) {
-            radix_shuffle<16u>(counts[N - 3], uout, ucpy, size);
-            if constexpr (N > 4) {
-                radix_shuffle<24u>(counts[N - 4], ucpy, uout, size);
-                if constexpr (N > 5) {
-                    radix_shuffle<32u>(counts[N - 5], uout, ucpy, size);
-                    if constexpr (N > 6) {
-                        radix_shuffle<40u>(counts[N - 6], ucpy, uout, size);
-                        if constexpr (N > 7) {
-                            radix_shuffle<48u>(counts[N - 7], uout, ucpy, size);
-                            radix_shuffle<56u>(counts[N - 8], ucpy, out, size, minValue);
+    if constexpr (N > 1) {
+        radix_shuffle_ab(counts[N - 1], arrayA, sizeA, arrayB, sizeB, ucpy, minValue, 0u);
+
+        if constexpr (N > 2) {
+            radix_shuffle(counts[N - 2], ucpy, uout, size, 8u);
+            if constexpr (N > 3) {
+                radix_shuffle(counts[N - 3], uout, ucpy, size, 16u);
+                if constexpr (N > 4) {
+                    radix_shuffle(counts[N - 4], ucpy, uout, size, 24u);
+                    if constexpr (N > 5) {
+                        radix_shuffle(counts[N - 5], uout, ucpy, size, 32u);
+                        if constexpr (N > 6) {
+                            radix_shuffle(counts[N - 6], ucpy, uout, size, 40u);
+                            if constexpr (N > 7) {
+                                radix_shuffle(counts[N - 7], uout, ucpy, size, 48u);
+                                radix_shuffle(counts[N - 8], ucpy, out, size, minValue, 56u);
+                            } else {
+                                radix_shuffle(counts[N - 7], uout, cpy, size, minValue, 48u);
+                            }
                         } else {
-                            radix_shuffle<48u>(counts[N - 7], uout, cpy, size, minValue);
+                            radix_shuffle(counts[N - 6], ucpy, out, size, minValue, 40u);
                         }
                     } else {
-                        radix_shuffle<40u>(counts[N - 6], ucpy, out, size, minValue);
+                        radix_shuffle(counts[N - 5], uout, cpy, size, minValue, 32u);
                     }
                 } else {
-                    radix_shuffle<32u>(counts[N - 5], uout, cpy, size, minValue);
+                    radix_shuffle(counts[N - 4], ucpy, out, size, minValue, 24u);
                 }
             } else {
-                radix_shuffle<24u>(counts[N - 4], ucpy, out, size, minValue);
+                radix_shuffle(counts[N - 3], uout, cpy, size, minValue, 16u);
             }
-        } else {
-            radix_shuffle<16u>(counts[N - 3], uout, cpy, size, minValue);
+        } else if constexpr (N > 1) {
+            radix_shuffle(counts[N - 2], ucpy, out, size, minValue, 8u);
         }
-    } else if constexpr (N > 1) {
-        radix_shuffle<8u>(counts[N - 2], ucpy, out, size, minValue);
-    }
 
-    if constexpr (N == 1) {
-        if (minValue != 0) {
-            auto usrc = N % 2 == 1 ? ucpy : uout;
-            for (x = 0; x < size; x++) {
-                out[x].ts = (int64_t) (minValue + usrc[x].ts);
-                out[x].i = usrc[x].i;
-            }
+        if constexpr (N % 2 == 1) {
+            __MEMCPY(out, cpy, size * sizeof(index_t));
         }
-    }
-    if constexpr (N % 2 == 1) {
-        __MEMCPY(out, cpy, size * sizeof(index_t));
+    } else {
+        radix_shuffle_ab_one_pass(counts[N - 1], arrayA, sizeA, arrayB, sizeB, ucpy, minValue);
     }
 }
 
@@ -745,6 +762,19 @@ Java_io_questdb_std_Vect_radixSortABLongIndexAsc(JNIEnv *env, jclass cl, jlong p
             break;
     }
 
+}
+
+
+JNIEXPORT void JNICALL
+Java_io_questdb_std_Vect_radixSortLongIndexAscInPlaceBounded(JNIEnv *env, jclass cl, jlong pLong, jlong len, jlong pCpy,
+                                                             jlong min, jlong max) {
+    Java_io_questdb_std_Vect_radixSortABLongIndexAsc(
+            env, cl,
+            0, 0,
+            pLong, len,
+            pLong, pCpy,
+            min, max
+    );
 }
 
 
