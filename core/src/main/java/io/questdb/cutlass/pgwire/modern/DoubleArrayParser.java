@@ -76,12 +76,12 @@ public final class DoubleArrayParser extends ArrayView implements FlatArrayView 
         values.clear();
         shape.clear();
         strides.clear();
-        if (input != null) {
-            parse(input);
-            type = ColumnType.encodeArrayType(ColumnType.DOUBLE, shape.size());
-        } else {
+        if (input == null) {
             type = ColumnType.NULL;
+            return;
         }
+        parse(input);
+        type = ColumnType.encodeArrayType(ColumnType.DOUBLE, shape.size());
         resetToDefaultStrides();
     }
 
