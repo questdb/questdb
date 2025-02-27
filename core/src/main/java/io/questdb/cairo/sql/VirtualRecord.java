@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
@@ -40,6 +41,11 @@ public class VirtualRecord implements ColumnTypes, Record {
     public VirtualRecord(ObjList<? extends Function> functions) {
         this.functions = functions;
         this.columnCount = functions.size();
+    }
+
+    @Override
+    public ArrayView getArray(int col, int columnType) {
+        return getFunction(col).getArray(base);
     }
 
     public Record getBaseRecord() {
@@ -167,7 +173,7 @@ public class VirtualRecord implements ColumnTypes, Record {
 
     @Override
     public Record getRecord(int col) {
-        return getFunction(col).getRecord(base);
+        return getFunction(col).extendedOps().getRecord(base);
     }
 
     @Override

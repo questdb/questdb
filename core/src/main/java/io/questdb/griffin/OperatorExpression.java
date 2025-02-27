@@ -121,6 +121,7 @@ public final class OperatorExpression {
                 add(new OperatorExpression(Operator.BinaryNot, 14, false, UNARY, false));
                 add(new OperatorExpression(Operator.BinaryAnd, 15, true, BINARY, false));
                 add(new OperatorExpression(Operator.BinaryOr, 16, true, BINARY, false));
+                add(new OperatorExpression(Operator.Colon, 17, false, BINARY));
             }});
     final boolean leftAssociative;
     final OperatorExpression.Operator operator;
@@ -170,6 +171,7 @@ public final class OperatorExpression {
         UnaryComplement("~"),
         UnarySetNegation("not"),
         Dot("."),
+        Colon(":"),
         DoubleColon("::"),
         Multiplication("*"),
         Division("/"),

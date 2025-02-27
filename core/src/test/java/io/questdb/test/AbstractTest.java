@@ -29,10 +29,11 @@ import io.questdb.Metrics;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Zip;
+import io.questdb.test.cutlass.http.HttpQueryTestBuilder;
+import io.questdb.test.cutlass.http.HttpServerConfigurationBuilder;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.AfterClass;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
@@ -40,8 +41,6 @@ import org.junit.Rule;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
 import org.junit.runner.OrderWith;
-
-import java.io.File;
 
 @OrderWith(RandomOrder.class)
 public class AbstractTest {
@@ -84,5 +83,13 @@ public class AbstractTest {
 
     protected static String[] getServerMainArgs() {
         return Bootstrap.getServerMainArgs(root);
+    }
+
+    protected static HttpQueryTestBuilder getSimpleTester() {
+        return new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false);
     }
 }

@@ -37,7 +37,7 @@ public class GeoByteColumn extends GeoByteFunction {
 
     private final int columnIndex;
 
-    public GeoByteColumn(int columnIndex, int columnType) {
+    private GeoByteColumn(int columnIndex, int columnType) {
         super(columnType);
         this.columnIndex = columnIndex;
     }

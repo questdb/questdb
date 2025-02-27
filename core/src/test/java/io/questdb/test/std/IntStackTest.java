@@ -28,7 +28,86 @@ import io.questdb.std.IntStack;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
+
 public class IntStackTest {
+
+    @Test
+    public void testBottomBeyondTop() {
+        IntStack s = new IntStack();
+        s.push(1);
+        s.push(2);
+        try {
+            s.setBottom(3);
+            fail();
+        } catch (IllegalStateException e) {
+            assertEquals("Tried to set bottom beyond the top of the stack", e.getMessage());
+        }
+    }
+
+    @Test
+    public void testBottomClear() {
+        IntStack s = new IntStack();
+        s.push(1);
+        s.push(2);
+        s.setBottom(2);
+        assertEquals(-1, s.peek());
+        s.clear();
+        s.push(1);
+        assertEquals(1, s.pop());
+    }
+
+    @Test
+    public void testBottomPeek() {
+        IntStack s = new IntStack();
+        s.push(1);
+        s.push(2);
+        s.push(3);
+        s.setBottom(1);
+        assertEquals(3, s.peek(0));
+        assertEquals(2, s.peek(1));
+        assertEquals(-1, s.peek(2));
+    }
+
+    @Test
+    public void testBottomPop() {
+        IntStack s = new IntStack();
+        s.push(1);
+        s.push(2);
+        s.setBottom(1);
+        assertEquals(1, s.size());
+        assertEquals(2, s.pop());
+        assertEquals(-1, s.pop());
+        s.setBottom(0);
+        assertEquals(1, s.size());
+        assertEquals(1, s.pop());
+    }
+
+    @Test
+    public void testBottomPopAll() {
+        IntStack s = new IntStack();
+        s.push(1);
+        s.push(2);
+        s.setBottom(1);
+        s.popAll();
+        assertEquals(-1, s.pop());
+        s.setBottom(0);
+        assertEquals(1, s.pop());
+    }
+
+    @Test
+    public void testBottomSize() {
+        IntStack s = new IntStack();
+        s.push(1);
+        s.push(2);
+        assertEquals(2, s.size());
+        s.setBottom(1);
+        assertEquals(1, s.size());
+        s.setBottom(2);
+        assertEquals(0, s.size());
+    }
+
     @Test
     public void testPollLast() {
         int sz = 2050;
@@ -49,6 +128,20 @@ public class IntStackTest {
 
         Assert.assertEquals(-1, stack.pollLast());
         Assert.assertFalse(stack.notEmpty());
+    }
+
+    @Test
+    public void testPollLastNotAllowedWithBottom() {
+        IntStack s = new IntStack();
+        s.push(1);
+        s.push(2);
+        s.setBottom(1);
+        try {
+            s.pollLast();
+            fail("Allowed pollLast() while bottom != 0");
+        } catch (IllegalStateException e) {
+            assertEquals("pollLast() called while bottom != 0", e.getMessage());
+        }
     }
 
     @Test

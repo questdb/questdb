@@ -54,7 +54,7 @@ public class Table2Ilp {
                 "\n [-sts <timestamp_column>] [-sym <symbol_columns>] [-dauth <ilp_auth_key:ilp_auth_token>] [-dtls]");
     }
 
-    static class Table2IlpParams {
+    public static class Table2IlpParams {
         private String destinationAuthKey;
         private String destinationAuthToken;
         private boolean destinationEnableTls;

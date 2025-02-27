@@ -63,7 +63,7 @@ import java.util.concurrent.TimeUnit;
  *     <li>Use {@link #stringColumn(CharSequence, CharSequence)}, {@link #longColumn(CharSequence, long)},
  *     {@link #doubleColumn(CharSequence, double)}, {@link #boolColumn(CharSequence, boolean)},
  *     {@link #timestampColumn(CharSequence, long, ChronoUnit)} to add remaining columns columns</li>
- *     <li>Use {@link #at(long, ChronoUnit)} (long)} to finish a row with an explicit timestamp.Alternatively, you can use use
+ *     <li>Use {@link #at(long, ChronoUnit)} (long)} to finish a row with an explicit timestamp.Alternatively, you can use
  *     {@link #atNow()} which will add a timestamp on a server.</li>
  *     <li>Optionally: You can use {@link #flush()} to send locally buffered data into a server</li>
  * </ol>
@@ -180,6 +180,42 @@ public interface Sender extends Closeable {
         }
         return fromConfig(configString);
     }
+
+    /**
+     * Add a column with an array value.
+     *
+     * <p>Here are some valid examples:</p>
+     * <p>Dense arrays are specified row-major. Values are separated with commas,
+     * nesting levels are surrounded by braces. No whitespace or newlines are allowed:</p>
+     * <ul>
+     *   <li>A NULL array: <code>{}</code></li>
+     *   <li>A 1x3 dense array of longs: <code>{6s1,2,3}</code></li>
+     *   <li>A 1x2 dense array of doubles: <code>{6f1.0,3.4}</code></li>
+     *   <li>A 4x3x2 dense array of ints:
+     *       <code>{5s{{1,2},{3,4},{5,6}},{{7,8},{9,10},{11,12}},{{13,14},{15,16},{17,18}},{{19,20},{21,22},{23,24}}}</code>
+     *   </li>
+     * </ul>
+     * <p>The first two chars after the opening brace are:
+     * <ul>
+     *     <li>type precision, expressed as the exponent of a power of two. E.g. 5 means 2^5, i.e. 32-bit type.</li>
+     *     <li>type class, e.g. <code>u</code> for unsigned, <code>s</code> for signed, <code>f</code> for floating point</li>
+     * </ul>
+     * <p>Examples:
+     * <ul>
+     *     <li><code>1u</code>: boolean</li>
+     *     <li><code>3s</code>: byte</li>
+     *     <li><code>4s</code>: short</li>
+     *     <li><code>5s</code>: int</li>
+     *     <li><code>6s</code>: long</li>
+     *     <li><code>5f</code>: float</li>
+     *     <li><code>6f</code>: double</li>
+     * </ul>
+     *
+     * @param name  name of the column
+     * @param value the encoded array buffer
+     */
+    Sender arrayColumn(CharSequence name, CharSequence value);
+
 
     /**
      * Finalize the current row and assign an explicit timestamp.

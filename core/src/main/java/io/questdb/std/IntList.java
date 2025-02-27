@@ -32,8 +32,8 @@ import org.jetbrains.annotations.NotNull;
 import java.util.Arrays;
 
 public class IntList implements Mutable, Sinkable {
+    public static final int NO_ENTRY_VALUE = -1;
     private static final int DEFAULT_ARRAY_SIZE = 16;
-    private static final int NO_ENTRY_VALUE = -1;
     private final int initialCapacity;
     private int[] data;
     private int pos = 0;
@@ -225,6 +225,15 @@ public class IntList implements Mutable, Sinkable {
     public void restoreInitialCapacity() {
         data = new int[initialCapacity];
         pos = 0;
+    }
+
+    public void reverse() {
+        final int len = size();
+        for (int index = 0, mid = len / 2; index < mid; ++index) {
+            final int temp = get(index);
+            set(index, get(len - index - 1));
+            set(len - index - 1, temp);
+        }
     }
 
     public void set(int index, int element) {
