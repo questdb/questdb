@@ -63,10 +63,6 @@ struct long_3x {
     }
 };
 
-#define RADIX_SHUFFLE 0
-
-#if RADIX_SHUFFLE == 0
-
 inline void radix_shuffle_ab(uint64_t *counts, const int64_t *srcA, const uint64_t sizeA, const index_l *srcB,
                              const uint64_t sizeB, index_t *dest, int64_t minValue, uint16_t sh) {
     MM_PREFETCH_T0(counts);
@@ -89,8 +85,9 @@ inline void radix_shuffle_ab(uint64_t *counts, const int64_t *srcA, const uint64
     }
 }
 
-inline void radix_shuffle_ab_one_pass(uint64_t *counts, const int64_t *src_a, const uint64_t size_a, const index_l *src_b,
-                                      const uint64_t size_b, index_t *dest, int64_t min_value) {
+inline void
+radix_shuffle_ab_one_pass(uint64_t *counts, const int64_t *src_a, const uint64_t size_a, const index_l *src_b,
+                          const uint64_t size_b, index_t *dest, int64_t min_value) {
     MM_PREFETCH_T0(counts);
     for (uint64_t x = 0; x < size_a; x++) {
         const uint64_t value = src_a[x] - min_value;
@@ -110,80 +107,6 @@ inline void radix_shuffle_ab_one_pass(uint64_t *counts, const int64_t *src_a, co
         MM_PREFETCH_T2(src_b + x + 64);
     }
 }
-
-#elif RADIX_SHUFFLE == 1
-
-template<uint16_t sh>
-inline void radix_shuffle(uint64_t *counts, index_t *src, index_t *dest, uint64_t size) {
-    _mm_prefetch(counts, _MM_HINT_NTA);
-    Vec4q vec;
-    Vec4q digitVec;
-    int64_t values[4];
-    int64_t digits[4];
-    for (uint64_t x = 0; x < size; x += 4) {
-        _mm_prefetch(src + x + 64, _MM_HINT_T0);
-        vec.load(src + x);
-        digitVec = (vec >> sh) & 0xff;
-
-        vec.store(values);
-        digitVec.store(digits);
-
-        dest[counts[digits[0]]] = values[0];
-        counts[digits[0]]++;
-
-        dest[counts[digits[1]]] = values[1];
-        counts[digits[1]]++;
-
-        dest[counts[digits[2]]] = values[2];
-        counts[digits[2]]++;
-
-        dest[counts[digits[3]]] = values[3];
-        counts[digits[3]]++;
-    }
-}
-
-#elif RADIX_SHUFFLE == 2
-template<uint16_t sh>
-inline void radix_shuffle(uint64_t* counts, int64_t* src, int64_t* dest, uint64_t size) {
-    _mm_prefetch(counts, _MM_HINT_NTA);
-    Vec8q vec;
-    Vec8q digitVec;
-    int64_t values[8];
-    int64_t digits[8];
-    for (uint64_t x = 0; x < size; x += 8) {
-        _mm_prefetch(src + x + 64, _MM_HINT_T0);
-        vec.load(src + x);
-        digitVec = (vec >> sh) & 0xff;
-
-        vec.store(values);
-        digitVec.store(digits);
-
-        dest[counts[digits[0]]] = values[0];
-        counts[digits[0]]++;
-
-        dest[counts[digits[1]]] = values[1];
-        counts[digits[1]]++;
-
-        dest[counts[digits[2]]] = values[2];
-        counts[digits[2]]++;
-
-        dest[counts[digits[3]]] = values[3];
-        counts[digits[3]]++;
-
-        dest[counts[digits[4]]] = values[4];
-        counts[digits[4]]++;
-
-        dest[counts[digits[5]]] = values[5];
-        counts[digits[5]]++;
-
-        dest[counts[digits[6]]] = values[6];
-        counts[digits[6]]++;
-
-        dest[counts[digits[7]]] = values[7];
-        counts[digits[7]]++;
-    }
-}
-#endif
 
 template<typename T>
 void radix_sort_long_index_asc_in_place(T *array, uint64_t size, T *cpy) {
@@ -952,19 +875,21 @@ Java_io_questdb_std_Vect_mergeShuffleStringColumnFromManyAddresses(
     int64_t dst_var_end_offset;
     switch (dataLengthBytes) {
         case 4:
-            dst_var_end_offset = merge_shuffle_string_column_from_many_addresses<int32_t, 2u>(
-                    index_segment_encoding_bytes, src_primary,
+            dst_var_end_offset = merge_shuffle_string_column_from_many_addresses<int32_t>(
+                    index_segment_encoding_bytes * 8, src_primary,
                     src_secondary, dst_primary, dst_secondary,
                     merge_index_address, row_count,
-                    dst_var_offset
+                    dst_var_offset,
+                    2u
             );
             break;
         case 8:
-            dst_var_end_offset = merge_shuffle_string_column_from_many_addresses<int64_t, 1u>(
-                    index_segment_encoding_bytes, src_primary,
+            dst_var_end_offset = merge_shuffle_string_column_from_many_addresses<int64_t>(
+                    index_segment_encoding_bytes * 8, src_primary,
                     src_secondary, dst_primary, dst_secondary,
                     merge_index_address, row_count,
-                    dst_var_offset
+                    dst_var_offset,
+                    1u
             );
             break;
         default:
@@ -1011,66 +936,13 @@ Java_io_questdb_std_Vect_mergeShuffleVarcharColumnFromManyAddresses(
         return -2;
     }
 
-    int64_t end_dst_var_offset;
-    switch (index_segment_encoding_bytes) {
-        case 0:
-            end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses<0u>(src_primary, src_secondary,
-                                                                                      dst_primary, dst_secondary,
-                                                                                      merge_index_address, row_count,
-                                                                                      dst_var_offset);
-            break;
-        case 1:
-            end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses<8u>(src_primary, src_secondary,
-                                                                                      dst_primary, dst_secondary,
-                                                                                      merge_index_address, row_count,
-                                                                                      dst_var_offset);
-            break;
-        case 2:
-            end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses<16u>(src_primary, src_secondary,
-                                                                                       dst_primary,
-                                                                                       dst_secondary,
-                                                                                       merge_index_address, row_count,
-                                                                                       dst_var_offset);
-            break;
-        case 3:
-            end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses<24u>(src_primary, src_secondary,
-                                                                                       dst_primary,
-                                                                                       dst_secondary,
-                                                                                       merge_index_address, row_count,
-                                                                                       dst_var_offset);
-            break;
-        case 4:
-            end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses<32u>(src_primary, src_secondary,
-                                                                                       dst_primary,
-                                                                                       dst_secondary,
-                                                                                       merge_index_address, row_count,
-                                                                                       dst_var_offset);
-            break;
-        case 5:
-            end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses<40u>(src_primary, src_secondary,
-                                                                                       dst_primary,
-                                                                                       dst_secondary,
-                                                                                       merge_index_address, row_count,
-                                                                                       dst_var_offset);
-            break;
-        case 6:
-            end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses<48u>(src_primary, src_secondary,
-                                                                                       dst_primary,
-                                                                                       dst_secondary,
-                                                                                       merge_index_address, row_count,
-                                                                                       dst_var_offset);
-            break;
-        case 7:
-            end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses<56u>(src_primary, src_secondary,
-                                                                                       dst_primary,
-                                                                                       dst_secondary,
-                                                                                       merge_index_address, row_count,
-                                                                                       dst_var_offset);
-            break;
-        default:
-            return -1;
-    }
-
+    int64_t end_dst_var_offset = merge_shuffle_varchar_column_from_many_addresses(
+            src_primary, src_secondary,
+            dst_primary, dst_secondary,
+            merge_index_address, row_count,
+            dst_var_offset,
+            index_segment_encoding_bytes * 8u
+    );
     if (end_dst_var_offset < 0) {
         // Error occurred, this is error code
         return end_dst_var_offset;
