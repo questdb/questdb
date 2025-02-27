@@ -112,13 +112,7 @@ public class TranscodingBinaryArrayView extends PGWireArrayView implements FlatA
                 throw new UnsupportedOperationException("not implemented yet");
         }
 
-        strides.clear();
-        int stride = 1;
-        for (int i = shape.size() - 1; i > 0; i--) {
-            strides.add(stride);
-            stride *= shape.getQuick(i);
-        }
-        strides.add(stride);
+        resetToDefaultStrides();
         baseOffset = mem.getAppendOffset();
         this.type = ColumnType.encodeArrayType(componentNativeType, shape.size());
     }

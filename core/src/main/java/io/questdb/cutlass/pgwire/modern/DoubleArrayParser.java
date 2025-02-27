@@ -82,19 +82,9 @@ public final class DoubleArrayParser extends ArrayView implements FlatArrayView 
             type = ColumnType.encodeArrayType(ColumnType.DOUBLE, shape.size());
         }
         strides.clear();
-        calculateStrides();
+        resetToDefaultStrides();
     }
-
-    private void calculateStrides() {
-        assert strides.size() == 0;
-
-        int stride = 1;
-        for (int i = shape.size() - 1; i >= 0; i--) {
-            strides.add(stride);
-            stride *= shape.getQuick(i);
-        }
-    }
-
+    
     private void parse(CharSequence input) {
         IntList currentDimSizes = strides;
         assert currentDimSizes.size() == 0;

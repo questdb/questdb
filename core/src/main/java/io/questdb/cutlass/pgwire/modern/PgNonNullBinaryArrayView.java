@@ -111,13 +111,7 @@ final class PgNonNullBinaryArrayView extends PGWireArrayView implements FlatArra
                 throw new UnsupportedOperationException("not implemented yet");
         }
 
-        strides.clear();
-        int stride = 1;
-        for (int i = shape.size() - 1; i > 0; i--) {
-            strides.add(stride);
-            stride *= shape.getQuick(i);
-        }
-        strides.add(stride);
+        resetToDefaultStrides();
         this.lo = lo;
         this.hi = hi;
         this.type = ColumnType.encodeArrayType(componentNativeType, shape.size());
