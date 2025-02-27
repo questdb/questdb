@@ -1424,30 +1424,6 @@ if __name__ == "__main__":
     }
 
     @Test
-    public void testCreateDropCreateTable() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
-            try (Statement stmt = connection.createStatement()) {
-                stmt.execute("create table x as (select x::timestamp as ts from long_sequence(100)) timestamp (ts)");
-                try (ResultSet rs = stmt.executeQuery("tables();")) {
-                    assertResultSet("id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],isMatView[BIT]\n" +
-                                    "2,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false\n",
-                            sink, rs);
-                }
-
-                stmt.execute("drop table x");
-                drainWalQueue();
-                stmt.execute("create table x as (select x::timestamp as ts from long_sequence(100)) timestamp (ts)");
-
-                try (ResultSet rs = stmt.executeQuery("tables();")) {
-                    assertResultSet("id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],isMatView[BIT]\n" +
-                                    "3,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false\n",
-                            sink, rs);
-                }
-            }
-        });
-    }
-
-    @Test
     public void testBasicFetch() throws Exception {
         skipOnWalRun(); // Non-partitioned
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -2022,6 +1998,16 @@ if __name__ == "__main__":
         testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.MONTH);
     }
 
+    @Test
+    public void testBindVariableDropLastPartitionListByNoneHigherPrecision() throws Exception {
+        try {
+            testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.NONE);
+            Assert.fail();
+        } catch (PSQLException e) {
+            TestUtils.assertContains(e.getMessage(), "ERROR: table is not partitioned");
+        }
+    }
+
 //Testing through postgres - need to establish connection
 //    @Test
 //    public void testReadINet() throws SQLException, IOException {
@@ -2043,16 +2029,6 @@ if __name__ == "__main__":
 //                    "12.2.65.90\n", sink, rs);
 //        }
 //    }
-
-    @Test
-    public void testBindVariableDropLastPartitionListByNoneHigherPrecision() throws Exception {
-        try {
-            testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.NONE);
-            Assert.fail();
-        } catch (PSQLException e) {
-            TestUtils.assertContains(e.getMessage(), "ERROR: table is not partitioned");
-        }
-    }
 
     @Test
     public void testBindVariableDropLastPartitionListByWeekHigherPrecision() throws Exception {
@@ -3075,6 +3051,30 @@ if __name__ == "__main__":
             }
             assertSql("count\n" +
                     "100\n", "select count(*) from t");
+        });
+    }
+
+    @Test
+    public void testCreateDropCreateTable() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            try (Statement stmt = connection.createStatement()) {
+                stmt.execute("create table x as (select x::timestamp as ts from long_sequence(100)) timestamp (ts)");
+                try (ResultSet rs = stmt.executeQuery("tables();")) {
+                    assertResultSet("id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],matView[BIT]\n" +
+                                    "2,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false\n",
+                            sink, rs);
+                }
+
+                stmt.execute("drop table x");
+                drainWalQueue();
+                stmt.execute("create table x as (select x::timestamp as ts from long_sequence(100)) timestamp (ts)");
+
+                try (ResultSet rs = stmt.executeQuery("tables();")) {
+                    assertResultSet("id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],matView[BIT]\n" +
+                                    "3,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false\n",
+                            sink, rs);
+                }
+            }
         });
     }
 
