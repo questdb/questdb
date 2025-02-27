@@ -80,6 +80,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     public static final String WAL_2_TABLE_RESUME_REASON = "Resume WAL Data Application";
     private static final Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
     private static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
+    private final int RELOAD_TXN_DETAILS = -2;
     private final CairoEngine engine;
     private final int lookAheadTransactionCount;
     private final WalMetrics metrics;
@@ -407,7 +408,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 }
 
                                 isTerminating = runStatus.isTerminating();
-                                if (txnCommitted == -2L || isTerminating) {
+                                if (txnCommitted == RELOAD_TXN_DETAILS || isTerminating) {
                                     // transaction cursor goes beyond prepared transactionMeta or termination requested. Re-run the loop.
                                     break WHILE_TRANSACTION_CURSOR;
                                 }
@@ -546,7 +547,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     return (int) (writer.getAppliedSeqTxn() - seqTxn + 1);
                 } else {
                     // re-build wal transaction details
-                    return -2;
+                    return RELOAD_TXN_DETAILS;
                 }
 
             case SQL:

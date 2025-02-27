@@ -781,7 +781,7 @@ Java_io_questdb_std_Vect_radixSortManySegmentsIndexAsc(
     auto lag_row_count = __JLONG_REINTERPRET_CAST__(int64_t, lagRowCount);
     auto total_row_count = __JLONG_REINTERPRET_CAST__(int64_t, totalRowCount);
 
-    // Add 1 so since 1 values is needed for deduplication to indicate row not used
+    // Add 1 so since 1 value is needed for deduplication to indicate row not used
     auto total_row_count_bytes = integral_type_bytes(range_bytes(total_row_count + 1));
 
     auto ts_range_bytes = range_bytes(max_ts - min_ts + 1);
@@ -789,7 +789,7 @@ Java_io_questdb_std_Vect_radixSortManySegmentsIndexAsc(
 
     // Check that ts + seq_txn fits 64 bits
     if (ts_range_bytes + txn_bytes > 8 || ts_range_bytes < 0) {
-        return merge_index_format(-1, 0, 0, 0);
+        return merge_index_format(error_sort_timestamp_txn_range_overflow, 0, 0, 0);
     }
 
     auto row_count_range_bytes = range_bytes(std::max(max_segment_row_count, lag_row_count));
@@ -797,12 +797,12 @@ Java_io_questdb_std_Vect_radixSortManySegmentsIndexAsc(
 
     // Check that segment index + segment row offset fits 64 bits
     if (row_count_range_bytes + segments_range_bytes > 8 || row_count_range_bytes < 0 || segments_range_bytes < 0) {
-        return merge_index_format(-2, 0, 0, 0);
+        return merge_index_format(error_sort_segment_index_offset_range_overflow, 0, 0, 0);
     }
 
     // Check that total rows fits 64 bits
     if (total_row_count_bytes > 8) {
-        return merge_index_format(-3, 0, 0, 0);
+        return merge_index_format(error_sort_row_count_overflow, 0, 0, 0);
     }
 
     auto sorted_count = radix_copy_segments_index_asc_precompiled(
@@ -1079,83 +1079,47 @@ Java_io_questdb_std_Vect_mergeShuffleSymbolColumnFromManyAddresses(
 
     jlong rows_processed;
 
-    if (format == shuffle_index_format) {
-        switch (row_index_bytes) {
-            case 1:
-                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint8_t, shuffle_index_format>(
-                        src, dst,
-                        txn_info_addr, txn_count, symbol_map,
-                        reverse_index_ptr,
-                        reverse_index_row_count
-                );
-                break;
-            case 2:
-                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint16_t, shuffle_index_format>(
-                        src, dst,
-                        txn_info_addr, txn_count, symbol_map,
-                        reverse_index_ptr,
-                        reverse_index_row_count
-                );
-                break;
-            case 4:
-                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint32_t, shuffle_index_format>(
-                        src, dst,
-                        txn_info_addr, txn_count, symbol_map,
-                        reverse_index_ptr,
-                        reverse_index_row_count
-                );
-                break;
-            case 8:
-                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint64_t, shuffle_index_format>(
-                        src, dst,
-                        txn_info_addr, txn_count, symbol_map,
-                        reverse_index_ptr,
-                        reverse_index_row_count
-                );
-                break;
-            default:
-                return -1;
-        }
-    } else if (format == dedup_shuffle_index_format) {
-        switch (row_index_bytes) {
-            case 1:
-                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint8_t, dedup_shuffle_index_format>(
-                        src, dst,
-                        txn_info_addr, txn_count, symbol_map,
-                        reverse_index_ptr,
-                        reverse_index_row_count
-                );
-                break;
-            case 2:
-                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint16_t, dedup_shuffle_index_format>(
-                        src, dst,
-                        txn_info_addr, txn_count, symbol_map,
-                        reverse_index_ptr,
-                        reverse_index_row_count
-                );
-                break;
-            case 4:
-                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint32_t, dedup_shuffle_index_format>(
-                        src, dst,
-                        txn_info_addr, txn_count, symbol_map,
-                        reverse_index_ptr,
-                        reverse_index_row_count
-                );
-                break;
-            case 8:
-                rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint64_t, dedup_shuffle_index_format>(
-                        src, dst,
-                        txn_info_addr, txn_count, symbol_map,
-                        reverse_index_ptr,
-                        reverse_index_row_count
-                );
-                break;
-            default:
-                return -1;
-        }
-    } else {
-        return -1;
+    switch (row_index_bytes) {
+        case 1:
+            rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint8_t>(
+                    src, dst,
+                    txn_info_addr, txn_count, symbol_map,
+                    reverse_index_ptr,
+                    reverse_index_row_count,
+                    format
+            );
+            break;
+        case 2:
+            rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint16_t>(
+                    src, dst,
+                    txn_info_addr, txn_count, symbol_map,
+                    reverse_index_ptr,
+                    reverse_index_row_count,
+                    format
+            );
+            break;
+        case 4:
+            rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint32_t>(
+                    src, dst,
+                    txn_info_addr, txn_count, symbol_map,
+                    reverse_index_ptr,
+                    reverse_index_row_count,
+                    format
+            );
+            break;
+        case 8:
+            rows_processed = merge_shuffle_symbol_column_from_many_addresses<uint64_t>(
+                    src, dst,
+                    txn_info_addr, txn_count, symbol_map,
+                    reverse_index_ptr,
+                    reverse_index_row_count,
+                    format
+            );
+            break;
+        default:
+            return -1;
     }
+
 
     assertm(rows_processed <= reverse_index_row_count, "rows processed does not match reverse index row count");
     return rows_processed;
@@ -1174,69 +1138,40 @@ Java_io_questdb_std_Vect_shuffleSymbolColumnByReverseIndex(
     auto dst = reinterpret_cast<int32_t *>(dstAddress);
     auto row_index_bytes = read_reverse_index_format_bytes(indexFormat);
     auto reverse_index_ptr = read_reverse_index_ptr(mergeIndex, indexFormat);
-    auto format = read_format(indexFormat);
+    auto merge_format = read_format(indexFormat);
     auto rev_index_row_count = read_reverse_index_row_count(mergeIndex, indexFormat);
 
-    if (format == shuffle_index_format) {
-        switch (row_index_bytes) {
-            case 1:
-                return merge_shuffle_symbol_column_by_reverse_index<uint8_t, shuffle_index_format>(
-                        src, dst,
-                        reverse_index_ptr,
-                        rev_index_row_count
-                );
-            case 2:
-                return merge_shuffle_symbol_column_by_reverse_index<uint16_t, shuffle_index_format>(
-                        src, dst,
-                        reverse_index_ptr,
-                        rev_index_row_count
-                );
-            case 4:
-                return merge_shuffle_symbol_column_by_reverse_index<uint32_t, shuffle_index_format>(
-                        src, dst,
-                        reverse_index_ptr,
-                        rev_index_row_count
-                );
-            case 8:
-                return merge_shuffle_symbol_column_by_reverse_index<uint64_t, shuffle_index_format>(
-                        src, dst,
-                        reverse_index_ptr,
-                        rev_index_row_count
-                );
-            default:
-                return -1;
-        }
-    } else if (format == dedup_shuffle_index_format) {
-        switch (row_index_bytes) {
-            case 1:
-                return merge_shuffle_symbol_column_by_reverse_index<uint8_t, dedup_shuffle_index_format>(
-                        src, dst,
-                        reverse_index_ptr,
-                        rev_index_row_count
-                );
-            case 2:
-                return merge_shuffle_symbol_column_by_reverse_index<uint16_t, dedup_shuffle_index_format>(
-                        src, dst,
-                        reverse_index_ptr,
-                        rev_index_row_count
-                );
-            case 4:
-                return merge_shuffle_symbol_column_by_reverse_index<uint32_t, dedup_shuffle_index_format>(
-                        src, dst,
-                        reverse_index_ptr,
-                        rev_index_row_count
-                );
-            case 8:
-                return merge_shuffle_symbol_column_by_reverse_index<uint64_t, dedup_shuffle_index_format>(
-                        src, dst,
-                        reverse_index_ptr,
-                        rev_index_row_count
-                );
-            default:
-                return -1;
-        }
-    } else {
-        return -1;
+    switch (row_index_bytes) {
+        case 1:
+            return merge_shuffle_symbol_column_by_reverse_index<uint8_t>(
+                    src, dst,
+                    reverse_index_ptr,
+                    rev_index_row_count,
+                    merge_format
+            );
+        case 2:
+            return merge_shuffle_symbol_column_by_reverse_index<uint16_t>(
+                    src, dst,
+                    reverse_index_ptr,
+                    rev_index_row_count,
+                    merge_format
+            );
+        case 4:
+            return merge_shuffle_symbol_column_by_reverse_index<uint32_t>(
+                    src, dst,
+                    reverse_index_ptr,
+                    rev_index_row_count,
+                    merge_format
+            );
+        case 8:
+            return merge_shuffle_symbol_column_by_reverse_index<uint64_t>(
+                    src, dst,
+                    reverse_index_ptr,
+                    rev_index_row_count,
+                    merge_format
+            );
+        default:
+            return -1;
     }
 }
 
@@ -1256,26 +1191,26 @@ Java_io_questdb_std_Vect_remapSymbolColumnFromManyAddresses(
     auto txn_count = __JLONG_REINTERPRET_CAST__(int64_t, txnCount);
     auto symbol_map = reinterpret_cast<const int32_t *>(symbolMap);
 
-    int64_t outIndex = 0;
-    jlong rowsProcessed = 0;
-    for (int64_t txnIndex = 0; txnIndex < txn_count; txnIndex++) {
-        auto segmentAddr = src[txn_info_addr[txnIndex].seg_info_index];
-        uint64_t hi = txn_info_addr[txnIndex].segment_row_offset + txn_info_addr[txnIndex].row_count;
-        int32_t cleanSymbolCount = symbol_map[2 * txnIndex];
-        int32_t mapOffset = symbol_map[2 * txnIndex + 1];
+    size_t out_index = 0;
+    jlong rows_processed = 0;
+    for (int64_t txn_index = 0; txn_index < txn_count; txn_index++) {
+        auto segment_addr = src[txn_info_addr[txn_index].seg_info_index];
+        uint64_t hi = txn_info_addr[txn_index].segment_row_offset + txn_info_addr[txn_index].row_count;
+        int32_t clean_symbol_count = symbol_map[2 * txn_index];
+        int32_t map_offset = symbol_map[2 * txn_index + 1];
 
-        for (uint64_t segRow = txn_info_addr[txnIndex].segment_row_offset; segRow < hi; segRow++, outIndex++) {
-            int32_t value = segmentAddr[segRow];
-            if (value >= cleanSymbolCount) {
-                auto value2 = symbol_map[mapOffset + value - cleanSymbolCount];
-                dst[outIndex] = value2;
+        for (uint64_t seg_row = txn_info_addr[txn_index].segment_row_offset; seg_row < hi; seg_row++, out_index++) {
+            int32_t value = segment_addr[seg_row];
+            if (value >= clean_symbol_count) {
+                auto value2 = symbol_map[map_offset + value - clean_symbol_count];
+                dst[out_index] = value2;
             } else {
-                dst[outIndex] = value;
+                dst[out_index] = value;
             }
-            rowsProcessed++;
+            rows_processed++;
         }
     }
-    return rowsProcessed;
+    return rows_processed;
 }
 
 JNIEXPORT void JNICALL

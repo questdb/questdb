@@ -952,15 +952,15 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
 JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_dedupSortedTimestampIndexManyAddresses(
         JAVA_STATIC,
-        jlong indexFromat,
+        jlong indexFormat,
         jlong pIndexIn,
         jlong pIndexTemp,
         jint dedupKeyCount,
         jlong dedupColBuffs
 ) {
-    auto segment_bytes = read_segment_bytes(indexFromat);
+    auto segment_bytes = read_segment_bytes(indexFormat);
     auto dedup_key_count = (int32_t) dedupKeyCount;
-    auto format = read_format(indexFromat);
+    auto format = read_format(indexFormat);
 
     if (format != dedup_index_format) {
         return merge_index_format(-1, 0, 0, 0);
@@ -971,15 +971,15 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndexManyAddresses(
             segment_bytes,
             pIndexIn,
             pIndexIn,
-            indexFromat,
+            indexFormat,
             pIndexTemp,
             dedup_key_count,
             src_keys
     );
 
-    auto reverse_index_bytes = read_reverse_index_format_bytes(indexFromat);
+    auto reverse_index_bytes = read_reverse_index_format_bytes(indexFormat);
     if (dedup_row_count == no_timestamp_duplicates) {
-        merge_index_format(dedup_row_count, reverse_index_bytes, segment_bytes, shuffle_index_format);
+        return merge_index_format(dedup_row_count, reverse_index_bytes, segment_bytes, shuffle_index_format);
     }
     return merge_index_format(dedup_row_count, reverse_index_bytes, segment_bytes, dedup_shuffle_index_format);
 }

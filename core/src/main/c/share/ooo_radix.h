@@ -753,7 +753,7 @@ int64_t merge_shuffle_varchar_column_from_many_addresses(
     return dst_var_offset;
 }
 
-template<typename TIdx, uint8_t MergeFormat>
+template<typename TIdx>
 jlong merge_shuffle_symbol_column_from_many_addresses(
         const int32_t **src,
         int32_t *dst,
@@ -761,7 +761,8 @@ jlong merge_shuffle_symbol_column_from_many_addresses(
         uint64_t txn_count,
         const int32_t *symbol_map,
         const void *reverse_index_ptr,
-        int64_t reverse_index_row_count
+        int64_t reverse_index_row_count,
+        uint8_t merge_format
 ) {
     static_assert(std::is_integral_v<TIdx> && std::is_unsigned_v<TIdx>, "T must be an unsigned integer");
     const TIdx *reverse_index = reinterpret_cast<const TIdx *>(reverse_index_ptr);
@@ -777,7 +778,7 @@ jlong merge_shuffle_symbol_column_from_many_addresses(
 
         for (uint64_t seg_row = segment_txns[txn_index].segment_row_offset; seg_row < hi; seg_row++, out_index++) {
             int dst_index = reverse_index[out_index];
-            if constexpr (MergeFormat == dedup_shuffle_index_format) {
+            if (merge_format == dedup_shuffle_index_format) {
                 if (dst_index == 0) {
                     // 0 means this row is not in the result set
                     dups++;
@@ -801,20 +802,21 @@ jlong merge_shuffle_symbol_column_from_many_addresses(
     return rows_processed - dups;
 }
 
-template<typename TIdx, uint8_t MergeFormat>
+template<typename TIdx>
 jlong merge_shuffle_symbol_column_by_reverse_index(
         const int32_t *src,
         int32_t *dst,
         const void *reverse_index_ptr,
-        int64_t revrese_index_row_count
+        int64_t reverse_index_row_count,
+        uint8_t merge_format
 ) {
     static_assert(std::is_integral_v<TIdx> && std::is_unsigned_v<TIdx>, "T must be an unsigned integer");
     const TIdx *reverse_index = reinterpret_cast<const TIdx *>(reverse_index_ptr);
 
     int64_t dups = 0;
-    for (int64_t r_index = 0; r_index < revrese_index_row_count; r_index++) {
+    for (int64_t r_index = 0; r_index < reverse_index_row_count; r_index++) {
         auto dst_index = reverse_index[r_index];
-        if constexpr (MergeFormat == dedup_shuffle_index_format) {
+        if (merge_format == dedup_shuffle_index_format) {
             if (dst_index == 0) {
                 // 0 means this row is not in the result set
                 dups++;
@@ -826,7 +828,7 @@ jlong merge_shuffle_symbol_column_by_reverse_index(
 
         dst[dst_index] = src[r_index];
     }
-    return revrese_index_row_count - dups;
+    return reverse_index_row_count - dups;
 }
 
 #endif //QUESTDB_OOO_RADIX_H

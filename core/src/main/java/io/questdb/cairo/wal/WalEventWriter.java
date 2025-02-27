@@ -39,7 +39,6 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
-import java.io.Console;
 
 import static io.questdb.cairo.wal.WalUtils.*;
 
