@@ -45,6 +45,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cairo.vm.api.MemoryAR;
 import io.questdb.cutlass.pgwire.BadProtocolException;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.cutlass.pgwire.PGResponseSink;
@@ -145,7 +147,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     //    and we have to respect this. Thus, if a PARSE message contains a type VARCHAR then
     //    we need to read it from wire as VARCHAR even we use e.g. INT internally. So we need both native and wire types.
     private final LongList outParameterTypeDescriptionTypes;
-    private final ObjectPool<PgNonNullBinaryArrayView> pgNonNullBinaryArrayViewPool = new ObjectPool<>(PgNonNullBinaryArrayView::new, 1);
     private final ObjList<String> pgResultSetColumnNames;
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private final IntList pgResultSetColumnTypes;
@@ -206,6 +207,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private int stateSync = 0;
     private TypesAndInsertModern tai = null;
     private TypesAndSelectModern tas = null;
+    private final ObjectPool<PgNonNullBinaryArrayView> pgNonNullBinaryArrayViewPool = new ObjectPool<>(PgNonNullBinaryArrayView::new, 1);
+    // todo: configurable maxPageSize
+    private final MemoryAR transcodedArrayMemory = new MemoryCARWImpl(4096, 10000, MemoryTag.NATIVE_PGW_PIPELINE);
+    private final ObjectPool<TranscodingBinaryArrayView> transcodingBinaryArrayViews = new ObjectPool<>(() -> new TranscodingBinaryArrayView(transcodedArrayMemory), 1);
     // IMPORTANT: if you add a new state, make sure to add it to the close() method too!
     // PGPipelineEntry instances are pooled and reused, so we need to make sure
     // that all state is cleared before returning the instance to the pool
@@ -333,6 +338,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         tai = null;
         tas = null;
         pgNonNullBinaryArrayViewPool.clear();
+        transcodedArrayMemory.close();
+        transcodingBinaryArrayViews.clear();
     }
 
     public void commit(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) throws BadProtocolException {
@@ -1216,7 +1223,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         setUuidBindVariable(i, lo, valueSize, bindVariableService);
                         break;
                     case X_PG_ARR_INT8:
-                        setBindVariableAsLongArray(i, lo, valueSize, msgLimit, bindVariableService);
+                    case X_PG_ARR_FLOAT8:
+                        setBindVariableAsArray(i, lo, valueSize, msgLimit, bindVariableService);
                         break;
                     default:
                         // before we bind a string, we need to define the type of the variable
@@ -1296,6 +1304,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 bindVariableService.define(j, ColumnType.UUID, 0);
                 break;
             case X_PG_ARR_INT8:
+            case X_PG_ARR_FLOAT8:
                 bindVariableService.define(j, ColumnType.ARRAY, 0);
                 break;
             case PG_UNSPECIFIED:
@@ -2571,8 +2580,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         bindVariableService.setLong(variableIndex, getLongUnsafe(valueAddr));
     }
 
-    private void setBindVariableAsLongArray(int i, long lo, int valueSize, long msgLimit, BindVariableService bindVariableService) throws SqlException, BadProtocolException {
-        PgNonNullBinaryArrayView arrayView = pgNonNullBinaryArrayViewPool.next();
+    private void setBindVariableAsArray(int i, long lo, int valueSize, long msgLimit, BindVariableService bindVariableService) throws SqlException, BadProtocolException {
+        PGWireArrayView arrayView;
 
         int dimensions = getInt(lo, msgLimit, "malformed array dimensions");
         lo += Integer.BYTES;
@@ -2580,14 +2589,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
         int hasNull = getInt(lo, msgLimit, "malformed array null flag");
         if (hasNull == 1) {
-            // arrays with null elements do not have a fixed length per element in pgwire
-            // how come? each array element is encoded as (length, value) pair.
-            // but null elements have length of -1 and value is entirely missing.
-            // thus to calculate memory offset for n-th element we need to know
-            // how many nulls are in front of it.
-            // thus we either need implement more complex view or perhaps
-            // transcode the received array to a fixed-element size.
-            throw new UnsupportedOperationException("arrays with nulls are not supported yet");
+            arrayView = transcodingBinaryArrayViews.next();
+        } else {
+            arrayView = pgNonNullBinaryArrayViewPool.next();
         }
         lo += Integer.BYTES;
         valueSize -= Integer.BYTES;

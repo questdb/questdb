@@ -72,7 +72,7 @@ public final class ArrayBindVariable extends ArrayFunction implements Mutable {
             clear();
             return;
         }
-        if (ColumnType.decodeArrayElementType(view.getType()) != ColumnType.LONG) {
+        if (ColumnType.decodeArrayElementType(view.getType()) != ColumnType.LONG && ColumnType.decodeArrayElementType(view.getType()) != ColumnType.DOUBLE) {
             throw new UnsupportedOperationException("not imlemented yet");
         }
         this.view = view;

@@ -1392,7 +1392,7 @@ public class PGJobContextTest extends BasePGTest {
             }
 
             try (PreparedStatement stmt = connection.prepareStatement("insert into x values (?)")) {
-                Array arr = connection.createArrayOf("int8", new Double[]{1d, 2d, 3d, null, 5d});
+                Array arr = connection.createArrayOf("float8", new Double[]{1d, 2d, 3d, null, 5d});
                 stmt.setArray(1, arr);
                 stmt.execute();
             }

@@ -25,35 +25,32 @@
 package io.questdb.cutlass.pgwire.modern;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryAR;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 
-final class PgNonNullBinaryArrayView extends PGWireArrayView implements FlatArrayView, Mutable {
-    private long hi;
-    private long lo;
+public class TranscodingBinaryArrayView extends PGWireArrayView implements FlatArrayView, Mutable {
+    private final MemoryAR mem;
+    private long baseOffset;
 
-    public PgNonNullBinaryArrayView() {
+    public TranscodingBinaryArrayView(MemoryAR mem) {
+        this.mem = mem;
         this.flatViewLength = 1;
         this.flatView = this;
     }
 
     @Override
-    public void appendToMemFlat(MemoryA mem) {
+    public void appendToMemFlat(MemoryA dst) {
         int size = this.flatViewLength;
-        switch (ColumnType.decodeArrayElementType(type)) {
-            case ColumnType.LONG:
-                for (int i = 0; i < size; i++) {
-                    mem.putLong(getLong(i));
-                }
-                break;
+        switch (elemType()) {
+            // todo: optimize this
             case ColumnType.DOUBLE:
                 for (int i = 0; i < size; i++) {
-                    mem.putDouble(getDouble(i));
+                    dst.putDouble(getDouble(i));
                 }
                 break;
             default:
@@ -66,46 +63,50 @@ final class PgNonNullBinaryArrayView extends PGWireArrayView implements FlatArra
         shape.clear();
         strides.clear();
         flatViewLength = 1;
-        lo = 0;
-        hi = 0;
         type = ColumnType.UNDEFINED;
+        baseOffset = -1;
     }
 
     @Override
     public int elemType() {
-        return 0;
+        return ColumnType.decodeArrayElementType(type);
     }
 
     @Override
-    public double getDouble(int flatIndex) {
-        final long addr = lo + Integer.BYTES + ((long) flatIndex * (Double.BYTES + Integer.BYTES));
-        assert addr < hi;
-        long networkOrderVal = Unsafe.getUnsafe().getLong(addr);
-        return Double.longBitsToDouble(Numbers.bswap(networkOrderVal));
+    public double getDouble(int elemIndex) {
+        return mem.getDouble((long) elemIndex * Double.BYTES);
     }
 
     @Override
-    public long getLong(int flatIndex) {
-        final long addr = lo + Integer.BYTES + ((long) flatIndex * (Long.BYTES + Integer.BYTES));
-        assert addr < hi;
-        long networkOrderVal = Unsafe.getUnsafe().getLong(addr);
-        return Numbers.bswap(networkOrderVal);
+    public long getLong(int elemIndex) {
+        throw new UnsupportedOperationException("not implemented yet");
     }
 
     @Override
     public int length() {
-        return 0;
+        return flatViewLength;
     }
 
     @Override
     void setPtrAndCalculateStrides(long lo, long hi, int pgOidType) {
         short componentNativeType;
         switch (pgOidType) {
-            case PGOids.PG_INT8:
-                componentNativeType = ColumnType.LONG;
-                break;
             case PGOids.PG_FLOAT8:
                 componentNativeType = ColumnType.DOUBLE;
+                for (int i = 0; i < flatViewLength; i++) {
+                    assert lo + 4 <= hi;
+                    int size = Numbers.bswap(Unsafe.getUnsafe().getInt(lo));
+                    lo += 4;
+                    if (size == -1) {
+                        mem.putDouble(Double.NaN);
+                        continue;
+                    }
+                    assert size == Double.BYTES;
+                    assert lo + Double.BYTES <= hi;
+                    double val = Double.longBitsToDouble(Numbers.bswap(Unsafe.getUnsafe().getLong(lo)));
+                    lo += Double.BYTES;
+                    mem.putDouble(val);
+                }
                 break;
             default:
                 throw new UnsupportedOperationException("not implemented yet");
@@ -118,8 +119,8 @@ final class PgNonNullBinaryArrayView extends PGWireArrayView implements FlatArra
             stride *= shape.getQuick(i);
         }
         strides.add(stride);
-        this.lo = lo;
-        this.hi = hi;
+        baseOffset = mem.getAppendOffset();
         this.type = ColumnType.encodeArrayType(componentNativeType, shape.size());
     }
+
 }
