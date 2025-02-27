@@ -68,7 +68,7 @@ public class TranscodingBinaryArrayView extends PGWireArrayView implements FlatA
     }
 
     @Override
-    public int elemType() {
+    public short elemType() {
         return ColumnType.decodeArrayElementType(type);
     }
 
