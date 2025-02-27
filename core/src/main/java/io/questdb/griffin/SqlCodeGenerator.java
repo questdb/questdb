@@ -5981,7 +5981,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (Chars.isQuoted(arg)) {
                     arg = arg.subSequence(1, arg.length() - 1);
                 }
-                forNamesSet.add(arg);
+                forNamesSet.add(arg.toString().toLowerCase());
             }
 
             // for every column in base metadata, check what we need to pull up
