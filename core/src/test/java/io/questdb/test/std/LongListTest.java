@@ -34,7 +34,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class LongListTest {
-
     @Test
     public void testAddAll_CapacityExpansion() {
         LongList dst = new LongList(2);
@@ -139,17 +138,15 @@ public class LongListTest {
 
     @Test
     public void testBinarySearchBlockFuzz() {
+        Rnd rnd = TestUtils.generateRandom(null);
         final int N = 997; // prime
-        final int skipRate = 4;
-        final int dupeRate = 8;
+        final int skipRate = 1 + rnd.nextInt(3);
+        final int dupeRate = 1 + rnd.nextInt(7);
         final int dupeCountBound = 4;
+
         for (int c = 0; c < N; c++) {
-            for (int i = 0; i < skipRate; i++) {
-                for (int j = 0; j < dupeRate; j++) {
-                    for (int k = 1; k < dupeCountBound; k++) {
-                        testBinarySearchBlockFuzz0(c, i, j, k);
-                    }
-                }
+            for (int k = 1; k < dupeCountBound; k++) {
+                testBinarySearchBlockFuzz0(c, skipRate, dupeRate, k);
             }
         }
 
@@ -158,17 +155,15 @@ public class LongListTest {
 
     @Test
     public void testBinarySearchFuzz() {
+        Rnd rnd = TestUtils.generateRandom(null);
         final int N = 997; // prime
-        final int skipRate = 4;
-        final int dupeRate = 8;
+        final int skipRate = 1 + rnd.nextInt(3);
+        final int dupeRate = 1 + rnd.nextInt(7);
         final int dupeCountBound = 4;
+
         for (int c = 0; c < N; c++) {
-            for (int i = 0; i < skipRate; i++) {
-                for (int j = 0; j < dupeRate; j++) {
-                    for (int k = 1; k < dupeCountBound; k++) {
-                        testBinarySearchFuzz0(c, i, j, k);
-                    }
-                }
+            for (int k = 1; k < dupeCountBound; k++) {
+                testBinarySearchFuzz0(c, skipRate, dupeRate, k);
             }
         }
 

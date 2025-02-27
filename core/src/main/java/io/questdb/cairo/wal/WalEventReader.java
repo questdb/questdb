@@ -27,6 +27,7 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -44,7 +45,7 @@ import static io.questdb.cairo.wal.WalUtils.*;
 public class WalEventReader implements Closeable {
     private final Log LOG = LogFactory.getLog(WalEventReader.class);
     private final WalEventCursor eventCursor;
-    private final MemoryMR eventMem;
+    private final MemoryCMR eventMem;
     private final FilesFacade ff;
 
     public WalEventReader(FilesFacade ff) {

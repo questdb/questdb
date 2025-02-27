@@ -38,6 +38,7 @@ public class WalUtils {
     public static final String EVENT_INDEX_FILE_NAME = "_event.i";
     public static final CharSequence INITIAL_META_FILE_NAME = "_meta.0";
     public static final int METADATA_WALID = -1;
+    public static final int MIN_WAL_ID = DROP_TABLE_WAL_ID;
     public static final int SEG_MIN_ID = 0;
     public static final int SEG_NONE_ID = Integer.MAX_VALUE >> 2;
     public static final int SEG_MAX_ID = SEG_NONE_ID - 1;

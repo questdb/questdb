@@ -29,6 +29,8 @@ public final class Vect {
     public static final int BIN_SEARCH_SCAN_DOWN = 1;
     // Up is decreasing scan direction
     public static final int BIN_SEARCH_SCAN_UP = -1;
+    public static final byte DEDUP_INDEX_FORMAT = 1;
+    public static final byte SHUFFLE_INDEX_FORMAT = 2;
 
     public static native double avgDoubleAcc(long pInt, long count, long pCount);
 
@@ -107,6 +109,14 @@ public final class Vect {
         return dedupCount;
     }
 
+    public static native long dedupSortedTimestampIndexManyAddresses(
+            long indexFormat,
+            long inIndexAddr,
+            long outIndexAddr,
+            int dedupColumnCount,
+            long dedupColumnData
+    );
+
     public static native void flattenIndex(long pIndex, long count);
 
     public static native long getPerformanceCounter(int index);
@@ -143,6 +153,11 @@ public final class Vect {
     public static native void indexReshuffle64Bit(long pSrc, long pDest, long pIndex, long count);
 
     public static native void indexReshuffle8Bit(long pSrc, long pDest, long pIndex, long count);
+
+    public static boolean isIndexSuccess(long indexFormat) {
+        long f = indexFormat >>> 56;
+        return f > 0 && f < 4;
+    }
 
     public static native double maxDouble(long pDouble, long count);
 
@@ -219,6 +234,38 @@ public final class Vect {
 
     public static native void mergeShuffle8Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
+    public static native long mergeShuffleFixedColumnFromManyAddresses(
+            int columnSizeBytes,
+            long indexFormat,
+            long srcAddresses,
+            long dstAddress,
+            long mergeIndex,
+            long segmentAddressPtr,
+            long segmentCount
+    );
+
+    public static native long mergeShuffleStringColumnFromManyAddresses(long indexFormat, int dataLengthBytes, long primaryAddressList, long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndex, long destVarOffset, long destDataSize);
+
+    public static native long mergeShuffleSymbolColumnFromManyAddresses(long indexFormat, long srcAddresses, long dstAddress, long mergeIndex, long txnInfo, long txnCount, long symbolMapAddress, long symbolMapSize);
+
+    public static native long mergeShuffleVarcharColumnFromManyAddresses(long indexFormat, long primaryAddressList, long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndex, long destVarOffset, long destDataSize);
+
+    public static native long radixSortManySegmentsIndexAsc(
+            long tsOutAddr,
+            long tsOutAddrCopy,
+            long segmentAddresses,
+            int segmentCount,
+            long txnInfo,
+            long txnCount,
+            long maxSegmentRowCount,
+            long tsLagRowAddr,
+            long tsLagRowCount,
+            long minTimestamp,
+            long maxTimestamp,
+            long totalRows,
+            byte resultFormat
+    );
+
     public static native long mergeTwoLongIndexesAsc(long pTs, long tsIndexLo, long tsCount, long pIndex2, long index2Count, long pIndexDest);
 
     public static native double minDouble(long pDouble, long count);
@@ -269,10 +316,26 @@ public final class Vect {
 
     public static native void quickSortLongIndexAscInPlace(long pLongData, long count);
 
-    public static native void radixSortABLongIndexAsc(long pDataA, long countA, long pDataB, long countB, long pDataDest, long pDataCpy);
+    public static native void radixSortABLongIndexAsc(long pDataA, long countA, long pDataB, long countB, long pDataDest, long pDataCpy,
+                                                      long minTimestamp, long maxTimestamp);
 
     // This is not In Place sort, to be renamed later
     public static native void radixSortLongIndexAscInPlace(long pLongData, long count, long pCpy);
+
+    public static native void radixSortLongIndexAscInPlaceBounded(long pLongData, long count, long pCpy, long min, long max);
+
+    public static long readIndexResultRowCount(long indexFormat) {
+        return indexFormat & 0xFFFFFFFFFFFFL;
+    }
+
+    public static native long remapSymbolColumnFromManyAddresses(long srcAddresses, long dstAddress, long txnInfo, long txnCount, long symbolMapAddress);
+
+    public static native long shuffleSymbolColumnByReverseIndex(
+            long indexFormat,
+            long srcAddresses,
+            long dstAddress,
+            long mergeIndex
+    );
 
     public static native void resetPerformanceCounters();
 
