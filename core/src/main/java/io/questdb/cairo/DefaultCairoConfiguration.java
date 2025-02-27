@@ -375,6 +375,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getIdGenerateBatchStep() {
+        return 512;
+    }
+
+    @Override
     public long getIdleCheckInterval() {
         return 100;
     }

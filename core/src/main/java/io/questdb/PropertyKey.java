@@ -49,6 +49,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_DEFAULT_SYMBOL_CACHE_FLAG("cairo.default.symbol.cache.flag"),
     CAIRO_DEFAULT_SYMBOL_CAPACITY("cairo.default.symbol.capacity"),
     CAIRO_FILE_OPERATION_RETRY_COUNT("cairo.file.operation.retry.count"),
+    CAIRO_ID_GENERATE_STEP("cairo.id.generator.batch.step"),
     CAIRO_IDLE_CHECK_INTERVAL("cairo.idle.check.interval"),
     CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS("cairo.inactive.reader.max.open.partitions"),
     CAIRO_INACTIVE_READER_TTL("cairo.inactive.reader.ttl"),
