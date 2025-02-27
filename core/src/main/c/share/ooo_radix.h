@@ -460,7 +460,7 @@ inline int64_t merge_shuffle_string_column_from_many_addresses(
 ) {
     int64_t dstVarOffset = dst_var_offset;
     uint64_t segmentMask = (1ULL << index_segment_encoding_bits) - 1;
-    static_assert(std::__1::is_integral_v<T> && std::__1::is_signed_v<T>,
+    static_assert(std::is_integral_v<T> && std::is_signed_v<T>,
                   "string,binary len must be an signed integer");
 
     for (int64_t l = 0; l < row_count; l++) {
