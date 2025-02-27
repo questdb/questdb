@@ -29,6 +29,7 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.UUID;
 
 public class UuidTest extends AbstractCairoTest {
@@ -975,26 +976,39 @@ public class UuidTest extends AbstractCairoTest {
         final int count = 1000;
         assertMemoryLeak(() -> {
             execute("create table x (u UUID)");
-            UUID[] uuids = new UUID[count];
+            UUID[] reference = new UUID[count];
             for (int i = 0; i < count; i++) {
                 UUID uuid = UUID.randomUUID();
                 execute("insert into x values ('" + uuid + "')");
-                uuids[i] = uuid;
+                reference[i] = uuid;
             }
-            Arrays.sort(uuids);
+            // insert a null UUID too, we care about order of null UUIDs
+            // they are considered lower than any non-null value
+            execute("insert into x values (null)");
+
+            // use string representation of UUIDs to generate reference
+            // order since JDK has a bug in UUID.compareTo()
+            // see https://bugs.openjdk.org/browse/JDK-7025832
+            Arrays.sort(reference, Comparator.comparing(UUID::toString));
 
             // test ascending
             StringBuilder expected = new StringBuilder("u\n");
+            // the null value must be first
+            expected.append("\n");
+            // then non-null UUIDs
             for (int i = 0; i < count; i++) {
-                expected.append(uuids[i]).append("\n");
+                expected.append(reference[i]).append("\n");
             }
             assertSql(expected, "select * from x order by u");
 
             // test descending
             expected = new StringBuilder("u\n");
+            // first non-null UUIDs
             for (int i = count - 1; i >= 0; i--) {
-                expected.append(uuids[i]).append("\n");
+                expected.append(reference[i]).append("\n");
             }
+            // then null
+            expected.append("\n");
             assertSql(expected, "select * from x order by u desc");
         });
     }
