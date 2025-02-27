@@ -550,6 +550,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return new ExplainPlanFactory(recordCursorFactory, format);
     }
 
+    public BytecodeAssembler getAsm() {
+        return asm;
+    }
+
+    public EntityColumnFilter getEntityColumnFilter() {
+        return entityColumnFilter;
+    }
+
+    public ListColumnFilter getIndexColumnFilter() {
+        return listColumnFilterA;
+    }
+
+    public RecordComparatorCompiler getRecordComparatorCompiler() {
+        return recordComparatorCompiler;
+    }
+
     public IntList toOrderIndices(RecordMetadata m, ObjList<ExpressionNode> orderBy, IntList orderByDirection) throws SqlException {
         final IntList indices = intListPool.next();
         for (int i = 0, n = orderBy.size(); i < n; i++) {
@@ -572,22 +588,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return indices;
     }
 
-    public BytecodeAssembler getAsm() {
-        return asm;
-    }
-
-    public EntityColumnFilter getEntityColumnFilter() {
-        return entityColumnFilter;
-    }
-
-    public ListColumnFilter getIndexColumnFilter() {
-        return listColumnFilterA;
-    }
-
-    public RecordComparatorCompiler getRecordComparatorCompiler() {
-        return recordComparatorCompiler;
-    }
-
     private static boolean allGroupsFirstLastWithSingleSymbolFilter(QueryModel model, RecordMetadata metadata) {
         final ObjList<QueryColumn> columns = model.getColumns();
         CharSequence symbolToken = null;
@@ -608,7 +608,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (symbolToken == null) {
                         symbolToken = node.token;
                     } else if (!Chars.equalsIgnoreCase(symbolToken, node.token)) {
-                        return false; //more than one key symbol column
+                        return false; // more than one key symbol column
                     }
                 } else {
                     return false;
@@ -5275,7 +5275,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             0,
                             metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag(),
                             metadata.getColumnMetadata(columnIndex).getSymbolCapacity()
-
                     ));
 
                     if (columnIndex == readerTimestampIndex) {
@@ -5359,10 +5358,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final IntrinsicModel intrinsicModel;
             if (withinExtracted != null) {
                 CharSequence preferredKeyColumn = null;
-
                 if (latestByColumnCount == 1) {
                     final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
-
                     if (ColumnType.isSymbol(myMeta.getColumnType(latestByIndex))) {
                         preferredKeyColumn = latestBy.getQuick(0).token;
                     }

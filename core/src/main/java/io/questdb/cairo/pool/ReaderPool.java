@@ -29,10 +29,10 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.PartitionOverwriteControl;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
-
     private final MessageBus messageBus;
     private final PartitionOverwriteControl partitionOverwriteControl;
     private ReaderListener readerListener;
@@ -57,6 +57,19 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         rdr.detach();
     }
 
+    /**
+     * Returns a pooled table reader that is pointed at the same transaction number
+     * as the source reader.
+     */
+    public TableReader getCopyOf(TableReader srcReader) {
+        return getCopyOf((ReaderPool.R) srcReader);
+    }
+
+    @Override
+    public boolean isCopyOfSupported() {
+        return true;
+    }
+
     @TestOnly
     public void setTableReaderListener(ReaderListener readerListener) {
         this.readerListener = readerListener;
@@ -65,6 +78,11 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
     @Override
     protected byte getListenerSrc() {
         return PoolListener.SRC_READER;
+    }
+
+    @Override
+    protected R newCopyOfTenant(R srcReader, Entry<R> entry, int index, ResourcePoolSupervisor<R> supervisor) {
+        return new R(this, entry, index, srcReader, messageBus, readerListener, partitionOverwriteControl, supervisor);
     }
 
     @Override
@@ -97,6 +115,24 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
                 ResourcePoolSupervisor<R> supervisor
         ) {
             super(pool.getConfiguration(), tableToken, messageBus, partitionOverwriteControl);
+            this.pool = pool;
+            this.entry = entry;
+            this.index = index;
+            this.readerListener = readerListener;
+            this.supervisor = supervisor;
+        }
+
+        public R(
+                AbstractMultiTenantPool<R> pool,
+                Entry<R> entry,
+                int index,
+                R srcReader,
+                MessageBus messageBus,
+                ReaderListener readerListener,
+                PartitionOverwriteControl partitionOverwriteControl,
+                ResourcePoolSupervisor<R> supervisor
+        ) {
+            super(pool.getConfiguration(), srcReader, messageBus, partitionOverwriteControl);
             this.pool = pool;
             this.entry = entry;
             this.index = index;
@@ -161,6 +197,17 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
             this.supervisor = supervisor;
             try {
                 goActive();
+            } catch (Throwable ex) {
+                close();
+                throw ex;
+            }
+        }
+
+        @Override
+        public void refreshAt(@Nullable ResourcePoolSupervisor<R> supervisor, R srcReader) {
+            this.supervisor = supervisor;
+            try {
+                goActiveAtTxn(srcReader);
             } catch (Throwable ex) {
                 close();
                 throw ex;

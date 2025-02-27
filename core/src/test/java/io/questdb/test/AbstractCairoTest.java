@@ -449,6 +449,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     public static void println(RecordMetadata metadata, RecordCursor cursor) {
+        println(metadata, cursor, sink);
+    }
+
+    public static void println(RecordMetadata metadata, RecordCursor cursor, StringSink sink) {
         sink.clear();
         CursorPrinter.println(metadata, sink);
 

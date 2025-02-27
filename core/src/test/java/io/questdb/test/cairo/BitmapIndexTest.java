@@ -1233,7 +1233,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             BitmapIndexUtils.searchValueBlock(new NullMemoryCMR(), 0L, 63L, 1L);
             Assert.fail();
         } catch (CairoException e) {
-            TestUtils.assertContains("index is corrupt, rowid not found [offset=0, cellCount=63, value=1]", e.getFlyweightMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(), "index is corrupt, rowid not found [offset=0, cellCount=63, value=1]");
         }
     }
 

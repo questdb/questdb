@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
@@ -107,6 +108,18 @@ public class TxnScoreboard implements Closeable, Mutable {
         return fromInternalTxn(min);
     }
 
+    /**
+     * Ignores min/max txn values and increments the counter. Must be called only when there is already
+     * an active reader that already acquired this txn.
+     * <p>
+     * Used by {@link ReaderPool#getCopyOf(TableReader)}.
+     */
+    public boolean incrementTxn(long txn) {
+        assert txn > -1;
+        final long internalTxn = toInternalTxn(txn);
+        return incrementTxn(mem, internalTxn);
+    }
+
     public boolean isRangeAvailable(long fromTxn, long toTxn) {
         return isRangeAvailable0(mem, toInternalTxn(fromTxn), toInternalTxn(toTxn));
     }
@@ -180,6 +193,14 @@ public class TxnScoreboard implements Closeable, Mutable {
     private static native long getCount(long pTxnScoreboard, long txn);
 
     private static native long getMin(long pTxnScoreboard);
+
+    private static boolean incrementTxn(long pTxnScoreboard, long txn) {
+        assert pTxnScoreboard > 0;
+        LOG.debug().$("increment [p=").$(pTxnScoreboard).$(", txn=").$(fromInternalTxn(txn)).I$();
+        return incrementTxn0(pTxnScoreboard, txn);
+    }
+
+    private native static boolean incrementTxn0(long pTxnScoreboard, long txn);
 
     private static native void init(long pTxnScoreboard, int entryCount);
 

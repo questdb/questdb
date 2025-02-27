@@ -40,7 +40,7 @@ public class Base64FunctionFactoryTest extends AbstractFunctionFactoryTest {
         try {
             assertQueryNoLeakCheck("", "select base64(rnd_bin(6,6,0), 0)", null);
         } catch (SqlException e) {
-            TestUtils.assertContains("maxLength has to be greater than 0", e.getFlyweightMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(), "maxLength has to be greater than 0");
         }
     }
 

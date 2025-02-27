@@ -157,8 +157,8 @@ public class WorkerPoolManagerTest {
                 }
             }, WorkerPoolManager.Requester.OTHER);
             Assert.fail();
-        } catch (IllegalStateException err) {
-            TestUtils.assertContains("can only get instance before start", err.getMessage());
+        } catch (IllegalStateException e) {
+            TestUtils.assertContains(e.getMessage(), "can only get instance before start");
         } finally {
             workerPoolManager.halt();
         }
@@ -247,6 +247,11 @@ public class WorkerPoolManagerTest {
             }
 
             @Override
+            public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
+                return null;
+            }
+
+            @Override
             public MemoryConfiguration getMemoryConfiguration() {
                 return null;
             }
@@ -268,11 +273,6 @@ public class WorkerPoolManagerTest {
 
             @Override
             public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
-                return null;
-            }
-
-            @Override
-            public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
                 return null;
             }
 

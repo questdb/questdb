@@ -63,6 +63,11 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
         );
     }
 
+    public void clearReader() {
+        this.viewTableToken = null;
+        this.baseTableReader = null;
+    }
+
     @Override
     public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
         return getSimpleCircuitBreaker(); // mat view refresh should use cancellable circuit breaker instead of no-op
@@ -71,7 +76,7 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
     @Override
     public TableReader getReader(TableToken tableToken, long version) {
         if (tableToken.equals(baseTableReader.getTableToken())) {
-            // The base table reader is fixed throughout the mat view refresh.
+            // The base table reader txn is fixed throughout the mat view refresh.
             if (version > -1 && baseTableReader.getMetadataVersion() != version) {
                 final int tableId = tableToken.getTableId();
                 throw TableReferenceOutOfDateException.of(
@@ -82,7 +87,7 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
                         baseTableReader.getMetadataVersion()
                 );
             }
-            return baseTableReader;
+            return getCairoEngine().getReaderAtTxn(baseTableReader);
         }
         return getCairoEngine().getReader(tableToken, version);
     }
@@ -90,8 +95,8 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
     @Override
     public TableReader getReader(TableToken tableToken) {
         if (tableToken.equals(baseTableReader.getTableToken())) {
-            // The base table reader is fixed throughout the mat view refresh.
-            return baseTableReader;
+            // The base table reader txn is fixed throughout the mat view refresh.
+            return getCairoEngine().getReaderAtTxn(baseTableReader);
         }
         return getCairoEngine().getReader(tableToken);
     }

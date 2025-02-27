@@ -47,14 +47,16 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
 
 public class MatViewDefinition {
+    // For now, incremental refresh is the only supported refresh type.
+    public static final int INCREMENTAL_REFRESH_TYPE = 0;
     public static final String MAT_VIEW_DEFINITION_FILE_NAME = "_mv";
     public static final int MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE = 0;
-
     private final String baseTableName;
     // is not persisted, parsed from timeZoneOffset
     private final long fixedOffset;
     private final String matViewSql;
     private final TableToken matViewToken;
+    private final int refreshType;
     // is not persisted, parsed from timeZone
     private final @Nullable TimeZoneRules rules;
     private final long samplingInterval;
@@ -66,6 +68,7 @@ public class MatViewDefinition {
     private final TimestampSampler timestampSampler;
 
     public MatViewDefinition(
+            int refreshType,
             @NotNull TableToken matViewToken,
             @NotNull String matViewSql,
             @NotNull String baseTableName,
@@ -74,6 +77,7 @@ public class MatViewDefinition {
             @Nullable String timeZone,
             @Nullable String timeZoneOffset
     ) {
+        this.refreshType = refreshType;
         this.matViewToken = matViewToken;
         this.matViewSql = matViewSql;
         this.baseTableName = baseTableName;
@@ -115,6 +119,7 @@ public class MatViewDefinition {
     }
 
     public static void append(@NotNull MatViewDefinition matViewDefinition, @NotNull AppendableBlock block) {
+        block.putInt(matViewDefinition.getRefreshType());
         block.putStr(matViewDefinition.getBaseTableName());
         block.putLong(matViewDefinition.getSamplingInterval());
         block.putChar(matViewDefinition.getSamplingIntervalUnit());
@@ -162,6 +167,10 @@ public class MatViewDefinition {
         return matViewToken;
     }
 
+    public int getRefreshType() {
+        return refreshType;
+    }
+
     public long getSamplingInterval() {
         return samplingInterval;
     }
@@ -193,6 +202,17 @@ public class MatViewDefinition {
         }
 
         long offset = 0;
+        final int refreshType = block.getInt(offset);
+        if (refreshType != INCREMENTAL_REFRESH_TYPE) {
+            throw CairoException.critical(0)
+                    .put("unsupported refresh strategy [view=")
+                    .put(matViewToken.getTableName())
+                    .put(", type=")
+                    .put(refreshType)
+                    .put(']');
+        }
+        offset += Integer.BYTES;
+
         final CharSequence baseTableName = block.getStr(offset);
         if (baseTableName == null || baseTableName.length() == 0) {
             throw CairoException.critical(0)
@@ -227,6 +247,7 @@ public class MatViewDefinition {
         final String matViewSqlStr = Chars.toString(matViewSql);
 
         return new MatViewDefinition(
+                refreshType,
                 matViewToken,
                 matViewSqlStr,
                 baseTableNameStr,

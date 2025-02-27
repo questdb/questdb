@@ -201,7 +201,7 @@ public class MetadataCache implements QuietCloseable {
             table.setTtlHoursOrMonths(TableUtils.getTtlHoursOrMonths(metaMem));
             table.setIsSoftLink(isSoftLink);
 
-            TableUtils.buildWriterOrderMap(metaMem, table.columnOrderMap, metaMem, columnCount);
+            TableUtils.buildWriterOrderMap(metaMem, table.columnOrderMap, columnCount);
             boolean isMetaFormatUpToDate = TableUtils.isMetaFormatUpToDate(metaMem);
             // populate columns
             for (int i = 0, n = table.columnOrderMap.size(); i < n; i += 3) {
