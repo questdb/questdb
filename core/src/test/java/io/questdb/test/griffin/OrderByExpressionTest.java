@@ -314,4 +314,21 @@ public class OrderByExpressionTest extends AbstractCairoTest {
                 true
         );
     }
+
+    @Test
+    public void testOrderByWithAlphanumericNamedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql("5_sum\n" +
+                    "123\n" +
+                    "456\n" +
+                    "789\n", "SELECT * FROM (\n" +
+                    "  SELECT 456 AS \"5_sum\"\n" +
+                    "  UNION ALL \n" +
+                    "  SELECT 789 AS \"5_sum\"\n" +
+                    "  UNION ALL \n" +
+                    "  SELECT 123 AS \"5_sum\"\n" +
+                    ")\n" +
+                    "ORDER BY \"5_sum\"");
+        });
+    }
 }
