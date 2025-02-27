@@ -268,11 +268,11 @@ radix_sort_ab_long_index_asc(const int64_t *arrayA, const uint64_t sizeA, const 
         }
 
         if constexpr (N % 2 == 1) {
-            __MEMMOVE(out, cpy, size * sizeof(index_t));
+            __MEMCPY(out, cpy, size * sizeof(index_t));
         }
     } else {
         radix_shuffle_ab_one_pass(counts[N - 1], arrayA, sizeA, arrayB, sizeB, ucpy, minValue);
-        __MEMMOVE(out, cpy, size * sizeof(index_t));
+        __MEMCPY(out, cpy, size * sizeof(index_t));
     }
 }
 
