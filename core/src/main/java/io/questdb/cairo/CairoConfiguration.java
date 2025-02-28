@@ -222,6 +222,8 @@ public interface CairoConfiguration {
         return IOURingFacadeImpl.INSTANCE;
     }
 
+    int getIdGenerateBatchStep();
+
     long getIdleCheckInterval();
 
     int getInactiveReaderMaxOpenPartitions();
