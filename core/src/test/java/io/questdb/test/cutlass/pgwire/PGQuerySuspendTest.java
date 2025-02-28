@@ -65,7 +65,7 @@ public class PGQuerySuspendTest extends BasePGTest {
 
     @Test
     public void testAllCases() throws Exception {
-        // limit cursor will not try to calculate size of the cursor proactively,
+        // limit cursor will now try to calculate size of the cursor proactively,
         // this is liable to throw DataUnavailable exception from cursor.size() call
         // legacy mode is not equipped to handle exception from this place and will hang
         // modern mode thought works fine.

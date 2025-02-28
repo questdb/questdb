@@ -376,6 +376,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         try {
             sqlExecutionContext.setCacheHit(cacheHit = false);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                // When recompiling, we would already have bind variable values in the bind variable
+                // service. This is because re-compilation is typically triggered from "sync" message.
+                // Types and values would already be richly defined.
                 if (!recompile) {
                     // Define the provided PostgresSQL types on the BindVariableService. The compilation
                     // below will use these types to build the plan, and it will also define any missing bind

@@ -111,7 +111,16 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     public int getScanDirection() {
         if (singleRowFactory) {
             // we only return single row, sometimes we use backward scan to do that
-            // even if we do, we mark single row factory to return data in ascending timestamp order
+            // even if we do, we mark single row factory to return data in ascending timestamp order.
+
+            // there is validation in as-of and lt-join generator code, which checks that both left and
+            // right factories are in ascending order. Without this change single row symbol search will fail to
+            // participate in those joins.
+
+            // There is additional consistency issue, single-row flag is to address. The issue arose from
+            // single-symbol filter search. Without this condition factory scan would be "backward", which is
+            // inconsistent with same SQL filtering on two or more symbol values. Where scan order will be
+            // "forward".
             return SCAN_DIRECTION_FORWARD;
         }
         switch (partitionFrameCursorFactory.getOrder()) {
