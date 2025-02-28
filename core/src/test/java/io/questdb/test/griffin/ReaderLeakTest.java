@@ -85,7 +85,8 @@ public class ReaderLeakTest extends AbstractCairoTest {
                                                 true,
                                                 columnIndexes,
                                                 columnSizes,
-                                                true
+                                                true,
+                                                false
                                         )
                                 )
                         )

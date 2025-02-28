@@ -342,6 +342,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getIdGenerateBatchStep() {
+        return getDelegate().getIdGenerateBatchStep();
+    }
+
+    @Override
     public long getIdleCheckInterval() {
         return getDelegate().getIdleCheckInterval();
     }
