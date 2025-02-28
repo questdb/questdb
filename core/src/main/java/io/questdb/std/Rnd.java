@@ -26,7 +26,7 @@ package io.questdb.std;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.arr.ArraySink;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sink;
@@ -39,7 +39,7 @@ public class Rnd {
     private static final double DOUBLE_UNIT = 0x1.0p-53; // 1.0 / (1L << 53)
     private static final float FLOAT_UNIT = 1 / ((float) (1 << 24));
     private static final long mask = (1L << 48) - 1;
-    private final StringSink sink = new StringSink();
+    private final StringSink array = new StringSink();
     private long s0;
     private long s1;
 
@@ -96,15 +96,15 @@ public class Rnd {
     }
 
     public CharSequence nextChars(int len) {
-        sink.clear();
-        nextChars(sink, len);
-        return sink;
+        array.clear();
+        nextChars(array, len);
+        return array;
     }
 
     // returns random bytes between 'B' and 'Z' for legacy reasons
-    public void nextChars(Utf16Sink sink, int len) {
+    public void nextChars(Utf16Sink array, int len) {
         for (int i = 0; i < len; i++) {
-            sink.put((char) (nextPositiveInt() % 25 + 66));
+            array.put((char) (nextPositiveInt() % 25 + 66));
         }
     }
 
@@ -112,41 +112,41 @@ public class Rnd {
         return (((long) (nextIntForDouble(26)) << 27) + nextIntForDouble(27)) * DOUBLE_UNIT;
     }
 
-    public void nextDoubleArray(int dimCount, ArraySink sink, int nanRate, int maxDimLen, int errorPosition) {
+    public void nextDoubleArray(int dimCount, DirectArray array, int nanRate, int maxDimLen, int errorPosition) {
 
-        sink.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, dimCount));
+        array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, dimCount));
 
         int size = 1;
         for (int i = 0; i < dimCount; i++) {
             int n = nextInt(maxDimLen) + 1;
-            sink.setDimLen(i, n);
+            array.setDimLen(i, n);
             size *= n;
         }
 
-        sink.applyShape(errorPosition);
+        array.applyShape(errorPosition);
 
-        nextFlatDoubleArray(sink, nanRate, size);
+        nextFlatDoubleArray(array, nanRate, size);
     }
 
-    public void nextDoubleArray(int dimCount, ArraySink sink, int nanRate, IntList dimLens, int errorPosition) {
+    public void nextDoubleArray(int dimCount, DirectArray array, int nanRate, IntList dimLens, int errorPosition) {
 
         assert dimLens.size() == dimCount;
 
-        sink.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, dimCount));
+        array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, dimCount));
 
         int size = 1;
         for (int i = 0; i < dimCount; i++) {
             int n = dimLens.getQuick(i);
-            sink.setDimLen(i, n);
+            array.setDimLen(i, n);
             size *= n;
         }
 
-        sink.applyShape(errorPosition);
+        array.applyShape(errorPosition);
 
-        nextFlatDoubleArray(sink, nanRate, size);
+        nextFlatDoubleArray(array, nanRate, size);
     }
 
-    public void nextFlatDoubleArray(ArraySink sink, int nanRate, int size) {
+    public void nextFlatDoubleArray(DirectArray array, int nanRate, int size) {
         for (int i = 0; i < size; i++) {
             double val;
             if (nanRate > 0 && nextInt(nanRate) == 1) {
@@ -154,7 +154,7 @@ public class Rnd {
             } else {
                 val = nextDouble();
             }
-            sink.putDouble(i, val);
+            array.putDouble(i, val);
         }
     }
 
@@ -209,18 +209,18 @@ public class Rnd {
         return (s1 = l1 ^ l0 ^ (l1 >> 17) ^ (l0 >> 26)) + l0;
     }
 
-    public void nextLongArray(int dimCount, ArraySink sink, int nanRate, int maxDimLen, int errorPosition) {
+    public void nextLongArray(int dimCount, DirectArray array, int nanRate, int maxDimLen, int errorPosition) {
 
-        sink.setType(ColumnType.encodeArrayType(ColumnType.LONG, dimCount));
+        array.setType(ColumnType.encodeArrayType(ColumnType.LONG, dimCount));
 
         int size = 1;
         for (int i = 0; i < dimCount; i++) {
             int n = nextInt(maxDimLen - 1) + 1;
-            sink.setDimLen(i, n);
+            array.setDimLen(i, n);
             size *= n;
         }
 
-        sink.applyShape(errorPosition);
+        array.applyShape(errorPosition);
 
         for (int i = 0; i < size; i++) {
             long val;
@@ -229,7 +229,7 @@ public class Rnd {
             } else {
                 val = nextLong();
             }
-            sink.putLong(i, val);
+            array.putLong(i, val);
         }
     }
 
@@ -256,20 +256,20 @@ public class Rnd {
         return new String(chars);
     }
 
-    public void nextUtf8AsciiStr(int len, Utf8Sink sink) {
+    public void nextUtf8AsciiStr(int len, Utf8Sink array) {
         for (int i = 0; i < len; i++) {
-            sink.putAscii((char) (32 + nextPositiveInt() % (127 - 32)));
+            array.putAscii((char) (32 + nextPositiveInt() % (127 - 32)));
         }
     }
 
     // https://stackoverflow.com/questions/1319022/really-good-bad-utf-8-example-test-data
-    public void nextUtf8Str(int len, Utf8Sink sink) {
+    public void nextUtf8Str(int len, Utf8Sink array) {
         for (int i = 0; i < len; i++) {
             // 5 is the exclusive upper limit for up to how many UTF8 bytes per character we generate
             int byteCount = Math.max(1, nextInt(5));
             switch (byteCount) {
                 case 1:
-                    sink.putAscii((char) (32 + nextPositiveInt() % (127 - 32)));
+                    array.putAscii((char) (32 + nextPositiveInt() % (127 - 32)));
                     break;
                 case 2:
                     while (true) {
@@ -282,7 +282,7 @@ public class Rnd {
                         if ((b1 & 30) == 0) {
                             continue;
                         }
-                        sink.put(b1).put(b2);
+                        array.put(b1).put(b2);
                         break;
                     }
                     break;
@@ -298,7 +298,7 @@ public class Rnd {
                         if (Character.isSurrogate(c)) {
                             continue;
                         }
-                        sink.put(b1).put(b2).put(b3);
+                        array.put(b1).put(b2).put(b3);
                         break;
                     }
                     break;
@@ -311,7 +311,7 @@ public class Rnd {
                         final byte b3 = nextUtf8ContinuationByte();
                         final byte b4 = nextUtf8ContinuationByte();
                         if (Character.isSupplementaryCodePoint(Utf8s.getUtf8Codepoint(b1, b2, b3, b4))) {
-                            sink.put(b1).put(b2).put(b3).put(b4);
+                            array.put(b1).put(b2).put(b3).put(b4);
                             break;
                         }
                     }

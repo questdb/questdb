@@ -34,7 +34,7 @@ import io.questdb.std.Unsafe;
 /**
  * Mutable array that owns its backing native memory.
  */
-public final class DirectArray extends ArrayView implements ArraySink, Mutable {
+public final class DirectArray extends ArrayView implements Mutable {
     private static final long DOUBLE_BYTES = 8;
     private static final long LONG_BYTES = 8;
     private static final int MEM_TAG = MemoryTag.NATIVE_ND_ARRAY;
@@ -55,14 +55,18 @@ public final class DirectArray extends ArrayView implements ArraySink, Mutable {
         this.maxArrayElementCount = maxArrayElementCount;
     }
 
-    @Override
     public void applyShape(int errorPosition) {
         assert strides.size() == shape.size();
 
         int maxArrayElementCount = configuration != null ? configuration.maxArrayElementCount() : this.maxArrayElementCount;
         int flatLength = 1;
         for (int i = 0, n = shape.size(); i < n; i++) {
-            flatLength *= shape.getQuick(i);
+            int dimLen = shape.getQuick(i);
+            if (dimLen == 0) {
+                throw CairoException.nonCritical().position(errorPosition)
+                        .put("zero dimLen [dim=").put(i).put(']');
+            }
+            flatLength *= dimLen;
             if (flatLength > maxArrayElementCount) {
                 throw CairoException.nonCritical().position(errorPosition)
                         .put("resulting array is too large [flatLength=").put(flatLength)
