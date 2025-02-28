@@ -221,7 +221,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             // we need to make sure we have access to the last element
             // which will indicate size of the char column
             offsetMem.extend(maxOffset + Long.BYTES);
-            charMem.extend(this.offsetMem.getLong(maxOffset));
+            charMem.extend(offsetMem.getLong(maxOffset));
         } else if (symbolCount < this.symbolCount) {
             cache.remove(symbolCount + 1, this.symbolCount);
             this.symbolCount = symbolCount;

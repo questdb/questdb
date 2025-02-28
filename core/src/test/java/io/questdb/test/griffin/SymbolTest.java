@@ -64,6 +64,42 @@ public class SymbolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullIsReturnedAfterReaderReload2() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
+            final String query = "select * from x where sym not in ('foo', 'bar')";
+            // Load table reader on empty table.
+            assertQueryNoLeakCheck(
+                    "sym\tts\n",
+                    query,
+                    "ts",
+                    true,
+                    false,
+                    false
+            );
+            // Insert only NULL rows.
+            execute(
+                    "insert into x values (null, '2024-05-14T16:00:01.000000Z')," +
+                            "(null, '2024-05-14T16:00:02.000000Z')," +
+                            "(null, '2024-05-14T16:00:03.000000Z');"
+            );
+            // The reader should refresh contain null flag in symbol readers,
+            // so NULL rows should be included in the result set.
+            assertQueryNoLeakCheck(
+                    "sym\tts\n" +
+                            "\t2024-05-14T16:00:01.000000Z\n" +
+                            "\t2024-05-14T16:00:02.000000Z\n" +
+                            "\t2024-05-14T16:00:03.000000Z\n",
+                    query,
+                    "ts",
+                    true,
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testNullSymbolOrderByRegression() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (" +
