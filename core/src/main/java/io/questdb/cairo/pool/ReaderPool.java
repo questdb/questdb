@@ -108,7 +108,10 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         private final int index;
         private final ReaderListener readerListener;
         private boolean detached;
-        // May be used to track usage of detached readers.
+        // Reference counter that may be used to track usage of detached readers.
+        // A reader may be obtained from the pool and closed on different threads,
+        // but that's fine. In that case, there will be synchronization between the threads,
+        // so we don't need to make this field volatile/atomic.
         private int detachedRefCount;
         private Entry<R> entry;
         private AbstractMultiTenantPool<R> pool;
