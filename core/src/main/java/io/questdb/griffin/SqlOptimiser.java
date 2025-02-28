@@ -4618,6 +4618,7 @@ public class SqlOptimiser implements Mutable {
                 final ExpressionNode orderBy = orderByNodes.getQuick(i);
                 final CharSequence column = orderBy.token;
 
+                // fast check to rule out an obvious non-numeric
                 char first = column.charAt(0);
                 if (first < '0' || first > '9') {
                     continue;
@@ -4638,7 +4639,7 @@ public class SqlOptimiser implements Mutable {
                             )
                     );
                 } catch (NumericException e) {
-                    throw SqlException.invalidColumn(orderBy.position, column);
+                    // fallback when not a valid numeric
                 }
             }
         }
