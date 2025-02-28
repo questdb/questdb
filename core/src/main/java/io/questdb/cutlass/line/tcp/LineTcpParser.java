@@ -999,6 +999,7 @@ public class LineTcpParser implements QuietCloseable {
             controlBytes[i] = true;
         }
 
+        // todo, client only support ND_ARRAY
         nativeFormatSupportType.add(ENTITY_TYPE_BOOLEAN);
         nativeFormatSupportType.add(ENTITY_TYPE_FLOAT);
         nativeFormatSupportType.add(ENTITY_TYPE_DOUBLE);

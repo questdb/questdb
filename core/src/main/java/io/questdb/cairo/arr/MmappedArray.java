@@ -113,15 +113,6 @@ public class MmappedArray extends MutableArray {
     }
 
     /**
-     * The array is a typeless zero-dimensional array.
-     * <p>
-     * This maps to the <code>NULL</code> value in an array column.
-     */
-    public boolean isNull() {
-        return type == ColumnType.NULL;
-    }
-
-    /**
      * Resets to an invalid array.
      */
     public void reset() {
