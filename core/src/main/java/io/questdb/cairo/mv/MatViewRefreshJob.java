@@ -512,8 +512,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 try (TableWriterAPI commitWriter = engine.getTableWriterAPI(viewToken, "mat view full refresh")) {
                     commitWriter.truncateSoft();
                     insertAsSelect(state, viewDef, commitWriter, toBaseTxn, refreshTriggeredTimestamp);
+                    long seqTxn = engine.getTableSequencerAPI().getTxnTracker(viewToken).getSeqTxn();
                     resetInvalidState(state);
-                    writeLastRefreshBaseTableTxn(state, toBaseTxn);
+                    writeLastRefreshBaseTableTxn(state, toBaseTxn, seqTxn);
                     return true;
                 } catch (CairoException ex) {
                     if (ex.isTableDropped() || ex.tableDoesNotExist()) {
@@ -544,6 +545,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         assert state.isLocked();
 
         final SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseTableToken);
+        final SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
+
         long toBaseTxn = baseSeqTracker.getWriterTxn();
 
         final long fromBaseTxn = state.getLastRefreshBaseTxn();
@@ -579,7 +582,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     try (TableWriterAPI commitWriter = engine.getTableWriterAPI(viewToken, "Mat View refresh")) {
                         boolean changed = insertAsSelect(state, viewDef, commitWriter, toBaseTxn, refreshTriggeredTimestamp);
                         if (changed) {
-                            writeLastRefreshBaseTableTxn(state, toBaseTxn);
+                            long seqTxn = viewSeqTracker.getSeqTxn();
+                            writeLastRefreshBaseTableTxn(state, toBaseTxn, seqTxn);
                         }
                         return changed;
                     } catch (CairoException ex) {
@@ -649,7 +653,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         state.markAsInvalid(blockFileWriter, dbRoot.trimTo(dbRootLen), invalidationReason);
     }
 
-    private void writeLastRefreshBaseTableTxn(MatViewRefreshState state, long txn) {
-        state.writeLastRefreshBaseTableTxn(blockFileWriter, dbRoot.trimTo(dbRootLen), txn);
+    private void writeLastRefreshBaseTableTxn(MatViewRefreshState state, long refreshTxn, long seqTxn) {
+        state.writeLastRefreshBaseTableTxn(blockFileWriter, dbRoot.trimTo(dbRootLen), refreshTxn, seqTxn);
     }
 }

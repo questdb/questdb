@@ -1429,6 +1429,12 @@ public class CairoEngine implements Closeable, WriterSource {
                             }
 
                             if (!state.isInvalid()) {
+                                long seqTxn = getTableSequencerAPI().lastTxn(tableToken);
+                                long baseSeqTxn = getTableSequencerAPI().lastTxn(baseTableToken);
+                                if (state.getLastRefreshBaseTxn() > baseSeqTxn || state.getSeqTxn() > seqTxn) {
+                                    // materialized view state is ahead of the base table or the view itself
+                                    state.setLastRefreshBaseTxn(-1);
+                                }
                                 matViewGraph.enqueueIncrementalRefresh(tableToken);
                             }
                         }
@@ -1669,14 +1675,14 @@ public class CairoEngine implements Closeable, WriterSource {
         return token;
     }
 
-    protected Iterable<FunctionFactory> getFunctionFactories() {
-        return new FunctionFactoryCacheBuilder().scan(LOG).build();
-    }
-
     protected @NotNull <T extends AbstractTelemetryTask> Telemetry<T> createTelemetry(
             Telemetry.TelemetryTypeBuilder<T> builder, CairoConfiguration configuration
     ) {
         return new Telemetry<>(builder, configuration);
+    }
+
+    protected Iterable<FunctionFactory> getFunctionFactories() {
+        return new FunctionFactoryCacheBuilder().scan(LOG).build();
     }
 
     protected TableFlagResolver newTableFlagResolver(CairoConfiguration configuration) {
