@@ -37,12 +37,8 @@ public class FunctionArray extends ArrayView implements FlatArrayView {
     private Record record;
 
     public FunctionArray(short elementType, int nDims) {
-        this.type = ColumnType.encodeArrayType(elementType, nDims);
+        setType(ColumnType.encodeArrayType(elementType, nDims));
         this.flatView = this;
-        for (int i = 0; i < nDims; i++) {
-            shape.add(0);
-            strides.add(0);
-        }
     }
 
     @Override
@@ -113,18 +109,9 @@ public class FunctionArray extends ArrayView implements FlatArrayView {
     }
 
     public void applyShape() {
-        int stride = 1;
-        for (int i = shape.size() - 1; i >= 0; i--) {
-            int dimLen = shape.get(i);
-            if (dimLen == 0) {
-                throw new IllegalStateException("Zero dimLen at " + i);
-            }
-            strides.set(i, stride);
-            stride *= dimLen;
-        }
-        this.flatViewLength = stride;
-        if (functions == null || functions.length < stride) {
-            functions = new Function[stride];
+        resetToDefaultStrides();
+        if (functions == null || functions.length < flatViewLength) {
+            functions = new Function[flatViewLength];
         }
     }
 
@@ -172,8 +159,9 @@ public class FunctionArray extends ArrayView implements FlatArrayView {
         this.record = rec;
     }
 
-    public void setType(int type) {
-        this.type = type;
+    @Override
+    public void setType(int encodedType) {
+        super.setType(encodedType);
     }
 
     private Function[] functions() {

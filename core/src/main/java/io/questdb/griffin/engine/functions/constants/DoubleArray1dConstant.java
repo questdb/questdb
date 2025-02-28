@@ -39,7 +39,7 @@ public class DoubleArray1dConstant extends ArrayFunction implements ConstantFunc
     private DirectArray array;
 
     public DoubleArray1dConstant(double[] vals) {
-        this.array = new DirectArray(Integer.MAX_VALUE);
+        this.array = new DirectArray();
         this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
         array.setType(type);
         array.setDimLen(0, vals.length);

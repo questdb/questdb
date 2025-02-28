@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.arr;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.IntList;
@@ -185,15 +186,49 @@ public abstract class ArrayView implements QuietCloseable {
     }
 
     protected void resetToDefaultStrides() {
+        resetToDefaultStrides(Integer.MAX_VALUE, -1);
+    }
+
+    protected void resetToDefaultStrides(int maxArrayElemCount, int errorPos) {
+        final int nDims = shape.size();
         strides.clear();
-        int nDims = shape.size();
         for (int i = 0; i < nDims; i++) {
             strides.add(0);
         }
+
         int stride = 1;
-        for (int dimIndex = nDims - 1; dimIndex >= 0; dimIndex--) {
-            strides.set(dimIndex, stride);
-            stride *= shape.get(dimIndex);
+        for (int i = nDims - 1; i >= 0; i--) {
+            int dimLen = shape.get(i);
+            if (dimLen == 0) {
+                throw new IllegalStateException("Zero dimLen at " + i);
+            }
+            strides.set(i, stride);
+            try {
+                stride = Math.multiplyExact(stride, dimLen);
+                if (stride > maxArrayElemCount) {
+                    throw new ArithmeticException();
+                }
+            } catch (ArithmeticException e) {
+                throw CairoException.nonCritical().position(errorPos)
+                        .put("array element count exceeds max [max=")
+                        .put(maxArrayElemCount)
+                        .put(", shape=")
+                        .put(shape)
+                        .put(']');
+            }
+        }
+        this.flatViewLength = stride;
+    }
+
+    protected void setType(int encodedType) {
+        assert ColumnType.isArray(encodedType);
+        this.type = encodedType;
+        shape.clear();
+        strides.clear();
+        flatViewLength = 0;
+        int nDims = ColumnType.decodeArrayDimensionality(encodedType);
+        for (int i = 0; i < nDims; i++) {
+            shape.add(0);
         }
     }
 }

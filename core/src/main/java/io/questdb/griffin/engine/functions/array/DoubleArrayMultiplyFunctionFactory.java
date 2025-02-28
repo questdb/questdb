@@ -123,7 +123,6 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
             int leftIndexOffset = left.getFlatViewOffset();
             int rightIndexOffset = right.getFlatViewOffset();
             arrayOut.setType(type);
-            arrayOut.clear();
             arrayOut.setDimLen(0, outRowCount);
             arrayOut.setDimLen(1, outColCount);
             arrayOut.applyShape(leftArgPos);

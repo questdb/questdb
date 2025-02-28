@@ -49,52 +49,28 @@ public final class DirectArray extends ArrayView implements Mutable {
         this.maxArrayElementCount = configuration.maxArrayElementCount();
     }
 
-    public DirectArray(int maxArrayElementCount) {
+    public DirectArray() {
         this.flatView = new BorrowedFlatArrayView();
         this.configuration = null;
-        this.maxArrayElementCount = maxArrayElementCount;
+        this.maxArrayElementCount = Integer.MAX_VALUE;
     }
 
     public void applyShape(int errorPosition) {
-        assert strides.size() == shape.size();
-
         int maxArrayElementCount = configuration != null ? configuration.maxArrayElementCount() : this.maxArrayElementCount;
-        int flatLength = 1;
-        for (int i = 0, n = shape.size(); i < n; i++) {
-            int dimLen = shape.getQuick(i);
-            if (dimLen == 0) {
-                throw CairoException.nonCritical().position(errorPosition)
-                        .put("zero dimLen [dim=").put(i).put(']');
-            }
-            flatLength *= dimLen;
-            if (flatLength > maxArrayElementCount) {
-                throw CairoException.nonCritical().position(errorPosition)
-                        .put("resulting array is too large [flatLength=").put(flatLength)
-                        .put(", dimensionsLeft=").put(n - i - 1)
-                        .put(", max=").put(maxArrayElementCount)
-                        .put(']');
-            }
-            assert flatLength > 0;
-        }
-        int byteSize = flatLength << ColumnType.pow2SizeOf(ColumnType.decodeArrayElementType(type));
-        ensureCapacity(byteSize);
-        this.flatViewLength = flatLength;
+        resetToDefaultStrides(maxArrayElementCount, errorPosition);
         short elemType = ColumnType.decodeArrayElementType(type);
-        borrowedFlatView().of(ptr, elemType, flatLength);
-        int stride = 1;
-        for (int i = shape.size() - 1; i >= 0; i--) {
-            strides.set(i, stride);
-            stride *= shape.getQuick(i);
-        }
+        int byteSize = flatViewLength << ColumnType.pow2SizeOf(elemType);
+        ensureCapacity(byteSize);
+        borrowedFlatView().of(ptr, elemType, flatViewLength);
     }
 
     @Override
     public void clear() {
+        strides.clear();
         flatViewLength = 0;
         borrowedFlatView().reset();
         for (int n = getDimCount(), i = 0; i < n; i++) {
             shape.set(i, 0);
-            strides.set(i, 0);
         }
     }
 
@@ -137,17 +113,9 @@ public final class DirectArray extends ArrayView implements Mutable {
         shape.set(dimension, length);
     }
 
+    @Override
     public void setType(int encodedType) {
-        assert ColumnType.isArray(encodedType);
-
-        int nDims = ColumnType.decodeArrayDimensionality(encodedType);
-        this.type = encodedType;
-        shape.clear();
-        strides.clear();
-        for (int i = 0; i < nDims; i++) {
-            shape.add(0);
-            strides.add(0);
-        }
+        super.setType(encodedType);
     }
 
     private void ensureCapacity(long requiredCapacity) {

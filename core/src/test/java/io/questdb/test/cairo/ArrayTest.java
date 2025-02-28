@@ -499,7 +499,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "select rnd_double_array(10, 0, 1000)",
                     7,
-                    "array is too large"
+                    "array element count exceeds max"
             );
 
             assertExceptionNoLeakCheck(
