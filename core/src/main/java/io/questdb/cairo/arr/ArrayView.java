@@ -24,13 +24,24 @@
 
 package io.questdb.cairo.arr;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.IntList;
 import io.questdb.std.QuietCloseable;
 
 public abstract class ArrayView implements QuietCloseable {
+    /**
+     * Maximum size of any given dimension.
+     * <p>Why:
+     * <ul>
+     *   <li>Our buffers are at most Integer.MAX_VALUE bytes long</li>
+     *   <li>Our largest datatype has 8 bytes</li>
+     * </ul>
+     * Assuming a 1-D array, <code>Integer.MAX_VALUE / Long.BYTES</code> gives us
+     * a maximum of 2^28 - 1
+     */
+    public static final int DIM_MAX_LEN = (1 << 28) - 1;
+
     protected final IntList shape = new IntList();
     protected final IntList strides = new IntList();
     protected FlatArrayView flatView;
@@ -183,52 +194,5 @@ public abstract class ArrayView implements QuietCloseable {
 
     protected final BorrowedFlatArrayView borrowedFlatView() {
         return (BorrowedFlatArrayView) flatView;
-    }
-
-    protected void resetToDefaultStrides() {
-        resetToDefaultStrides(Integer.MAX_VALUE, -1);
-    }
-
-    protected void resetToDefaultStrides(int maxArrayElemCount, int errorPos) {
-        final int nDims = shape.size();
-        strides.clear();
-        for (int i = 0; i < nDims; i++) {
-            strides.add(0);
-        }
-
-        int stride = 1;
-        for (int i = nDims - 1; i >= 0; i--) {
-            int dimLen = shape.get(i);
-            if (dimLen == 0) {
-                throw new IllegalStateException("Zero dimLen at " + i);
-            }
-            strides.set(i, stride);
-            try {
-                stride = Math.multiplyExact(stride, dimLen);
-                if (stride > maxArrayElemCount) {
-                    throw new ArithmeticException();
-                }
-            } catch (ArithmeticException e) {
-                throw CairoException.nonCritical().position(errorPos)
-                        .put("array element count exceeds max [max=")
-                        .put(maxArrayElemCount)
-                        .put(", shape=")
-                        .put(shape)
-                        .put(']');
-            }
-        }
-        this.flatViewLength = stride;
-    }
-
-    protected void setType(int encodedType) {
-        assert ColumnType.isArray(encodedType);
-        this.type = encodedType;
-        shape.clear();
-        strides.clear();
-        flatViewLength = 0;
-        int nDims = ColumnType.decodeArrayDimensionality(encodedType);
-        for (int i = 0; i < nDims; i++) {
-            shape.add(0);
-        }
     }
 }

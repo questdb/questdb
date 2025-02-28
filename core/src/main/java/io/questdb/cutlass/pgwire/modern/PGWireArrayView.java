@@ -24,13 +24,13 @@
 
 package io.questdb.cutlass.pgwire.modern;
 
-import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.MutableArray;
 
-abstract class PGWireArrayView extends ArrayView {
-    abstract void setPtrAndCalculateStrides(long lo, long hi, int componentOid);
-
+abstract class PGWireArrayView extends MutableArray {
     void addDimLen(int dimLen) {
         shape.add(dimLen);
         flatViewLength *= dimLen;
     }
+
+    abstract void setPtrAndCalculateStrides(long lo, long hi, int componentOid);
 }

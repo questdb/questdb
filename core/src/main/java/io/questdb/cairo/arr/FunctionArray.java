@@ -31,7 +31,7 @@ import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 
-public class FunctionArray extends ArrayView implements FlatArrayView {
+public class FunctionArray extends MutableArray implements FlatArrayView {
 
     private Function[] functions;
     private Record record;
@@ -151,17 +151,8 @@ public class FunctionArray extends ArrayView implements FlatArrayView {
         functions()[flatIndex] = f;
     }
 
-    public void setDimLen(int dim, int len) {
-        shape.set(dim, len);
-    }
-
     public void setRecord(Record rec) {
         this.record = rec;
-    }
-
-    @Override
-    public void setType(int encodedType) {
-        super.setType(encodedType);
     }
 
     private Function[] functions() {

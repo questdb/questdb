@@ -30,20 +30,7 @@ import io.questdb.std.Unsafe;
 
 import static io.questdb.cairo.arr.ArrayTypeDriver.bytesToSkipForAlignment;
 
-public class MmappedArray extends ArrayView {
-    /**
-     * Maximum size of any given dimension.
-     * <p>Why:
-     * <ul>
-     *   <li>Our buffers are at most Integer.MAX_VALUE long</li>
-     *   <li>Our largest datatypes are 8 bytes</li>
-     * </ul>
-     * Assuming a 1-D array, <code>Integer.MAX_VALUE / Long.BYTES</code> gives us a maximum
-     * of 2 ** 28 - 1, i.e. all bits 0 to (inc) 27 set.
-     * <p><strong>NOTE</strong>: This value can also be used as a mask to extract the dim
-     * from the lower bits of an int, packed with extra data in the remaining bits.</p>
-     */
-    public static final int DIM_MAX_SIZE = (1 << 28) - 1;
+public class MmappedArray extends MutableArray {
     // Helper object used during init
     private final DirectIntSlice mmappedShape = new DirectIntSlice();
 
@@ -60,10 +47,7 @@ public class MmappedArray extends ArrayView {
             long row
     ) {
         assert ColumnType.isArray(columnType) : "type class is not Array";
-        this.type = columnType;
-        this.flatViewOffset = 0;
-        shape.clear();
-        strides.clear();
+        setType(columnType);
         short elemType = ColumnType.decodeArrayElementType(columnType);
         final int elemSize = ColumnType.sizeOf(elemType);
         final int nDims = ColumnType.decodeArrayDimensionality(columnType);
@@ -82,7 +66,14 @@ public class MmappedArray extends ArrayView {
         final long offset = crcAndOffset & ArrayTypeDriver.OFFSET_MAX;
         final long dataEntryPtr = dataAddr + offset;
 
-        validateAndInitShape(dataEntryPtr, nDims);
+        mmappedShape.of(dataEntryPtr, nDims);
+        try {
+            for (int i = 0; i < nDims; i++) {
+                setDimLen(i, mmappedShape.get(i));
+            }
+        } finally {
+            mmappedShape.reset();
+        }
         assert (dataEntryPtr + nDims * Integer.BYTES) <= dataLim : "dataEntryPtr + shapeSize > dataLim";
         resetToDefaultStrides();
 
@@ -111,29 +102,5 @@ public class MmappedArray extends ArrayView {
         borrowedFlatView().reset();
         shape.clear();
         strides.clear();
-    }
-
-    private void validateAndInitShape(long shapePtr, int nDims) {
-        mmappedShape.of(shapePtr, nDims);
-        try {
-            if (mmappedShape.length() > ColumnType.ARRAY_NDIMS_LIMIT) {
-                throw new AssertionError("shape length exceeds max dimensionality: " + mmappedShape.length());
-            }
-            int flatLength = 1;
-            for (int i = 0; i < nDims; ++i) {
-                final int dimLength = mmappedShape.get(i);
-                if (dimLength <= 0 || dimLength >= DIM_MAX_SIZE) {
-                    throw new AssertionError(String.format("shape dimension %,d out of bounds: %,d", i, dimLength));
-                }
-                flatLength = Math.multiplyExact(flatLength, dimLength);
-            }
-            this.flatViewLength = flatLength;
-            shape.clear();
-            for (int i = 0; i < nDims; i++) {
-                shape.add(mmappedShape.get(i));
-            }
-        } finally {
-            mmappedShape.reset();
-        }
     }
 }

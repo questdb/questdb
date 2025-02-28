@@ -34,29 +34,27 @@ import io.questdb.std.Unsafe;
 /**
  * Mutable array that owns its backing native memory.
  */
-public final class DirectArray extends ArrayView implements Mutable {
+public final class DirectArray extends MutableArray implements Mutable {
     private static final long DOUBLE_BYTES = 8;
     private static final long LONG_BYTES = 8;
     private static final int MEM_TAG = MemoryTag.NATIVE_ND_ARRAY;
     private final CairoConfiguration configuration;
-    private final int maxArrayElementCount;
     private long capacity;
     private long ptr = 0;
 
     public DirectArray(CairoConfiguration configuration) {
         this.flatView = new BorrowedFlatArrayView();
         this.configuration = configuration;
-        this.maxArrayElementCount = configuration.maxArrayElementCount();
     }
 
     public DirectArray() {
         this.flatView = new BorrowedFlatArrayView();
         this.configuration = null;
-        this.maxArrayElementCount = Integer.MAX_VALUE;
     }
 
     public void applyShape(int errorPosition) {
-        int maxArrayElementCount = configuration != null ? configuration.maxArrayElementCount() : this.maxArrayElementCount;
+        int maxArrayElementCount = configuration != null ? configuration.maxArrayElementCount() :
+                Integer.MAX_VALUE >> ColumnType.pow2SizeOf(ColumnType.decodeArrayElementType(this.type));
         resetToDefaultStrides(maxArrayElementCount, errorPosition);
         short elemType = ColumnType.decodeArrayElementType(type);
         int byteSize = flatViewLength << ColumnType.pow2SizeOf(elemType);
@@ -109,8 +107,9 @@ public final class DirectArray extends ArrayView implements Mutable {
         Unsafe.getUnsafe().putLong(ptr + offset, value);
     }
 
+    @Override
     public void setDimLen(int dimension, int length) {
-        shape.set(dimension, length);
+        super.setDimLen(dimension, length);
     }
 
     @Override

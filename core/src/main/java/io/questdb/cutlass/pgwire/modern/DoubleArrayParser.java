@@ -27,15 +27,15 @@ package io.questdb.cutlass.pgwire.modern;
 
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.FlatArrayView;
+import io.questdb.cairo.arr.MutableArray;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.DoubleList;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 
-public final class DoubleArrayParser extends ArrayView implements FlatArrayView {
+public final class DoubleArrayParser extends MutableArray implements FlatArrayView {
     private static final int STATE_IDLE = 0;
     private static final int STATE_IN_NUMBER = 2;
     private static final int STATE_IN_QUOTE = 1;
