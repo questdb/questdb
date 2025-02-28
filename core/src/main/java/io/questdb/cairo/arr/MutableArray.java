@@ -29,11 +29,11 @@ import io.questdb.cairo.ColumnType;
 
 public class MutableArray extends ArrayView {
 
-    public void resetToDefaultStrides() {
+    public final void resetToDefaultStrides() {
         resetToDefaultStrides(Integer.MAX_VALUE >> 3, -1);
     }
 
-    public void resetToDefaultStrides(int maxArrayElemCount, int errorPos) {
+    public final void resetToDefaultStrides(int maxArrayElemCount, int errorPos) {
         assert maxArrayElemCount <= Integer.MAX_VALUE >> ColumnType.pow2SizeOf(ColumnType.decodeArrayElementType(this.type))
                 : "maxArrayElemCount > " +
                 (Integer.MAX_VALUE >> ColumnType.pow2SizeOf(ColumnType.decodeArrayElementType(this.type)));
@@ -68,7 +68,7 @@ public class MutableArray extends ArrayView {
         this.flatViewLength = stride;
     }
 
-    public void setDimLen(int dimension, int length) {
+    public final void setDimLen(int dimension, int length) {
         if (length <= 0) {
             throw CairoException.nonCritical()
                     .put("dimension length must be positive [dim=").put(dimension)
@@ -78,7 +78,7 @@ public class MutableArray extends ArrayView {
         shape.set(dimension, length);
     }
 
-    public void setType(int encodedType) {
+    public final void setType(int encodedType) {
         assert ColumnType.isArray(encodedType);
         this.type = encodedType;
         shape.clear();

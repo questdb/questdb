@@ -107,16 +107,6 @@ public final class DirectArray extends MutableArray implements Mutable {
         Unsafe.getUnsafe().putLong(ptr + offset, value);
     }
 
-    @Override
-    public void setDimLen(int dimension, int length) {
-        super.setDimLen(dimension, length);
-    }
-
-    @Override
-    public void setType(int encodedType) {
-        super.setType(encodedType);
-    }
-
     private void ensureCapacity(long requiredCapacity) {
         if (ptr == 0) {
             ptr = Unsafe.malloc(requiredCapacity, MEM_TAG);
