@@ -76,7 +76,7 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
     @Override
     public TableReader getReader(TableToken tableToken, long version) {
         if (tableToken.equals(baseTableReader.getTableToken())) {
-            // The base table reader txn is fixed throughout the mat view refresh.
+            // Base table reader txn is fixed throughout the mat view refresh.
             if (version > -1 && baseTableReader.getMetadataVersion() != version) {
                 final int tableId = tableToken.getTableId();
                 throw TableReferenceOutOfDateException.of(
@@ -101,7 +101,7 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
     @Override
     public TableReader getReader(TableToken tableToken) {
         if (tableToken.equals(baseTableReader.getTableToken())) {
-            // The base table reader txn is fixed throughout the mat view refresh.
+            // Base table reader txn is fixed throughout the mat view refresh.
             // Fast path: go with the base reader if it's not in-use.
             if (getCairoEngine().getDetachedReaderRefCount(baseTableReader) == 0) {
                 getCairoEngine().incDetachedReaderRefCount(baseTableReader);
