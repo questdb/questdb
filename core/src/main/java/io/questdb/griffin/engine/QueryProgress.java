@@ -107,7 +107,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         try {
             final int leakedReadersCount = leakedReaders != null ? leakedReaders.size() : 0;
             if (leakedReadersCount > 0) {
-                log = LOG.errorW();
+                log = LOG.critical();
                 executionContext.getCairoEngine().getMetrics().healthMetrics()
                         .incrementReaderLeakCounter(leakedReadersCount);
                 log.$("brk");
@@ -172,12 +172,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                     executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos;
             CharSequence principal = executionContext.getSecurityContext().getPrincipal();
             boolean cacheHit = executionContext.isCacheHit();
-            log = LOG.errorW();
             if (leakedReadersCount > 0) {
-                log.$("brk");
+                log = LOG.critical().$("brk");
                 executionContext.getCairoEngine().getMetrics().healthMetrics().incrementReaderLeakCounter(leakedReadersCount);
             } else {
-                log.$("err");
+                log = LOG.errorW().$("err");
             }
             if (e instanceof FlyweightMessageContainer) {
                 final int pos = ((FlyweightMessageContainer) e).getPosition();
