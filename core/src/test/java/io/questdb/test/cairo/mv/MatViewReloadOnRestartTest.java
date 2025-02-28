@@ -60,7 +60,6 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     public void testMatViewsCheckUpdates() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain main1 = startWithEnvVariables0(
-                    PropertyKey.LINE_UDP_ENABLED.getEnvVarName(), "true",
                     PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
                     PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
             )) {
