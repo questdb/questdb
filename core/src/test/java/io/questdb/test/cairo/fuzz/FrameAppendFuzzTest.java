@@ -44,7 +44,7 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testFullRandom() throws Exception {
-        Rnd rnd = generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG, 880111454689L, 1740679464045L);
         setFuzzProperties(rnd.nextLong(50), getRndO3PartitionSplit(rnd), getRndO3PartitionSplit(rnd));
 
         setFuzzProbabilities(
