@@ -307,27 +307,15 @@ public class ArrayParser implements QuietCloseable {
     private void parseLeaf(int elemType, int tokenLimit, int flatIndex) throws ParseException {
         try {
             switch (elemType) {
-                case ColumnType.BOOLEAN:
-                    int n = Numbers.parseInt(input, 0, tokenLimit);
-                    if (n != (n & 1)) {
-                        throw ParseException.unexpectedToken(position());
-                    }
-                    array.putByte(flatIndex, (byte) n);
-                    break;
-                case ColumnType.BYTE:
-                    array.putByte(flatIndex, Numbers.parseByte(input, 0, tokenLimit));
-                    break;
-                case ColumnType.SHORT:
-                    array.putShort(flatIndex, Numbers.parseShort(input, 0, tokenLimit));
-                    break;
-                case ColumnType.INT:
-                    array.putInt(flatIndex, Numbers.parseInt(input, 0, tokenLimit));
-                    break;
+//                case ColumnType.BOOLEAN:
+//                    int n = Numbers.parseInt(input, 0, tokenLimit);
+//                    if (n != (n & 1)) {
+//                        throw ParseException.unexpectedToken(position());
+//                    }
+//                    array.putByte(flatIndex, (byte) n);
+//                    break;
                 case ColumnType.LONG:
                     array.putLong(flatIndex, Numbers.parseLong(input, 0, tokenLimit));
-                    break;
-                case ColumnType.FLOAT:
-                    array.putFloat(flatIndex, Numbers.parseFloat(input.ptr(), tokenLimit));
                     break;
                 case ColumnType.DOUBLE:
                     array.putDouble(flatIndex, Numbers.parseDouble(input.ptr(), tokenLimit));

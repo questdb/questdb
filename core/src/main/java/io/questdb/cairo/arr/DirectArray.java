@@ -117,12 +117,6 @@ public final class DirectArray extends ArrayView implements Mutable {
         strides.clear();
     }
 
-    @Override
-    public void putByte(int flatIndex, byte value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public void putDouble(int flatIndex, double value) {
         assert ColumnType.decodeArrayElementType(type) == ColumnType.DOUBLE : "putting DOUBLE to a non-DOUBLE array";
         assert flatIndex >= 0 : "negative flatIndex";
@@ -131,17 +125,6 @@ public final class DirectArray extends ArrayView implements Mutable {
         Unsafe.getUnsafe().putDouble(ptr + offset, value);
     }
 
-    @Override
-    public void putFloat(int flatIndex, float value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putInt(int flatIndex, int value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public void putLong(int flatIndex, long value) {
         assert ColumnType.decodeArrayElementType(type) == ColumnType.LONG : "putting LONG to a non-LONG array";
         assert flatIndex >= 0 : "negative flatIndex";
@@ -150,17 +133,10 @@ public final class DirectArray extends ArrayView implements Mutable {
         Unsafe.getUnsafe().putLong(ptr + offset, value);
     }
 
-    @Override
-    public void putShort(int flatIndex, short value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public void setDimLen(int dimension, int length) {
         shape.set(dimension, length);
     }
 
-    @Override
     public void setType(int encodedType) {
         assert ColumnType.isArray(encodedType);
 
