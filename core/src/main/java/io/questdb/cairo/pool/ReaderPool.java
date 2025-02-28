@@ -65,6 +65,14 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         return getCopyOf((ReaderPool.R) srcReader);
     }
 
+    public int getDetachedRefCount(TableReader reader) {
+        return ((ReaderPool.R) reader).getDetachedRefCount();
+    }
+
+    public void incDetachedRefCount(TableReader reader) {
+        ((ReaderPool.R) reader).incrementDetachedRefCount();
+    }
+
     @Override
     public boolean isCopyOfSupported() {
         return true;
@@ -100,6 +108,8 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         private final int index;
         private final ReaderListener readerListener;
         private boolean detached;
+        // May be used to track usage of detached readers.
+        private int detachedRefCount;
         private Entry<R> entry;
         private AbstractMultiTenantPool<R> pool;
         private ResourcePoolSupervisor<R> supervisor;
@@ -141,28 +151,38 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         }
 
         public void attach() {
+            assert detachedRefCount == 0;
             detached = false;
         }
 
         @Override
         public void close() {
-            if (!detached && isOpen()) {
-                // report reader closure to the supervisor
-                // so that we do not freak out about reader leaks
-                if (supervisor != null) {
-                    supervisor.onResourceReturned(this);
-                    supervisor = null;
-                }
-                goPassive();
-                final AbstractMultiTenantPool<R> pool = this.pool;
-                if (pool == null || entry == null || !pool.returnToPool(this)) {
-                    super.close();
+            if (isOpen()) {
+                if (!detached) {
+                    // report reader closure to the supervisor
+                    // so that we do not freak out about reader leaks
+                    if (supervisor != null) {
+                        supervisor.onResourceReturned(this);
+                        supervisor = null;
+                    }
+                    goPassive();
+                    final AbstractMultiTenantPool<R> pool = this.pool;
+                    if (pool == null || entry == null || !pool.returnToPool(this)) {
+                        super.close();
+                    }
+                } else {
+                    detachedRefCount--;
                 }
             }
         }
 
         public void detach() {
             detached = true;
+            detachedRefCount = 0;
+        }
+
+        public int getDetachedRefCount() {
+            return detachedRefCount;
         }
 
         @Override
@@ -182,6 +202,11 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         public void goodbye() {
             entry = null;
             pool = null;
+        }
+
+        public void incrementDetachedRefCount() {
+            assert detached;
+            detachedRefCount++;
         }
 
         @Override

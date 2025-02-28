@@ -503,6 +503,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // Operate SQL on a fixed reader that has known max transaction visible. The reader
             // is used to initialize base table readers returned from the mvRefreshExecutionContext.getReader()
             // call, so that all of them are at the same txn.
+            engine.detachReader(baseTableReader);
             refreshExecutionContext.of(baseTableReader);
             try {
                 final long toBaseTxn = baseTableReader.getSeqTxn();
@@ -525,6 +526,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
             } finally {
                 refreshExecutionContext.clearReader();
+                engine.attachReader(baseTableReader);
             }
         } catch (SqlException e) {
             LOG.error().$("error refreshing materialized view [view=").$(viewToken)
@@ -571,6 +573,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // Operate SQL on a fixed reader that has known max transaction visible. The reader
             // is used to initialize base table readers returned from the mvRefreshExecutionContext.getReader()
             // call, so that all of them are at the same txn.
+            engine.detachReader(baseTableReader);
             refreshExecutionContext.of(baseTableReader);
             try {
                 if (findCommitTimestampRanges(refreshExecutionContext, baseTableReader, viewDef, fromBaseTxn)) {
@@ -593,6 +596,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
             } finally {
                 refreshExecutionContext.clearReader();
+                engine.attachReader(baseTableReader);
             }
         } catch (SqlException e) {
             LOG.error().$("error refreshing materialized view [view=").$(viewToken)

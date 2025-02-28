@@ -446,8 +446,8 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableToken;
     }
 
+    // The reader will ignore close() calls until attached back.
     public void detachReader(TableReader reader) {
-        // Ignore the object close() call until attached back
         readerPool.detach(reader);
     }
 
@@ -549,6 +549,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public @NotNull DdlListener getDdlListener(TableToken tableToken) {
         return tableFlagResolver.isSystem(tableToken.getTableName()) ? DefaultDdlListener.INSTANCE : ddlListener;
+    }
+
+    public int getDetachedReaderRefCount(TableReader reader) {
+        return readerPool.getDetachedRefCount(reader);
     }
 
     public Job getEngineMaintenanceJob() {
@@ -905,6 +909,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public TableWriter getWriterUnsafe(TableToken tableToken, @NotNull String lockReason) {
         return writerPool.get(tableToken, lockReason);
+    }
+
+    public void incDetachedReaderRefCount(TableReader reader) {
+        readerPool.incDetachedRefCount(reader);
     }
 
     public boolean isTableDropped(TableToken tableToken) {
@@ -1669,14 +1677,14 @@ public class CairoEngine implements Closeable, WriterSource {
         return token;
     }
 
-    protected Iterable<FunctionFactory> getFunctionFactories() {
-        return new FunctionFactoryCacheBuilder().scan(LOG).build();
-    }
-
     protected @NotNull <T extends AbstractTelemetryTask> Telemetry<T> createTelemetry(
             Telemetry.TelemetryTypeBuilder<T> builder, CairoConfiguration configuration
     ) {
         return new Telemetry<>(builder, configuration);
+    }
+
+    protected Iterable<FunctionFactory> getFunctionFactories() {
+        return new FunctionFactoryCacheBuilder().scan(LOG).build();
     }
 
     protected TableFlagResolver newTableFlagResolver(CairoConfiguration configuration) {
