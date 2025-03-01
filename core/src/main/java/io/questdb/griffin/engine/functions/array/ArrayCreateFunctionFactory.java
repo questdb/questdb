@@ -56,7 +56,71 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new FunctionArrayFunction(args, argPositions);
+        try {
+            int outerDimLen = args.size();
+            Function arg0 = args.getQuick(0);
+            int arg0Pos = argPositions.getQuick(0);
+            short type0 = (short) arg0.getType();
+            short commonElemType = type0;
+            if (!ColumnType.isArray(type0)) {
+                for (int i = 1; i < outerDimLen; i++) {
+                    short typeI = (short) args.getQuick(i).getType();
+                    if (ColumnType.isArray(typeI)) {
+                        throw SqlException.$(argPositions.getQuick(i), "mixed array and non-array elements");
+                    }
+                    commonElemType = commonWideningType(commonElemType, typeI);
+                }
+                FunctionArray array = new FunctionArray(commonElemType, 1);
+                array.setDimLen(0, outerDimLen);
+                array.applyShape(configuration, arg0Pos);
+                for (int i = 0; i < outerDimLen; i++) {
+                    array.putFunction(i, args.getQuick(i));
+                }
+                return new FunctionArrayFunction(array);
+            }
+            
+            commonElemType = decodeArrayElementType(type0);
+            FunctionArray array0 = (FunctionArray) arg0.getArray(null);
+            final int nestedNDims = array0.getDimCount();
+            final int nestedElemCount = array0.getFlatViewLength();
+            for (int n = args.size(), i = 1; i < n; i++) {
+                Function argI = args.getQuick(i);
+                int typeI = argI.getType();
+                int argPos = argPositions.getQuick(i);
+                if (!ColumnType.isArray(typeI)) {
+                    throw SqlException.$(argPos, "mixed array and non-array elements");
+                }
+                commonElemType = commonWideningType(commonElemType, decodeArrayElementType(typeI));
+                ArrayView arrayI = argI.getArray(null);
+                if (arrayI.getDimCount() != nestedNDims) {
+                    throw SqlException.$(argPos, "mismatched array shape");
+                }
+                if (arrayI.getFlatViewLength() != nestedElemCount) {
+                    throw SqlException.$(argPos, "element counts in sub-arrays don't match");
+                }
+            }
+            FunctionArray array = new FunctionArray(commonElemType, nestedNDims + 1);
+            array.setDimLen(0, outerDimLen);
+            for (int i = 0; i < nestedNDims; i++) {
+                array.setDimLen(i + 1, array0.getDimLen(i));
+            }
+            array.applyShape(configuration, arg0Pos);
+            int flatIndex = 0;
+            for (int i = 0; i < outerDimLen; i++) {
+                FunctionArray arrayI = (FunctionArray) args.getQuick(i).getArray(null);
+                for (int j = 0; j < nestedElemCount; j++) {
+                    array.putFunction(flatIndex++, arrayI.getFunctionAtFlatIndex(j));
+                }
+            }
+            return new FunctionArrayFunction(array);
+        } finally {
+            for (int n = args.size(), i = 0; i < n; i++) {
+                Function arg = args.getQuick(i);
+                if (ColumnType.isArray(arg.getType())) {
+                    arg.close();
+                }
+            }
+        }
     }
 
     @Override
@@ -67,70 +131,9 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
     private static class FunctionArrayFunction extends ArrayFunction {
         private FunctionArray array;
 
-        public FunctionArrayFunction(ObjList<Function> args, IntList argPositions) throws SqlException {
-            try {
-                int outerDimLen = args.size();
-                Function arg0 = args.getQuick(0);
-                short type0 = (short) arg0.getType();
-                short commonElemType = type0;
-                if (ColumnType.isArray(type0)) {
-                    commonElemType = decodeArrayElementType(type0);
-                    FunctionArray array0 = (FunctionArray) arg0.getArray(null);
-                    final int nestedNDims = array0.getDimCount();
-                    final int nestedElemCount = array0.getFlatViewLength();
-                    for (int n = args.size(), i = 1; i < n; i++) {
-                        Function argI = args.getQuick(i);
-                        int typeI = argI.getType();
-                        int argPos = argPositions.getQuick(i);
-                        if (!ColumnType.isArray(typeI)) {
-                            throw SqlException.$(argPos, "mixed array and non-array elements");
-                        }
-                        commonElemType = commonWideningType(commonElemType, decodeArrayElementType(typeI));
-                        ArrayView arrayI = argI.getArray(null);
-                        if (arrayI.getDimCount() != nestedNDims) {
-                            throw SqlException.$(argPos, "mismatched array shape");
-                        }
-                        if (arrayI.getFlatViewLength() != nestedElemCount) {
-                            throw SqlException.$(argPos, "element counts in sub-arrays don't match");
-                        }
-                    }
-                    this.array = new FunctionArray(commonElemType, nestedNDims + 1);
-                    array.setDimLen(0, outerDimLen);
-                    for (int i = 0; i < nestedNDims; i++) {
-                        array.setDimLen(i + 1, array0.getDimLen(i));
-                    }
-                    array.applyShape();
-                    int flatIndex = 0;
-                    for (int i = 0; i < outerDimLen; i++) {
-                        FunctionArray arrayI = (FunctionArray) args.getQuick(i).getArray(null);
-                        for (int j = 0; j < nestedElemCount; j++) {
-                            array.putFunction(flatIndex++, arrayI.getFunctionAtFlatIndex(j));
-                        }
-                    }
-                } else {
-                    for (int i = 1; i < outerDimLen; i++) {
-                        short typeI = (short) args.getQuick(i).getType();
-                        if (ColumnType.isArray(typeI)) {
-                            throw SqlException.$(argPositions.getQuick(i), "mixed array and non-array elements");
-                        }
-                        commonElemType = commonWideningType(commonElemType, typeI);
-                    }
-                    this.array = new FunctionArray(commonElemType, 1);
-                    array.setDimLen(0, outerDimLen);
-                    array.applyShape();
-                    for (int i = 0; i < outerDimLen; i++) {
-                        array.putFunction(i, args.getQuick(i));
-                    }
-                }
-                this.type = array.getType();
-            } finally {
-                for (int n = args.size(), i = 0; i < n; i++) {
-                    Function arg = args.getQuick(i);
-                    if (ColumnType.isArray(arg.getType())) {
-                        arg.close();
-                    }
-                }
-            }
+        public FunctionArrayFunction(FunctionArray array) {
+            this.array = array;
+            this.type = array.getType();
         }
 
         @Override
