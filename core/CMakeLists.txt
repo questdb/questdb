@@ -83,7 +83,6 @@ set(
         src/main/c/share/json.cpp
         src/main/c/share/array.cpp
 )
-set(ENV{JAVA_HOME} "/Users/vicgao/javaa/java/jdk-21.0.5.jdk/Contents/Home")
 # JNI includes
 include_directories($ENV{JAVA_HOME}/include/)
 
