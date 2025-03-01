@@ -408,6 +408,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ObjList<VectorAggregateFunction> tempVaf = new ObjList<>();
     private final IntList tempVecConstructorArgIndexes = new IntList();
     private final ObjList<VectorAggregateFunctionConstructor> tempVecConstructors = new ObjList<>();
+    private final boolean validateSampleByFillType;
     private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
     private final WhereClauseParser whereClauseParser = new WhereClauseParser();
     // a bitset of string/symbol columns forced to be serialised as varchar
@@ -416,7 +417,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final BitSet writeSymbolAsString = new BitSet();
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
-    private boolean validateSampleByFillType;
 
     public SqlCodeGenerator(
             CairoEngine engine,
@@ -2422,6 +2422,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, "ASOF");
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getContext(), masterMetadata, slaveMetadata);
+                                validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
                                         RecordSink masterSink = RecordSinkFactory.getInstance(
@@ -2494,7 +2495,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 masterAlias = null;
                                 // if we fail after this step, master will release slave
                                 releaseSlave = false;
-                                validateBothTimestampOrders(master, slave, slaveModel.getJoinKeywordPosition());
                                 break;
                             case JOIN_LT:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
@@ -2941,6 +2941,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 false,
                                 columnIndexes,
                                 columnSizeShifts,
+                                true,
                                 true
                         );
                     }
@@ -3080,7 +3081,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             final Function loFunc = getLoFunction(model, executionContext);
             final Function hiFunc = getHiFunction(model, executionContext);
-
             return new LimitRecordCursorFactory(factory, loFunc, hiFunc);
         } catch (Throwable e) {
             Misc.free(factory);
@@ -5342,15 +5342,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         model.setWhereClause(withinExtracted);
 
-        // Either this: `ORDER BY timestamp DESC`
-        // Or this: `ORDER BY timestamp DESC, side DESC LIMIT 3`
-        // In the latter case, we would like to generate a partially sorted cursor in `generateOrderBy`
-        // So we need to return a bwd scan here first.
-        boolean orderDescendingByDesignatedTimestampOnly = isOrderDescendingByDesignatedTimestampOnly(model);
-
-        boolean shouldGenerateBackwardsScan = orderDescendingByDesignatedTimestampOnly
-                || isOrderByStartingWithDescDesignatedTimestampAndLimited(model);
-
         if (withinExtracted != null || executionContext.isOverriddenIntrinsics(reader.getTableToken())) {
             final IntrinsicModel intrinsicModel;
             if (withinExtracted != null) {
@@ -5434,7 +5425,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final boolean intervalHitsOnlyOnePartition;
             if (intrinsicModel.hasIntervalFilters()) {
                 RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
-                if (shouldGenerateBackwardsScan) {
+                if (model.isForceBackwardScan()) {
                     dfcFactory = new IntervalBwdPartitionFrameCursorFactory(
                             tableToken,
                             model.getMetadataVersion(),
@@ -5453,7 +5444,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition(reader.getPartitionedBy());
             } else {
-                if (shouldGenerateBackwardsScan) {
+                if (model.isForceBackwardScan()) {
                     dfcFactory = new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
                 } else {
                     dfcFactory = new FullFwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
@@ -5631,7 +5622,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 false,
                                 columnIndexes,
                                 columnSizeShifts,
-                                supportsRandomAccess
+                                supportsRandomAccess,
+                                false
                         );
                     }
 
@@ -5765,7 +5757,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             RowCursorFactory rowFactory;
-            if (shouldGenerateBackwardsScan) {
+            if (model.isForceBackwardScan()) {
                 rowFactory = new BwdPageFrameRowCursorFactory();
             } else {
                 rowFactory = new FwdPageFrameRowCursorFactory();
@@ -5782,7 +5774,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     true,
                     columnIndexes,
                     columnSizeShifts,
-                    supportsRandomAccess
+                    supportsRandomAccess,
+                    false
             );
         }
 
@@ -5794,7 +5787,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             AbstractPartitionFrameCursorFactory cursorFactory;
             RowCursorFactory rowCursorFactory;
 
-            if (shouldGenerateBackwardsScan) {
+            if (model.isForceBackwardScan()) {
                 cursorFactory = new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
                 rowCursorFactory = new BwdPageFrameRowCursorFactory();
             } else {
@@ -5807,12 +5800,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     myMeta,
                     cursorFactory,
                     rowCursorFactory,
-                    orderDescendingByDesignatedTimestampOnly,
+                    model.isOrderDescendingByDesignatedTimestampOnly(),
                     null,
                     true,
                     columnIndexes,
                     columnSizeShifts,
-                    supportsRandomAccess
+                    supportsRandomAccess,
+                    false
             );
         }
 
@@ -6146,21 +6140,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token, model.getTimestamp().token);
     }
 
-    private boolean isOrderByStartingWithDescDesignatedTimestampAndLimited(QueryModel model) {
-        return model.getOrderByAdvice().size() > 1
-                && model.getTimestamp() != null
-                && Chars.equalsIgnoreCase(
-                model.getOrderByAdvice().getQuick(0).token,
-                model.getTimestamp().token
-        )
-                && model.getLimitLo() != null && !Chars.equals(model.getLimitLo().token, '-');
-    }
-
-    private boolean isOrderDescendingByDesignatedTimestampOnly(QueryModel model) {
-        return isOrderByDesignatedTimestampOnly(model) &&
-                getOrderByDirectionOrDefault(model, 0) == ORDER_DIRECTION_DESCENDING;
-    }
-
     private boolean isSameTable(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) {
         return masterFactory.getTableToken() != null && masterFactory.getTableToken().equals(slaveFactory.getTableToken());
     }
@@ -6372,13 +6351,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return defaultValue;
         }
 
-        final Function func = functionParser.parseFunction(limit, EmptyRecordMetadata.INSTANCE, executionContext);
-        final int type = func.getType();
-        if (limitTypes.excludes(type)) {
-            throw SqlException.$(limit.position, "invalid type: ").put(ColumnType.nameOf(type));
+        final Function limitFunc = functionParser.parseFunction(limit, EmptyRecordMetadata.INSTANCE, executionContext);
+
+        // coerce to a convertible type
+        coerceRuntimeConstantType(limitFunc, ColumnType.LONG, executionContext, "LIMIT expressions must be convertible to INT", limit.position);
+
+        // also rule out string, varchar etc.
+        int limitFuncType = limitFunc.getType();
+        if (limitTypes.excludes(limitFuncType)) {
+            throw SqlException.$(limit.position, "invalid type: ").put(ColumnType.nameOf(limitFuncType));
         }
-        return func;
+
+        return limitFunc;
     }
+
 
     private void validateBothTimestampOrders(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory, int position) throws SqlException {
         if (masterFactory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
