@@ -115,7 +115,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                     : new SliceDoubleArrayFunction(arrayArg, resultNDims, args, argPositions);
         } catch (Throwable e) {
             Misc.free(arrayArg);
-            Misc.clearObjList(inputArgs);
+            Misc.freeObjList(inputArgs);
             throw e;
         }
     }
@@ -138,9 +138,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         @Override
         public void close() {
             this.arrayArg = Misc.free(arrayArg);
-            for (int n = indexArgs.size(), i = 0; i < n; i++) {
-                indexArgs.getQuick(i).close();
-            }
+            Misc.freeObjList(indexArgs);
             indexArgs.clear();
         }
 
@@ -194,9 +192,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         @Override
         public void close() {
             this.arrayArg = Misc.free(this.arrayArg);
-            for (int n = rangeArgs.size(), i = 0; i < n; i++) {
-                rangeArgs.getQuick(i).close();
-            }
+            Misc.freeObjList(rangeArgs);
             rangeArgs.clear();
         }
 

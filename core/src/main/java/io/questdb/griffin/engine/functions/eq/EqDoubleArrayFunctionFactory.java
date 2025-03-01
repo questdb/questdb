@@ -62,6 +62,8 @@ public class EqDoubleArrayFunctionFactory implements FunctionFactory {
         if (leftNDims == rightNDims) {
             return new DoubleArrayEqualsFunction(left, right);
         }
+        left.close();
+        right.close();
         return BooleanConstant.FALSE;
     }
 
