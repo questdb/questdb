@@ -2081,11 +2081,15 @@ public class SqlParser {
         if (tok != null && isPivotKeyword(tok)) {
             lexer.unparseLast();
             tok = parsePivot(lexer, model, sqlParserCallback);
-        }
-
-        if (tok != null && isUnpivotKeyword(tok)) {
+            if (tok != null && (isPivotKeyword(tok) || isUnpivotKeyword(tok))) {
+                throw SqlException.$((lexer.lastTokenPosition()), "only a single PIVOT or UNPIVOT clause can be used in an individual query");
+            }
+        } else if (tok != null && isUnpivotKeyword(tok)) {
             lexer.unparseLast();
             tok = parseUnpivot(lexer, model, sqlParserCallback);
+            if (tok != null && (isPivotKeyword(tok) || isUnpivotKeyword(tok))) {
+                throw SqlException.$((lexer.lastTokenPosition()), "only a single PIVOT or UNPIVOT clause can be used in an individual query");
+            }
         }
 
         // expect multiple [[inner | outer | cross] join]

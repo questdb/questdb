@@ -26,8 +26,7 @@ package io.questdb.test.griffin;
 
 import org.junit.Test;
 
-import static io.questdb.test.griffin.PivotTest.ddlCities;
-import static io.questdb.test.griffin.PivotTest.dmlCities;
+import static io.questdb.test.griffin.PivotTest.*;
 
 
 // todo(nwoolmer): swap to assertQuery
@@ -193,25 +192,37 @@ public class UnpivotTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(ddlCities);
             execute(dmlCities);
+            execute(ddlTrades);
+            execute(dmlTrades);
+            drainWalQueue();
 
-            String pivotUnpivot = "SELECT * FROM (\n" +
-                    "    SELECT *\n" +
-                    "    FROM cities\n" +
+
+            String pivotUnpivotCities = "(\n" +
+                    "  cities\n" +
                     "    PIVOT (\n" +
-                    "        SUM(population)\n" +
-                    "        FOR\n" +
-                    "            year IN (2000, 2010, 2020)\n" +
-                    "        GROUP BY country\n" +
+                    "      SUM(population)\n" +
+                    "      FOR year IN (2000, 2010, 2020)\n" +
+                    "      GROUP BY country\n" +
                     "    )\n" +
                     ") UNPIVOT (\n" +
-                    "    population\n" +
-                    "    FOR\n" +
-                    "        year IN (2000, 2010, 2020)\n" +
-                    ")\n";
+                    "    sum_population\n" +
+                    "    FOR  year IN (2000, 2010, 2020)\n" +
+                    "  );\n";
 
-            assertPlanNoLeakCheck(pivotUnpivot,
+            String pivotUnpivotTrades = "(\n" +
+                    "  (trades) \n" +
+                    "    PIVOT (\n" +
+                    "      avg(price) \n" +
+                    "      FOR symbol IN ('BTC-USD', 'ETH-USD')\n" +
+                    "    )\n" +
+                    ") UNPIVOT (\n" +
+                    "    avg_price\n" +
+                    "    FOR symbol IN ('BTC-USD', 'ETH-USD')\n" +
+                    "  );";
+
+            assertPlanNoLeakCheck(pivotUnpivotCities,
                     "Unpivot\n" +
-                            "  into: population\n" +
+                            "  into: sum_population\n" +
                             "  for: year\n" +
                             "  in: [2000,2010,2020]\n" +
                             "  nulls: excluded\n" +
@@ -223,14 +234,30 @@ public class UnpivotTest extends AbstractSqlParserTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: cities\n");
 
-            assertSql("country\tyear\tpopulation\n" +
+            assertSql("country\tyear\tsum_population\n" +
                             "NL\t2000\t1005\n" +
                             "NL\t2010\t1065\n" +
                             "NL\t2020\t1158\n" +
                             "US\t2000\t8579\n" +
                             "US\t2010\t8783\n" +
                             "US\t2020\t9510\n",
-                    pivotUnpivot);
+                    pivotUnpivotCities);
+
+            assertPlanNoLeakCheck(pivotUnpivotTrades,
+                    "Unpivot\n" +
+                            "  into: avg_price\n" +
+                            "  for: symbol\n" +
+                            "  in: [BTC-USD,ETH-USD]\n" +
+                            "  nulls: excluded\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      values: [avg(case([price,NaN,symbol])),avg(case([price,NaN,symbol]))]\n" +
+                            "        Limit lo: 1000\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: trades\n");
+
+            assertSql("symbol\tavg_price\n",
+                    pivotUnpivotTrades);
         });
     }
 
