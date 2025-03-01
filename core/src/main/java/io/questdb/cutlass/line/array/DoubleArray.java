@@ -34,6 +34,8 @@ import io.questdb.std.Unsafe;
  * <p>
  * To enhance runtime performance, a separate method is enumerated for each dimension, rather than using reflection.
  */
+
+// todo replace with JNI
 public class DoubleArray {
 
     public static long processArrayData(long addr, CheckCapacity checkCapacity, double[] array) {
