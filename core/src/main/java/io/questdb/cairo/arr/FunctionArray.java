@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.arr;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -108,8 +109,8 @@ public class FunctionArray extends MutableArray implements FlatArrayView {
         }
     }
 
-    public void applyShape() {
-        resetToDefaultStrides();
+    public void applyShape(CairoConfiguration configuration, int errorPos) {
+        resetToDefaultStrides(configuration.maxArrayElementCount(), errorPos);
         if (functions == null || functions.length < flatViewLength) {
             functions = new Function[flatViewLength];
         }
