@@ -457,7 +457,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
-                            "        Limit lo: 10\n" +
+                            "        Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n"
@@ -666,7 +666,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "from x limit 3";
             assertPlanNoLeakCheck(
                     sql,
-                    "Limit lo: 3\n" +
+                    "Limit lo: 3 skip-over-rows: 0 limit: 3\n" +
                             "    CachedWindow\n" +
                             "      unorderedFunctions: [row_number() over (partition by [sym]),avg(i) over (),sum(i) over (),first_value(i) over ()]\n" +
                             "        PageFrame\n" +
@@ -843,7 +843,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     query,
                     "SelectedRecord\n" +
                             "    Cross Join\n" +
-                            "        Limit lo: 10\n" +
+                            "        Limit lo: 10 skip-over-rows: 0 limit: 2\n" +
                             "            PageFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: t\n" +
@@ -866,7 +866,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "order by t1.ts asc",
                     "SelectedRecord\n" +
                             "    Cross Join\n" +
-                            "        Limit lo: 10\n" +
+                            "        Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: t\n" +
@@ -891,7 +891,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [ts desc]\n" +
                             "    SelectedRecord\n" +
                             "        Cross Join\n" +
-                            "            Limit lo: 10\n" +
+                            "            Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                             "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: t\n" +
@@ -914,7 +914,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "order by t1.ts asc",
                     "SelectedRecord\n" +
                             "    Cross Join\n" +
-                            "        Limit lo: 10\n" +
+                            "        Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: t\n" +
@@ -953,7 +953,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di order by 1 limit 10",
-                "Limit lo: 10\n" +
+                "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
                         "    DistinctTimeSeries\n" +
                         "      keys: ts\n" +
                         "        PageFrame\n" +
@@ -982,7 +982,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di limit 10",
-                "Limit lo: 10\n" +
+                "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
                         "    DistinctTimeSeries\n" +
                         "      keys: ts\n" +
                         "        PageFrame\n" +
@@ -996,7 +996,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di limit -10",
-                "Limit lo: -10\n" +
+                "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
                         "    DistinctTimeSeries\n" +
                         "      keys: ts\n" +
                         "        PageFrame\n" +
@@ -1010,7 +1010,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di where y = 5 limit 10",
-                "Limit lo: 10\n" +
+                "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
                         "    DistinctTimeSeries\n" +
                         "      keys: ts\n" +
                         "        SelectedRecord\n" +
@@ -1027,7 +1027,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di where y = 5 limit -10",
-                "Limit lo: -10\n" +
+                "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
                         "    DistinctTimeSeries\n" +
                         "      keys: ts\n" +
                         "        SelectedRecord\n" +
@@ -1044,7 +1044,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di where abs(y) = 5 limit 10",
-                "Limit lo: 10\n" +
+                "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
                         "    DistinctTimeSeries\n" +
                         "      keys: ts\n" +
                         "        SelectedRecord\n" +
@@ -1061,7 +1061,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di where abs(y) = 5 limit -10",
-                "Limit lo: -10\n" +
+                "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
                         "    DistinctTimeSeries\n" +
                         "      keys: ts\n" +
                         "        SelectedRecord\n" +
@@ -1078,7 +1078,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di where abs(y) = 5 limit 10, 20",
-                "Limit lo: 10 hi: 20\n" +
+                "Limit lo: 10 hi: 20 skip-over-rows: 10 limit: 10\n" +
                         "    DistinctTimeSeries\n" +
                         "      keys: ts\n" +
                         "        SelectedRecord\n" +
@@ -1129,7 +1129,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long)",
                 "select distinct x from di limit 10",
-                "Limit lo: 10\n" +
+                "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
                         "    DistinctKey\n" +
                         "        GroupBy vectorized: true workers: 1\n" +
                         "          keys: [x]\n" +
@@ -1145,7 +1145,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long)",
                 "select distinct x from di limit -10",
-                "Limit lo: -10\n" +
+                "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
                         "    DistinctKey\n" +
                         "        GroupBy vectorized: true workers: 1\n" +
                         "          keys: [x]\n" +
@@ -1161,7 +1161,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long)",
                 "select distinct x from di where y = 5 limit 10",
-                "Limit lo: 10\n" +
+                "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
                         "    Distinct\n" +
                         "      keys: x\n" +
                         "        SelectedRecord\n" +
@@ -1178,7 +1178,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long)",
                 "select distinct x from di where y = 5 limit -10",
-                "Limit lo: -10\n" +
+                "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
                         "    Distinct\n" +
                         "      keys: x\n" +
                         "        SelectedRecord\n" +
@@ -1195,7 +1195,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long)",
                 "select distinct x from di where abs(y) = 5 limit 10",
-                "Limit lo: 10\n" +
+                "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
                         "    Distinct\n" +
                         "      keys: x\n" +
                         "        SelectedRecord\n" +
@@ -1212,7 +1212,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long)",
                 "select distinct x from di where abs(y) = 5 limit -10",
-                "Limit lo: -10\n" +
+                "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
                         "    Distinct\n" +
                         "      keys: x\n" +
                         "        SelectedRecord\n" +
@@ -1229,7 +1229,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long)",
                 "select distinct x from di where abs(y) = 5 limit 10, 20",
-                "Limit lo: 10 hi: 20\n" +
+                "Limit lo: 10 hi: 20 skip-over-rows: 10 limit: 10\n" +
                         "    Distinct\n" +
                         "      keys: x\n" +
                         "        SelectedRecord\n" +
@@ -1281,7 +1281,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts desc limit 10) except (select * from a) order by ts desc",
                     "Except\n" +
-                            "    Limit lo: 10\n" +
+                            "    Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: a\n" +
@@ -1301,7 +1301,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts asc limit 10) except (select * from a) order by ts asc",
                     "Except\n" +
-                            "    Limit lo: 10\n" +
+                            "    Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -1323,7 +1323,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    Except\n" +
-                            "        Limit lo: 10\n" +
+                            "        Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                             "            PageFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: a\n" +
@@ -1345,7 +1345,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Radix sort light\n" +
                             "  keys: [ts desc]\n" +
                             "    Except\n" +
-                            "        Limit lo: 10\n" +
+                            "        Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -1539,7 +1539,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table a ( l long, d double)");
             assertSql("QUERY PLAN\n" +
-                    "Limit lo: 10\n" +
+                    "Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                     "    PageFrame\n" +
                     "        Row forward scan\n" +
                     "        Frame forward scan on: a\n", "explain with b as (select * from a limit 10) select * from b;"
@@ -2284,7 +2284,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 "            Row forward scan\n" +
                                 "            Frame forward scan on: a\n" +
                                 "        Hash\n" +
-                                "            Limit lo: 40\n" +
+                                "            Limit lo: 40 skip-over-rows: 0 limit: 0\n" +
                                 "                PageFrame\n" +
                                 "                    Row forward scan\n" +
                                 "                    Frame forward scan on: a\n",
@@ -3483,7 +3483,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long)",
                 "select x, count(*) from di group by x limit 10",
-                "Limit lo: 10\n" +
+                "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
                         "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
@@ -3498,7 +3498,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long)",
                 "select x, count(*) from di group by x limit -10",
-                "Limit lo: -10\n" +
+                "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
                         "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
@@ -3513,7 +3513,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long)",
                 "select x, count(*) from di where y = 5 group by x limit 10",
-                "Limit lo: 10\n" +
+                "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
                         "    Async JIT Group By workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
@@ -3529,7 +3529,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long)",
                 "select x, count(*) from di where y = 5 group by x limit -10",
-                "Limit lo: -10\n" +
+                "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
                         "    Async JIT Group By workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
@@ -3545,7 +3545,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long)",
                 "select x, count(*) from di where abs(y) = 5 group by x limit 10",
-                "Limit lo: 10\n" +
+                "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
                         "    Async Group By workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
@@ -3561,7 +3561,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long)",
                 "select x, count(*) from di where abs(y) = 5 group by x limit -10",
-                "Limit lo: -10\n" +
+                "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
                         "    Async Group By workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
@@ -3577,7 +3577,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long)",
                 "select x, count(*) from di where abs(y) = 5 group by x limit 10, 20",
-                "Limit lo: 10 hi: 20\n" +
+                "Limit lo: 10 hi: 20 skip-over-rows: 10 limit: 10\n" +
                         "    Async Group By workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
@@ -3809,7 +3809,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts desc limit 10) intersect (select * from a) order by ts desc",
                     "Intersect\n" +
-                            "    Limit lo: 10\n" +
+                            "    Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: a\n" +
@@ -3829,7 +3829,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts asc limit 10) intersect (select * from a) order by ts asc",
                     "Intersect\n" +
-                            "    Limit lo: 10\n" +
+                            "    Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
@@ -3851,7 +3851,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    Intersect\n" +
-                            "        Limit lo: 10\n" +
+                            "        Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                             "            PageFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: a\n" +
@@ -3873,7 +3873,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Radix sort light\n" +
                             "  keys: [ts desc]\n" +
                             "    Intersect\n" +
-                            "        Limit lo: 10\n" +
+                            "        Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -3928,7 +3928,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "limit 10";
             assertPlanNoLeakCheck(
                     sql,
-                    "Limit lo: 10\n" +
+                    "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
                             "    Sort\n" +
                             "      keys: [bits desc]\n" +
                             "        VirtualRecord\n" +
@@ -3966,7 +3966,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from yy latest on ts partition by s limit 10";
             assertPlanNoLeakCheck(
                     sql,
-                    "Limit lo: 10\n" +
+                    "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
                             "    LatestBy\n" +
                             "        Sample By\n" +
                             "          fill: none\n" +
@@ -5169,7 +5169,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
-                            "        Limit lo: 10\n" +
+                            "        Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n"
@@ -5468,7 +5468,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Nested Loop Left Join\n" +
                             "      filter: 0<t1.x*t2.x\n" +
-                            "        Limit lo: 10\n" +
+                            "        Limit lo: 10 skip-over-rows: 0 limit: 2\n" +
                             "            PageFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: t\n" +
@@ -5660,7 +5660,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "WHERE device_data.id = '12345678' " +
                             "ORDER BY timestamp DESC " +
                             "LIMIT 1,3",
-                    "Limit lo: 1 hi: 3\n" +
+                    "Limit lo: 1 hi: 3 skip-over-rows: 1 limit: 2\n" +
                             "    VirtualRecord\n" +
                             "      functions: [date,val,val+1]\n" +
                             "        SelectedRecord\n" +
@@ -5720,7 +5720,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "WHERE device_data.id = '12345678' " +
                             "ORDER BY date DESC " +
                             "LIMIT 1",
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 1\n" +
                             "    VirtualRecord\n" +
                             "      functions: [date,val,val+1]\n" +
                             "        SelectedRecord\n" +
@@ -5739,7 +5739,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "WHERE device_data.id = '12345678' " +
                             "ORDER BY date  " +
                             "LIMIT -1",
-                    "Limit lo: -1\n" +
+                    "Limit lo: -1 skip-over-rows: 9 limit: 1\n" +
                             "    VirtualRecord\n" +
                             "      functions: [date,val,val+1]\n" +
                             "        SelectedRecord\n" +
@@ -5758,7 +5758,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "WHERE device_data.id = '12345678' " +
                             "ORDER BY date DESC " +
                             "LIMIT -2",
-                    "Limit lo: -2\n" +
+                    "Limit lo: -2 skip-over-rows: 8 limit: 2\n" +
                             "    VirtualRecord\n" +
                             "      functions: [date,val,val+1]\n" +
                             "        SelectedRecord\n" +
@@ -5778,7 +5778,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "WHERE device_data.id = '12345678' " +
                             "ORDER BY date DESC " +
                             "LIMIT 1,3",
-                    "Limit lo: 1 hi: 3\n" +
+                    "Limit lo: 1 hi: 3 skip-over-rows: 1 limit: 2\n" +
                             "    VirtualRecord\n" +
                             "      functions: [date,val,val+1]\n" +
                             "        SelectedRecord\n" +
@@ -7294,7 +7294,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, s symbol index)",
                 "select count(*) from (select 1 from a limit 1) ",
                 "Count\n" +
-                        "    Limit lo: 1\n" +
+                        "    Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                         "        VirtualRecord\n" +
                         "          functions: [1]\n" +
                         "            PageFrame\n" +
@@ -7942,7 +7942,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select * from a where s = 'S1' order by ts desc limit 1 ",
-                "Limit lo: 1\n" +
+                "Limit lo: 1 skip-over-rows: 0 limit: 1\n" +
                         "    DeferredSingleSymbolFilterPageFrame\n" +
                         "        Index backward scan on: s deferred: true\n" +
                         "          filter: s='S1'\n" +
@@ -7955,7 +7955,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day;",
                 "select * from a where s = 'S1' order by ts desc limit 1 ",
-                "Limit lo: 1\n" +
+                "Limit lo: 1 skip-over-rows: 0 limit: 1\n" +
                         "    DeferredSingleSymbolFilterPageFrame\n" +
                         "        Index backward scan on: s deferred: true\n" +
                         "          filter: s='S1'\n" +
@@ -7968,7 +7968,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select * from a where s = 'S1' order by ts desc limit 1 ",
-                "Limit lo: 1\n" +
+                "Limit lo: 1 skip-over-rows: 0 limit: 1\n" +
                         "    DeferredSingleSymbolFilterPageFrame\n" +
                         "        Index backward scan on: s deferred: true\n" +
                         "          filter: s='S1'\n" +
@@ -7981,7 +7981,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day;",
                 "select * from a where s = 'S1' order by ts desc limit 1 ",
-                "Limit lo: 1\n" +
+                "Limit lo: 1 skip-over-rows: 0 limit: 1\n" +
                         "    DeferredSingleSymbolFilterPageFrame\n" +
                         "        Index backward scan on: s deferred: true\n" +
                         "          filter: s='S1'\n" +
@@ -8043,7 +8043,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select ts, s from a where s in ('S1', 'S2') and length(s) = 2 order by s desc limit 1",
-                "Limit lo: 1\n" +
+                "Limit lo: 1 skip-over-rows: 0 limit: 1\n" +
                         "    FilterOnValues symbolOrder: desc\n" +
                         "        Cursor-order scan\n" + //actual order is S2, S1
                         "            Index forward scan on: s deferred: true\n" +
@@ -8084,12 +8084,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // TODO: it would be better to get rid of unnecessary sort and limit factories
+    @Test
     public void testSelectIndexedSymbols04() throws Exception {
         assertPlan(
                 "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select * from a where s = 'S1' and s = 'S2' order by ts desc limit 1",
-                "Limit lo: 1\n" +
+                "Limit lo: 1 skip-over-rows: 0 limit: 0\n" +
                         "    Sort\n" +
                         "      keys: [ts desc]\n" +
                         "        Empty table\n"
@@ -8140,7 +8140,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( s symbol index) ;",
                 "select * from a where s = 'S1' order by s asc limit 10",
-                "Limit lo: 10\n" +
+                "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
                         "    DeferredSingleSymbolFilterPageFrame\n" +
                         "        Index forward scan on: s deferred: true\n" +
                         "          filter: s='S1'\n" +
@@ -8294,7 +8294,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select * from a where s in ('S1', 'S2') limit 1",
-                "Limit lo: 1\n" +
+                "Limit lo: 1 skip-over-rows: 0 limit: 1\n" +
                         "    FilterOnValues\n" +
                         "        Table-order scan\n" +
                         "            Index forward scan on: s deferred: true\n" +
@@ -8321,7 +8321,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from a where s in ('S1', 'S2') and length(s) = 2 limit 1",
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 1\n" +
                             "    FilterOnValues\n" +
                             "        Table-order scan\n" +
                             "            Index forward scan on: s\n" +
@@ -8340,7 +8340,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("insert into a select 'S' || x, 'S' || x, x::timestamp from long_sequence(10)");
             assertPlanNoLeakCheck(
                     "select * from a where s1 in ('S1', 'S2') and s2 in ('S2') limit 1",
-                    "Limit lo: 1\n" +
+                    "Limit lo: 1 skip-over-rows: 0 limit: 1\n" +
                             "    PageFrame\n" +
                             "        Index forward scan on: s2\n" +
                             "          filter: s2=2 and s1 in [S1,S2]\n" +
@@ -8456,7 +8456,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     ") order by ts asc";
             assertPlanNoLeakCheck(
                     query,
-                    "Limit lo: 5\n" +
+                    "Limit lo: 5 skip-over-rows: 0 limit: 5\n" +
                             "    FilterOnExcludedValues\n" +
                             "      symbolFilter: s1 not in ['S1','S2']\n" +
                             "        Table-order scan\n" +
@@ -8469,10 +8469,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Frame forward scan on: a\n"
             );
 
-            assertQueryNoLeakCheck("s1\tts\n" +
-                    "S5\t1970-01-01T00:20:00.000000Z\n" +
-                    "S4\t1970-01-01T00:40:00.000000Z\n" +
-                    "S3\t1970-01-01T01:00:00.000000Z\n", query, "ts", true, false);
+            assertQueryNoLeakCheck(
+                    "s1\tts\n" +
+                            "S5\t1970-01-01T00:20:00.000000Z\n" +
+                            "S4\t1970-01-01T00:40:00.000000Z\n" +
+                            "S3\t1970-01-01T01:00:00.000000Z\n",
+                    query,
+                    "ts",
+                    true,
+                    true
+            );
         });
     }
 
@@ -8522,12 +8528,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from a limit -5",
-                    "Radix sort light\n" +
-                            "  keys: [ts]\n" +
-                            "    Limit lo: 5\n" +
-                            "        PageFrame\n" +
-                            "            Row backward scan\n" +
-                            "            Frame backward scan on: a\n"
+                    "Limit lo: -5 skip-over-rows: 5 limit: 5\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: a\n"
             );
         });
     }
@@ -8540,12 +8544,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from a limit -10+2",
-                    "Radix sort light\n" +
-                            "  keys: [ts]\n" +
-                            "    Limit lo: 8\n" +
-                            "        PageFrame\n" +
-                            "            Row backward scan\n" +
-                            "            Frame backward scan on: a\n"
+                    "Limit lo: -8 skip-over-rows: 2 limit: 8\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: a\n"
             );
         });
     }
@@ -8555,12 +8557,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts);",
                 "select * from a order by 2 desc limit -10",
-                "Radix sort light\n" +
-                        "  keys: [ts desc]\n" +
-                        "    Limit lo: 10\n" +
-                        "        PageFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: a\n"
+                "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
+                        "    PageFrame\n" +
+                        "        Row backward scan\n" +
+                        "        Frame backward scan on: a\n"
         );
     }
 
@@ -8585,7 +8585,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from (select * from a order by ts asc limit 5) order by ts desc",
                     "Radix sort light\n" +
                             "  keys: [ts desc]\n" +
-                            "    Limit lo: 5\n" +
+                            "    Limit lo: 5 skip-over-rows: 0 limit: 5\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n"
@@ -8603,7 +8603,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from (select * from a order by ts desc limit 5) order by ts asc",
                     "Radix sort light\n" +
                             "  keys: [ts]\n" +
-                            "    Limit lo: 5\n" +
+                            "    Limit lo: 5 skip-over-rows: 0 limit: 5\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: a\n"
@@ -8614,9 +8614,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectOrderByTsDescLargeNegativeLimit1() throws Exception {
         assertPlan(
-                "create table a ( i int, ts timestamp) timestamp(ts) ;",
+                "create table a as (select rnd_int() i, timestamp_sequence(0, 100) ts from long_sequence(10000)) timestamp(ts) ;",
                 "select * from a order by ts desc limit 9223372036854775806L+3L ",
-                "Limit lo: -9223372036854775807L\n" +
+                "Limit lo: -9223372036854775807L skip-over-rows: 0 limit: 10000\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: a\n"
@@ -8626,9 +8626,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectOrderByTsDescLargeNegativeLimit2() throws Exception {
         assertPlan(
-                "create table a ( i int, ts timestamp) timestamp(ts) ;",
-                "select * from a order by ts desc limit -1000000 ",
-                "Limit lo: -1000000\n" +
+                "create table a as (select rnd_int() i, timestamp_sequence(0,100) ts from long_sequence(2_000_000)) timestamp(ts) ;",
+                "select * from a order by ts desc limit -1_000_000 ",
+                "Limit lo: -1000000 skip-over-rows: 1000000 limit: 1000000\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: a\n"
@@ -8640,12 +8640,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by ts desc limit -10",
-                "Radix sort light\n" +
-                        "  keys: [ts desc]\n" +
-                        "    Limit lo: 10\n" +
-                        "        PageFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: a\n"
+                "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
+                        "    PageFrame\n" +
+                        "        Row backward scan\n" +
+                        "        Frame backward scan on: a\n"
         );
     }
 
@@ -8654,12 +8652,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts)",
                 "select * from a order by ts  limit -5",
-                "Radix sort light\n" +
-                        "  keys: [ts]\n" +
-                        "    Limit lo: 5\n" +
-                        "        PageFrame\n" +
-                        "            Row backward scan\n" +
-                        "            Frame backward scan on: a\n"
+                "Limit lo: -5 skip-over-rows: 0 limit: 0\n" +
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
         );
     }
 
@@ -8671,7 +8667,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select ts, count(*)  from a sample by 1s ALIGN TO FIRST OBSERVATION limit -5",
-                    "Limit lo: -5\n" +
+                    "Limit lo: -5 skip-over-rows: 0 limit: 1\n" +
                             "    Sample By\n" +
                             "      fill: none\n" +
                             "      values: [count(*)]\n" +
@@ -8682,7 +8678,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select i, count(*)  from a group by i limit -5",
-                    "Limit lo: -5\n" +
+                    "Limit lo: -5 skip-over-rows: 5 limit: 5\n" +
                             "    GroupBy vectorized: true workers: 1\n" +
                             "      keys: [i]\n" +
                             "      values: [count(*)]\n" +
@@ -8693,7 +8689,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select i, count(*)  from a limit -5",
-                    "Limit lo: -5\n" +
+                    "Limit lo: -5 skip-over-rows: 5 limit: 5\n" +
                             "    GroupBy vectorized: true workers: 1\n" +
                             "      keys: [i]\n" +
                             "      values: [count(*)]\n" +
@@ -8704,7 +8700,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select distinct(i) from a limit -5",
-                    "Limit lo: -5\n" +
+                    "Limit lo: -5 skip-over-rows: 5 limit: 5\n" +
                             "    DistinctKey\n" +
                             "        GroupBy vectorized: true workers: 1\n" +
                             "          keys: [i]\n" +
@@ -9383,7 +9379,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a limit 10",
-                "Limit lo: 10\n" +
+                "Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -9395,7 +9391,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a limit 10, 100",
-                "Limit lo: 10 hi: 100\n" +
+                "Limit lo: 10 hi: 100 skip-over-rows: 0 limit: 0\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -9407,7 +9403,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a limit -10, -100",
-                "Limit lo: -10 hi: -100\n" +
+                "Limit lo: -10 hi: -100 skip-over-rows: 0 limit: 0\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -9419,12 +9415,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a limit -10",
-                "Radix sort light\n" +
-                        "  keys: [ts]\n" +
-                        "    Limit lo: 10\n" +
-                        "        PageFrame\n" +
-                        "            Row backward scan\n" +
-                        "            Frame backward scan on: a\n"
+                "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
         );
     }
 
@@ -9685,7 +9679,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by ts desc limit 10",
-                "Limit lo: 10\n" +
+                "Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: a\n"
@@ -9697,12 +9691,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by ts desc limit -10",
-                "Radix sort light\n" +
-                        "  keys: [ts desc]\n" +
-                        "    Limit lo: 10\n" +
-                        "        PageFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: a\n"
+                "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
+                        "    PageFrame\n" +
+                        "        Row backward scan\n" +
+                        "        Frame backward scan on: a\n"
         );
     }
 
@@ -9712,12 +9704,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select i from a order by ts desc limit -10",
                 "SelectedRecord\n" +
-                        "    Radix sort light\n" +
-                        "      keys: [ts desc]\n" +
-                        "        Limit lo: 10\n" +
-                        "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: a\n"
+                        "    Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
+                        "        PageFrame\n" +
+                        "            Row backward scan\n" +
+                        "            Frame backward scan on: a\n"
         );
     }
 
@@ -9726,12 +9716,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by ts limit -10",
-                "Radix sort light\n" +
-                        "  keys: [ts]\n" +
-                        "    Limit lo: 10\n" +
-                        "        PageFrame\n" +
-                        "            Row backward scan\n" +
-                        "            Frame backward scan on: a\n"
+                "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
         );
     }
 
@@ -9741,12 +9729,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select i from a order by ts limit -10",
                 "SelectedRecord\n" +
-                        "    Radix sort light\n" +
-                        "      keys: [ts]\n" +
-                        "        Limit lo: 10\n" +
-                        "            PageFrame\n" +
-                        "                Row backward scan\n" +
-                        "                Frame backward scan on: a\n"
+                        "    Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n"
         );
     }
 
@@ -9862,7 +9848,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts asc limit 10) order by ts asc",
-                    "Limit lo: 10\n" +
+                    "Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
@@ -9919,7 +9905,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "(select * from a) order by ts asc",
                     "SelectedRecord\n" +
                             "    Lt Join Fast Scan\n" +
-                            "        Limit lo: 10\n" +
+                            "        Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                             "            Sort light\n" +
                             "              keys: [ts, l]\n" +
                             "                PageFrame\n" +
@@ -9943,7 +9929,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "order by ts asc",
                     "Radix sort light\n" +
                             "  keys: [ts]\n" +
-                            "    Limit lo: 10\n" +
+                            "    Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                             "        Sort light\n" +
                             "          keys: [ts desc, l desc]\n" +
                             "            PageFrame\n" +
@@ -9971,7 +9957,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "order by ts asc",
                     "SelectedRecord\n" +
                             "    Lt Join Fast Scan\n" +
-                            "        Limit lo: 10\n" +
+                            "        Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                             "            Sort\n" +
                             "              keys: [ts, l]\n" +
                             "                SelectedRecord\n" +
@@ -10004,7 +9990,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             " limit 10" +
                             ") " +
                             "order by ts desc",
-                    "Limit lo: 10\n" +
+                    "Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                             "    SelectedRecord\n" +
                             "        Cross Join\n" +
                             "            PageFrame\n" +
@@ -10026,7 +10012,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from (select * from a order by ts asc limit 10) order by ts desc",
                     "Radix sort light\n" +
                             "  keys: [ts desc]\n" +
-                            "    Limit lo: 10\n" +
+                            "    Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n"
@@ -10041,7 +10027,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts desc limit 10) order by ts desc",
-                    "Limit lo: 10\n" +
+                    "Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                             "    PageFrame\n" +
                             "        Row backward scan\n" +
                             "        Frame backward scan on: a\n"
@@ -10058,7 +10044,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from (select * from a order by ts desc limit 10) order by ts asc",
                     "Radix sort light\n" +
                             "  keys: [ts]\n" +
-                            "    Limit lo: 10\n" +
+                            "    Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                             "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: a\n"
@@ -10093,7 +10079,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from (select * from a order by ts, l limit 10,-10) order by ts, l",
                     "Sort light\n" +
                             "  keys: [ts, l]\n" +
-                            "    Limit lo: 10 hi: -10\n" +
+                            "    Limit lo: 10 hi: -10 skip-over-rows: 0 limit: 0\n" +
                             "        Sort light\n" +
                             "          keys: [ts, l]\n" +
                             "            PageFrame\n" +
@@ -10182,7 +10168,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
-                            "        Limit lo: 10\n" +
+                            "        Limit lo: 10 skip-over-rows: 0 limit: 0\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n"
@@ -10651,7 +10637,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             ") order by ts asc",
                     "Sort\n" +
                             "  keys: [ts]\n" +
-                            "    Limit lo: 9223372036854775807L\n" +
+                            "    Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 0\n" +
                             "        Window\n" +
                             "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
@@ -10673,7 +10659,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             ") order by ts desc",
                     "Sort\n" +
                             "  keys: [ts desc]\n" +
-                            "    Limit lo: 9223372036854775807L\n" +
+                            "    Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 0\n" +
                             "        Window\n" +
                             "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
@@ -10695,7 +10681,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             ") order by hostname",
                     "Sort\n" +
                             "  keys: [hostname]\n" +
-                            "    Limit lo: 9223372036854775807L\n" +
+                            "    Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 0\n" +
                             "        Window\n" +
                             "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
@@ -10793,7 +10779,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             ") order by ts asc ",
                     "Sort\n" +
                             "  keys: [ts]\n" +
-                            "    Limit lo: 9223372036854775807L\n" +
+                            "    Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 0\n" +
                             "        Window\n" +
                             "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
@@ -10815,7 +10801,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             ") order by ts desc ",
                     "Sort\n" +
                             "  keys: [ts desc]\n" +
-                            "    Limit lo: 9223372036854775807L\n" +
+                            "    Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 0\n" +
                             "        Window\n" +
                             "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
@@ -10837,7 +10823,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             ") order by hostname ",
                     "Sort\n" +
                             "  keys: [hostname]\n" +
-                            "    Limit lo: 9223372036854775807L\n" +
+                            "    Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 0\n" +
                             "        Window\n" +
                             "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
@@ -10911,7 +10897,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             String expectedForwardLimitPlan =
-                    "Limit lo: 9223372036854775807L\n" +
+                    "Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 0\n" +
                             "    Window\n" +
                             "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
@@ -11001,7 +10987,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     expectedBackwardPlan
             );
 
-            String expectedBackwardLimitPlan = "Limit lo: 9223372036854775807L\n" +
+            String expectedBackwardLimitPlan = "Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 0\n" +
                     "    Window\n" +
                     "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                     "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
@@ -11057,7 +11043,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "from x limit 3";
             assertPlanNoLeakCheck(
                     sql,
-                    "Limit lo: 3\n" +
+                    "Limit lo: 3 skip-over-rows: 0 limit: 3\n" +
                             "    Window\n" +
                             "      functions: [row_number() over (partition by [sym])," +
                             "avg(i) over (partition by [i] rows between unbounded preceding and current row)," +
@@ -11306,7 +11292,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         // actual order is S2, S1
         assertPlanNoLeakCheck(
                 query,
-                "Limit lo: 5\n" +
+                "Limit lo: 5 skip-over-rows: 0 limit: 5\n" +
                         "    FilterOnValues symbolOrder: desc\n" +
                         "        Cursor-order scan\n" +
                         "            Index forward scan on: s deferred: true\n" +
@@ -11319,14 +11305,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQueryNoLeakCheck("s\tts\n" +
                 "S2\t1970-01-01T00:00:00.000000Z\n" +
                 "S2\t1970-01-01T01:00:00.000003Z\n" +
-                "S1\t1970-01-01T00:00:00.000001Z\n", query, null, true, false);
+                "S1\t1970-01-01T00:00:00.000001Z\n", query, null, true, true);
 
         //order by asc
         query = "select * from a where s in (:s1, :s2) order by s asc limit 5";
 
         assertPlanNoLeakCheck(
                 query,
-                "Limit lo: 5\n" +
+                "Limit lo: 5 skip-over-rows: 0 limit: 5\n" +
                         "    FilterOnValues symbolOrder: asc\n" +
                         "        Cursor-order scan\n" +
                         "            Index forward scan on: s deferred: true\n" +
@@ -11339,7 +11325,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQueryNoLeakCheck("s\tts\n" +
                 "S1\t1970-01-01T00:00:00.000001Z\n" +
                 "S2\t1970-01-01T00:00:00.000000Z\n" +
-                "S2\t1970-01-01T01:00:00.000003Z\n", query, null, true, false);
+                "S2\t1970-01-01T01:00:00.000003Z\n", query, null, true, true);
     }
 
     @SuppressWarnings("SameParameterValue")
@@ -11357,7 +11343,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         // actual order is S2, S1
         assertPlanNoLeakCheck(
                 query,
-                "Limit lo: 5\n" +
+                "Limit lo: 5 skip-over-rows: 0 limit: 5\n" +
                         "    FilterOnValues symbolOrder: desc\n" +
                         "        Cursor-order scan\n" +
                         "            Index forward scan on: s deferred: true\n" +
@@ -11371,14 +11357,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQueryNoLeakCheck("s\tts\n" +
                 "S2\t1970-01-01T00:00:00.000000Z\n" +
                 "S2\t1970-01-01T01:00:00.000003Z\n" +
-                "S1\t1970-01-01T00:00:00.000001Z\n", query, null, true, false);
+                "S1\t1970-01-01T00:00:00.000001Z\n", query, null, true, true);
 
         //order by asc
         query = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s asc limit 5";
 
         assertPlanNoLeakCheck(
                 query,
-                "Limit lo: 5\n" +
+                "Limit lo: 5 skip-over-rows: 0 limit: 5\n" +
                         "    FilterOnValues symbolOrder: asc\n" +
                         "        Cursor-order scan\n" +
                         "            Index forward scan on: s deferred: true\n" +
@@ -11392,7 +11378,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQueryNoLeakCheck("s\tts\n" +
                 "S1\t1970-01-01T00:00:00.000001Z\n" +
                 "S2\t1970-01-01T00:00:00.000000Z\n" +
-                "S2\t1970-01-01T01:00:00.000003Z\n", query, null, true, false);
+                "S2\t1970-01-01T01:00:00.000003Z\n", query, null, true, true);
     }
 
     private void testSelectIndexedSymbols10WithOrder(String partitionByClause) throws Exception {
@@ -11407,7 +11393,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         String queryAsc = "select * from a where s in (:s2, :s1) order by ts asc limit 5";
         assertPlanNoLeakCheck(
                 queryAsc,
-                "Limit lo: 5\n" +
+                "Limit lo: 5 skip-over-rows: 0 limit: 5\n" +
                         "    FilterOnValues\n" +
                         "        Table-order scan\n" +
                         "            Index forward scan on: s deferred: true\n" +
@@ -11420,7 +11406,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "S2\t1970-01-01T00:00:00.000001Z\n" +
                 "S1\t1970-01-01T01:00:00.000003Z\n" +
                 "S2\t1970-01-01T01:00:00.000004Z\n" +
-                "S1\t1970-01-01T01:00:00.000005Z\n", queryAsc, "ts", true, false);
+                "S1\t1970-01-01T01:00:00.000005Z\n", queryAsc, "ts", true, true);
 
         String queryDesc = "select * from a where s in (:s2, :s1) order by ts desc limit 5";
         assertPlanNoLeakCheck(
