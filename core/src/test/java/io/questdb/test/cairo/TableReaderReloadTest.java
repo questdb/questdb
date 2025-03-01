@@ -154,7 +154,6 @@ public class TableReaderReloadTest extends AbstractCairoTest {
 
         long timestamp = 0;
         try (TableWriter writer = newOffPoolWriter(configuration, "all")) {
-
             try (TableReader reader = newOffPoolReader(configuration, "all")) {
                 Assert.assertFalse(reader.reload());
             }
