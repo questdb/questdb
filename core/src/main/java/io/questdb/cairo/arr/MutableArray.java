@@ -29,11 +29,33 @@ import io.questdb.cairo.ColumnType;
 
 public class MutableArray extends ArrayView {
 
-    public final void resetToDefaultStrides() {
+    public final void setDimLen(int dimension, int length) {
+        if (length <= 0) {
+            throw CairoException.nonCritical()
+                    .put("dimension length must be positive [dim=").put(dimension)
+                    .put(", dimLen=").put(length)
+                    .put(']');
+        }
+        shape.set(dimension, length);
+    }
+
+    public final void setType(int encodedType) {
+        assert ColumnType.isArray(encodedType);
+        this.type = encodedType;
+        shape.clear();
+        strides.clear();
+        flatViewLength = 0;
+        int nDims = ColumnType.decodeArrayDimensionality(encodedType);
+        for (int i = 0; i < nDims; i++) {
+            shape.add(0);
+        }
+    }
+
+    protected final void resetToDefaultStrides() {
         resetToDefaultStrides(Integer.MAX_VALUE >> 3, -1);
     }
 
-    public final void resetToDefaultStrides(int maxArrayElemCount, int errorPos) {
+    protected final void resetToDefaultStrides(int maxArrayElemCount, int errorPos) {
         assert maxArrayElemCount <= Integer.MAX_VALUE >> ColumnType.pow2SizeOf(ColumnType.decodeArrayElementType(this.type))
                 : "maxArrayElemCount > " +
                 (Integer.MAX_VALUE >> ColumnType.pow2SizeOf(ColumnType.decodeArrayElementType(this.type)));
@@ -66,27 +88,5 @@ public class MutableArray extends ArrayView {
             }
         }
         this.flatViewLength = stride;
-    }
-
-    public final void setDimLen(int dimension, int length) {
-        if (length <= 0) {
-            throw CairoException.nonCritical()
-                    .put("dimension length must be positive [dim=").put(dimension)
-                    .put(", dimLen=").put(length)
-                    .put(']');
-        }
-        shape.set(dimension, length);
-    }
-
-    public final void setType(int encodedType) {
-        assert ColumnType.isArray(encodedType);
-        this.type = encodedType;
-        shape.clear();
-        strides.clear();
-        flatViewLength = 0;
-        int nDims = ColumnType.decodeArrayDimensionality(encodedType);
-        for (int i = 0; i < nDims; i++) {
-            shape.add(0);
-        }
     }
 }
