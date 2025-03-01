@@ -79,7 +79,7 @@ public class MmappedArray extends MutableArray {
         resetToDefaultStrides();
         short elemType = ColumnType.decodeArrayElementType(columnType);
         assert ColumnType.sizeOf(elemType) * flatViewLength == valueSize;
-        borrowedFlatView().of(valuePtr, elemType, valueSize);
+        borrowedFlatView().of(valuePtr, elemType, flatViewLength);
         return this;
     }
 

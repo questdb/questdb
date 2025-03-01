@@ -37,6 +37,7 @@ import io.questdb.std.Unsafe;
 
 // todo replace with JNI
 public class DoubleArray {
+    public native static long processArrayData(long addr, CheckCapacity checkCapacity, Object array, int dims, int elemType);
 
     public static long processArrayData(long addr, CheckCapacity checkCapacity, double[] array) {
         checkCapacity(checkCapacity, (long) array.length * Double.BYTES);
