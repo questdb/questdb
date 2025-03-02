@@ -1215,6 +1215,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 } else {
                     return IPv4Constant.newInstance(function.getIPv4(null));
                 }
+                // TODO: Insert operation doesn't close the functions that provide data to insert, causing memory leak
+//            case ColumnType.ARRAY:
+//                if (function instanceof ArrayConstant) {
+//                    return function;
+//                } else {
+//                    return new ArrayConstant(function.getArray(null));
+//                }
             default:
                 return function;
         }
