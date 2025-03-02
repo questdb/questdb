@@ -62,23 +62,27 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
             int arg0Pos = argPositions.getQuick(0);
             short type0 = (short) arg0.getType();
             short commonElemType = type0;
+            boolean isConstant = arg0.isConstant();
             if (!ColumnType.isArray(type0)) {
                 for (int i = 1; i < outerDimLen; i++) {
-                    short typeI = (short) args.getQuick(i).getType();
+                    Function argI = args.getQuick(i);
+                    short typeI = (short) argI.getType();
                     if (ColumnType.isArray(typeI)) {
                         throw SqlException.$(argPositions.getQuick(i), "mixed array and non-array elements");
                     }
+                    isConstant &= argI.isConstant();
                     commonElemType = commonWideningType(commonElemType, typeI);
                 }
                 FunctionArray array = new FunctionArray(commonElemType, 1);
                 array.setDimLen(0, outerDimLen);
                 array.applyShape(configuration, arg0Pos);
                 for (int i = 0; i < outerDimLen; i++) {
-                    array.putFunction(i, args.getQuick(i));
+                    Function argI = args.getQuick(i);
+                    array.putFunction(i, argI);
                 }
-                return new FunctionArrayFunction(array);
+                return new FunctionArrayFunction(array, isConstant);
             }
-            
+
             commonElemType = decodeArrayElementType(type0);
             FunctionArray array0 = (FunctionArray) arg0.getArray(null);
             final int nestedNDims = array0.getDimCount();
@@ -91,6 +95,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                     throw SqlException.$(argPos, "mixed array and non-array elements");
                 }
                 commonElemType = commonWideningType(commonElemType, decodeArrayElementType(typeI));
+                isConstant &= argI.isConstant();
                 ArrayView arrayI = argI.getArray(null);
                 if (arrayI.getDimCount() != nestedNDims) {
                     throw SqlException.$(argPos, "mismatched array shape");
@@ -112,7 +117,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                     array.putFunction(flatIndex++, arrayI.getFunctionAtFlatIndex(j));
                 }
             }
-            return new FunctionArrayFunction(array);
+            return new FunctionArrayFunction(array, isConstant);
         } finally {
             for (int n = args.size(), i = 0; i < n; i++) {
                 Function arg = args.getQuick(i);
@@ -129,10 +134,12 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
     }
 
     private static class FunctionArrayFunction extends ArrayFunction {
+        private final boolean isConstant;
         private FunctionArray array;
 
-        public FunctionArrayFunction(FunctionArray array) {
+        public FunctionArrayFunction(FunctionArray array, boolean isConstant) {
             this.array = array;
+            this.isConstant = isConstant;
             this.type = array.getType();
         }
 
@@ -145,6 +152,11 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         public ArrayView getArray(Record rec) {
             array.setRecord(rec);
             return array;
+        }
+
+        @Override
+        public boolean isConstant() {
+            return isConstant;
         }
 
         @Override
