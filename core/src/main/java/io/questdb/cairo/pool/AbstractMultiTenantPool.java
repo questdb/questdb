@@ -72,93 +72,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
 
     @Override
     public T get(TableToken tableToken) {
-        Entry<T> e = getEntry(tableToken);
-
-        long lockOwner = e.lockOwner;
-        long thread = Thread.currentThread().getId();
-
-        if (lockOwner != UNLOCKED) {
-            LOG.info().$('\'').utf8(tableToken.getDirName()).$("' is locked [owner=").$(lockOwner).$(']').$();
-            throw EntryLockedException.instance(NO_LOCK_REASON);
-        }
-
-        do {
-            for (int i = 0; i < ENTRY_SIZE; i++) {
-                if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
-                    Unsafe.arrayPutOrdered(e.releaseOrAcquireTimes, i, clock.getTicks());
-                    // got lock, allocate if needed
-                    T tenant = e.getTenant(i);
-                    ResourcePoolSupervisor<T> supervisor = threadLocalPoolSupervisor.get();
-                    if (tenant == null) {
-                        try {
-                            LOG.debug()
-                                    .$("open '").utf8(tableToken.getDirName())
-                                    .$("' [at=").$(e.index).$(':').$(i)
-                                    .I$();
-                            tenant = newTenant(tableToken, e, i, supervisor);
-                        } catch (CairoException ex) {
-                            Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
-                            throw ex;
-                        }
-
-                        e.assignTenant(i, tenant);
-                        notifyListener(thread, tableToken, PoolListener.EV_CREATE, e.index, i);
-                    } else {
-                        try {
-                            tenant.refresh(supervisor);
-                        } catch (Throwable th) {
-                            tenant.goodbye();
-                            tenant.close();
-                            e.assignTenant(i, null);
-                            Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
-                            throw th;
-                        }
-                        notifyListener(thread, tableToken, PoolListener.EV_GET, e.index, i);
-                    }
-
-                    if (isClosed()) {
-                        e.assignTenant(i, null);
-                        tenant.goodbye();
-                        LOG.info().$('\'').utf8(tableToken.getDirName()).$("' born free").$();
-                        tenant.updateTableToken(tableToken);
-                        if (supervisor != null) {
-                            supervisor.onResourceBorrowed(tenant);
-                        }
-                        return tenant;
-                    }
-                    LOG.debug().$('\'').utf8(tableToken.getDirName()).$("' is assigned [at=").$(e.index).$(':').$(i)
-                            .$(", thread=").$(thread)
-                            .I$();
-                    tenant.updateTableToken(tableToken);
-                    if (supervisor != null) {
-                        supervisor.onResourceBorrowed(tenant);
-                    }
-                    return tenant;
-                }
-            }
-
-            LOG.debug().$("Thread ").$(thread).$(" is moving to entry ").$(e.index + 1).$();
-
-            // all allocated, create next entry if possible
-            if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_ALLOCATED)) {
-                LOG.debug().$("Thread ").$(thread).$(" allocated entry ").$(e.index + 1).$();
-                e.next = new Entry<>(e.index + 1, clock.getTicks());
-            } else {
-                // if the race is lost we need to wait until e.next is set by the winning thread
-                while (e.next == null && e.nextStatus == NEXT_ALLOCATED) {
-                    Os.pause();
-                }
-            }
-            e = e.next;
-        } while (e != null && e.index < maxSegments);
-
-        // max entries exceeded
-        notifyListener(thread, tableToken, PoolListener.EV_FULL, -1, -1);
-        LOG.info().$("could not get, busy [table=`").utf8(tableToken.getDirName())
-                .$("`, thread=").$(thread)
-                .$(", retries=").$(this.maxSegments)
-                .I$();
-        throw EntryUnavailableException.instance(NO_LOCK_REASON);
+        return get0(tableToken, null);
     }
 
     public int getBusyCount() {
@@ -181,6 +95,10 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         return maxEntries;
     }
 
+    public boolean isCopyOfSupported() {
+        return false;
+    }
+
     public boolean lock(TableToken tableToken) {
         Entry<T> e = getEntry(tableToken);
         final long thread = Thread.currentThread().getId();
@@ -197,7 +115,11 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                             return false;
                         }
                     } else {
-                        LOG.info().$("could not lock, busy [table=`").utf8(tableToken.getDirName()).$("`, at=").$(e.index).$(':').$(i).$(", owner=").$(e.allocations[i]).$(", thread=").$(thread).$(']').$();
+                        LOG.info().$("could not lock, busy [table=`").utf8(tableToken.getDirName())
+                                .$("`, at=").$(e.index).$(':').$(i)
+                                .$(", owner=").$(e.allocations[i])
+                                .$(", thread=").$(thread)
+                                .I$();
                         e.lockOwner = -1L;
                         return false;
                     }
@@ -276,6 +198,102 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         }
     }
 
+    private T get0(TableToken tableToken, @Nullable T copyOfTenant) {
+        Entry<T> e = getEntry(tableToken);
+
+        long lockOwner = e.lockOwner;
+        long thread = Thread.currentThread().getId();
+
+        if (lockOwner != UNLOCKED) {
+            LOG.info().$('\'').utf8(tableToken.getDirName()).$("' is locked [owner=").$(lockOwner).$(']').$();
+            throw EntryLockedException.instance(NO_LOCK_REASON);
+        }
+
+        do {
+            for (int i = 0; i < ENTRY_SIZE; i++) {
+                if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
+                    Unsafe.arrayPutOrdered(e.releaseOrAcquireTimes, i, clock.getTicks());
+                    // got lock, allocate if needed
+                    T tenant = e.getTenant(i);
+                    ResourcePoolSupervisor<T> supervisor = threadLocalPoolSupervisor.get();
+                    if (tenant == null) {
+                        try {
+                            LOG.debug()
+                                    .$("open '").utf8(tableToken.getDirName())
+                                    .$("' [at=").$(e.index).$(':').$(i)
+                                    .I$();
+                            tenant = copyOfTenant != null
+                                    ? newCopyOfTenant(copyOfTenant, e, i, supervisor)
+                                    : newTenant(tableToken, e, i, supervisor);
+                        } catch (CairoException ex) {
+                            Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
+                            throw ex;
+                        }
+
+                        e.assignTenant(i, tenant);
+                        notifyListener(thread, tableToken, PoolListener.EV_CREATE, e.index, i);
+                    } else {
+                        try {
+                            if (copyOfTenant != null) {
+                                tenant.refreshAt(supervisor, copyOfTenant);
+                            } else {
+                                tenant.refresh(supervisor);
+                            }
+                        } catch (Throwable th) {
+                            tenant.goodbye();
+                            tenant.close();
+                            e.assignTenant(i, null);
+                            Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
+                            throw th;
+                        }
+                        notifyListener(thread, tableToken, PoolListener.EV_GET, e.index, i);
+                    }
+
+                    if (isClosed()) {
+                        e.assignTenant(i, null);
+                        tenant.goodbye();
+                        LOG.info().$('\'').utf8(tableToken.getDirName()).$("' born free").$();
+                        tenant.updateTableToken(tableToken);
+                        if (supervisor != null) {
+                            supervisor.onResourceBorrowed(tenant);
+                        }
+                        return tenant;
+                    }
+                    LOG.debug().$('\'').utf8(tableToken.getDirName()).$("' is assigned [at=").$(e.index).$(':').$(i)
+                            .$(", thread=").$(thread)
+                            .I$();
+                    tenant.updateTableToken(tableToken);
+                    if (supervisor != null) {
+                        supervisor.onResourceBorrowed(tenant);
+                    }
+                    return tenant;
+                }
+            }
+
+            LOG.debug().$("Thread ").$(thread).$(" is moving to entry ").$(e.index + 1).$();
+
+            // all allocated, create next entry if possible
+            if (Unsafe.getUnsafe().compareAndSwapInt(e, NEXT_STATUS, NEXT_OPEN, NEXT_ALLOCATED)) {
+                LOG.debug().$("Thread ").$(thread).$(" allocated entry ").$(e.index + 1).$();
+                e.next = new Entry<>(e.index + 1, clock.getTicks());
+            } else {
+                // if the race is lost we need to wait until e.next is set by the winning thread
+                while (e.next == null && e.nextStatus == NEXT_ALLOCATED) {
+                    Os.pause();
+                }
+            }
+            e = e.next;
+        } while (e != null && e.index < maxSegments);
+
+        // max entries exceeded
+        notifyListener(thread, tableToken, PoolListener.EV_FULL, -1, -1);
+        LOG.info().$("could not get, busy [table=`").utf8(tableToken.getDirName())
+                .$("`, thread=").$(thread)
+                .$(", retries=").$(this.maxSegments)
+                .I$();
+        throw EntryUnavailableException.instance(NO_LOCK_REASON);
+    }
+
     private Entry<T> getEntry(TableToken token) {
         checkClosed();
 
@@ -315,14 +333,33 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         final long owner = Unsafe.arrayGetVolatile(e.allocations, index);
 
         if (owner != UNALLOCATED) {
-            LOG.debug().$('\'').utf8(tableToken.getDirName()).$("' is expelled [at=").$(e.index).$(':').$(index).$(", thread=").$(thread).$(']').$();
+            LOG.debug().$('\'').utf8(tableToken.getDirName())
+                    .$("' is expelled [at=").$(e.index).$(':').$(index)
+                    .$(", thread=").$(thread)
+                    .I$();
             notifyListener(thread, tableToken, PoolListener.EV_OUT_OF_POOL_CLOSE, e.index, index);
             e.assignTenant(index, null);
             Unsafe.cas(e.allocations, index, owner, UNALLOCATED);
         }
     }
 
+    protected T getCopyOf(@NotNull T srcTenant) {
+        if (!isCopyOfSupported()) {
+            throw new UnsupportedOperationException("getCopyOf is not supported by this pool");
+        }
+        return get0(srcTenant.getTableToken(), srcTenant);
+    }
+
     protected abstract byte getListenerSrc();
+
+    protected T newCopyOfTenant(
+            T srcTenant,
+            Entry<T> entry,
+            int index,
+            @Nullable ResourcePoolSupervisor<T> supervisor
+    ) {
+        throw new UnsupportedOperationException();
+    }
 
     protected abstract T newTenant(
             TableToken tableToken,
@@ -394,7 +431,10 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         final long owner = Unsafe.arrayGetVolatile(e.allocations, index);
 
         if (owner != UNALLOCATED) {
-            LOG.debug().$('\'').utf8(tableToken.getDirName()).$("' is back [at=").$(e.index).$(':').$(index).$(", thread=").$(thread).$(']').$();
+            LOG.debug().$('\'').utf8(tableToken.getDirName())
+                    .$("' is back [at=").$(e.index).$(':').$(index)
+                    .$(", thread=").$(thread)
+                    .I$();
             notifyListener(thread, tableToken, PoolListener.EV_RETURN, e.index, index);
 
             // release the entry for anyone to pick up

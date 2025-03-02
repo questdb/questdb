@@ -44,6 +44,7 @@ import org.jetbrains.annotations.Nullable;
 public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final ObjList<String> baseKeyColumnNames = new ObjList<>();
     private final String baseTableName;
+    private final int refreshType;
     private final long samplingInterval;
     private final char samplingIntervalUnit;
     private final String timeZone;
@@ -54,6 +55,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
     public CreateMatViewOperationImpl(
             CreateTableOperation createTableOperation,
+            int refreshType,
             String baseTableName,
             @Transient CharSequenceHashSet baseKeyColumnNames,
             long samplingInterval,
@@ -63,6 +65,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             String viewSql
     ) {
         this.createTableOperation = createTableOperation;
+        this.refreshType = refreshType;
         this.baseTableName = baseTableName;
         for (int i = 0, n = baseKeyColumnNames.getList().size(); i < n; i++) {
             CharSequence colName = baseKeyColumnNames.getList().get(i);
@@ -92,6 +95,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     public CharSequence getBaseTableName() {
         return baseTableName;
     }
+
 
     @Override
     public int getColumnCount() {
@@ -153,6 +157,12 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         return createTableOperation.getPartitionBy();
     }
 
+    @Override
+    public int getRefreshType() {
+        return refreshType;
+    }
+
+    @Override
     public CharSequence getSqlText() {
         return createTableOperation.getSqlText();
     }
@@ -172,6 +182,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         return createTableOperation.getTableName();
     }
 
+    @Override
     public int getTableNamePosition() {
         return createTableOperation.getTableNamePosition();
     }
@@ -199,6 +210,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     @Override
     public void init(TableToken matViewToken) {
         matViewDefinition = new MatViewDefinition(
+                refreshType,
                 matViewToken,
                 viewSql,
                 baseTableName,

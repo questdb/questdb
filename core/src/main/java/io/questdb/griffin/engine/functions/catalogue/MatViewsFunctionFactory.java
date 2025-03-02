@@ -51,7 +51,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "mat_views()";
+        return "materialized_views()";
     }
 
     @Override
@@ -102,7 +102,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("mat_views()");
+            sink.val("materialized_views()");
         }
 
         private static class ViewsListCursor implements NoRandomAccessRecordCursor {
@@ -201,8 +201,11 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_VIEW_NAME:
                             return viewDefinition.getMatViewToken().getTableName();
                         case COLUMN_REFRESH_TYPE:
-                            // For now, incremental refresh is the only supported strategy.
-                            return "incremental";
+                            // For now, incremental refresh is the only supported refresh type.
+                            if (viewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_REFRESH_TYPE) {
+                                return "incremental";
+                            }
+                            return "unknown";
                         case COLUMN_BASE_TABLE_NAME:
                             return viewDefinition.getBaseTableName();
                         case COLUMN_VIEW_SQL:

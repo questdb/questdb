@@ -446,8 +446,8 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableToken;
     }
 
+    // The reader will ignore close() calls until attached back.
     public void detachReader(TableReader reader) {
-        // Ignore the object close() call until attached back
         readerPool.detach(reader);
     }
 
@@ -551,6 +551,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableFlagResolver.isSystem(tableToken.getTableName()) ? DefaultDdlListener.INSTANCE : ddlListener;
     }
 
+    public int getDetachedReaderRefCount(TableReader reader) {
+        return readerPool.getDetachedRefCount(reader);
+    }
+
     public Job getEngineMaintenanceJob() {
         return engineMaintenanceJob;
     }
@@ -639,6 +643,15 @@ public class CairoEngine implements Closeable, WriterSource {
             throw ex;
         }
         return reader;
+    }
+
+    /**
+     * Returns a pooled table reader that is pointed at the same transaction number
+     * as the source reader.
+     */
+    public TableReader getReaderAtTxn(TableReader srcReader) {
+        assert srcReader.isOpen() && srcReader.isActive();
+        return readerPool.getCopyOf(srcReader);
     }
 
     public Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> getReaderPoolEntries() {
@@ -896,6 +909,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public TableWriter getWriterUnsafe(TableToken tableToken, @NotNull String lockReason) {
         return writerPool.get(tableToken, lockReason);
+    }
+
+    public void incDetachedReaderRefCount(TableReader reader) {
+        readerPool.incDetachedRefCount(reader);
     }
 
     public boolean isTableDropped(TableToken tableToken) {
@@ -1407,18 +1424,21 @@ public class CairoEngine implements Closeable, WriterSource {
                         }
 
                         final MatViewRefreshState state = matViewGraph.addView(matViewDefinition);
-                        final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, tableToken.getDirName());
-                        path.trimTo(pathLen).concat(tableToken.getDirName()).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
-                        if (isMatViewStateExists) {
-                            reader.of(path.$());
-                            MatViewRefreshState.readFrom(reader, state);
-                        } else {
-                            blockFileWriter.of(path.$());
-                            MatViewRefreshState.append(state, blockFileWriter);
-                        }
+                        // can be null if the graph has no-op implementation
+                        if (state != null) {
+                            final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, tableToken.getDirName());
+                            path.trimTo(pathLen).concat(tableToken.getDirName()).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
+                            if (isMatViewStateExists) {
+                                reader.of(path.$());
+                                MatViewRefreshState.readFrom(reader, state);
+                            } else {
+                                blockFileWriter.of(path.$());
+                                MatViewRefreshState.append(state, blockFileWriter);
+                            }
 
-                        if (!state.isInvalid()) {
-                            matViewGraph.enqueueIncrementalRefresh(tableToken);
+                            if (!state.isInvalid()) {
+                                matViewGraph.enqueueIncrementalRefresh(tableToken);
+                            }
                         }
                     } catch (CairoException e) {
                         LOG.error().$("could not load materialized view definition [view=").utf8(tableToken.getTableName())
@@ -1657,14 +1677,14 @@ public class CairoEngine implements Closeable, WriterSource {
         return token;
     }
 
-    protected Iterable<FunctionFactory> getFunctionFactories() {
-        return new FunctionFactoryCacheBuilder().scan(LOG).build();
-    }
-
     protected @NotNull <T extends AbstractTelemetryTask> Telemetry<T> createTelemetry(
             Telemetry.TelemetryTypeBuilder<T> builder, CairoConfiguration configuration
     ) {
         return new Telemetry<>(builder, configuration);
+    }
+
+    protected Iterable<FunctionFactory> getFunctionFactories() {
+        return new FunctionFactoryCacheBuilder().scan(LOG).build();
     }
 
     protected TableFlagResolver newTableFlagResolver(CairoConfiguration configuration) {

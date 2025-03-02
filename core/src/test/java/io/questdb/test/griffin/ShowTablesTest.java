@@ -49,6 +49,49 @@ public class ShowTablesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropAndRecreateTable() throws Exception {
+        // Tests that cached query plans of `tables() correctly handle table recreation
+        //
+        // Purpose: Verify that when a table is dropped and recreated, pre-existing
+        // query plans using tables() function correctly show the new table ID.
+        //
+        // Key assumption: Table IDs must change when a table is dropped and recreated.
+        //
+        // Background: This is a regression test for an issue where the tables() function
+        // returned stale table IDs from cached plans after DROP TABLE + CREATE TABLE operations.
+
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp) timestamp(ts) partition by DAY");
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery compile = compiler.compile("tables()", sqlExecutionContext);
+
+                // we use a single instance of RecordCursorFactory before and after table drop
+                // this mimic behavior of a query cache.
+                try (RecordCursorFactory recordCursorFactory = compile.getRecordCursorFactory()) {
+                    try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
+                        assertCursor("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\n" +
+                                        "1\tx\tts\tDAY\t1000\t300000000\tfalse\tx~\tfalse\t0\tHOUR\tfalse\n",
+                                false, true, true, cursor, recordCursorFactory.getMetadata(), false);
+                    }
+
+                    // recreate the same table again
+                    execute("drop table x");
+                    execute("create table x (ts timestamp) timestamp(ts) partition by DAY");
+                    drainWalQueue();
+
+                    try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
+                        // note the ID is 2 now!
+                        assertCursor("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\n" +
+                                        "2\tx\tts\tDAY\t1000\t300000000\tfalse\tx~\tfalse\t0\tHOUR\tfalse\n",
+                                false, true, true, cursor, recordCursorFactory.getMetadata(), false);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testShowColumnsWithFunction() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
@@ -208,54 +251,11 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("create table balances (ts timestamp, cust_id int, ccy symbol, balance double) timestamp(ts) partition by day wal");
             execute("create materialized view balances_1h as (select ts, max(balance) from balances sample by 1h) partition by week");
             assertSql(
-                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tisMatView\n" +
+                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\n" +
                             "1\tbalances\tts\tDAY\t1000\t300000000\ttrue\tbalances~1\tfalse\t0\tHOUR\tfalse\n" +
                             "2\tbalances_1h\tts\tWEEK\t0\t-1\ttrue\tbalances_1h~2\ttrue\t0\tHOUR\ttrue\n",
                     "tables() order by table_name"
             );
-        });
-    }
-
-    @Test
-    public void testDropAndRecreateTable() throws Exception {
-        // Tests that cached query plans of `tables() correctly handle table recreation
-        //
-        // Purpose: Verify that when a table is dropped and recreated, pre-existing
-        // query plans using tables() function correctly show the new table ID.
-        //
-        // Key assumption: Table IDs must change when a table is dropped and recreated.
-        //
-        // Background: This is a regression test for an issue where the tables() function
-        // returned stale table IDs from cached plans after DROP TABLE + CREATE TABLE operations.
-
-        assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp) timestamp(ts) partition by DAY");
-
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                CompiledQuery compile = compiler.compile("tables()", sqlExecutionContext);
-
-                // we use a single instance of RecordCursorFactory before and after table drop
-                // this mimic behavior of a query cache.
-                try (RecordCursorFactory recordCursorFactory = compile.getRecordCursorFactory()) {
-                    try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
-                        assertCursor("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tisMatView\n" +
-                                        "1\tx\tts\tDAY\t1000\t300000000\tfalse\tx~\tfalse\t0\tHOUR\tfalse\n",
-                                false, true, true, cursor, recordCursorFactory.getMetadata(), false);
-                    }
-
-                    // recreate the same table again
-                    execute("drop table x");
-                    execute("create table x (ts timestamp) timestamp(ts) partition by DAY");
-                    drainWalQueue();
-
-                    try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
-                        // note the ID is 2 now!
-                        assertCursor("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tisMatView\n" +
-                                        "2\tx\tts\tDAY\t1000\t300000000\tfalse\tx~\tfalse\t0\tHOUR\tfalse\n",
-                                false, true, true, cursor, recordCursorFactory.getMetadata(), false);
-                    }
-                }
-            }
         });
     }
 }

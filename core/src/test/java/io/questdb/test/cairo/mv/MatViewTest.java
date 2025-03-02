@@ -159,7 +159,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertSql(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
                             "price_1h\tincremental\tbase_price\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\n",
-                    "mat_views"
+                    "materialized_views"
             );
 
             execute("rename table base_price to base_price2");
@@ -170,7 +170,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertSql(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
                             "price_1h\tincremental\tbase_price\t2024-10-24T18:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\ttable does not exist [table=base_price]\tinvalid\t1\t-1\n",
-                    "mat_views"
+                    "materialized_views"
             );
 
             // Create another base table instead of the one that was renamed.
@@ -187,7 +187,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertSql(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
                             "price_1h\tincremental\tbase_price\t2024-10-24T19:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tbase table is not a WAL table\tinvalid\t1\t-1\n",
-                    "mat_views"
+                    "materialized_views"
             );
         });
     }
@@ -231,7 +231,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertSql(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
                             "price_1h\tincremental\tbase_price\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~3\t\tvalid\t1\t1\n",
-                    "mat_views"
+                    "materialized_views"
             );
 
             // Swap the tables with each other.
@@ -244,7 +244,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertSql(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
                             "price_1h\tincremental\tbase_price\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~3\ttable rename operation\tinvalid\t1\t1\n",
-                    "mat_views"
+                    "materialized_views"
             );
         });
     }
@@ -267,7 +267,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertSql(
                     "view_name\tview_status\n" +
                             "price_1h\tvalid\n",
-                    "select view_name, view_status from mat_views"
+                    "select view_name, view_status from materialized_views"
             );
         });
     }
@@ -458,7 +458,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertSql(
                     "count\n" +
                             "0\n",
-                    "select count() from mat_views();"
+                    "select count() from materialized_views();"
             );
             assertSql(
                     "count\n" +
@@ -509,7 +509,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertSql(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
                             "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\n",
-                    "mat_views"
+                    "materialized_views"
             );
 
             final String expected = "sym\tprice\tts\n" +
@@ -524,7 +524,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertSql(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
                             "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tdrop column operation\tinvalid\t1\t2\n",
-                    "mat_views"
+                    "materialized_views"
             );
 
             execute("refresh materialized view price_1h full");
@@ -533,7 +533,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertSql(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
                             "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t2\t2\n",
-                    "mat_views"
+                    "materialized_views"
             );
             assertSql(expected, "price_1h order by sym");
         });
@@ -571,7 +571,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertSql(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
                             "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\n",
-                    "mat_views"
+                    "materialized_views"
             );
 
             assertSql(
@@ -951,8 +951,55 @@ public class MatViewTest extends AbstractCairoTest {
             assertSql(
                     "view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
                             "price_1h\tbase_price\tinvalid\t[-1] unexpected filter error\n",
-                    "select view_name, base_table_name, view_status, invalidation_reason from mat_views"
+                    "select view_name, base_table_name, view_status, invalidation_reason from materialized_views"
             );
+        });
+    }
+
+    @Test
+    public void testQueryWithCte() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table exchanges (" +
+                            " uid symbol, amount double, ts timestamp " +
+                            ") timestamp(ts) partition by day wal;"
+            );
+            execute("create table aux_start_date (ts timestamp);");
+
+            execute(
+                    "insert into exchanges values('foo', 1.320, '2024-09-10T12:01')" +
+                            ",('foo', 1.323, '2024-09-10T12:02')" +
+                            ",('bar', 103.21, '2024-09-10T12:02')" +
+                            ",('foo', 1.321, '2024-09-10T13:02')"
+            );
+            execute("insert into aux_start_date values('2024-09-10')");
+            drainQueues();
+
+            final String expected = "ts\tuid\tamount\n" +
+                    "2000-01-01T00:00:00.000000Z\tbar\t103.21\n" +
+                    "2000-01-01T00:00:00.000000Z\tfoo\t1.321\n";
+            final String viewSql = "with starting_point as ( " +
+                    "  select ts from aux_start_date " +
+                    "  union " +
+                    "  select interval_start(yesterday()) " +
+                    "), " +
+                    "latest_query as ( " +
+                    "  select * " +
+                    "  from exchanges " +
+                    "  where ts >= (select min(ts) from starting_point) " +
+                    "  latest on ts partition by uid " +
+                    ") " +
+                    "select ts, uid, first(amount) as amount " +
+                    "from latest_query " +
+                    "sample by 100y";
+            assertSql(expected, viewSql);
+
+            execute(
+                    "create materialized view exchanges_100y as (" + viewSql + ") partition by year"
+            );
+            drainQueues();
+
+            assertSql(expected, "exchanges_100y");
         });
     }
 
@@ -995,7 +1042,7 @@ public class MatViewTest extends AbstractCairoTest {
                             "v2_v1\tincremental\tv1_base\tvalid\t\n" +
                             "v3_v1\tincremental\tv1_base\tvalid\t\n" +
                             "v4_v3\tincremental\tv3_v1\tvalid\t\n",
-                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from mat_views order by view_name"
+                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name"
             );
 
             execute("truncate table " + tableName);
@@ -1011,7 +1058,7 @@ public class MatViewTest extends AbstractCairoTest {
                             "v2_v1\tincremental\tv1_base\tinvalid\ttruncate operation\n" +
                             "v3_v1\tincremental\tv1_base\tinvalid\ttruncate operation\n" +
                             "v4_v3\tincremental\tv3_v1\tinvalid\ttruncate operation\n",
-                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from mat_views order by view_name"
+                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name"
             );
 
             execute("refresh materialized view " + view1Name + " full");
@@ -1023,7 +1070,7 @@ public class MatViewTest extends AbstractCairoTest {
                             "v2_v1\tincremental\tv1_base\tinvalid\ttruncate operation\n" +
                             "v3_v1\tincremental\tv1_base\tinvalid\ttruncate operation\n" +
                             "v4_v3\tincremental\tv3_v1\tinvalid\ttruncate operation\n",
-                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from mat_views order by view_name"
+                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name"
             );
 
             // Refresh the rest
@@ -1040,7 +1087,7 @@ public class MatViewTest extends AbstractCairoTest {
                             "v2_v1\tincremental\tv1_base\tvalid\t\n" +
                             "v3_v1\tincremental\tv1_base\tvalid\t\n" +
                             "v4_v3\tincremental\tv3_v1\tvalid\t\n",
-                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from mat_views order by view_name"
+                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name"
             );
         });
     }
@@ -1070,7 +1117,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertSql(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
                             "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\n",
-                    "mat_views"
+                    "materialized_views"
             );
 
             assertSql(
@@ -1425,12 +1472,11 @@ public class MatViewTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
 
-            createMatView(
-                    "select a.sym sym_a, b.sym sym_b, a.sym2 sym2_a, b.sym2 sym2_b, last(b.price) as price, a.ts " +
-                            "from (base_price where sym = 'foobar') a " +
-                            "asof join (base_price where sym = 'barbaz') b on (sym2) " +
-                            "sample by 1h"
-            );
+            final String viewSql = "select a.sym sym_a, b.sym sym_b, a.sym2 sym2_a, b.sym2 sym2_b, last(b.price) as price, a.ts " +
+                    "from (base_price where sym = 'foobar') a " +
+                    "asof join (base_price where sym = 'barbaz') b on (sym2) " +
+                    "sample by 1h";
+            createMatView(viewSql);
 
             execute(
                     "insert into base_price(sym, sym2, price, ts) values('foobar', 's1', 1.320, '2024-09-10T12:01')" +
@@ -1445,14 +1491,15 @@ public class MatViewTest extends AbstractCairoTest {
             assertSql(
                     "view_name\tbase_table_name\tview_status\n" +
                             "price_1h\tbase_price\tvalid\n",
-                    "select view_name, base_table_name, view_status from mat_views"
+                    "select view_name, base_table_name, view_status from materialized_views"
             );
 
-            assertSql(
-                    "sym_a\tsym_b\tsym2_a\tsym2_b\tprice\tts\n" +
-                            "foobar\tbarbaz\ts1\ts1\t103.21\t2024-09-10T12:00:00.000000Z\n",
-                    "price_1h"
-            );
+            final String expected = "sym_a\tsym_b\tsym2_a\tsym2_b\tprice\tts\n" +
+                    "foobar\t\ts1\t\tnull\t2024-09-10T12:00:00.000000Z\n" +
+                    "foobar\tbarbaz\ts1\ts1\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                    "foobar\tbarbaz\ts1\ts1\t103.21\t2024-09-10T13:00:00.000000Z\n";
+            assertSql(expected, viewSql + " order by ts, sym_a, sym_b");
+            assertSql(expected, "price_1h order by ts, sym_a, sym_b");
         });
     }
 
@@ -1481,16 +1528,18 @@ public class MatViewTest extends AbstractCairoTest {
             );
             drainWalQueue();
 
-            new Thread(() -> {
-                started.countDown();
-                try {
-                    try (MatViewRefreshJob job = new MatViewRefreshJob(0, engine)) {
-                        refreshed.set(job.run(0));
-                    }
-                } finally {
-                    stopped.countDown();
-                }
-            }, "mat_view_refresh_thread").start();
+            new Thread(
+                    () -> {
+                        started.countDown();
+                        try {
+                            try (MatViewRefreshJob job = new MatViewRefreshJob(0, engine)) {
+                                refreshed.set(job.run(0));
+                            }
+                        } finally {
+                            stopped.countDown();
+                        }
+                    }, "mat_view_refresh_thread"
+            ).start();
 
             started.await();
 
@@ -1518,7 +1567,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertSql(
                     "view_name\tview_status\n" +
                             "price_1h\tinvalid\n",
-                    "select view_name, view_status from mat_views"
+                    "select view_name, view_status from materialized_views"
             );
         });
     }
@@ -1755,7 +1804,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertSql(
                     "view_name\tbase_table_name\tview_status\n" +
                             "price_1h\tbase_price\tvalid\n",
-                    "select view_name, base_table_name, view_status from mat_views"
+                    "select view_name, base_table_name, view_status from materialized_views"
             );
 
             execute(operationSql);
@@ -1764,7 +1813,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertSql(
                     "view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
                             "price_1h\tbase_price\tinvalid\t" + invalidationReason + "\n",
-                    "select view_name, base_table_name, view_status, invalidation_reason from mat_views"
+                    "select view_name, base_table_name, view_status, invalidation_reason from materialized_views"
             );
         });
     }
@@ -1798,7 +1847,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertSql(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
                             "price_1h\tincremental\tbase_price\t2024-10-24T19:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\ttable rename operation\tinvalid\t1\t3\n",
-                    "mat_views"
+                    "materialized_views"
             );
         });
     }
@@ -1827,7 +1876,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertSql(
                     "view_name\tbase_table_name\tview_status\n" +
                             "price_1h\tbase_price\tvalid\n",
-                    "select view_name, base_table_name, view_status from mat_views"
+                    "select view_name, base_table_name, view_status from materialized_views"
             );
 
             execute(enableDedupSql);
@@ -1836,7 +1885,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertSql(
                     "view_name\tbase_table_name\tview_status\n" +
                             "price_1h\tbase_price\t" + (expectInvalid ? "invalid" : "valid") + "\n",
-                    "select view_name, base_table_name, view_status from mat_views"
+                    "select view_name, base_table_name, view_status from materialized_views"
             );
         });
     }

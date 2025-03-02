@@ -284,7 +284,7 @@ public class TablesFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("dedup", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("ttlValue", ColumnType.INT));
         metadata.add(new TableColumnMetadata("ttlUnit", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("isMatView", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("matView", ColumnType.BOOLEAN));
         METADATA = metadata;
     }
 }

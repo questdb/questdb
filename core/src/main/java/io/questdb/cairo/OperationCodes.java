@@ -6,4 +6,5 @@ public class OperationCodes {
     public static final int DROP_ALL = 3;
     public static final int DROP_MAT_VIEW = 5;
     public static final int DROP_TABLE = 2;
+    public static final int MAX = CREATE_MAT_VIEW;
 }
