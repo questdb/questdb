@@ -36,6 +36,13 @@ public class MutableArray extends ArrayView {
                     .put(", dimLen=").put(length)
                     .put(']');
         }
+        if (length > DIM_MAX_LEN) {
+            throw CairoException.nonCritical()
+                    .put("dimension length out of range [dim=").put(dimension)
+                    .put(", dimLen=").put(length)
+                    .put(", maxLen=").put(DIM_MAX_LEN);
+
+        }
         shape.set(dimension, length);
     }
 
