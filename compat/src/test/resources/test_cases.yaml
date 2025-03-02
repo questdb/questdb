@@ -228,8 +228,6 @@ tests:
                   - [ 1 ]
       - action: execute
         query: "ALTER TABLE ${table_name} ADD COLUMN ts2 timestamp;"
-        expect:
-          result:
       - action: execute
         query: "UPDATE ${table_name} SET ts2 = timestamp;"
         expect:
