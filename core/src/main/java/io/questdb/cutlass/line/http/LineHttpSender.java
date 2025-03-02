@@ -40,7 +40,7 @@ import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.json.JsonParser;
 import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.cutlass.line.array.DoubleArray;
+import io.questdb.cutlass.line.array.NDArrayFlattener;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
@@ -163,11 +163,8 @@ public final class LineHttpSender implements Sender {
         request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
                 .put((byte) ColumnType.DOUBLE) // element type
                 .put((byte) 1); // dims.
-        request.checkCapacity(Integer.BYTES);
-        long addr = request.getPtr();
-        DoubleArray.processArrayShape(addr, values);
-        addr += Integer.BYTES;
-        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 1,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
         return this;
     }
 
@@ -180,11 +177,8 @@ public final class LineHttpSender implements Sender {
         request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
                 .put((byte) ColumnType.DOUBLE) // element type
                 .put((byte) 2); // dims.
-        request.checkCapacity(Integer.BYTES * 2);
-        long addr = request.getPtr();
-        DoubleArray.processArrayShape(addr, values);
-        addr += Integer.BYTES * 2;
-        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 2,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
         return this;
     }
 
@@ -197,11 +191,8 @@ public final class LineHttpSender implements Sender {
         request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
                 .put((byte) ColumnType.DOUBLE) // element type
                 .put((byte) 3); // dims.
-        request.checkCapacity(Integer.BYTES * 3);
-        long addr = request.getPtr();
-        DoubleArray.processArrayShape(addr, values);
-        addr += Integer.BYTES * 3;
-        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 3,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
         return this;
     }
 
@@ -214,11 +205,8 @@ public final class LineHttpSender implements Sender {
         request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
                 .put((byte) ColumnType.DOUBLE) // element type
                 .put((byte) 4); // dims.
-        request.checkCapacity(Integer.BYTES * 4);
-        long addr = request.getPtr();
-        DoubleArray.processArrayShape(addr, values);
-        addr += Integer.BYTES * 4;
-        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 4,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
         return this;
     }
 
@@ -231,11 +219,8 @@ public final class LineHttpSender implements Sender {
         request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
                 .put((byte) ColumnType.DOUBLE) // element type
                 .put((byte) 5); // dims.
-        request.checkCapacity(Integer.BYTES * 5);
-        long addr = request.getPtr();
-        DoubleArray.processArrayShape(addr, values);
-        addr += Integer.BYTES * 5;
-        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 5,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
         return this;
     }
 
@@ -248,11 +233,8 @@ public final class LineHttpSender implements Sender {
         request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
                 .put((byte) ColumnType.DOUBLE) // element type
                 .put((byte) 6); // dims.
-        request.checkCapacity(Integer.BYTES * 6);
-        long addr = request.getPtr();
-        DoubleArray.processArrayShape(addr, values);
-        addr += Integer.BYTES * 6;
-        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 6,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
         return this;
     }
 
@@ -265,11 +247,8 @@ public final class LineHttpSender implements Sender {
         request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
                 .put((byte) ColumnType.DOUBLE) // element type
                 .put((byte) 7); // dims.
-        request.checkCapacity(Integer.BYTES * 7);
-        long addr = request.getPtr();
-        DoubleArray.processArrayShape(addr, values);
-        addr += Integer.BYTES * 7;
-        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 7,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
         return this;
     }
 
@@ -282,11 +261,8 @@ public final class LineHttpSender implements Sender {
         request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
                 .put((byte) ColumnType.DOUBLE) // element type
                 .put((byte) 8); // dims.
-        request.checkCapacity(Integer.BYTES * 8);
-        long addr = request.getPtr();
-        DoubleArray.processArrayShape(addr, values);
-        addr += Integer.BYTES * 8;
-        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 8,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
         return this;
     }
 
@@ -299,11 +275,8 @@ public final class LineHttpSender implements Sender {
         request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
                 .put((byte) ColumnType.DOUBLE) // element type
                 .put((byte) 9); // dims.
-        request.checkCapacity(Integer.BYTES * 9);
-        long addr = request.getPtr();
-        DoubleArray.processArrayShape(addr, values);
-        addr += Integer.BYTES * 9;
-        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 9,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
         return this;
     }
 
@@ -316,11 +289,8 @@ public final class LineHttpSender implements Sender {
         request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
                 .put((byte) ColumnType.DOUBLE) // element type
                 .put((byte) 10); // dims.
-        request.checkCapacity(Integer.BYTES * 10);
-        long addr = request.getPtr();
-        DoubleArray.processArrayShape(addr, values);
-        addr += Integer.BYTES * 10;
-        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 10,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
         return this;
     }
 
@@ -333,11 +303,8 @@ public final class LineHttpSender implements Sender {
         request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
                 .put((byte) ColumnType.DOUBLE) // element type
                 .put((byte) 11); // dims.
-        request.checkCapacity(Integer.BYTES * 11);
-        long addr = request.getPtr();
-        DoubleArray.processArrayShape(addr, values);
-        addr += Integer.BYTES * 11;
-        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 11,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
         return this;
     }
 
@@ -350,11 +317,8 @@ public final class LineHttpSender implements Sender {
         request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
                 .put((byte) ColumnType.DOUBLE) // element type
                 .put((byte) 12); // dims.
-        request.checkCapacity(Integer.BYTES * 12);
-        long addr = request.getPtr();
-        DoubleArray.processArrayShape(addr, values);
-        addr += Integer.BYTES * 12;
-        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 12,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
         return this;
     }
 
@@ -367,11 +331,8 @@ public final class LineHttpSender implements Sender {
         request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
                 .put((byte) ColumnType.DOUBLE) // element type
                 .put((byte) 13); // dims.
-        request.checkCapacity(Integer.BYTES * 13);
-        long addr = request.getPtr();
-        DoubleArray.processArrayShape(addr, values);
-        addr += Integer.BYTES * 13;
-        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 13,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
         return this;
     }
 
@@ -384,11 +345,8 @@ public final class LineHttpSender implements Sender {
         request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
                 .put((byte) ColumnType.DOUBLE) // element type
                 .put((byte) 14); // dims.
-        request.checkCapacity(Integer.BYTES * 14);
-        long addr = request.getPtr();
-        DoubleArray.processArrayShape(addr, values);
-        addr += Integer.BYTES * 14;
-        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 14,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
         return this;
     }
 
@@ -401,11 +359,8 @@ public final class LineHttpSender implements Sender {
         request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
                 .put((byte) ColumnType.DOUBLE) // element type
                 .put((byte) 15); // dims.
-        request.checkCapacity(Integer.BYTES * 15);
-        long addr = request.getPtr();
-        DoubleArray.processArrayShape(addr, values);
-        addr += Integer.BYTES * 15;
-        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 15,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
         return this;
     }
 
@@ -418,11 +373,8 @@ public final class LineHttpSender implements Sender {
         request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
                 .put((byte) ColumnType.DOUBLE) // element type
                 .put((byte) 16); // dims.
-        request.checkCapacity(Integer.BYTES * 16);
-        long addr = request.getPtr();
-        DoubleArray.processArrayShape(addr, values);
-        addr += Integer.BYTES * 16;
-        request.setPtr(DoubleArray.processArrayData(addr, request::checkCapacity, values));
+        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 16,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
         return this;
     }
 

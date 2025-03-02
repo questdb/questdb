@@ -28,7 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.auth.AuthUtils;
-import io.questdb.cutlass.line.array.DoubleArray;
+import io.questdb.cutlass.line.array.NDArrayFlattener;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -179,9 +179,8 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
                 .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
                 .put((byte) ColumnType.DOUBLE)
                 .put((byte) 1);
-        DoubleArray.processArrayShape(ptr, values);
-        ptr += Integer.BYTES;
-        ptr = DoubleArray.processArrayData(ptr, null, values);
+        ptr = NDArrayFlattener.processArray(ptr, null, values, 1,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE);
         return this;
     }
 
@@ -191,9 +190,8 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
                 .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
                 .put((byte) ColumnType.DOUBLE)
                 .put((byte) 2);
-        DoubleArray.processArrayShape(ptr, values);
-        ptr += Integer.BYTES * 2;
-        ptr = DoubleArray.processArrayData(ptr, null, values);
+        ptr = NDArrayFlattener.processArray(ptr, null, values, 2,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE);
         return this;
     }
 
@@ -203,9 +201,8 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
                 .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
                 .put((byte) ColumnType.DOUBLE)
                 .put((byte) 3);
-        DoubleArray.processArrayShape(ptr, values);
-        ptr += Integer.BYTES * 3;
-        ptr = DoubleArray.processArrayData(ptr, null, values);
+        ptr = NDArrayFlattener.processArray(ptr, null, values, 3,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE);
         return this;
     }
 
@@ -215,9 +212,8 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
                 .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
                 .put((byte) ColumnType.DOUBLE)
                 .put((byte) 4);
-        DoubleArray.processArrayShape(ptr, values);
-        ptr += Integer.BYTES * 4;
-        ptr = DoubleArray.processArrayData(ptr, null, values);
+        ptr = NDArrayFlattener.processArray(ptr, null, values, 4,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE);
         return this;
     }
 
@@ -227,9 +223,8 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
                 .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
                 .put((byte) ColumnType.DOUBLE)
                 .put((byte) 5);
-        DoubleArray.processArrayShape(ptr, values);
-        ptr += Integer.BYTES * 5;
-        ptr = DoubleArray.processArrayData(ptr, null, values);
+        ptr = NDArrayFlattener.processArray(ptr, null, values, 5,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE);
         return this;
     }
 
@@ -239,9 +234,8 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
                 .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
                 .put((byte) ColumnType.DOUBLE)
                 .put((byte) 6);
-        DoubleArray.processArrayShape(ptr, values);
-        ptr += Integer.BYTES * 6;
-        ptr = DoubleArray.processArrayData(ptr, null, values);
+        ptr = NDArrayFlattener.processArray(ptr, null, values, 6,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE);
         return this;
     }
 
@@ -251,9 +245,8 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
                 .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
                 .put((byte) ColumnType.DOUBLE)
                 .put((byte) 7);
-        DoubleArray.processArrayShape(ptr, values);
-        ptr += Integer.BYTES * 7;
-        ptr = DoubleArray.processArrayData(ptr, null, values);
+        ptr = NDArrayFlattener.processArray(ptr, null, values, 7,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE);
         return this;
     }
 
@@ -263,9 +256,8 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
                 .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
                 .put((byte) ColumnType.DOUBLE)
                 .put((byte) 8);
-        DoubleArray.processArrayShape(ptr, values);
-        ptr += Integer.BYTES * 8;
-        ptr = DoubleArray.processArrayData(ptr, null, values);
+        ptr = NDArrayFlattener.processArray(ptr, null, values, 8,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE);
         return this;
     }
 
@@ -275,9 +267,8 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
                 .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
                 .put((byte) ColumnType.DOUBLE)
                 .put((byte) 9);
-        DoubleArray.processArrayShape(ptr, values);
-        ptr += Integer.BYTES * 9;
-        ptr = DoubleArray.processArrayData(ptr, null, values);
+        ptr = NDArrayFlattener.processArray(ptr, null, values, 9,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE);
         return this;
     }
 
@@ -287,9 +278,8 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
                 .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
                 .put((byte) ColumnType.DOUBLE)
                 .put((byte) 10);
-        DoubleArray.processArrayShape(ptr, values);
-        ptr += Integer.BYTES * 10;
-        ptr = DoubleArray.processArrayData(ptr, null, values);
+        ptr = NDArrayFlattener.processArray(ptr, null, values, 10,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE);
         return this;
     }
 
@@ -299,9 +289,8 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
                 .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
                 .put((byte) ColumnType.DOUBLE)
                 .put((byte) 11);
-        DoubleArray.processArrayShape(ptr, values);
-        ptr += Integer.BYTES * 11;
-        ptr = DoubleArray.processArrayData(ptr, null, values);
+        ptr = NDArrayFlattener.processArray(ptr, null, values, 11,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE);
         return this;
     }
 
@@ -311,9 +300,8 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
                 .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
                 .put((byte) ColumnType.DOUBLE)
                 .put((byte) 12);
-        DoubleArray.processArrayShape(ptr, values);
-        ptr += Integer.BYTES * 12;
-        ptr = DoubleArray.processArrayData(ptr, null, values);
+        ptr = NDArrayFlattener.processArray(ptr, null, values, 12,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE);
         return this;
     }
 
@@ -323,9 +311,8 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
                 .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
                 .put((byte) ColumnType.DOUBLE)
                 .put((byte) 13);
-        DoubleArray.processArrayShape(ptr, values);
-        ptr += Integer.BYTES * 13;
-        ptr = DoubleArray.processArrayData(ptr, null, values);
+        ptr = NDArrayFlattener.processArray(ptr, null, values, 13,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE);
         return this;
     }
 
@@ -335,9 +322,8 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
                 .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
                 .put((byte) ColumnType.DOUBLE)
                 .put((byte) 14);
-        DoubleArray.processArrayShape(ptr, values);
-        ptr += Integer.BYTES * 14;
-        ptr = DoubleArray.processArrayData(ptr, null, values);
+        ptr = NDArrayFlattener.processArray(ptr, null, values, 14,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE);
         return this;
     }
 
@@ -347,9 +333,8 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
                 .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
                 .put((byte) ColumnType.DOUBLE)
                 .put((byte) 15);
-        DoubleArray.processArrayShape(ptr, values);
-        ptr += Integer.BYTES * 15;
-        ptr = DoubleArray.processArrayData(ptr, null, values);
+        ptr = NDArrayFlattener.processArray(ptr, null, values, 15,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE);
         return this;
     }
 
@@ -359,9 +344,8 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
                 .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
                 .put((byte) ColumnType.DOUBLE)
                 .put((byte) 16);
-        DoubleArray.processArrayShape(ptr, values);
-        ptr += Integer.BYTES * 16;
-        ptr = DoubleArray.processArrayData(ptr, null, values);
+        ptr = NDArrayFlattener.processArray(ptr, null, values, 16,
+                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE);
         return this;
     }
 
