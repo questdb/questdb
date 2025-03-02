@@ -115,8 +115,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         // Set the sharding threshold to a small value to test sharding.
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 2);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(enableParallelGroupBy));
         super.setUp();
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, enableParallelGroupBy);
     }
 
     @Test
@@ -2946,23 +2946,31 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         }
 
                         // Run with single-threaded GROUP BY.
-                        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, false);
-                        TestUtils.printSql(
-                                engine,
-                                sqlExecutionContext,
-                                query,
-                                sink
-                        );
+                        sqlExecutionContext.setParallelGroupByEnabled(false);
+                        try {
+                            TestUtils.printSql(
+                                    engine,
+                                    sqlExecutionContext,
+                                    query,
+                                    sink
+                            );
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
 
                         // Run with parallel GROUP BY.
-                        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, true);
+                        sqlExecutionContext.setParallelGroupByEnabled(true);
                         final StringSink sinkB = new StringSink();
-                        TestUtils.printSql(
-                                engine,
-                                sqlExecutionContext,
-                                query,
-                                sinkB
-                        );
+                        try {
+                            TestUtils.printSql(
+                                    engine,
+                                    sqlExecutionContext,
+                                    query,
+                                    sinkB
+                            );
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
 
                         // Compare the results.
                         TestUtils.assertEquals(sink, sinkB);

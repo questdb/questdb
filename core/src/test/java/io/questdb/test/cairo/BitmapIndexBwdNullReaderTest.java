@@ -31,7 +31,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class BitmapIndexBwdNullReaderTest {
-
     private static final BitmapIndexBwdNullReader reader = new BitmapIndexBwdNullReader();
 
     @Test
@@ -43,14 +42,18 @@ public class BitmapIndexBwdNullReaderTest {
     public void testCursor() {
         final Rnd rnd = new Rnd();
         for (int i = 0; i < 10; i++) {
-            int n = rnd.nextPositiveInt() % 1024;
+            final int n = rnd.nextPositiveInt() % 1024;
+
             int m = n;
             RowCursor cursor = reader.getCursor(true, 0, 0, n);
             while (cursor.hasNext()) {
                 Assert.assertEquals(m--, cursor.next());
             }
-
             Assert.assertEquals(-1, m);
+
+            // non-null key
+            cursor = reader.getCursor(true, 42, 0, n);
+            Assert.assertFalse(cursor.hasNext());
         }
     }
 

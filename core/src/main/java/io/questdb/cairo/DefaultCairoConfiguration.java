@@ -375,6 +375,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getIdGenerateBatchStep() {
+        return 512;
+    }
+
+    @Override
     public long getIdleCheckInterval() {
         return 100;
     }
@@ -460,6 +465,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public TimeZoneRules getLogTimestampTimezoneRules() {
         return null;
+    }
+
+    @Override
+    public long getMatViewInsertAsSelectBatchSize() {
+        return 1_000_000;
+    }
+
+    @Override
+    public int getMatViewMaxRecompileAttempts() {
+        return 10;
     }
 
     @Override
@@ -1185,6 +1200,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewEnabled() {
+        return false;
+    }
+
+    @Override
+    public boolean isMatViewParallelSqlEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isMultiKeyDedupEnabled() {
         return false;
     }
@@ -1256,6 +1281,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isWalApplyEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isWalApplyParallelSqlEnabled() {
         return true;
     }
 

@@ -34,10 +34,6 @@ import io.questdb.std.Numbers;
 class IntBindVariable extends IntFunction implements ScalarFunction, Mutable {
     int value;
 
-    IntBindVariable() {
-        super();
-    }
-
     @Override
     public void clear() {
         this.value = Numbers.INT_NULL;
@@ -49,12 +45,17 @@ class IntBindVariable extends IntFunction implements ScalarFunction, Mutable {
     }
 
     @Override
-    public boolean isThreadSafe() {
+    public boolean isNonDeterministic() {
         return true;
     }
 
     @Override
     public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    @Override
+    public boolean isThreadSafe() {
         return true;
     }
 

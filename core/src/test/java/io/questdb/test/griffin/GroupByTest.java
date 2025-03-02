@@ -70,12 +70,23 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test2FailOnAggregateFunctionAliasInGroupByClause() throws Exception {
+    public void test2FailOnAggregateFunctionAliasInGroupByClause1() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x long, y long);");
             assertError(
                     "select x, avg(x) as agx, avg(y) from t group by agx ",
                     "[48] aggregate functions are not allowed in GROUP BY"
+            );
+        });
+    }
+
+    @Test
+    public void test2FailOnAggregateFunctionAliasInGroupByClause2() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, y long);");
+            assertError(
+                    "select x, 2*avg(y) agy from t group by agy;",
+                    "[39] aggregate functions are not allowed in GROUP BY"
             );
         });
     }
@@ -1877,7 +1888,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "    GroupBy vectorized: false\n" +
                             "      keys: [i]\n" +
                             "      values: [last(ts),last(avg),last(sum),last(first_value)]\n" +
-                            "        Limit lo: -100\n" +
+                            "        Limit lo: -100 skip-over-rows: 999900 limit: 100\n" +
                             "            Window\n" +
                             "              functions: [avg(j) over (partition by [i] range between 80000 preceding and current row),sum(j) over (partition by [i] range between 80000 preceding and current row),first_value(j) over (partition by [i] range between 80000 preceding and current row)]\n" +
                             "                PageFrame\n" +
@@ -2424,7 +2435,8 @@ public class GroupByTest extends AbstractCairoTest {
                 true,
                 true
         );
-        assertSql(expected,
+        assertSql(
+                expected,
                 "WITH x_sample AS (\n" +
                         "  SELECT id, uuid, url, sum(metric) m_sum\n" +
                         "  FROM x\n" +
@@ -2433,7 +2445,8 @@ public class GroupByTest extends AbstractCairoTest {
                         ")\n" +
                         "SELECT url, count(distinct uuid) u_count, count() cnt, avg(m_sum) avg_m_sum\n" +
                         "FROM x_sample\n" +
-                        "GROUP BY url");
+                        "GROUP BY url"
+        );
     }
 
     @Test

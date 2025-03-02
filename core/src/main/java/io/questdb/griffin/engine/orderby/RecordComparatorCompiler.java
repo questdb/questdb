@@ -337,6 +337,12 @@ public class RecordComparatorCompiler {
                     comparatorClass = Long256Util.class;
                     break;
                 case ColumnType.UUID:
+                    getterNameA = "getLong128Hi";
+                    getterNameB = "getLong128Lo";
+                    fieldType = "J";
+                    comparatorDesc = "(JJJJ)I";
+                    comparatorClass = Uuid.class;
+                    break;
                 case ColumnType.LONG128:
                     getterNameA = "getLong128Hi";
                     getterNameB = "getLong128Lo";

@@ -342,6 +342,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getIdGenerateBatchStep() {
+        return getDelegate().getIdGenerateBatchStep();
+    }
+
+    @Override
     public long getIdleCheckInterval() {
         return getDelegate().getIdleCheckInterval();
     }
@@ -424,6 +429,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public TimeZoneRules getLogTimestampTimezoneRules() {
         return getDelegate().getLogTimestampTimezoneRules();
+    }
+
+    @Override
+    public long getMatViewInsertAsSelectBatchSize() {
+        return getDelegate().getMatViewInsertAsSelectBatchSize();
+    }
+
+    @Override
+    public int getMatViewMaxRecompileAttempts() {
+        return getDelegate().getMatViewMaxRecompileAttempts();
     }
 
     @Override
@@ -1157,6 +1172,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewEnabled() {
+        return getDelegate().isMatViewEnabled();
+    }
+
+    @Override
+    public boolean isMatViewParallelSqlEnabled() {
+        return getDelegate().isMatViewParallelSqlEnabled();
+    }
+
+    @Override
     public boolean isMultiKeyDedupEnabled() {
         return getDelegate().isMultiKeyDedupEnabled();
     }
@@ -1234,6 +1259,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isWalApplyEnabled() {
         return getDelegate().isWalApplyEnabled();
+    }
+
+    @Override
+    public boolean isWalApplyParallelSqlEnabled() {
+        return getDelegate().isWalApplyParallelSqlEnabled();
     }
 
     public boolean isWalSupported() {

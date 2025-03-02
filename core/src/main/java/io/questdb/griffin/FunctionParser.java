@@ -706,6 +706,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             throw invalidFunction(node, args);
         }
 
+
         final int argCount = args == null ? 0 : args.size();
         FunctionFactory candidate = null;
         FunctionFactoryDescriptor candidateDescriptor = null;
@@ -716,38 +717,47 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         int bestMatch = MATCH_NO_MATCH;
         boolean isWindowContext = !sqlExecutionContext.getWindowContext().isEmpty();
 
-        // If a bind variable of unknown type appears inside a cast expression, we should
-        // assign a default type to it. Otherwise, since casting is a heavily overloaded
-        // operation (can cast lots of things to a string/number), we'll end up picking
-        // whatever happens to be the first cast function in the traversal order, and force
-        // the bind variable to that type. This will then fail when an actual value is bound
-        // to the variable, and it's most likely not that arbitrary type.
-        if (SqlKeywords.isCastKeyword(node.token)
-                && argCount == 2
-                && args.getQuick(0).isUndefined()
-                && args.getQuick(1).isConstant()
-        ) skipAssigningType:{
-            final Function undefinedArg = args.getQuick(0);
-            final int castToType = args.getQuick(1).getType();
-            final int assignType;
-            switch (castToType) {
-                case ColumnType.VARCHAR:
-                case ColumnType.STRING:
-                case ColumnType.CHAR:
-                    assignType = ColumnType.STRING;
-                    break;
-                case ColumnType.BYTE:
-                case ColumnType.SHORT:
-                case ColumnType.INT:
-                case ColumnType.LONG:
-                case ColumnType.FLOAT:
-                case ColumnType.DOUBLE:
-                    assignType = ColumnType.DOUBLE;
-                    break;
-                default:
-                    break skipAssigningType;
+
+        if (SqlKeywords.isCastKeyword(node.token) && argCount == 2
+                && args.getQuick(1).isConstant()) skipAssigningType:{
+            // If this the cast into same type, return the first argument
+            if (args.getQuick(0).getType() == args.getQuick(1).getType()) {
+                return args.getQuick(0);
             }
-            undefinedArg.assignType(assignType, sqlExecutionContext.getBindVariableService());
+
+            // If a bind variable of unknown type appears inside a cast expression, we should
+            // assign a default type to it. Otherwise, since casting is a heavily overloaded
+            // operation (can cast lots of things to a string/number), we'll end up picking
+            // whatever happens to be the first cast function in the traversal order, and force
+            // the bind variable to that type. This will then fail when an actual value is bound
+            // to the variable, and it's most likely not that arbitrary type.
+            if (args.getQuick(0).isUndefined()) {
+                final Function undefinedArg = args.getQuick(0);
+                final int castToType = args.getQuick(1).getType();
+                final int assignType;
+                switch (castToType) {
+                    case ColumnType.VARCHAR:
+                    case ColumnType.STRING:
+                    case ColumnType.CHAR:
+                        assignType = ColumnType.STRING;
+                        break;
+                    case ColumnType.BYTE:
+                    case ColumnType.SHORT:
+                    case ColumnType.INT:
+                    case ColumnType.LONG:
+                    case ColumnType.FLOAT:
+                    case ColumnType.DOUBLE:
+                        assignType = ColumnType.DOUBLE;
+                        break;
+                    default:
+                        break skipAssigningType;
+                }
+                undefinedArg.assignType(assignType, sqlExecutionContext.getBindVariableService());
+                if (assignType == castToType) {
+                    // Now that that type is assigned, we can return the first argument, no additional cast needed
+                    return undefinedArg;
+                }
+            }
         }
 
         undefinedVariables.clear();

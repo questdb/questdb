@@ -41,6 +41,7 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
@@ -57,6 +58,35 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         super(METADATA);
         this.tableToken = tableToken;
         this.tokenPosition = tokenPosition;
+    }
+
+    public static void ttlToSink(int ttl, CharSink<?> sink) {
+        if (ttl == 0) {
+            return;
+        }
+        String unit;
+        if (ttl > 0) {
+            unit = "HOUR";
+            if (ttl % 24 == 0) {
+                unit = "DAY";
+                ttl /= 24;
+                if (ttl % 7 == 0) {
+                    unit = "WEEK";
+                    ttl /= 7;
+                }
+            }
+        } else {
+            ttl = -ttl;
+            unit = "MONTH";
+            if (ttl % 12 == 0) {
+                unit = "YEAR";
+                ttl /= 12;
+            }
+        }
+        sink.putAscii(" TTL ").put(ttl).put(' ').putAscii(unit);
+        if (ttl > 1) {
+            sink.put('S');
+        }
     }
 
     @Override
@@ -167,38 +197,11 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         }
 
         private void putTtl() {
-            int ttl = table.getTtlHoursOrMonths();
-            if (ttl == 0) {
-                return;
-            }
-            String unit;
-            if (ttl > 0) {
-                unit = "HOUR";
-                if (ttl % 24 == 0) {
-                    unit = "DAY";
-                    ttl /= 24;
-                    if (ttl % 7 == 0) {
-                        unit = "WEEK";
-                        ttl /= 7;
-                    }
-                }
-            } else {
-                ttl = -ttl;
-                unit = "MONTH";
-                if (ttl % 12 == 0) {
-                    unit = "YEAR";
-                    ttl /= 12;
-                }
-            }
-            sink.putAscii(" TTL ").put(ttl).put(' ').putAscii(unit);
-            if (ttl > 1) {
-                sink.put('S');
-            }
+            ttlToSink(table.getTtlHoursOrMonths(), sink);
         }
 
         // placeholder, do not remove!
         protected void putAdditional() {
-
         }
 
         protected void putColumn(CairoConfiguration config, CairoColumn column) {

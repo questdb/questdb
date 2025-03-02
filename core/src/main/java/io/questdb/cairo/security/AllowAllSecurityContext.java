@@ -110,6 +110,18 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeMatViewCreate() {
+    }
+
+    @Override
+    public void authorizeMatViewDrop(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeMatViewRefresh(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizePGWire() {
     }
 

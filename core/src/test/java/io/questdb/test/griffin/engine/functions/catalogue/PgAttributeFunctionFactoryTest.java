@@ -24,6 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -342,6 +346,39 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropAndRecreateTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (old int)");
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery compile = compiler.compile("select * from pg_catalog.pg_attribute", sqlExecutionContext);
+
+                // we use a single instance of RecordCursorFactory before and after table drop
+                // this mimic behavior of a query cache.
+                try (RecordCursorFactory recordCursorFactory = compile.getRecordCursorFactory()) {
+                    try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
+                        assertCursor("attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
+                                        "1\told\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue\n",
+                                false, true, true, cursor, recordCursorFactory.getMetadata(), false);
+                    }
+
+                    // recreate the same table again, this time with a different column
+                    execute("drop table x");
+                    execute("create table x (new long)");
+                    drainWalQueue();
+
+                    try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
+                        // note the ID is 2 now!
+                        assertCursor("attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
+                                        "2\tnew\t1\t20\tfalse\t-1\t8\t\tfalse\ttrue\n",
+                                false, true, true, cursor, recordCursorFactory.getMetadata(), false);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPgAttributeFuncNoPrefix() throws Exception {
         assertQuery(
                 "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n",
@@ -381,7 +418,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
     public void testPgAttributeFuncWith2TablesLimit1() throws Exception {
         assertQuery("attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
                 "1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue\n", "pg_catalog.pg_attribute order by 1 limit 1;", "create table x(a int)", null, "create table y(a double, b string)", "attrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\n" +
-                "1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue\n", true, false, false);
+                "1\ta\t1\t23\tfalse\t-1\t4\t\tfalse\ttrue\n", true, true, false);
     }
 
     @Test

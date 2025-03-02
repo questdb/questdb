@@ -270,10 +270,10 @@ public class Bootstrap {
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         final int maxFiles = cairoConfiguration.getMaxCrashFiles();
         DirectUtf8StringZ name = new DirectUtf8StringZ();
-        try (
-                Path path = new Path().of(dbRoot).slash();
-                Path other = new Path().of(dbRoot).slash()
-        ) {
+        try (Path path = new Path(); Path other = new Path()) {
+            path.of(dbRoot).slash();
+            other.of(dbRoot).slash();
+
             int plen = path.size();
             AtomicInteger counter = new AtomicInteger(0);
             FilesFacadeImpl.INSTANCE.iterateDir(path.$(), (pUtf8NameZ, type) -> {

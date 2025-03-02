@@ -375,7 +375,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             try {
                 addPending(fd, timestamp);
             } catch (Throwable th) {
-                LOG.error().$("could accept connection [fd=").$(fd).$(", e=").$(th).I$();
+                LOG.error().$("could not accept connection [fd=").$(fd).$(", e=").$(th).I$();
                 nf.close(fd, LOG);
                 connectionCount.decrementAndGet();
                 continue;

@@ -91,5 +91,10 @@ public class RndUuidCCFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             rnd = executionContext.getRandom();
         }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return true;
+        }
     }
 }
