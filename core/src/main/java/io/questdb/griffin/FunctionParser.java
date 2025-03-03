@@ -71,6 +71,7 @@ import io.questdb.griffin.engine.functions.columns.SymbolColumn;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.columns.UuidColumn;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
+import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.ByteConstant;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
@@ -1216,12 +1217,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     return IPv4Constant.newInstance(function.getIPv4(null));
                 }
                 // TODO: Insert operation doesn't close the functions that provide data to insert, causing memory leak
-//            case ColumnType.ARRAY:
-//                if (function instanceof ArrayConstant) {
-//                    return function;
-//                } else {
-//                    return new ArrayConstant(function.getArray(null));
-//                }
+            case ColumnType.ARRAY:
+                if (function instanceof ArrayConstant) {
+                    return function;
+                } else {
+                    return new ArrayConstant(function.getArray(null));
+                }
             default:
                 return function;
         }
