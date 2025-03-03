@@ -4,6 +4,7 @@ import sys
 sys.dont_write_bytecode = True
 import textwrap
 import shutil
+import shlex
 import urllib.request
 import urllib
 import pathlib
@@ -13,6 +14,11 @@ import argparse
 import threading
 import re
 from collections import deque
+
+
+def log_command(args):
+    print(f'>>> {shlex.join(args)}')
+    return args
 
 
 def download_file(url, dest):
@@ -61,7 +67,9 @@ def install_rust(nightly):
         install_cmd.extend(['--default-toolchain', 'nightly'])
     try:
         download_file(download_url, file_name)
-        subprocess.check_call(install_cmd, stderr=subprocess.STDOUT)
+        subprocess.check_call(
+            log_command(install_cmd),
+            stderr=subprocess.STDOUT)
     finally:
         os.remove(file_name)
     export_cargo_bin_path(default_cargo_path() / 'bin')
@@ -79,7 +87,7 @@ def parse_rustc_info(output):
 def install_components(components):
     if components:
         subprocess.check_call(
-            ['rustup', 'component', 'add'] + list(set(components)),
+            log_command(['rustup', 'component', 'add'] + list(set(components))),
             stderr=subprocess.STDOUT)
 
 
@@ -98,7 +106,7 @@ def linux_glibc_version():
 def call_rustup_install(args):
     # We need watch the output for Azure CI setup issues and rectify them.
     proc = subprocess.Popen(
-        args,
+        log_command(args),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -154,15 +162,15 @@ def call_rustup_install(args):
 
 def ensure_rust_version(rustup_bin, version, components):
     """Ensure the specified version of Rust is installed and defaulted."""
-    subprocess.check_call([
-        rustup_bin, 'self', 'update'])
-    components = components + call_rustup_install([
-        rustup_bin, 'install', '--allow-downgrade', version])
-    subprocess.check_call([
-        rustup_bin, 'default', version])
+    subprocess.check_call(log_command([
+        rustup_bin, 'self', 'update']))
+    components = components + call_rustup_install(log_command([
+        rustup_bin, 'install', '--allow-downgrade', version]))
+    subprocess.check_call(log_command([
+        rustup_bin, 'default', version]))
     if components:
-        subprocess.check_call([
-            rustup_bin, 'update'])
+        subprocess.check_call(log_command([
+            rustup_bin, 'update']))
         install_components(components)
 
 
@@ -179,7 +187,7 @@ def ensure_rust(version, components):
         install_components(components)
 
     output = subprocess.check_output(
-        ['rustc', '--version', '--verbose'],
+        log_command(['rustc', '--version', '--verbose']),
         stderr=subprocess.STDOUT).decode('utf-8')
     host_triple, release = parse_rustc_info(output)
     print('\nRustc info:')
