@@ -155,227 +155,163 @@ public final class LineHttpSender implements Sender {
     }
 
     @Override
+    public Sender longArray(CharSequence name, long[] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 1, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 2, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 3, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 4, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 5, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 6, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 7, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][][][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 8, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][][][][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 9, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][][][][][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 10, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][][][][][][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 11, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][][][][][][][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 12, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][][][][][][][][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 13, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][][][][][][][][][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 14, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][][][][][][][][][][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 15, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][][][][][][][][][][][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 16, values);
+    }
+
+    @Override
     public Sender doubleArray(CharSequence name, double[] values) {
-        if (processNullArray(name, values)) {
-            return this;
-        }
-        writeFieldName(name, true);
-        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
-                .put((byte) ColumnType.DOUBLE) // element type
-                .put((byte) 1); // dims.
-        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 1,
-                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
-        return this;
+        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 1, values);
     }
 
     @Override
     public Sender doubleArray(CharSequence name, double[][] values) {
-        if (processNullArray(name, values)) {
-            return this;
-        }
-        writeFieldName(name, true);
-        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
-                .put((byte) ColumnType.DOUBLE) // element type
-                .put((byte) 2); // dims.
-        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 2,
-                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
-        return this;
+        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 2, values);
     }
 
     @Override
     public Sender doubleArray(CharSequence name, double[][][] values) {
-        if (processNullArray(name, values)) {
-            return this;
-        }
-        writeFieldName(name, true);
-        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
-                .put((byte) ColumnType.DOUBLE) // element type
-                .put((byte) 3); // dims.
-        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 3,
-                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
-        return this;
+        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 3, values);
     }
 
     @Override
     public Sender doubleArray(CharSequence name, double[][][][] values) {
-        if (processNullArray(name, values)) {
-            return this;
-        }
-        writeFieldName(name, true);
-        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
-                .put((byte) ColumnType.DOUBLE) // element type
-                .put((byte) 4); // dims.
-        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 4,
-                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
-        return this;
+        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 4, values);
     }
 
     @Override
     public Sender doubleArray(CharSequence name, double[][][][][] values) {
-        if (processNullArray(name, values)) {
-            return this;
-        }
-        writeFieldName(name, true);
-        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
-                .put((byte) ColumnType.DOUBLE) // element type
-                .put((byte) 5); // dims.
-        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 5,
-                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
-        return this;
+        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 5, values);
     }
 
     @Override
     public Sender doubleArray(CharSequence name, double[][][][][][] values) {
-        if (processNullArray(name, values)) {
-            return this;
-        }
-        writeFieldName(name, true);
-        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
-                .put((byte) ColumnType.DOUBLE) // element type
-                .put((byte) 6); // dims.
-        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 6,
-                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
-        return this;
+        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 6, values);
     }
 
     @Override
     public Sender doubleArray(CharSequence name, double[][][][][][][] values) {
-        if (processNullArray(name, values)) {
-            return this;
-        }
-        writeFieldName(name, true);
-        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
-                .put((byte) ColumnType.DOUBLE) // element type
-                .put((byte) 7); // dims.
-        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 7,
-                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
-        return this;
+        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 7, values);
     }
 
     @Override
     public Sender doubleArray(CharSequence name, double[][][][][][][][] values) {
-        if (processNullArray(name, values)) {
-            return this;
-        }
-        writeFieldName(name, true);
-        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
-                .put((byte) ColumnType.DOUBLE) // element type
-                .put((byte) 8); // dims.
-        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 8,
-                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
-        return this;
+        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 8, values);
     }
 
     @Override
     public Sender doubleArray(CharSequence name, double[][][][][][][][][] values) {
-        if (processNullArray(name, values)) {
-            return this;
-        }
-        writeFieldName(name, true);
-        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
-                .put((byte) ColumnType.DOUBLE) // element type
-                .put((byte) 9); // dims.
-        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 9,
-                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
-        return this;
+        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 9, values);
     }
 
     @Override
     public Sender doubleArray(CharSequence name, double[][][][][][][][][][] values) {
-        if (processNullArray(name, values)) {
-            return this;
-        }
-        writeFieldName(name, true);
-        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
-                .put((byte) ColumnType.DOUBLE) // element type
-                .put((byte) 10); // dims.
-        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 10,
-                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
-        return this;
+        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 10, values);
     }
 
     @Override
     public Sender doubleArray(CharSequence name, double[][][][][][][][][][][] values) {
-        if (processNullArray(name, values)) {
-            return this;
-        }
-        writeFieldName(name, true);
-        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
-                .put((byte) ColumnType.DOUBLE) // element type
-                .put((byte) 11); // dims.
-        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 11,
-                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
-        return this;
+        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 11, values);
     }
 
     @Override
     public Sender doubleArray(CharSequence name, double[][][][][][][][][][][][] values) {
-        if (processNullArray(name, values)) {
-            return this;
-        }
-        writeFieldName(name, true);
-        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
-                .put((byte) ColumnType.DOUBLE) // element type
-                .put((byte) 12); // dims.
-        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 12,
-                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
-        return this;
+        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 12, values);
     }
 
     @Override
     public Sender doubleArray(CharSequence name, double[][][][][][][][][][][][][] values) {
-        if (processNullArray(name, values)) {
-            return this;
-        }
-        writeFieldName(name, true);
-        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
-                .put((byte) ColumnType.DOUBLE) // element type
-                .put((byte) 13); // dims.
-        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 13,
-                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
-        return this;
+        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 13, values);
     }
 
     @Override
     public Sender doubleArray(CharSequence name, double[][][][][][][][][][][][][][] values) {
-        if (processNullArray(name, values)) {
-            return this;
-        }
-        writeFieldName(name, true);
-        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
-                .put((byte) ColumnType.DOUBLE) // element type
-                .put((byte) 14); // dims.
-        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 14,
-                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
-        return this;
+        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 14, values);
     }
 
     @Override
     public Sender doubleArray(CharSequence name, double[][][][][][][][][][][][][][][] values) {
-        if (processNullArray(name, values)) {
-            return this;
-        }
-        writeFieldName(name, true);
-        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
-                .put((byte) ColumnType.DOUBLE) // element type
-                .put((byte) 15); // dims.
-        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 15,
-                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
-        return this;
+        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 15, values);
     }
 
     @Override
     public Sender doubleArray(CharSequence name, double[][][][][][][][][][][][][][][][] values) {
-        if (processNullArray(name, values)) {
-            return this;
-        }
-        writeFieldName(name, true);
-        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
-                .put((byte) ColumnType.DOUBLE) // element type
-                .put((byte) 16); // dims.
-        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, 16,
-                ColumnType.sizeOf(ColumnType.DOUBLE), NDArrayFlattener.ARRAY_INDEX_DOUBLE));
-        return this;
+        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 16, values);
     }
 
     @Override
@@ -559,16 +495,6 @@ public final class LineHttpSender implements Sender {
         int backoff = retryBackoff + jitter;
         Os.sleep(backoff);
         return Math.min(RETRY_MAX_BACKOFF_MS, backoff * RETRY_BACKOFF_MULTIPLIER);
-    }
-
-    private boolean processNullArray(CharSequence name, Object value) {
-        if (value == null) {
-            writeFieldName(name, true);
-            request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
-                    .put((byte) ColumnType.NULL); // element type
-            return true;
-        }
-        return false;
     }
 
     private void consumeChunkedResponse(HttpClient.ResponseHeaders response) {
@@ -836,6 +762,29 @@ public final class LineHttpSender implements Sender {
         TABLE_NAME_SET,
         ADDING_SYMBOLS,
         ADDING_COLUMNS,
+    }
+
+    private Sender arrayColumn(CharSequence name, short columnType, byte dims, Object values) {
+        if (processNullArray(name, values)) {
+            return this;
+        }
+
+        writeFieldName(name, true);
+        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                .put((byte) columnType) // element type
+                .put(dims); // dims.
+        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, dims, columnType));
+        return this;
+    }
+
+    private boolean processNullArray(CharSequence name, Object value) {
+        if (value == null) {
+            writeFieldName(name, true);
+            request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                    .put((byte) ColumnType.NULL); // element type
+            return true;
+        }
+        return false;
     }
 
     private static class JsonErrorParser implements JsonParser, Closeable {

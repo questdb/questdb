@@ -75,4 +75,36 @@ public interface INDArray<T> {
     T doubleArray(CharSequence name, double[][][][][][][][][][][][][][][] values);
 
     T doubleArray(CharSequence name, double[][][][][][][][][][][][][][][][] values);
+
+    T longArray(CharSequence name, long[] values);
+
+    T longArray(CharSequence name, long[][] values);
+
+    T longArray(CharSequence name, long[][][] values);
+
+    T longArray(CharSequence name, long[][][][] values);
+
+    T longArray(CharSequence name, long[][][][][] values);
+
+    T longArray(CharSequence name, long[][][][][][] values);
+
+    T longArray(CharSequence name, long[][][][][][][] values);
+
+    T longArray(CharSequence name, long[][][][][][][][] values);
+
+    T longArray(CharSequence name, long[][][][][][][][][] values);
+
+    T longArray(CharSequence name, long[][][][][][][][][][] values);
+
+    T longArray(CharSequence name, long[][][][][][][][][][][] values);
+
+    T longArray(CharSequence name, long[][][][][][][][][][][][] values);
+
+    T longArray(CharSequence name, long[][][][][][][][][][][][][] values);
+
+    T longArray(CharSequence name, long[][][][][][][][][][][][][][] values);
+
+    T longArray(CharSequence name, long[][][][][][][][][][][][][][][] values);
+
+    T longArray(CharSequence name, long[][][][][][][][][][][][][][][][] values);
 }

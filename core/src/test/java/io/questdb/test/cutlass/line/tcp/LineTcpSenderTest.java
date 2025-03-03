@@ -52,6 +52,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.function.Consumer;
 
 import static io.questdb.test.cutlass.http.line.LineHttpSenderTest.createDoubleArrays;
+import static io.questdb.test.cutlass.http.line.LineHttpSenderTest.createLongArrays;
 import static io.questdb.test.tools.TestUtils.assertContains;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.Assert.*;
@@ -698,7 +699,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testNDArrayTest() throws Exception {
+    public void testNDDoubleArrayTest() throws Exception {
         runInContext(r -> {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
@@ -726,6 +727,47 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         .doubleArray("a14", (double[][][][][][][][][][][][][][]) createDoubleArrays(new int[]{1, 1, 3, 1, 1, 1, 1, 1, 2, 1, 1, 2, 2, 1}))
                         .doubleArray("a15", (double[][][][][][][][][][][][][][][]) createDoubleArrays(new int[]{1, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 3, 1, 1, 1}))
                         .doubleArray("a16", (double[][][][][][][][][][][][][][][][]) createDoubleArrays(new int[]{1, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}))
+                        .at(ts, ChronoUnit.MICROS);
+                sender.flush();
+
+                assertTableSizeEventually(engine, table, 1);
+                // @todo getArray support in TestTableReadCursor
+/*                try (TableReader reader = getReader(table)) {
+                    TestUtils.assertReader("", reader, new StringSink());
+                }*/
+            }
+        });
+    }
+
+    @Test
+    public void testNDLongArrayTest() throws Exception {
+        runInContext(r -> {
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+                String table = "nd_test";
+                long ts = IntervalUtils.parseFloorPartialTimestamp("2025-02-22");
+                sender.table(table)
+                        .symbol("x", "42i")
+                        .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")  // ensuring no array parsing for symbol
+                        .longColumn("l1", 23452345)
+                        .longArray("a1", (long[]) createLongArrays(new int[]{5}))
+                        .longArray("a2", (long[][]) createLongArrays(new int[]{2, 3}))
+                        .longArray("a3", (long[][][]) createLongArrays(new int[]{1, 2, 3}))
+                        .longArray("a4", (long[][][][]) createLongArrays(new int[]{1, 2, 1, 1}))
+                        .longArray("a5", (long[][][][][]) createLongArrays(new int[]{3, 2, 1, 4, 1}))
+                        .longArray("a6", (long[][][][][][]) createLongArrays(new int[]{1, 3, 4, 2, 1, 1}))
+                        .longArray("a7", (long[][][][][][][]) createLongArrays(new int[]{2, 2, 2, 1, 1, 1, 2}))
+                        .longArray("a8", (long[][][][][][][][]) createLongArrays(new int[]{1, 1, 2, 1, 1, 1, 2, 1}))
+                        .longArray("a9", (long[][][][][][][][][]) createLongArrays(new int[]{1, 2, 1, 2, 1, 1, 2, 1, 1}))
+                        .longArray("a10", (long[][][][][][][][][][]) createLongArrays(new int[]{2, 1, 1, 2, 1, 1, 1, 1, 1, 2}))
+                        .longArray("a11", (long[][][][][][][][][][][]) createLongArrays(new int[]{3, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1}))
+                        .longArray("a12", (long[][][][][][][][][][][][]) createLongArrays(new int[]{1, 2, 1, 2, 1, 1, 1, 1, 2, 2, 1, 1}))
+                        .longArray("a13", (long[][][][][][][][][][][][][]) createLongArrays(new int[]{1, 1, 2, 2, 1, 2, 1, 1, 2, 1, 1, 2, 1}))
+                        .longArray("a14", (long[][][][][][][][][][][][][][]) createLongArrays(new int[]{1, 1, 3, 1, 1, 1, 1, 1, 2, 1, 1, 2, 2, 1}))
+                        .longArray("a15", (long[][][][][][][][][][][][][][][]) createLongArrays(new int[]{1, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 3, 1, 1, 1}))
+                        .longArray("a16", (long[][][][][][][][][][][][][][][][]) createLongArrays(new int[]{1, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}))
                         .at(ts, ChronoUnit.MICROS);
                 sender.flush();
 

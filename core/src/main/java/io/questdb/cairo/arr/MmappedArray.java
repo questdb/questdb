@@ -80,6 +80,7 @@ public class MmappedArray extends MutableArray {
         short elemType = ColumnType.decodeArrayElementType(columnType);
         assert ColumnType.sizeOf(elemType) * flatViewLength == valueSize;
         borrowedFlatView().of(valuePtr, elemType, flatViewLength);
+        isVanilla = true;
         return this;
     }
 

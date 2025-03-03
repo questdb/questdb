@@ -29,7 +29,7 @@
 #include <cstring>
 
 #define MAX_ARRAY_DIMS 32
-#define MAX_ARRAY_TYPE_INDEX 5
+#define MAX_ARRAY_TYPE_INDEX 6
 
 template <jint DIM, typename T> struct ProcessData {
   static jlong process(JNIEnv *env, jlong addr, jobject array) {
@@ -96,7 +96,7 @@ typedef jlong (*process_array_data_t)(JNIEnv *env, jlong addr, jobject array);
 
 typedef jint (*process_array_shape_t)(JNIEnv *env, jlong addr, jobject array);
 
-static process_array_data_t process_array_datas[6][32] = {
+static process_array_data_t process_array_datas[7][32] = {
     // boolean
     {ProcessData<1, jboolean>::process,  ProcessData<2, jboolean>::process,
      ProcessData<3, jboolean>::process,  ProcessData<4, jboolean>::process,
@@ -131,6 +131,23 @@ static process_array_data_t process_array_datas[6][32] = {
      ProcessData<27, jbyte>::process, ProcessData<28, jbyte>::process,
      ProcessData<29, jbyte>::process, ProcessData<30, jbyte>::process,
      ProcessData<31, jbyte>::process, ProcessData<32, jbyte>::process},
+    // short
+    {ProcessData<1, jshort>::process,  ProcessData<2, jshort>::process,
+     ProcessData<3, jshort>::process,  ProcessData<4, jshort>::process,
+     ProcessData<5, jshort>::process,  ProcessData<6, jshort>::process,
+     ProcessData<7, jshort>::process,  ProcessData<8, jshort>::process,
+     ProcessData<9, jshort>::process,  ProcessData<10, jshort>::process,
+     ProcessData<11, jshort>::process, ProcessData<12, jshort>::process,
+     ProcessData<13, jshort>::process, ProcessData<14, jshort>::process,
+     ProcessData<15, jshort>::process, ProcessData<16, jshort>::process,
+     ProcessData<17, jshort>::process, ProcessData<18, jshort>::process,
+     ProcessData<19, jshort>::process, ProcessData<20, jshort>::process,
+     ProcessData<21, jshort>::process, ProcessData<22, jshort>::process,
+     ProcessData<23, jshort>::process, ProcessData<24, jshort>::process,
+     ProcessData<25, jshort>::process, ProcessData<26, jshort>::process,
+     ProcessData<27, jshort>::process, ProcessData<28, jshort>::process,
+     ProcessData<29, jshort>::process, ProcessData<30, jshort>::process,
+     ProcessData<31, jshort>::process, ProcessData<32, jshort>::process},
     // int
     {ProcessData<1, jint>::process,  ProcessData<2, jint>::process,
      ProcessData<3, jint>::process,  ProcessData<4, jint>::process,

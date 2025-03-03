@@ -330,14 +330,14 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testInsertNdArray() throws Exception {
+    public void testInsertNdDoubleArray() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "8192"
             )) {
                 serverMain.start();
 
-                String tableName = "ndarr_test";
+                String tableName = "ndarr_double_test";
                 serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, y SYMBOL, l1 LONG, a1 DOUBLE[], " +
                         "a2 DOUBLE[][], a3 DOUBLE[][][], a4 DOUBLE[][][][], a5 DOUBLE[][][][][], a6 DOUBLE[][][][][][]," +
                         "a7 DOUBLE[][][][][][][], a8 DOUBLE[][][][][][][][], a9 DOUBLE[][][][][][][][][]," +
@@ -397,6 +397,81 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         "[[[[[[[[[[[[[[1.0],[2.0]],[[2.0],[4.0]]]]],[[[[[2.0],[4.0]],[[4.0],[8.0]]]]]]]]]]],[[[[[[[[[[[2.0],[4.0]],[[4.0],[8.0]]]]],[[[[[4.0],[8.0]],[[8.0],[16.0]]]]]]]]]]],[[[[[[[[[[[3.0],[6.0]],[[6.0],[12.0]]]]],[[[[[6.0],[12.0]],[[12.0],[24.0]]]]]]]]]]]]]]\t" +
                         "[[[[[[[[[[[[[[[1.0]]],[[[2.0]]],[[[3.0]]]]],[[[[[2.0]]],[[[4.0]]],[[[6.0]]]]]]]]]]],[[[[[[[[[[[2.0]]],[[[4.0]]],[[[6.0]]]]],[[[[[4.0]]],[[[8.0]]],[[[12.0]]]]]]]]]]]]]]]\t" +
                         "[[[[[[[[[[[[[[[[1.0]]]]]]]]]]]],[[[[[[[[[[[[2.0]]]]]]]]]]]],[[[[[[[[[[[[3.0]]]]]]]]]]]]],[[[[[[[[[[[[[2.0]]]]]]]]]]]],[[[[[[[[[[[[4.0]]]]]]]]]]]],[[[[[[[[[[[[6.0]]]]]]]]]]]]]]]]\t" +
+                        "1970-01-02T03:46:40.000000Z\n");
+            }
+        });
+    }
+
+    @Test
+    public void testInsertNdLongArray() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "8192"
+            )) {
+                serverMain.start();
+
+                String tableName = "ndarr_long_test";
+                serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, y SYMBOL, l1 LONG, a1 LONG[], " +
+                        "a2 LONG[][], a3 LONG[][][], a4 LONG[][][][], a5 LONG[][][][][], a6 LONG[][][][][][]," +
+                        "a7 LONG[][][][][][][], a8 LONG[][][][][][][][], a9 LONG[][][][][][][][][]," +
+                        "a10 LONG[][][][][][][][][][], a11 LONG[][][][][][][][][][][], a12 LONG[][][][][][][][][][][][], " +
+                        "a13 LONG[][][][][][][][][][][][][], a14 LONG[][][][][][][][][][][][][][], a15 LONG[][][][][][][][][][][][][][][]," +
+                        "a16 LONG[][][][][][][][][][][][][][][][], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.awaitTxn(tableName, 0);
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
+                        .retryTimeoutMillis(0)
+                        .build()
+                ) {
+                    sender.table(tableName)
+                            .symbol("x", "42i")
+                            .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")  // ensuring no array parsing for symbol
+                            .longColumn("l1", 23452345)
+                            .longArray("a1", (long[]) createLongArrays(new int[]{5}))
+                            .longArray("a2", (long[][]) createLongArrays(new int[]{2, 3}))
+                            .longArray("a3", (long[][][]) createLongArrays(new int[]{1, 2, 3}))
+                            .longArray("a4", (long[][][][]) createLongArrays(new int[]{1, 2, 1, 1}))
+                            .longArray("a5", (long[][][][][]) createLongArrays(new int[]{3, 2, 1, 4, 1}))
+                            .longArray("a6", (long[][][][][][]) createLongArrays(new int[]{1, 3, 4, 2, 1, 1}))
+                            .longArray("a7", (long[][][][][][][]) createLongArrays(new int[]{2, 2, 2, 1, 1, 1, 2}))
+                            .longArray("a8", (long[][][][][][][][]) createLongArrays(new int[]{1, 1, 2, 1, 1, 1, 2, 1}))
+                            .longArray("a9", (long[][][][][][][][][]) createLongArrays(new int[]{1, 2, 1, 2, 1, 1, 2, 1, 1}))
+                            .longArray("a10", (long[][][][][][][][][][]) createLongArrays(new int[]{2, 1, 1, 2, 1, 1, 1, 1, 1, 2}))
+                            .longArray("a11", (long[][][][][][][][][][][]) createLongArrays(new int[]{3, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1}))
+                            .longArray("a12", (long[][][][][][][][][][][][]) createLongArrays(new int[]{1, 2, 1, 2, 1, 1, 1, 1, 2, 2, 1, 1}))
+                            .longArray("a13", (long[][][][][][][][][][][][][]) createLongArrays(new int[]{1, 1, 2, 2, 1, 2, 1, 1, 2, 1, 1, 2, 1}))
+                            .longArray("a14", (long[][][][][][][][][][][][][][]) createLongArrays(new int[]{1, 1, 3, 1, 1, 1, 1, 1, 2, 1, 1, 2, 2, 1}))
+                            .longArray("a15", (long[][][][][][][][][][][][][][][]) createLongArrays(new int[]{1, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 3, 1, 1, 1}))
+                            .longArray("a16", (long[][][][][][][][][][][][][][][][]) createLongArrays(new int[]{1, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}))
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTxn(tableName, 1);
+
+                serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta1\ta2\ta3\ta4\ta5\ta6\ta7\ta8\ta9\ta10\ta11\ta12\ta13\ta14\ta15\ta16\tts\n" +
+                        "42i\t" +
+                        "[6f1.0,2.5,3.0,4.5,5.0]\t" +
+                        "23452345\t" +
+                        "[1,2,3,4,5]\t" +
+                        "[[1,2,3],[2,4,6]]\t" +
+                        "[[[1,2,3],[2,4,6]]]\t" +
+                        "[[[[1]],[[2]]]]\t" +
+                        "[[[[[1],[2],[3],[4]]],[[[2],[4],[6],[8]]]],[[[[2],[4],[6],[8]]],[[[4],[8],[12],[16]]]],[[[[3],[6],[9],[12]]],[[[6],[12],[18],[24]]]]]\t" +
+                        "[[[[[[1]],[[2]]],[[[2]],[[4]]],[[[3]],[[6]]],[[[4]],[[8]]]],[[[[2]],[[4]]],[[[4]],[[8]]],[[[6]],[[12]]],[[[8]],[[16]]]],[[[[3]],[[6]]],[[[6]],[[12]]],[[[9]],[[18]]],[[[12]],[[24]]]]]]\t" +
+                        "[[[[[[[1,2]]]],[[[[2,4]]]]],[[[[[2,4]]]],[[[[4,8]]]]]],[[[[[[2,4]]]],[[[[4,8]]]]],[[[[[4,8]]]],[[[[8,16]]]]]]]\t" +
+                        "[[[[[[[[1],[2]]]]],[[[[[2],[4]]]]]]]]\t" +
+                        "[[[[[[[[[1]],[[2]]]]],[[[[[2]],[[4]]]]]]],[[[[[[[2]],[[4]]]]],[[[[[4]],[[8]]]]]]]]]\t" +
+                        "[[[[[[[[[[1,2]]]]]],[[[[[[2,4]]]]]]]]],[[[[[[[[[2,4]]]]]],[[[[[[4,8]]]]]]]]]]\t" +
+                        "[[[[[[[[[[[1],[2]]]]]]],[[[[[[[2],[4]]]]]]]]]],[[[[[[[[[[2],[4]]]]]]],[[[[[[[4],[8]]]]]]]]]],[[[[[[[[[[3],[6]]]]]]],[[[[[[[6],[12]]]]]]]]]]]\t" +
+                        "[[[[[[[[[[[[1]],[[2]]],[[[2]],[[4]]]]]]]],[[[[[[[[2]],[[4]]],[[[4]],[[8]]]]]]]]]],[[[[[[[[[[2]],[[4]]],[[[4]],[[8]]]]]]]],[[[[[[[[4]],[[8]]],[[[8]],[[16]]]]]]]]]]]]\t" +
+                        "[[[[[[[[[[[[[1],[2]]]],[[[[2],[4]]]]]]],[[[[[[[2],[4]]]],[[[[4],[8]]]]]]]]],[[[[[[[[[2],[4]]]],[[[[4],[8]]]]]]],[[[[[[[4],[8]]]],[[[[8],[16]]]]]]]]]],[[[[[[[[[[2],[4]]]],[[[[4],[8]]]]]]],[[[[[[[4],[8]]]],[[[[8],[16]]]]]]]]],[[[[[[[[[4],[8]]]],[[[[8],[16]]]]]]],[[[[[[[8],[16]]]],[[[[16],[32]]]]]]]]]]]]]\t" +
+                        "[[[[[[[[[[[[[[1],[2]],[[2],[4]]]]],[[[[[2],[4]],[[4],[8]]]]]]]]]]],[[[[[[[[[[[2],[4]],[[4],[8]]]]],[[[[[4],[8]],[[8],[16]]]]]]]]]]],[[[[[[[[[[[3],[6]],[[6],[12]]]]],[[[[[6],[12]],[[12],[24]]]]]]]]]]]]]]\t" +
+                        "[[[[[[[[[[[[[[[1]]],[[[2]]],[[[3]]]]],[[[[[2]]],[[[4]]],[[[6]]]]]]]]]]],[[[[[[[[[[[2]]],[[[4]]],[[[6]]]]],[[[[[4]]],[[[8]]],[[[12]]]]]]]]]]]]]]]\t" +
+                        "[[[[[[[[[[[[[[[[1]]]]]]]]]]]],[[[[[[[[[[[[2]]]]]]]]]]]],[[[[[[[[[[[[3]]]]]]]]]]]]],[[[[[[[[[[[[[2]]]]]]]]]]]],[[[[[[[[[[[[4]]]]]]]]]]]],[[[[[[[[[[[[6]]]]]]]]]]]]]]]]\t" +
                         "1970-01-02T03:46:40.000000Z\n");
             }
         });
@@ -798,71 +873,95 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         }
     }
 
+
+
     public static Object createDoubleArrays(int[] shapes) {
-        return buildNestedArray(shapes, 0, new int[shapes.length]);
+        int[] indices = new int[shapes.length];
+        return buildNestedArray(ArrayDataType.DOUBLE, shapes, 0, indices);
     }
 
-    private static Object buildNestedArray(int[] shapes, int currentDim, int[] indices) {
-        if (currentDim == shapes.length - 1) {
-            double[] arr = new double[shapes[currentDim]];
-            for (int i = 0; i < arr.length; i++) {
-                indices[currentDim] = i;
+    public static Object createLongArrays(int[] shapes) {
+        int[] indices = new int[shapes.length];
+        return buildNestedArray(ArrayDataType.LONG, shapes, 0, indices);
+    }
+
+    private enum ArrayDataType {
+        DOUBLE(double.class) {
+            @Override
+            public Object createArray(int length) {
+                return new double[length];
+            }
+
+            @Override
+            public void setElement(Object array, int index, int[] indices) {
+                double[] arr = (double[]) array;
                 double product = 1.0;
                 for (int idx : indices) {
                     product *= (idx + 1);
                 }
-                arr[i] = product;
+                arr[index] = product;
+            }
+        },
+        LONG(long.class) {
+            @Override
+            public Object createArray(int length) {
+                return new long[length];
+            }
+
+            @Override
+            public void setElement(Object array, int index, int[] indices) {
+                long[] arr = (long[]) array;
+                long product = 1L;
+                for (int idx : indices) {
+                    product *= (idx + 1);
+                }
+                arr[index] = product;
+            }
+        };
+
+        private final Class<?> baseType;
+        private final Class<?>[] componentTypes = new Class<?>[17]; // 支持最多16维
+
+        ArrayDataType(Class<?> baseType) {
+            this.baseType = baseType;
+            initComponentTypes();
+        }
+
+        private void initComponentTypes() {
+            componentTypes[0] = baseType;
+            for (int dim = 1; dim <= 16; dim++) {
+                componentTypes[dim] = Array.newInstance(componentTypes[dim - 1], 0).getClass();
+            }
+        }
+
+        public Class<?> getComponentType(int dimsRemaining) {
+            if (dimsRemaining < 0 || dimsRemaining > 16) {
+                throw new RuntimeException("Array dimension too large");
+            }
+            return componentTypes[dimsRemaining];
+        }
+
+        public abstract Object createArray(int length);
+        public abstract void setElement(Object array, int index, int[] indices);
+    }
+
+    private static Object buildNestedArray(ArrayDataType dataType, int[] shapes, int currentDim, int[] indices) {
+        if (currentDim == shapes.length - 1) {
+            Object arr = dataType.createArray(shapes[currentDim]);
+            for (int i = 0; i < Array.getLength(arr); i++) {
+                indices[currentDim] = i;
+                dataType.setElement(arr, i, indices);
             }
             return arr;
         } else {
-            Object arr = Array.newInstance(getComponentType(shapes.length - currentDim - 1), shapes[currentDim]);
+            Class<?> componentType = dataType.getComponentType(shapes.length - currentDim - 1);
+            Object arr = Array.newInstance(componentType, shapes[currentDim]);
             for (int i = 0; i < shapes[currentDim]; i++) {
                 indices[currentDim] = i;
-                Object subArr = buildNestedArray(shapes, currentDim + 1, indices);
+                Object subArr = buildNestedArray(dataType, shapes, currentDim + 1, indices);
                 Array.set(arr, i, subArr);
             }
             return arr;
-        }
-    }
-
-    private static Class<?> getComponentType(int dimsRemaining) {
-        switch (dimsRemaining) {
-            case 0:
-                return double.class;
-            case 1:
-                return double[].class;
-            case 2:
-                return double[][].class;
-            case 3:
-                return double[][][].class;
-            case 4:
-                return double[][][][].class;
-            case 5:
-                return double[][][][][].class;
-            case 6:
-                return double[][][][][][].class;
-            case 7:
-                return double[][][][][][][].class;
-            case 8:
-                return double[][][][][][][][].class;
-            case 9:
-                return double[][][][][][][][][].class;
-            case 10:
-                return double[][][][][][][][][][].class;
-            case 11:
-                return double[][][][][][][][][][][].class;
-            case 12:
-                return double[][][][][][][][][][][][].class;
-            case 13:
-                return double[][][][][][][][][][][][][].class;
-            case 14:
-                return double[][][][][][][][][][][][][][].class;
-            case 15:
-                return double[][][][][][][][][][][][][][][].class;
-            case 16:
-                return double[][][][][][][][][][][][][][][][].class;
-            default:
-                throw new RuntimeException("array dimension to large");
         }
     }
 }
