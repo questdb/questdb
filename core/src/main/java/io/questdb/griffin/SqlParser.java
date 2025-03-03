@@ -2043,6 +2043,8 @@ public class SqlParser {
                                 && target.getGroupBy().size() == 0
                                 && proposedNested.getLimitLo() == null
                                 && proposedNested.getLimitHi() == null
+                                && target.getPivotFor() == null
+                                && target.getUnpivotFor() == null
                 ) {
                     model.setTableNameExpr(target.getTableNameExpr());
                     model.setAlias(target.getAlias());
@@ -2747,7 +2749,11 @@ public class SqlParser {
 
             model.addPivotFor(expr);
 
-            tok = tok(lexer, "'')' or 'GROUP' or 'ORDER' or 'LIMIT' or ','");
+            tok = SqlUtil.fetchNext(lexer);
+
+            if (tok == null) {
+                throw SqlException.$(lexer.lastTokenPosition(), "expected ')' or 'GROUP' or 'ORDER' or 'LIMIT' or ','");
+            }
 
             if (isGroupKeyword(tok) || Chars.equals(tok, ';') || Chars.equals(tok, ')')
                     || isOrderKeyword(tok) || isLimitKeyword(tok)) {
