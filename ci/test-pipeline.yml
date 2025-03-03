@@ -17,7 +17,6 @@ variables:
   MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 "
   MAVEN_VERSION: "version"
   MAVEN_VERSION_OPTION: "Default"
-  RUST_VERSION: "nightly-2025-01-07"
 
 stages:
   - stage: CheckChanges
@@ -111,7 +110,7 @@ stages:
           - download: current
             artifact: rust-llvm-coverage
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
-          - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --version $RUST_VERSION
+          - script: python3 .github/prepare_rust_env.py --nightly --export-cargo-install-env
             displayName: "Ensure Rust is installed"
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
           - template: templates/install-llvm.yml
