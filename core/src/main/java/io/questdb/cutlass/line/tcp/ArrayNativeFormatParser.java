@@ -50,7 +50,6 @@ import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.*;
  */
 public class ArrayNativeFormatParser implements QuietCloseable {
 
-    private static final byte DIM_COUNT_LIMIT = 16;
     private final MmappedArray view = new MmappedArray();
     private short elemType;
     private int dims;
@@ -87,7 +86,7 @@ public class ArrayNativeFormatParser implements QuietCloseable {
                 return false;
             case DIMS:
                 dims = Unsafe.getUnsafe().getByte(addr);
-                if (dims > DIM_COUNT_LIMIT) {
+                if (dims > ColumnType.ARRAY_NDIMS_LIMIT) {
                     throw ParseException.largeDims();
                 }
                 if (dims == 0) {
