@@ -33,12 +33,15 @@ import io.r2dbc.spi.Statement;
 import org.junit.AfterClass;
 import org.junit.Test;
 import org.reactivestreams.Publisher;
-import reactor.core.publisher.Hooks;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 import reactor.test.StepVerifier;
 
 import java.time.Duration;
+import java.time.Instant;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class R2DBCTest extends AbstractTest {
 
@@ -47,6 +50,92 @@ public class R2DBCTest extends AbstractTest {
         // Shutdown Project Reactor business
         Schedulers.shutdownNow();
     }
+
+    @Test
+    public void testCreateAndQueryParticipantsTable() {
+        assertWithR2RDBC(conn -> {
+            // Create table
+            String createTableSQL = "CREATE TABLE test_participants (" +
+                    "participantKey_participantId STRING, " +
+                    "timestamp TIMESTAMP, " +
+                    "inactivationProcessStatus SYMBOL " +
+                    ") timestamp(timestamp) partition by day";
+
+            Mono<Void> createTableMono = Mono.from(conn)
+                    .flatMap(connection -> Mono.from(connection.createStatement(createTableSQL).execute())
+                            .then());
+
+            StepVerifier.create(createTableMono)
+                    .expectComplete()
+                    .verify(Duration.ofSeconds(10));
+
+            // Insert 100 rows
+            AtomicInteger counter = new AtomicInteger(0);
+            Flux<Long> insertFlux = Flux.range(0, 10)
+                    .flatMap(i -> {
+                        String participantIdStr = String.valueOf(i);
+                        Instant now = Instant.now();
+
+                        String insertSQL = "INSERT INTO test_participants (" +
+                                "participantKey_participantId, " +
+                                "timestamp, " +
+                                "inactivationProcessStatus" +
+                                ") VALUES (" +
+                                "$1, $2, $3" +
+                                ")";
+
+                        return Mono.from(conn)
+                                .flatMap(connection -> {
+                                    Statement statement = connection.createStatement(insertSQL);
+                                    statement.bind(0, participantIdStr);
+                                    statement.bind(1, now.plusSeconds(i));
+                                    statement.bind(2, "NONE");
+
+                                    return Mono.from(statement.execute())
+                                            .flatMap(result -> Mono.from(result.getRowsUpdated()))
+                                            .doOnNext(rowsUpdated -> counter.addAndGet(rowsUpdated.intValue()));
+                                });
+                    }, 1);
+
+            insertFlux.collectList().block();
+
+
+            String query = "SELECT * FROM test_participants WHERE inactivationProcessStatus != 'PURGED' LIMIT 8";
+
+            AtomicReference<Integer> rowCount = new AtomicReference<>(0);
+            Mono<Void> queryMono = Mono.from(conn)
+                    .flatMap(connection -> Mono.from(connection.createStatement(query).execute())
+                            .flatMapMany(result -> result.map((row, metadata) -> 1))
+                            .reduce(0, Integer::sum)
+                            .doOnNext(count -> rowCount.set(count))
+                            .then());
+
+            StepVerifier.create(queryMono)
+                    .expectComplete()
+                    .verify(Duration.ofSeconds(10));
+
+            // Drop the table to clean up
+            Mono<Void> truncateTableMono = Mono.from(conn)
+                    .flatMap(connection -> Mono.from(connection.createStatement("TRUNCATE TABLE test_participants").execute())
+                            .then());
+
+            StepVerifier.create(truncateTableMono)
+                    .expectComplete()
+                    .verify(Duration.ofSeconds(10));
+
+            queryMono = Mono.from(conn)
+                    .flatMap(connection -> Mono.from(connection.createStatement(query).execute())
+                            .flatMapMany(result -> result.map((row, metadata) -> 1))
+                            .reduce(0, Integer::sum)
+                            .doOnNext(count -> rowCount.set(count))
+                            .then());
+
+            StepVerifier.create(queryMono)
+                    .expectComplete()
+                    .verify(Duration.ofSeconds(10));
+        });
+    }
+
 
     @Test
     public void testSmoke() {

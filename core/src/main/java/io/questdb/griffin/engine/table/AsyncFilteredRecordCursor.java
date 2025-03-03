@@ -355,6 +355,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                         collectCursor(false);
                     }
                 } else if (cursor == -2) {
+                    frameRowCount = 0;
                     break; // No frames to filter
                 } else {
                     Os.pause();
