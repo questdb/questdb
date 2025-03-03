@@ -1188,7 +1188,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compiledQuery.ofTableResume();
         } catch (CairoException ex) {
             LOG.critical().$("table resume failed [table=").$(tableToken)
-                    .$(", error=").$(ex.getFlyweightMessage())
+                    .$(", msg=").$(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
             ex.position(tableNamePosition);

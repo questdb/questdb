@@ -679,8 +679,8 @@ public class CairoEngine implements Closeable, WriterSource {
         } catch (CairoException e) {
             LOG.critical()
                     .$("could not open reader [table=").$(tableToken)
+                    .$(", msg=").$(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
-                    .$(", error=").$(e.getFlyweightMessage())
                     .I$();
             throw e;
         }
@@ -1445,8 +1445,8 @@ public class CairoEngine implements Closeable, WriterSource {
                         }
                     } catch (CairoException e) {
                         LOG.error().$("could not load materialized view definition [view=").utf8(tableToken.getTableName())
+                                .$(", msg=").$(e.getFlyweightMessage())
                                 .$(", errno=").$(e.getErrno())
-                                .$(", error=").$(e.getFlyweightMessage())
                                 .I$();
                     }
                 }

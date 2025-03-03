@@ -439,7 +439,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 if (!ff.unlinkOrRemove(partitionCleanPath, LOG)) {
                     LOG.info()
                             .$("failed to purge unused partition version [path=").$(partitionCleanPath)
-                            .$(", errno=").$(ff.errno()).I$();
+                            .$(", errno=").$(ff.errno())
+                            .I$();
                 } else {
                     LOG.info().$("purged unused partition version [path=").$(partitionCleanPath).I$();
                 }
