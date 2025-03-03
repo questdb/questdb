@@ -10,6 +10,9 @@ import pathlib
 import subprocess
 import os
 import argparse
+import threading
+import re
+from collections import deque
 
 
 def download_file(url, dest):
@@ -92,14 +95,66 @@ def linux_glibc_version():
     raise RuntimeError('Failed to parse glibc version')
 
 
-def ensure_rust_version(rustup_bin, version):
+def call_rustup_install(args):
+    # We need watch the output for Azure CI setup issues and rectify them.
+    proc = subprocess.Popen(
+        args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding='utf-8',
+        bufsize=1)  # Line buffered.
+    
+    broken_tools = deque()
+
+    warn_pat = re.compile(
+        r'warn: tool `([^`]+)` is already installed, ' +
+        r'remove it from `([^`]+)`, then run `rustup update` ' +
+        'to have rustup manage this tool.')
+
+    def monitor_output(in_stream, out_stream):
+        for line in in_stream:
+            out_stream.write(line)
+            match = warn_pat.match(line)
+            if match:
+                tool, path = match.groups()
+                broken_tools.append((tool, path))
+
+    stdout_thread = threading.Thread(
+        target=monitor_output, args=(proc.stdout, sys.stdout), daemon=True)
+    stdout_thread.start()
+    stderr_thread = threading.Thread(
+        target=monitor_output, args=(proc.stderr, sys.stderr), daemon=True)
+    stderr_thread.start()
+
+    return_code = proc.wait()
+
+    stdout_thread.join()
+    stderr_thread.join()
+
+    if return_code:
+        raise subprocess.CalledProcessError(return_code, args)
+    
+    components = []
+    for component, path in broken_tools:
+        components.append(component)
+        os.remove(path)
+
+    return components
+
+
+def ensure_rust_version(rustup_bin, version, components):
     """Ensure the specified version of Rust is installed and defaulted."""
     subprocess.check_call([
         rustup_bin, 'self', 'update'])
-    subprocess.check_call([
+    components = components + call_rustup_install([
         rustup_bin, 'install', '--allow-downgrade', version])
     subprocess.check_call([
         rustup_bin, 'default', version])
+    if components:
+        subprocess.check_call([
+            rustup_bin, 'update'])
+        install_components(components)
 
 
 def ensure_rust(version, components):
@@ -108,12 +163,11 @@ def ensure_rust(version, components):
     if rustup_bin and cargo_bin:
         cargo_path = pathlib.Path(cargo_bin).parent.parent
         print(f'Rustup and cargo are already installed. `cargo` path: {cargo_path}')
-        ensure_rust_version(rustup_bin, version)
+        ensure_rust_version(rustup_bin, version, components)
         may_export_cargo_home(cargo_path)
     else:
         install_rust(version)
-
-    install_components(components)
+        install_components(components)
 
     output = subprocess.check_output(
         ['rustc', '--version', '--verbose'],
@@ -140,7 +194,8 @@ def parse_args():
     parser.add_argument('--components', nargs='*', default=[])
     parser.add_argument(
         '--version', type=str, default='stable', 
-        help='Specify the version (e.g., "stable", "beta", "nightly-2025-01-07"). Default is "stable".')    
+        help='Specify the version (e.g., "stable", "beta", ' +
+        '"nightly-2025-01-07"). Default is "stable".')    
     return parser.parse_args()
 
 
