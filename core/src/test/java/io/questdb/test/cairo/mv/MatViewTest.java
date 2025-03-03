@@ -288,7 +288,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "sym\tprice\tts\n" +
                             "sym1\t1.0\t1970-01-01T00:00:00.000000Z\n" +
                             "sym10\t10.0\t1970-01-01T00:00:00.000000Z\n" +
@@ -320,7 +320,10 @@ public class MatViewTest extends AbstractCairoTest {
                             "sym7\t7.0\t1970-01-01T00:00:00.000000Z\n" +
                             "sym8\t8.0\t1970-01-01T00:00:00.000000Z\n" +
                             "sym9\t9.0\t1970-01-01T00:00:00.000000Z\n",
-                    "price_1h order by ts, sym"
+                    "price_1h order by ts, sym",
+                    "ts",
+                    true,
+                    true
             );
 
             // Expect 3 (30 rows / 10 rows per batch) commits.
@@ -394,12 +397,15 @@ public class MatViewTest extends AbstractCairoTest {
             );
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "sym\tprice\tts\n" +
                             "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                             "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
                             "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
-                    "price_1h order by ts, sym"
+                    "price_1h order by ts, sym",
+                    "ts",
+                    true,
+                    true
             );
 
             dropMatView();
@@ -409,12 +415,15 @@ public class MatViewTest extends AbstractCairoTest {
             TableToken matViewToken2 = engine.verifyTableName("price_1h");
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "sym\tprice\tts\n" +
                             "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                             "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
                             "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
-                    "price_1h order by ts, sym"
+                    "price_1h order by ts, sym",
+                    "ts",
+                    true,
+                    true
             );
 
             Assert.assertNull(engine.getMatViewGraph().getViewRefreshState(matViewToken1));
@@ -442,12 +451,15 @@ public class MatViewTest extends AbstractCairoTest {
             );
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "sym\tprice\tts\n" +
                             "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                             "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
                             "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
-                    "price_1h order by ts, sym"
+                    "price_1h order by ts, sym",
+                    "ts",
+                    true,
+                    true
             );
 
             // mat view should be deleted
@@ -516,7 +528,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                     "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
                     "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n";
-            assertSql(expected, "price_1h order by sym");
+            assertQueryNoLeakCheck(expected, "price_1h order by sym");
 
             execute("alter table base_price drop column extra_col");
             drainQueues();
@@ -535,7 +547,7 @@ public class MatViewTest extends AbstractCairoTest {
                             "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t2\t2\n",
                     "materialized_views"
             );
-            assertSql(expected, "price_1h order by sym");
+            assertQueryNoLeakCheck(expected, "price_1h order by sym");
         });
     }
 
@@ -574,7 +586,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "materialized_views"
             );
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "sym\tprice\tts\n" +
                             "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                             "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
@@ -605,28 +617,28 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testIndexSampleByAlignToCalendar() throws Exception {
         assertMemoryLeak(() -> {
-            String viewName = "x_view";
-            String out = "select k, s, lat, lon";
-            String viewQuery = "select k, s, first(lat) lat, last(lon) lon " +
+            final String viewName = "x_view";
+            final String out = "select k, s, lat, lon";
+            final String viewQuery = "select k, s, first(lat) lat, last(lon) lon " +
                     "from x " +
                     "where s in ('a') " +
                     "sample by 1h align to calendar";
 
-            long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-27T23:30:00.000000Z");
-            long step = 100000000L;
+            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-27T23:30:00.000000Z");
+            final long step = 100000000L;
             final int N = 100;
             final int K = 5;
-            String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
+            final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
             updateViewIncrementally(viewName, viewQuery, columns, "s", startTs, step, N, K);
 
-            String expected = "k\ts\tlat\tlon\n" +
+            final String expected = "k\ts\tlat\tlon\n" +
                     "2021-03-27T23:00:00.000000Z\ta\t142.30215575416736\t165.69007104574442\n" +
                     "2021-03-28T00:00:00.000000Z\ta\t106.0418967098362\tnull\n" +
                     "2021-03-28T01:00:00.000000Z\ta\t79.9245166429184\t168.04971262491318\n" +
                     "2021-03-28T02:00:00.000000Z\ta\t6.612327943200507\t128.42101395467057\n";
 
-            assertSql(expected, outSelect(out, viewQuery));
-            assertSql(expected, outSelect(out, viewName));
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), "k", true, true);
+            assertQueryNoLeakCheck(expected, outSelect(out, viewName), "k", true, true);
         });
     }
 
@@ -644,143 +656,145 @@ public class MatViewTest extends AbstractCairoTest {
             long step = 60 * 1000000L;
             final int N = 100;
             final int K = 5;
-            String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a') s,";
+            final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a') s,";
             updateViewIncrementally(viewName, viewQuery, columns, "s", startTs, step, N, K);
 
-            String expected = "k\ts\tlat\tlon\n" +
+            final String expected = "k\ts\tlat\tlon\n" +
                     "2021-03-28T01:00:00.000000Z\ta\t144.77803379943109\t15.276535618609202\n" +
                     "2021-03-28T03:00:00.000000Z\ta\tnull\t127.43011035722469\n" +
                     "2021-03-28T04:00:00.000000Z\ta\t60.30746433578906\t128.42101395467057\n";
 
-            assertSql(expected, outSelect(out, viewQuery));
-            assertSql(expected, outSelect(out, viewName));
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, false);
+            assertQueryNoLeakCheck(expected, outSelect(out, viewName), null, true, true);
         });
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarDSTForwardEdge2() throws Exception {
         assertMemoryLeak(() -> {
-            String viewName = "x_view";
-            String out = "select to_timezone(k, 'Europe/Berlin') k, s, lat, lon";
-            String viewQuery = "select k, s, first(lat) lat, last(lon) lon " +
+            final String viewName = "x_view";
+            final String out = "select to_timezone(k, 'Europe/Berlin') k, s, lat, lon";
+            final String viewQuery = "select k, s, first(lat) lat, last(lon) lon " +
                     "from x " +
                     "where s in ('a') " +
                     "sample by 1h align to calendar time zone 'Europe/Berlin'";
 
-            long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-28T01:00:00.000000Z");
-            long step = 60 * 1000000L;
+            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-28T01:00:00.000000Z");
+            final long step = 60 * 1000000L;
             final int N = 100;
             final int K = 5;
-            String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a') s,";
+            final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a') s,";
             updateViewIncrementally(viewName, viewQuery, columns, "s", startTs, step, N, K);
 
-            String expected = "k\ts\tlat\tlon\n" +
+            final String expected = "k\ts\tlat\tlon\n" +
                     "2021-03-28T03:00:00.000000Z\ta\t144.77803379943109\tnull\n" +
                     "2021-03-28T04:00:00.000000Z\ta\t98.27279585461298\t128.42101395467057\n";
 
-            assertSql(expected, outSelect(out, viewQuery));
-            assertSql(expected, outSelect(out, viewName));
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, false);
+            assertQueryNoLeakCheck(expected, outSelect(out, viewName), null, true, true);
         });
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarDSTForwardEdge3() throws Exception {
         assertMemoryLeak(() -> {
-            String viewName = "x_view";
-            String out = "select to_timezone(k, 'Europe/Berlin') k, s, lat, lon";
-            String viewQuery = "select k, s, first(lat) lat, last(lon) lon " +
+            final String viewName = "x_view";
+            final String out = "select to_timezone(k, 'Europe/Berlin') k, s, lat, lon";
+            final String viewQuery = "select k, s, first(lat) lat, last(lon) lon " +
                     "from x " +
                     "where s in ('a') " +
                     "sample by 1h align to calendar time zone 'Europe/Berlin'";
 
-            long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-28T01:59:00.000000Z");
-            long step = 60 * 1000000L;
+            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-28T01:59:00.000000Z");
+            final long step = 60 * 1000000L;
             final int N = 100;
             final int K = 5;
-            String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a') s,";
+            final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a') s,";
             updateViewIncrementally(viewName, viewQuery, columns, "s", startTs, step, N, K);
 
-            String expected = "k\ts\tlat\tlon\n" +
+            final String expected = "k\ts\tlat\tlon\n" +
                     "2021-03-28T03:00:00.000000Z\ta\t144.77803379943109\t15.276535618609202\n" +
                     "2021-03-28T04:00:00.000000Z\ta\tnull\t127.43011035722469\n" +
                     "2021-03-28T05:00:00.000000Z\ta\t60.30746433578906\t128.42101395467057\n";
 
-            assertSql(expected, outSelect(out, viewQuery));
-            assertSql(expected, outSelect(out, viewName));
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, false);
+            assertQueryNoLeakCheck(expected, outSelect(out, viewName), null, true, true);
         });
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarDSTForwardLocalMidnight() throws Exception {
         assertMemoryLeak(() -> {
-            String viewName = "x_view";
-            String out = "select to_timezone(k, 'Europe/Berlin') k, s, lat, lon";
-            String viewQuery = "select k, s, first(lat) lat, last(lon) lon " +
+            final String viewName = "x_view";
+            final String out = "select to_timezone(k, 'Europe/Berlin') k, s, lat, lon";
+            final String viewQuery = "select k, s, first(lat) lat, last(lon) lon " +
                     "from x " +
                     "where s in ('a') " +
                     "sample by 1h align to calendar time zone 'Europe/Berlin'";
 
-            long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-27T23:01:00.000000Z");
-            long step = 60 * 1000000L;
+            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-27T23:01:00.000000Z");
+            final long step = 60 * 1000000L;
             final int N = 100;
             final int K = 5;
-            String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
+            final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
             updateViewIncrementally(viewName, viewQuery, columns, "s", startTs, step, N, K);
-            String expected = "k\ts\tlat\tlon\n" +
+
+            final String expected = "k\ts\tlat\tlon\n" +
                     "2021-03-28T00:00:00.000000Z\ta\t142.30215575416736\t167.4566019970139\n" +
                     "2021-03-28T01:00:00.000000Z\ta\t33.45558404694713\t128.42101395467057\n";
 
-            assertSql(expected, outSelect(out, viewQuery));
-            assertSql(expected, outSelect(out, viewName));
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, false);
+            assertQueryNoLeakCheck(expected, outSelect(out, viewName), null, true, true);
         });
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBack() throws Exception {
         assertMemoryLeak(() -> {
-            String viewName = "x_view";
-            String out = "select to_timezone(k, 'Europe/Berlin'), k, s, lat, lon";
-            String viewQuery = "select k, s, first(lat) lat, last(k) lon " + //TODO(eugene): last(k) or last(lon) ?
+            final String viewName = "x_view";
+            final String out = "select to_timezone(k, 'Europe/Berlin'), k, s, lat, lon";
+            final String viewQuery = "select k, s, first(lat) lat, last(k) lon " + // TODO(eugene): last(k) or last(lon) ?
                     "from x " +
                     "where s in ('a') " +
                     "sample by 1d align to calendar time zone 'Europe/Berlin'";
 
-            long startTs = TimestampFormatUtils.parseUTCTimestamp("2020-10-23T20:30:00.000000Z");
-            long step = 50 * 60 * 1000000L;
+            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2020-10-23T20:30:00.000000Z");
+            final long step = 50 * 60 * 1000000L;
             final int N = 120;
             final int K = 5;
-            String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
+            final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
             updateViewIncrementally(viewName, viewQuery, columns, "s", startTs, step, N, K);
 
-            String expected = "to_timezone\tk\ts\tlat\tlon\n" +
+            final String expected = "to_timezone\tk\ts\tlat\tlon\n" +
                     "2020-10-24T00:00:00.000000Z\t2020-10-23T22:00:00.000000Z\ta\t142.30215575416736\t2020-10-24T19:50:00.000000Z\n" +
                     "2020-10-25T00:00:00.000000Z\t2020-10-24T22:00:00.000000Z\ta\tnull\t2020-10-25T20:00:00.000000Z\n" +
                     "2020-10-26T00:00:00.000000Z\t2020-10-25T23:00:00.000000Z\ta\t33.45558404694713\t2020-10-26T21:50:00.000000Z\n" +
                     "2020-10-27T00:00:00.000000Z\t2020-10-26T23:00:00.000000Z\ta\t6.612327943200507\t2020-10-27T22:00:00.000000Z\n" +
                     "2020-10-28T00:00:00.000000Z\t2020-10-27T23:00:00.000000Z\ta\tnull\t2020-10-27T23:40:00.000000Z\n";
 
-            assertSql(expected, outSelect(out, viewQuery));
-            assertSql(expected, outSelect(out, viewName));
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), "k");
+            assertQueryNoLeakCheck(expected, outSelect(out, viewName), "k", true, true);
         });
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBackHourlyWithOffset() throws Exception {
         assertMemoryLeak(() -> {
-            String viewName = "x_view";
-            String out = "select to_timezone(k, 'Europe/Berlin'), k, s, lat, lon";
-            String viewQuery = "select k, s, first(lat) lat, last(k) lon " + //TODO(eugene): last(k) or last(lon) ?
+            final String viewName = "x_view";
+            final String out = "select to_timezone(k, 'Europe/Berlin'), k, s, lat, lon";
+            final String viewQuery = "select k, s, first(lat) lat, last(k) lon " + //TODO(eugene): last(k) or last(lon) ?
                     "from x " +
                     "where s in ('a') and k between '2021-03-27 21:00' and  '2021-03-28 04:00'" +
                     "sample by 1h align to calendar time zone 'Europe/Berlin' with offset '00:15'";
 
-            long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-26T20:30:00.000000Z");
-            long step = 13 * 60 * 1000000L;
+            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-26T20:30:00.000000Z");
+            final long step = 13 * 60 * 1000000L;
             final int N = 1000;
             final int K = 25;
-            String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b') s,";
+            final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b') s,";
             updateViewIncrementally(viewName, viewQuery, columns, "s", startTs, step, N, K);
-            String expected = "to_timezone\tk\ts\tlat\tlon\n" +
+
+            final String expected = "to_timezone\tk\ts\tlat\tlon\n" +
                     "2021-03-27T21:15:00.000000Z\t2021-03-27T20:15:00.000000Z\ta\t132.09083798490755\t2021-03-27T21:12:00.000000Z\n" +
                     "2021-03-27T22:15:00.000000Z\t2021-03-27T21:15:00.000000Z\ta\t179.5841357536068\t2021-03-27T21:51:00.000000Z\n" +
                     "2021-03-27T23:15:00.000000Z\t2021-03-27T22:15:00.000000Z\ta\t77.68770182183965\t2021-03-27T22:56:00.000000Z\n" +
@@ -790,36 +804,36 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-03-28T04:15:00.000000Z\t2021-03-28T02:15:00.000000Z\ta\tnull\t2021-03-28T02:37:00.000000Z\n" +
                     "2021-03-28T05:15:00.000000Z\t2021-03-28T03:15:00.000000Z\ta\t38.20430552091481\t2021-03-28T03:16:00.000000Z\n";
 
-            assertSql(expected, outSelect(out, viewQuery));
-            assertSql(expected, outSelect(out, viewName));
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), "k", false);
+            assertQueryNoLeakCheck(expected, outSelect(out, viewName), "k", true, true);
         });
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftForward() throws Exception {
         assertMemoryLeak(() -> {
-            String viewName = "x_view";
-            String out = "select to_timezone(k, 'Europe/Berlin'), k, s, lat, lon";
-            String viewQuery = "select k, s, first(lat) lat, last(k) lon " + //TODO(eugene): last(k) or last(lon) ?
+            final String viewName = "x_view";
+            final String out = "select to_timezone(k, 'Europe/Berlin'), k, s, lat, lon";
+            final String viewQuery = "select k, s, first(lat) lat, last(k) lon " + //TODO(eugene): last(k) or last(lon) ?
                     "from x " +
                     "where s in ('a') " +
                     "sample by 1d align to calendar time zone 'Europe/Berlin'";
 
-            long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-25T23:30:00.000000Z");
-            long step = 50 * 60 * 1000000L;
+            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-25T23:30:00.000000Z");
+            final long step = 50 * 60 * 1000000L;
             final int N = 120;
             final int K = 5;
-            String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
+            final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
             updateViewIncrementally(viewName, viewQuery, columns, "s", startTs, step, N, K);
-            String expected = "to_timezone\tk\ts\tlat\tlon\n" +
+            final String expected = "to_timezone\tk\ts\tlat\tlon\n" +
                     "2021-03-26T00:00:00.000000Z\t2021-03-25T23:00:00.000000Z\ta\t142.30215575416736\t2021-03-26T22:50:00.000000Z\n" +
                     "2021-03-27T00:00:00.000000Z\t2021-03-26T23:00:00.000000Z\ta\tnull\t2021-03-27T22:10:00.000000Z\n" +
                     "2021-03-28T00:00:00.000000Z\t2021-03-27T23:00:00.000000Z\ta\t109.94209864193589\t2021-03-28T20:40:00.000000Z\n" +
                     "2021-03-29T00:00:00.000000Z\t2021-03-28T22:00:00.000000Z\ta\t70.00560222114518\t2021-03-29T16:40:00.000000Z\n" +
                     "2021-03-30T00:00:00.000000Z\t2021-03-29T22:00:00.000000Z\ta\t13.290235514836048\t2021-03-30T02:40:00.000000Z\n";
 
-            assertSql(expected, outSelect(out, viewQuery));
-            assertSql(expected, outSelect(out, viewName));
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), "k", false);
+            assertQueryNoLeakCheck(expected, outSelect(out, viewName), "k", true, true);
         });
     }
 
@@ -827,29 +841,29 @@ public class MatViewTest extends AbstractCairoTest {
     @Ignore
     public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftBack() throws Exception {
         assertMemoryLeak(() -> {
-            String viewName = "x_view";
-            String out = "select to_timezone(k, 'Europe/London'), k, s, lat, lon";
-            String viewQuery = "select k, s, first(lat) lat, last(k) lon " + //TODO(eugene): last(k) or last(lon) ?
+            final String viewName = "x_view";
+            final String out = "select to_timezone(k, 'Europe/London'), k, s, lat, lon";
+            final String viewQuery = "select k, s, first(lat) lat, last(k) lon " + //TODO(eugene): last(k) or last(lon) ?
                     "from x " +
                     "where s in ('a') " +
                     "sample by 1d align to calendar time zone 'Europe/London'";
 
-            long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-25T23:30:00.000000Z");
-            long step = 50 * 60 * 1000000L;
+            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-25T23:30:00.000000Z");
+            final long step = 50 * 60 * 1000000L;
             final int N = 120;
             final int K = 5;
-            String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
+            final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
             updateViewIncrementally(viewName, viewQuery, columns, "s", startTs, step, N, K);
 
-            String expected = "to_timezone\tk\ts\tlat\tlon\n" +
+            final String expected = "to_timezone\tk\ts\tlat\tlon\n" +
                     "2021-03-26T00:00:00.000000Z\t2021-03-26T00:00:00.000000Z\ta\t142.30215575416736\t2021-03-26T22:50:00.000000Z\n" +
                     "2021-03-27T00:00:00.000000Z\t2021-03-27T00:00:00.000000Z\ta\tnull\t2021-03-27T23:00:00.000000Z\n" +
                     "2021-03-28T00:00:00.000000Z\t2021-03-28T00:00:00.000000Z\ta\t33.45558404694713\t2021-03-28T20:40:00.000000Z\n" +
                     "2021-03-29T00:00:00.000000Z\t2021-03-28T23:00:00.000000Z\ta\t70.00560222114518\t2021-03-29T16:40:00.000000Z\n" +
                     "2021-03-30T00:00:00.000000Z\t2021-03-29T23:00:00.000000Z\ta\t13.290235514836048\t2021-03-30T02:40:00.000000Z\n";
 
-            assertSql(expected, outSelect(out, viewQuery));
-            assertSql(expected, outSelect(out, viewName));
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery));
+            assertQueryNoLeakCheck(expected, outSelect(out, viewName));
         });
     }
 
@@ -857,21 +871,21 @@ public class MatViewTest extends AbstractCairoTest {
     @Ignore
     public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftForwardHourly() throws Exception {
         assertMemoryLeak(() -> {
-            String viewName = "x_view";
-            String out = "select to_timezone(k, 'Europe/London'), k, s, lat, lastk";
-            String viewQuery = "select k, s, first(lat) lat, last(k) lastk " +
+            final String viewName = "x_view";
+            final String out = "select to_timezone(k, 'Europe/London'), k, s, lat, lastk";
+            final String viewQuery = "select k, s, first(lat) lat, last(k) lastk " +
                     "from x " +
                     "where s in ('a') and k between '2020-10-24 21:00:00' and '2020-10-25 05:00:00'" +
                     "sample by 1h align to calendar time zone 'Europe/London'";
 
-            long startTs = TimestampFormatUtils.parseUTCTimestamp("2020-10-23T20:30:00.000000Z");
-            long step = 259 * 1000000L;
+            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2020-10-23T20:30:00.000000Z");
+            final long step = 259 * 1000000L;
             final int N = 1000;
             final int K = 25;
-            String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b') s,";
+            final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b') s,";
             updateViewIncrementally(viewName, viewQuery, columns, "s", startTs, step, N, K);
 
-            String expected = "to_timezone\tk\ts\tlat\tlastk\n" +
+            final String expected = "to_timezone\tk\ts\tlat\tlastk\n" +
                     "2020-10-24T22:00:00.000000Z\t2020-10-24T21:00:00.000000Z\ta\t154.93777586404912\t2020-10-24T21:49:28.000000Z\n" +
                     "2020-10-24T23:00:00.000000Z\t2020-10-24T22:00:00.000000Z\ta\t43.799859246867385\t2020-10-24T22:54:13.000000Z\n" +
                     "2020-10-25T00:00:00.000000Z\t2020-10-24T23:00:00.000000Z\ta\t38.34194069380561\t2020-10-24T23:41:42.000000Z\n" +
@@ -880,8 +894,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "2020-10-25T03:00:00.000000Z\t2020-10-25T03:00:00.000000Z\ta\tnull\t2020-10-25T03:43:26.000000Z\n" +
                     "2020-10-25T04:00:00.000000Z\t2020-10-25T04:00:00.000000Z\ta\t34.49948946607576\t2020-10-25T04:56:49.000000Z\n";
 
-            assertSql(expected, outSelect(out, viewQuery));
-            assertSql(expected, outSelect(out, viewName));
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery));
+            assertQueryNoLeakCheck(expected, outSelect(out, viewName));
         });
     }
 
@@ -918,14 +932,14 @@ public class MatViewTest extends AbstractCairoTest {
                     "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                     "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
                     "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n";
-            assertSql(expected1, "price_1h order by sym");
-            assertSql(expected1, view1Sql + " order by sym");
+            assertQueryNoLeakCheck(expected1, "price_1h order by sym");
+            assertQueryNoLeakCheck(expected1, view1Sql + " order by sym");
 
             final String expected2 = "sym\tprice\tts\n" +
                     "gbpusd\t1.321\t2024-09-10T00:00:00.000000Z\n" +
                     "jpyusd\t103.21\t2024-09-10T00:00:00.000000Z\n";
-            assertSql(expected2, "price_1d order by sym");
-            assertSql(expected2, view2Sql + " order by sym");
+            assertQueryNoLeakCheck(expected2, "price_1d order by sym");
+            assertQueryNoLeakCheck(expected2, view2Sql + " order by sym");
         });
     }
 
@@ -992,14 +1006,12 @@ public class MatViewTest extends AbstractCairoTest {
                     "select ts, uid, first(amount) as amount " +
                     "from latest_query " +
                     "sample by 100y";
-            assertSql(expected, viewSql);
+            assertQueryNoLeakCheck(expected, viewSql, "ts");
 
-            execute(
-                    "create materialized view exchanges_100y as (" + viewSql + ") partition by year"
-            );
+            execute("create materialized view exchanges_100y as (" + viewSql + ") partition by year");
             drainQueues();
 
-            assertSql(expected, "exchanges_100y");
+            assertQueryNoLeakCheck(expected, "exchanges_100y", "ts", true, true);
         });
     }
 
@@ -1120,7 +1132,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "materialized_views"
             );
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "sym\tprice\tts\n" +
                             "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                             "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
@@ -1134,7 +1146,7 @@ public class MatViewTest extends AbstractCairoTest {
             execute("insert into base_price(sym, price, ts) values('jpyusd', 103.14, '2024-09-10T13:04')");
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "sym\tprice\tts\n" +
                             "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                             "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
@@ -1153,7 +1165,7 @@ public class MatViewTest extends AbstractCairoTest {
             execute("alter materialized view price_1h resume wal");
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "sym\tprice\tts\n" +
                             "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                             "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
@@ -1175,7 +1187,7 @@ public class MatViewTest extends AbstractCairoTest {
             execute("insert into base_price(sym, price, ts) values('jpyusd', 103.17, '2024-09-10T13:22')");
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "sym\tprice\tts\n" +
                             "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                             "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
@@ -1195,7 +1207,7 @@ public class MatViewTest extends AbstractCairoTest {
             execute("alter materialized view price_1h resume wal from txn 3");
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "sym\tprice\tts\n" +
                             "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                             "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n" +
@@ -1239,10 +1251,12 @@ public class MatViewTest extends AbstractCairoTest {
                     "gbpusd\t1.325\t1.326\t2024-10-27T00:00:00.000000Z\t2024-10-27T02:00:00.000000Z\n" +
                     "gbpusd\t1.327\t1.328\t2024-10-27T23:00:00.000000Z\t2024-10-28T00:00:00.000000Z\n";
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     exp,
-                    "select sym, first(price) as first, last(price) as last, count() count, ts from base_price" +
-                            " sample by 1d ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' order by ts, sym"
+                    "select sym, first(price) as first, last(price) as last, count() count, ts " +
+                            "from base_price " +
+                            "sample by 1d ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' " +
+                            "order by ts, sym"
             );
         });
     }
@@ -1250,23 +1264,24 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testSampleByNoFillAlignToCalendarTimezoneOffset() throws Exception {
         assertMemoryLeak(() -> {
-            String viewName = "x_view";
-            String out = "select to_timezone(k, 'PST') k, c";
-            String viewQuery = "select k, count() c from x sample by 2h align to calendar time zone 'PST' with offset '00:42'";
-            long startTs = TimestampFormatUtils.parseUTCTimestamp("1970-01-03T00:20:00.000000Z");
-            long step = 300000000;
+            final String viewName = "x_view";
+            final String out = "select to_timezone(k, 'PST') k, c";
+            final String viewQuery = "select k, count() c from x sample by 2h align to calendar time zone 'PST' with offset '00:42'";
+            final long startTs = TimestampFormatUtils.parseUTCTimestamp("1970-01-03T00:20:00.000000Z");
+            final long step = 300000000;
             final int N = 100;
             final int K = 5;
             updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
-            String expected = "k\tc\n" +
+
+            final String expected = "k\tc\n" +
                     "1970-01-02T14:42:00.000000Z\t5\n" +
                     "1970-01-02T16:42:00.000000Z\t24\n" +
                     "1970-01-02T18:42:00.000000Z\t24\n" +
                     "1970-01-02T20:42:00.000000Z\t24\n" +
                     "1970-01-02T22:42:00.000000Z\t23\n";
 
-            assertSql(expected, outSelect(out, viewQuery));
-            assertSql(expected, outSelect(out, viewName));
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, false);
+            assertQueryNoLeakCheck(expected, outSelect(out, viewName), null, true, true);
         });
     }
 
@@ -1274,14 +1289,15 @@ public class MatViewTest extends AbstractCairoTest {
     public void testSampleByNoFillNotKeyedAlignToCalendarMisalignedTimezone() throws Exception {
         // IRAN timezone is +4:30, which doesn't align well with 1hr sample
         assertMemoryLeak(() -> {
-            String viewName = "x_view";
-            String viewQuery = "select k, count() c from x sample by 1h align to calendar time zone 'Iran'";
-            long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-28T00:15:00.000000Z");
-            long step = 6 * 60000000;
+            final String viewName = "x_view";
+            final String viewQuery = "select k, count() c from x sample by 1h align to calendar time zone 'Iran'";
+            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-28T00:15:00.000000Z");
+            final long step = 6 * 60000000;
             final int N = 100;
             final int K = 5;
             updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
-            String expected = "k\tc\n" +
+
+            final String expected = "k\tc\n" +
                     "2021-03-28T04:00:00.000000Z\t3\n" +
                     "2021-03-28T05:00:00.000000Z\t10\n" +
                     "2021-03-28T06:00:00.000000Z\t10\n" +
@@ -1294,23 +1310,24 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-03-28T13:00:00.000000Z\t10\n" +
                     "2021-03-28T14:00:00.000000Z\t7\n";
 
-            String out = "select to_timezone(k, 'Iran') k, c";
-            assertSql(expected, outSelect(out, viewQuery));
-            assertSql(expected, outSelect(out, viewName));
+            final String out = "select to_timezone(k, 'Iran') k, c";
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, false);
+            assertQueryNoLeakCheck(expected, outSelect(out, viewName), null, true, true);
         });
     }
 
     @Test
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezone() throws Exception {
         assertMemoryLeak(() -> {
-            String viewName = "x_view";
-            String viewQuery = "select k, count() c from x sample by 1h align to calendar time zone 'Europe/Berlin'";
-            long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-28T00:15:00.000000Z");
-            long step = 6 * 60000000;
+            final String viewName = "x_view";
+            final String viewQuery = "select k, count() c from x sample by 1h align to calendar time zone 'Europe/Berlin'";
+            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-28T00:15:00.000000Z");
+            final long step = 6 * 60000000;
             final int N = 100;
             final int K = 5;
             updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
-            String expected = "k\tc\n" +
+
+            final String expected = "k\tc\n" +
                     "2021-03-28T01:00:00.000000Z\t8\n" +
                     "2021-03-28T03:00:00.000000Z\t10\n" +
                     "2021-03-28T04:00:00.000000Z\t10\n" +
@@ -1322,9 +1339,10 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-03-28T10:00:00.000000Z\t10\n" +
                     "2021-03-28T11:00:00.000000Z\t10\n" +
                     "2021-03-28T12:00:00.000000Z\t2\n";
-            String out = "select to_timezone(k, 'Europe/Berlin') k, c";
-            assertSql(expected, outSelect(out, viewQuery));
-            assertSql(expected, outSelect(out, viewName));
+
+            final String out = "select to_timezone(k, 'Europe/Berlin') k, c";
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, false);
+            assertQueryNoLeakCheck(expected, outSelect(out, viewName), null, true, true);
         });
     }
 
@@ -1340,14 +1358,15 @@ public class MatViewTest extends AbstractCairoTest {
         // to do anything special. Our UTC timestamps will show "gap" and data doesn't
         // have to change
         assertMemoryLeak(() -> {
-            String viewName = "x_view";
-            String viewQuery = "select k, count() c from x sample by 1h align to calendar time zone 'Europe/Berlin'";
-            long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-10-31T00:15:00.000000Z");
-            long step = 6 * 60000000;
+            final String viewName = "x_view";
+            final String viewQuery = "select k, count() c from x sample by 1h align to calendar time zone 'Europe/Berlin'";
+            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-10-31T00:15:00.000000Z");
+            final long step = 6 * 60000000;
             final int N = 100;
             final int K = 5;
             updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
-            String expected = "k\tc\n" +
+
+            final String expected = "k\tc\n" +
                     "2021-10-31T02:00:00.000000Z\t18\n" +
                     "2021-10-31T03:00:00.000000Z\t10\n" +
                     "2021-10-31T04:00:00.000000Z\t10\n" +
@@ -1358,10 +1377,10 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-10-31T09:00:00.000000Z\t10\n" +
                     "2021-10-31T10:00:00.000000Z\t10\n" +
                     "2021-10-31T11:00:00.000000Z\t2\n";
-            String out = "select to_timezone(k, 'Europe/Berlin') k, c";
-            assertSql(expected, outSelect(out, viewQuery));
+            final String out = "select to_timezone(k, 'Europe/Berlin') k, c";
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery));
             //TODO(eugene): Sample by bug around DST ?
-            assertSql(expected, outSelect(out, viewName));
+            assertQueryNoLeakCheck(expected, outSelect(out, viewName));
         });
     }
 
@@ -1372,14 +1391,15 @@ public class MatViewTest extends AbstractCairoTest {
         // to do anything special. Our UTC timestamps will show "gap" and data doesn't
         // have to change
         assertMemoryLeak(() -> {
-            String viewName = "x_view";
-            String viewQuery = "select k, count() c from x sample by 30m align to calendar time zone 'Europe/Berlin'";
-            long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-10-31T00:15:00.000000Z");
-            long step = 6 * 60000000;
+            final String viewName = "x_view";
+            final String viewQuery = "select k, count() c from x sample by 30m align to calendar time zone 'Europe/Berlin'";
+            final long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-10-31T00:15:00.000000Z");
+            final long step = 6 * 60000000;
             final int N = 100;
             final int K = 5;
             updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
-            String expected = "k\tc\n" +
+
+            final String expected = "k\tc\n" +
                     "2021-10-31T02:00:00.000000Z\t3\n" +
                     "2021-10-31T02:30:00.000000Z\t15\n" +
                     "2021-10-31T03:00:00.000000Z\t5\n" +
@@ -1400,10 +1420,10 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-10-31T10:30:00.000000Z\t5\n" +
                     "2021-10-31T11:00:00.000000Z\t2\n";
 
-            String out = "select to_timezone(k, 'Europe/Berlin') k, c";
-            assertSql(expected, outSelect(out, viewQuery));
+            final String out = "select to_timezone(k, 'Europe/Berlin') k, c";
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery));
             //TODO(eugene): Sample by bug around DST ?
-            assertSql(expected, outSelect(out, viewName));
+            assertQueryNoLeakCheck(expected, outSelect(out, viewName));
         });
     }
 
@@ -1415,36 +1435,39 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testSampleByNoFillNotKeyedAlignToCalendarUTC() throws Exception {
         assertMemoryLeak(() -> {
-            String viewName = "x_view";
-            String viewQuery = "select k, count() c from x sample by 90m align to calendar";
-            long startTs = 172800000000L;
-            long step = 300000000;
+            final String viewName = "x_view";
+            final String viewQuery = "select k, count() c from x sample by 90m align to calendar";
+            final long startTs = 172800000000L;
+            final long step = 300000000;
             final int N = 100;
             final int K = 5;
             updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
-            String expected = "k\tc\n" +
+
+            final String expected = "k\tc\n" +
                     "1970-01-03T00:00:00.000000Z\t18\n" +
                     "1970-01-03T01:30:00.000000Z\t18\n" +
                     "1970-01-03T03:00:00.000000Z\t18\n" +
                     "1970-01-03T04:30:00.000000Z\t18\n" +
                     "1970-01-03T06:00:00.000000Z\t18\n" +
                     "1970-01-03T07:30:00.000000Z\t10\n";
-            assertSql(expected, viewQuery);
-            assertSql(expected, viewName);
+
+            assertQueryNoLeakCheck(expected, viewQuery, "k", true, true);
+            assertQueryNoLeakCheck(expected, viewName, "k", true, true);
         });
     }
 
     @Test
     public void testSampleByNoFillNotKeyedAlignToCalendarUTCOffset() throws Exception {
         assertMemoryLeak(() -> {
-            String viewName = "x_view";
-            String viewQuery = "select k, count() c from x sample by 90m align to calendar with offset '00:42'";
-            long startTs = 172800000000L;
-            long step = 300000000;
+            final String viewName = "x_view";
+            final String viewQuery = "select k, count() c from x sample by 90m align to calendar with offset '00:42'";
+            final long startTs = 172800000000L;
+            final long step = 300000000;
             final int N = 100;
             final int K = 5;
             updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
-            String expected = "k\tc\n" +
+
+            final String expected = "k\tc\n" +
                     "1970-01-02T23:12:00.000000Z\t9\n" +
                     "1970-01-03T00:42:00.000000Z\t18\n" +
                     "1970-01-03T02:12:00.000000Z\t18\n" +
@@ -1452,15 +1475,12 @@ public class MatViewTest extends AbstractCairoTest {
                     "1970-01-03T05:12:00.000000Z\t18\n" +
                     "1970-01-03T06:42:00.000000Z\t18\n" +
                     "1970-01-03T08:12:00.000000Z\t1\n";
-            assertSql(expected, viewQuery);
-            assertSql(expected, viewName);
+
+            assertQueryNoLeakCheck(expected, viewQuery, "k");
+            assertQueryNoLeakCheck(expected, viewName, "k", true, true);
         });
     }
 
-    // TODO(puzpuzpuz): we need to fix txn for all readers that belong to the base table
-    //                  instead of using single detached reader instance; index cursors are
-    //                  mutable and lead to bugs when shared between multiple factories/cursors
-    @Ignore
     @Test
     public void testSelfJoinQuery() throws Exception {
         // Here we want to verify that the detached base table reader used by the refresh job
@@ -1498,17 +1518,17 @@ public class MatViewTest extends AbstractCairoTest {
                     "foobar\t\ts1\t\tnull\t2024-09-10T12:00:00.000000Z\n" +
                     "foobar\tbarbaz\ts1\ts1\t103.21\t2024-09-10T12:00:00.000000Z\n" +
                     "foobar\tbarbaz\ts1\ts1\t103.21\t2024-09-10T13:00:00.000000Z\n";
-            assertSql(expected, viewSql + " order by ts, sym_a, sym_b");
-            assertSql(expected, "price_1h order by ts, sym_a, sym_b");
+            assertQueryNoLeakCheck(expected, viewSql + " order by ts, sym_a, sym_b", "ts", true);
+            assertQueryNoLeakCheck(expected, "price_1h order by ts, sym_a, sym_b", "ts", true, true);
         });
     }
 
     @Test
     public void testSimpleCancelRefresh() throws Exception {
         assertMemoryLeak(() -> {
-            SOCountDownLatch started = new SOCountDownLatch(1);
-            SOCountDownLatch stopped = new SOCountDownLatch(1);
-            AtomicBoolean refreshed = new AtomicBoolean(true);
+            final SOCountDownLatch started = new SOCountDownLatch(1);
+            final SOCountDownLatch stopped = new SOCountDownLatch(1);
+            final AtomicBoolean refreshed = new AtomicBoolean(true);
 
             execute(
                     "create table base_price (" +
@@ -1591,12 +1611,15 @@ public class MatViewTest extends AbstractCairoTest {
             );
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "sym\tprice\tts\n" +
                             "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                             "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
                             "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
-                    "price_1h order by ts, sym"
+                    "price_1h order by ts, sym",
+                    "ts",
+                    true,
+                    true
             );
 
             execute(
@@ -1610,17 +1633,18 @@ public class MatViewTest extends AbstractCairoTest {
                     "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
                     "gbpusd\t1.325\t2024-09-10T13:00:00.000000Z\n";
 
-            assertSql(expected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
-            assertSql(expected, "price_1h order by ts, sym");
+            assertQueryNoLeakCheck(expected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym", "ts", true, true);
+            assertQueryNoLeakCheck(expected, "price_1h order by ts, sym", "ts", true, true);
         });
     }
 
     @Test
     public void testSubQuery() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table base_price (" +
-                    "  sym varchar, price double, ts timestamp" +
-                    ") timestamp(ts) partition by DAY WAL"
+            execute(
+                    "create table base_price (" +
+                            "  sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
             );
 
             final String viewSql = "select sym0, last(price0) price, ts0 " +
@@ -1628,9 +1652,10 @@ public class MatViewTest extends AbstractCairoTest {
                     "sample by 1h";
 
             createMatView(viewSql);
-            execute("insert into base_price " +
-                    "select 'gbpusd', 1.320 + x / 1000.0, timestamp_sequence('2024-09-10T12:02', 1000000*60*5) " +
-                    "from long_sequence(24 * 20 * 5)"
+            execute(
+                    "insert into base_price " +
+                            "select 'gbpusd', 1.320 + x / 1000.0, timestamp_sequence('2024-09-10T12:02', 1000000*60*5) " +
+                            "from long_sequence(24 * 20 * 5)"
             );
             drainQueues();
 
@@ -1665,12 +1690,15 @@ public class MatViewTest extends AbstractCairoTest {
             );
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "sym\tprice\tts\n" +
                             "gbpusd\t1.312\t2024-09-12T13:00:00.000000Z\n" +
                             "gbpusd\t1.313\t2024-09-13T13:00:00.000000Z\n" +
                             "gbpusd\t1.314\t2024-09-14T13:00:00.000000Z\n",
-                    "price_1h order by ts, sym"
+                    "price_1h order by ts, sym",
+                    "ts",
+                    true,
+                    true
             );
         });
     }
@@ -1750,23 +1778,25 @@ public class MatViewTest extends AbstractCairoTest {
         return out + " from (" + in + ")";
     }
 
-    private void testAlignToCalendarTimezoneOffset(final String timezone) throws SqlException {
-        String viewName = "x_view";
-        String viewQuery = "select k, count() c from x sample by 90m align to calendar time zone '" + timezone + "' with offset '00:42'";
-        long startTs = 172800000000L;
-        long step = 300000000;
+    private void testAlignToCalendarTimezoneOffset(final String timezone) throws Exception {
+        final String viewName = "x_view";
+        final String viewQuery = "select k, count() c from x sample by 90m align to calendar time zone '" + timezone + "' with offset '00:42'";
+        final long startTs = 172800000000L;
+        final long step = 300000000;
         final int N = 100;
         final int K = 5;
         updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
-        String expected = "k\tc\n" +
+
+        final String expected = "k\tc\n" +
                 "1970-01-02T23:42:00.000000Z\t15\n" +
                 "1970-01-03T01:12:00.000000Z\t18\n" +
                 "1970-01-03T02:42:00.000000Z\t18\n" +
                 "1970-01-03T04:12:00.000000Z\t18\n" +
                 "1970-01-03T05:42:00.000000Z\t18\n" +
                 "1970-01-03T07:12:00.000000Z\t13\n";
-        assertSql(expected, viewQuery);
-        assertSql(expected, viewName);
+
+        assertQueryNoLeakCheck(expected, viewQuery, "k");
+        assertQueryNoLeakCheck(expected, viewName, "k", true, true);
     }
 
     private void testBaseTableInvalidateOnOperation(String operationSql, String invalidationReason) throws Exception {

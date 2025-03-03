@@ -205,7 +205,7 @@ public class MatViewDefinition {
         final int refreshType = block.getInt(offset);
         if (refreshType != INCREMENTAL_REFRESH_TYPE) {
             throw CairoException.critical(0)
-                    .put("unsupported refresh strategy [view=")
+                    .put("unsupported refresh type [view=")
                     .put(matViewToken.getTableName())
                     .put(", type=")
                     .put(refreshType)

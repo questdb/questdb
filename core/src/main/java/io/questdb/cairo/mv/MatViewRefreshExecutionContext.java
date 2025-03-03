@@ -87,12 +87,6 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
                         baseTableReader.getMetadataVersion()
                 );
             }
-            // Fast path: go with the base reader if it's not in-use.
-            if (getCairoEngine().getDetachedReaderRefCount(baseTableReader) == 0) {
-                getCairoEngine().incDetachedReaderRefCount(baseTableReader);
-                return baseTableReader;
-            }
-            // Slow path: obtain a base reader copy from the pool.
             return getCairoEngine().getReaderAtTxn(baseTableReader);
         }
         return getCairoEngine().getReader(tableToken, version);
@@ -102,12 +96,6 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
     public TableReader getReader(TableToken tableToken) {
         if (tableToken.equals(baseTableReader.getTableToken())) {
             // Base table reader txn is fixed throughout the mat view refresh.
-            // Fast path: go with the base reader if it's not in-use.
-            if (getCairoEngine().getDetachedReaderRefCount(baseTableReader) == 0) {
-                getCairoEngine().incDetachedReaderRefCount(baseTableReader);
-                return baseTableReader;
-            }
-            // Slow path: obtain a base reader copy from the pool.
             return getCairoEngine().getReaderAtTxn(baseTableReader);
         }
         return getCairoEngine().getReader(tableToken);

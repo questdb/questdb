@@ -551,10 +551,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableFlagResolver.isSystem(tableToken.getTableName()) ? DefaultDdlListener.INSTANCE : ddlListener;
     }
 
-    public int getDetachedReaderRefCount(TableReader reader) {
-        return readerPool.getDetachedRefCount(reader);
-    }
-
     public Job getEngineMaintenanceJob() {
         return engineMaintenanceJob;
     }
@@ -648,9 +644,18 @@ public class CairoEngine implements Closeable, WriterSource {
     /**
      * Returns a pooled table reader that is pointed at the same transaction number
      * as the source reader.
+     * <p>
+     * If the source reader is detached and not in use, returns the source reader.
+     * The source reader must be used only through calling this method.
      */
     public TableReader getReaderAtTxn(TableReader srcReader) {
         assert srcReader.isOpen() && srcReader.isActive();
+        // Fast path: go with the base reader if it's not in-use.
+        if (readerPool.isDetached(srcReader) && readerPool.getDetachedRefCount(srcReader) == 0) {
+            readerPool.incDetachedRefCount(srcReader);
+            return srcReader;
+        }
+        // Slow path: obtain a base reader copy from the pool.
         return readerPool.getCopyOf(srcReader);
     }
 
@@ -909,10 +914,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public TableWriter getWriterUnsafe(TableToken tableToken, @NotNull String lockReason) {
         return writerPool.get(tableToken, lockReason);
-    }
-
-    public void incDetachedReaderRefCount(TableReader reader) {
-        readerPool.incDetachedRefCount(reader);
     }
 
     public boolean isTableDropped(TableToken tableToken) {

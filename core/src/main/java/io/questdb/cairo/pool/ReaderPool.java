@@ -78,6 +78,10 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         return true;
     }
 
+    public boolean isDetached(TableReader reader) {
+        return ((ReaderPool.R) reader).isDetached();
+    }
+
     @TestOnly
     public void setTableReaderListener(ReaderListener readerListener) {
         this.readerListener = readerListener;
@@ -210,6 +214,10 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         public void incrementDetachedRefCount() {
             assert detached;
             detachedRefCount++;
+        }
+
+        public boolean isDetached() {
+            return detached;
         }
 
         @Override
