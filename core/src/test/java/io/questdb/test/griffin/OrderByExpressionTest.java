@@ -380,4 +380,23 @@ public class OrderByExpressionTest extends AbstractCairoTest {
                     "ORDER BY \"5_sum\"");
         });
     }
+
+    @Test
+    public void testOrderByWithAmbiguousColumnOrdering() throws Exception {
+        assertQuery("5\t1\n" +
+                        "123\t999\n" +
+                        "456\t123\n" +
+                        "789\t456\n",
+                "SELECT * FROM (\n" +
+                        "  SELECT 456 AS \"5\", 123 AS \"1\"\n" +
+                        "  UNION ALL \n" +
+                        "  SELECT 789 AS \"5\",  456 AS \"1\"\n" +
+                        "  UNION ALL \n" +
+                        "  SELECT 123 AS \"5\",  999 AS \"1\"\n" +
+                        ")\n" +
+                        "ORDER BY 1",
+                null,
+                true,
+                true);
+    }
 }
