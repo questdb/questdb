@@ -27,6 +27,7 @@ package io.questdb.cairo.arr;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Immutable view over the backing native memory of an array. Does not own the memory.
@@ -80,9 +81,27 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
         return this;
     }
 
+    @TestOnly
+    public long ptr() {
+        return this.ptr;
+    }
+
     public void reset() {
         this.ptr = 0;
         this.length = 0;
         this.size = 0;
+    }
+
+    /**
+     * Subtracts the delta from the memory pointer. Called by the same-named method
+     * in {@link io.questdb.cutlass.line.tcp.LineTcpParser#shl ILP parser}.
+     */
+    public void shl(long delta) {
+        this.ptr -= delta;
+    }
+
+    @TestOnly
+    public int size() {
+        return this.size;
     }
 }
