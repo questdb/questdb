@@ -29,6 +29,7 @@ import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.FlatArrayView;
+import io.questdb.cairo.arr.FunctionArray;
 import io.questdb.cairo.arr.NoopArrayState;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Record;
@@ -38,7 +39,7 @@ import io.questdb.std.str.StringSink;
 public final class ArrayConstant extends ArrayFunction implements ConstantFunction {
     private final DirectArray array = new DirectArray();
 
-    public ArrayConstant(ArrayView arrayIn) {
+    public ArrayConstant(FunctionArray arrayIn) {
         this.type = arrayIn.getType();
         if (ColumnType.isNull(type)) {
             array.ofNull();
@@ -50,7 +51,6 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
             array.setDimLen(dim, arrayIn.getDimLen(dim));
         }
         array.applyShape(-1);
-        // TODO: this code only works for vanilla arrayIn. Should work for any array.
         FlatArrayView flatViewIn = arrayIn.flatView();
         int elemCount = arrayIn.getFlatViewLength();
         for (int i = 0; i < elemCount; i++) {
