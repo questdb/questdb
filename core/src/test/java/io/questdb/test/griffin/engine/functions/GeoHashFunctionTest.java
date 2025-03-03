@@ -51,6 +51,11 @@ public class GeoHashFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetArray() {
+        nullFunction.getArray(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetBin() {
         nullFunction.getBin(null);
     }

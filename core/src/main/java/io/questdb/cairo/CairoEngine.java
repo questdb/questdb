@@ -245,7 +245,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
                 break;
             case INSERT:
-                insert(compiler, sqlText, sqlExecutionContext);
+                insert(cc, sqlExecutionContext);
                 break;
             case SELECT:
                 throw SqlException.$(0, "use select()");
@@ -258,20 +258,19 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public static void insert(
-            SqlCompiler compiler,
-            CharSequence insertSql,
+            CompiledQuery cq,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        CompiledQuery cq = compiler.compile(insertSql, sqlExecutionContext);
         switch (cq.getType()) {
             case INSERT:
             case INSERT_AS_SELECT:
-                final InsertOperation insertOperation = cq.getInsertOperation();
-                if (insertOperation != null) {
-                    // for insert as select the operation is null
-                    try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
-                        insertMethod.execute();
-                        insertMethod.commit();
+                try (InsertOperation insertOperation = cq.getInsertOperation()) {
+                    if (insertOperation != null) {
+                        // for insert as select the operation is null
+                        try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
+                            insertMethod.execute();
+                            insertMethod.commit();
+                        }
                     }
                 }
                 break;
@@ -1657,14 +1656,14 @@ public class CairoEngine implements Closeable, WriterSource {
         return token;
     }
 
-    protected Iterable<FunctionFactory> getFunctionFactories() {
-        return new FunctionFactoryCacheBuilder().scan(LOG).build();
-    }
-
     protected @NotNull <T extends AbstractTelemetryTask> Telemetry<T> createTelemetry(
             Telemetry.TelemetryTypeBuilder<T> builder, CairoConfiguration configuration
     ) {
         return new Telemetry<>(builder, configuration);
+    }
+
+    protected Iterable<FunctionFactory> getFunctionFactories() {
+        return new FunctionFactoryCacheBuilder().scan(LOG).build();
     }
 
     protected TableFlagResolver newTableFlagResolver(CairoConfiguration configuration) {

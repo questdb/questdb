@@ -33,18 +33,14 @@ import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.StaticHttpAuthenticatorFactory;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Misc;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractTest;
 import org.jetbrains.annotations.NotNull;
 import org.junit.AfterClass;
-import org.junit.BeforeClass;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.Timeout;
-
-import java.util.concurrent.TimeUnit;
 
 public class HttpSecurityTest extends AbstractTest {
 
@@ -96,25 +92,13 @@ public class HttpSecurityTest extends AbstractTest {
             return "foo";
         }
     };
-    private static TestHttpClient testHttpClient;
-
-    @Rule
-    public Timeout timeout = Timeout.builder()
-            .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
-            .withLookingForStuckThread(true)
-            .build();
-
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        AbstractTest.setUpStatic();
-        testHttpClient = Misc.free(testHttpClient);
-        testHttpClient = new TestHttpClient();
-    }
+    private static final TestHttpClient testHttpClient = new TestHttpClient();
 
     @AfterClass
     public static void tearDownStatic() {
-        testHttpClient = Misc.free(testHttpClient);
+        testHttpClient.close();
         AbstractTest.tearDownStatic();
+        assert Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN) == 0;
     }
 
     @Test

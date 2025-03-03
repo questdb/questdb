@@ -171,7 +171,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             memStart = Unsafe.malloc(sizeBytes, memoryTag);
             Vect.memset(memStart, sizeBytes, 0);
             memLimit = memStart + sizeBytes;
-            keySink = new DirectByteSink(KEY_SINK_INITIAL_CAPACITY);
+            keySink = new DirectByteSink(KEY_SINK_INITIAL_CAPACITY, memoryTag);
 
             value = new UnorderedVarcharMapValue(valueSize, valueOffsets);
             value2 = new UnorderedVarcharMapValue(valueSize, valueOffsets);
