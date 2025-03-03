@@ -79,7 +79,7 @@ def parse_rustc_info(output):
 def install_components(components):
     if components:
         subprocess.check_call(
-            ['rustup', 'component', 'add'] + components,
+            ['rustup', 'component', 'add'] + list(set(components)),
             stderr=subprocess.STDOUT)
 
 
@@ -135,13 +135,19 @@ def call_rustup_install(args):
     if return_code:
         raise subprocess.CalledProcessError(return_code, args)
     
+    tool2component = {
+        'rust-analyzer': 'rust-analyzer',
+        'rustfmt': 'rustfmt',
+        'cargo-fmt': 'rustfmt',
+    }
+
     components = []
-    for component, path in broken_tools:
-        components.append(component)
-        component_filename = f'{component}.exe' \
-            if sys.platform == 'win32' else component
-        component_path = path / component_filename
-        component_path.unlink()
+    for tool, path in broken_tools:
+        components.append(tool2component[tool])
+        tool_filename = f'{tool}.exe' \
+            if sys.platform == 'win32' else tool
+        tool_path = path / tool_filename
+        tool_path.unlink()
 
     return components
 
