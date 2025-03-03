@@ -38,6 +38,7 @@ import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.FullBwdPartitionFrameCursorFactory;
 import io.questdb.cairo.FullFwdPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.IntervalBwdPartitionFrameCursorFactory;
 import io.questdb.cairo.IntervalFwdPartitionFrameCursorFactory;
 import io.questdb.cairo.ListColumnFilter;
@@ -4565,7 +4566,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
             return new VirtualRecordCursorFactory(virtualMetadata, functions, factory);
-        } catch (SqlException | CairoException e) {
+        } catch (SqlException | CairoException | ImplicitCastException e) {
             Misc.freeObjList(functions);
             factory.close();
             throw e;
