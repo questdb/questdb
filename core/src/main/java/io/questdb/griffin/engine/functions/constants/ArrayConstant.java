@@ -25,11 +25,15 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.FlatArrayView;
+import io.questdb.cairo.arr.NoopArrayState;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
+import io.questdb.std.str.StringSink;
 
 public final class ArrayConstant extends ArrayFunction implements ConstantFunction {
     private final DirectArray array = new DirectArray();
@@ -46,10 +50,34 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
             array.setDimLen(dim, arrayIn.getDimLen(dim));
         }
         array.applyShape(-1);
+        // TODO: this code only works for vanilla arrayIn. Should work for any array.
         FlatArrayView flatViewIn = arrayIn.flatView();
         int elemCount = arrayIn.getFlatViewLength();
         for (int i = 0; i < elemCount; i++) {
             array.putDouble(i, flatViewIn.getDouble(i));
+        }
+    }
+
+    public ArrayConstant(double[] vals) {
+        this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+        array.setType(type);
+        array.setDimLen(0, vals.length);
+        array.applyShape(-1);
+        for (int n = vals.length, i = 0; i < n; i++) {
+            array.putDouble(i, vals[i]);
+        }
+    }
+
+    public ArrayConstant(double[][] vals) {
+        this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
+        array.setType(type);
+        array.setDimLen(0, vals.length);
+        array.setDimLen(1, vals[0].length);
+        array.applyShape(-1);
+        for (int n = vals.length, i = 0; i < n; i++) {
+            for (int m = vals[0].length, j = 0; j < m; j++) {
+                array.putDouble(i * j, vals[i][j]);
+            }
         }
     }
 
@@ -61,5 +89,12 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
     @Override
     public ArrayView getArray(Record rec) {
         return array;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        StringSink strSink = new StringSink();
+        ArrayTypeDriver.arrayToJson(array, strSink, NoopArrayState.INSTANCE);
+        sink.val("ARRAY" + strSink);
     }
 }
