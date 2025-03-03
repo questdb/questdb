@@ -71,13 +71,6 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
         return length;
     }
 
-    /**
-     * Shift delta of ptr
-     */
-    public void shl(long delta) {
-        this.ptr -= delta;
-    }
-
     public BorrowedFlatArrayView of(long ptr, short elemType, int length) {
         assert ptr > 0 : "ptr <= 0";
         assert length > 0 : "length <= 0";
@@ -88,15 +81,23 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
         return this;
     }
 
+    @TestOnly
+    public long ptr() {
+        return this.ptr;
+    }
+
     public void reset() {
         this.ptr = 0;
         this.length = 0;
         this.size = 0;
     }
 
-    @TestOnly
-    public long ptr() {
-        return this.ptr;
+    /**
+     * Subtracts the delta from the memory pointer. Called by the same-named method
+     * in {@link io.questdb.cutlass.line.tcp.LineTcpParser#shl ILP parser}.
+     */
+    public void shl(long delta) {
+        this.ptr -= delta;
     }
 
     @TestOnly
