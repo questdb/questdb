@@ -95,6 +95,8 @@ def linux_glibc_version():
 def ensure_rust_version(rustup_bin, version):
     """Ensure the specified version of Rust is installed and defaulted."""
     subprocess.check_call([
+        rustup_bin, 'self', 'update'])
+    subprocess.check_call([
         rustup_bin, 'install', '--allow-downgrade', version])
     subprocess.check_call([
         rustup_bin, 'default', version])
