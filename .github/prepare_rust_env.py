@@ -168,7 +168,7 @@ def ensure_rust_version(rustup_bin, version, components):
         rustup_bin, 'self', 'update'])) != 0:
         print('Failed to update rustup. Ignoring and hoping for the best.')
     components = components + call_rustup_install(log_command([
-        rustup_bin, 'install', '--allow-downgrade', version]))
+        rustup_bin, 'toolchain', 'install', '--allow-downgrade', version]))
     subprocess.check_call(log_command([
         rustup_bin, 'default', version]))
     if components:
