@@ -118,7 +118,7 @@ def call_rustup_install(args):
             match = warn_pat.match(line)
             if match:
                 tool, path = match.groups()
-                broken_tools.append((tool, path))
+                broken_tools.append((tool, pathlib.Path(path)))
 
     stdout_thread = threading.Thread(
         target=monitor_output, args=(proc.stdout, sys.stdout), daemon=True)
@@ -138,7 +138,10 @@ def call_rustup_install(args):
     components = []
     for component, path in broken_tools:
         components.append(component)
-        os.remove(path)
+        component_filename = f'{component}.exe' \
+            if sys.platform == 'win32' else component
+        component_path = path / component_filename
+        component_path.unlink()
 
     return components
 
