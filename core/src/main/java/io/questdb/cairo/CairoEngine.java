@@ -1427,7 +1427,9 @@ public class CairoEngine implements Closeable, WriterSource {
                         }
 
                         final MatViewRefreshState state = matViewGraph.addView(matViewDefinition);
-                        // can be null if the graph has no-op implementation
+                        // Can be null if the graph implementation is no-op.
+                        // The no-op graph does nothing on view creation and other operations
+                        // and is used when mat views are disabled.
                         if (state != null) {
                             final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, tableToken.getDirName());
                             path.trimTo(pathLen).concat(tableToken.getDirName()).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
