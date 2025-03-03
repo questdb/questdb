@@ -92,14 +92,24 @@ def linux_glibc_version():
     raise RuntimeError('Failed to parse glibc version')
 
 
-def ensure_rust(nightly, components):
-    cargo_bin = None if nightly else shutil.which('cargo')
-    if cargo_bin:
+def ensure_rust_version(rustup_bin, version):
+    """Ensure the specified version of Rust is installed and defaulted."""
+    subprocess.check_call([
+        rustup_bin, 'install', '--allow-downgrade', version])
+    subprocess.check_call([
+        rustup_bin, 'default', version])
+
+
+def ensure_rust(version, components):
+    rustup_bin = shutil.which('rustup')
+    cargo_bin = shutil.which('cargo')
+    if rustup_bin and cargo_bin:
         cargo_path = pathlib.Path(cargo_bin).parent.parent
-        print(f'Rust is already installed. Cargo path: {cargo_path}')
+        print(f'Rustup and cargo are already installed. `cargo` path: {cargo_path}')
+        ensure_rust_version(rustup_bin, version)
         may_export_cargo_home(cargo_path)
     else:
-        install_rust(nightly)
+        install_rust(version)
 
     install_components(components)
 
@@ -126,12 +136,14 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--export-cargo-install-env', action='store_true')
     parser.add_argument('--components', nargs='*', default=[])
-    parser.add_argument('--nightly', action='store_true')
+    parser.add_argument(
+        '--version', type=str, default='stable', 
+        help='Specify the version (e.g., "stable", "beta", "nightly-2025-01-07"). Default is "stable".')    
     return parser.parse_args()
 
 
 if __name__ == '__main__':
     args = parse_args()
-    ensure_rust(args.nightly, args.components)
+    ensure_rust(args.version, args.components)
     if args.export_cargo_install_env:
         export_cargo_install_env()
