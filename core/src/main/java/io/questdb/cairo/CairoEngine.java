@@ -1400,12 +1400,14 @@ public class CairoEngine implements Closeable, WriterSource {
         final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
         getTableTokens(tableTokenBucket, false);
 
-        Path path = Path.getThreadLocal(configuration.getDbRoot());
-        final int pathLen = path.size();
         try (
+                Path path = new Path();
                 BlockFileReader reader = new BlockFileReader(configuration);
                 BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())
         ) {
+            path.of(configuration.getDbRoot());
+            final int pathLen = path.size();
+
             for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
                 final TableToken tableToken = tableTokenBucket.get(i);
                 if (tableToken.isMatView() && TableUtils.isMatViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {

@@ -245,6 +245,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         }
                     }
 
+                    assert factory != null;
+                    assert copier != null;
+
                     final CharSequence timestampName = tableWriter.getMetadata().getColumnName(tableWriter.getMetadata().getTimestampIndex());
                     final int cursorTimestampIndex = factory.getMetadata().getColumnIndex(timestampName);
 
