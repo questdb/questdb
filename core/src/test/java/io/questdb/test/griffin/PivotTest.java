@@ -320,9 +320,8 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(ddlCities);
             execute(dmlCities);
 
-            String pivotQuery = "SELECT *\n" +
-                    "FROM cities" +
-                    "WHERE (population % 2) = 0\n" +
+            String pivotQuery = "(cities\n" +
+                    "WHERE (population % 2) = 0)\n" +
                     "PIVOT (\n" +
                     "    SUM(population) as sum\n" +
                     "    FOR\n" +
@@ -331,9 +330,9 @@ public class PivotTest extends AbstractSqlParserTest {
                     ");";
 
             String result = "country\tname\t2000_sum\t2010_sum\t2020_sum\n" +
+                    "NL\tAmsterdam\tnull\tnull\t1158\n" +
                     "US\tSeattle\t564\t608\t738\n" +
-                    "NL\tAmsterdam\t1005\t1065\t1158\n" +
-                    "US\tNew York City\t8015\t8175\t8772\n";
+                    "US\tNew York City\tnull\tnull\t8772\n";
 
             assertSql(result, pivotQuery);
         });
