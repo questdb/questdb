@@ -162,18 +162,19 @@ def call_rustup_install(args):
     return components
 
 
-def ensure_rust_version(rustup_bin, version, components):
+def ensure_rust_version(version, components):
     """Ensure the specified version of Rust is installed and defaulted."""
     if subprocess.call(log_command([
-        rustup_bin, 'self', 'update'])) != 0:
-        print('Failed to update rustup. Ignoring and hoping for the best.')
+        'rustup', 'self', 'update'])) != 0:
+        sys.stderr('    !!! Failed to update rustup. Hoping for the best.\n')
+        sys.stderr.flush()
     components = components + call_rustup_install(log_command([
-        rustup_bin, 'toolchain', 'install', '--allow-downgrade', version]))
+        'rustup', 'toolchain', 'install', '--allow-downgrade', version]))
     subprocess.check_call(log_command([
-        rustup_bin, 'default', version]))
+        'rustup', 'default', version]))
     if components:
         subprocess.check_call(log_command([
-            rustup_bin, 'update']))
+            'rustup', 'update']))
         install_components(components)
 
 
@@ -183,7 +184,7 @@ def ensure_rust(version, components):
     if rustup_bin and cargo_bin:
         cargo_path = pathlib.Path(cargo_bin).parent.parent
         print(f'Rustup and cargo are already installed. `cargo` path: {cargo_path}')
-        ensure_rust_version(rustup_bin, version, components)
+        ensure_rust_version(version, components)
         may_export_cargo_home(cargo_path)
     else:
         install_rust(version)
