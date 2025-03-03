@@ -65,14 +65,6 @@ public interface QuaternaryFunction extends Function {
     }
 
     @Override
-    default void initCursor() {
-        getFunc0().initCursor();
-        getFunc1().initCursor();
-        getFunc2().initCursor();
-        getFunc3().initCursor();
-    }
-
-    @Override
     default boolean isConstant() {
         return getFunc0().isConstant()
                 && getFunc1().isConstant()

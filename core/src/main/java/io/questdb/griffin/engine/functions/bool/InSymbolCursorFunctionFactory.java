@@ -117,7 +117,6 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         private final Function valueArg;
         private final CharSequenceHashSet valueSetA = new CharSequenceHashSet();
         private final CharSequenceHashSet valueSetB = new CharSequenceHashSet();
-        private RecordCursor cursor;
         private CharSequenceHashSet valueSet;
 
         public StrInCursorFunc(Function valueArg, Function cursorArg, Record.CharSequenceFunction func) {
@@ -128,14 +127,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void close() {
-            cursor = Misc.free(cursor);
-            BinaryFunction.super.close();
-        }
-
-        @Override
         public boolean getBool(Record rec) {
-            initCursor();
             return valueSet.contains(valueArg.getSymbol(rec));
         }
 
@@ -151,9 +143,6 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            if (cursor != null) {
-                cursor = Misc.free(cursor);
-            }
             valueArg.init(symbolTableSource, executionContext);
             cursorArg.init(symbolTableSource, executionContext);
 
@@ -168,21 +157,26 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
             this.valueSet = valueSet;
 
             RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
-            cursor = factory.getCursor(executionContext);
-        }
-
-        @Override
-        public void initCursor() {
-            if (cursor != null) {
-                BinaryFunction.super.initCursor();
-                buildValueSet();
-                cursor = Misc.free(cursor);
+            try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                final Record record = cursor.getRecord();
+                StringSink sink = Misc.getThreadLocalSink();
+                while (cursor.hasNext()) {
+                    CharSequence value = func.get(record, 0, sink);
+                    if (value == null) {
+                        this.valueSet.addNull();
+                    } else {
+                        int toIndex = this.valueSet.keyIndex(value);
+                        if (toIndex > -1) {
+                            this.valueSet.addAt(toIndex, Chars.toString(value));
+                        }
+                    }
+                }
             }
         }
 
         @Override
         public boolean isThreadSafe() {
-            return false;
+            return true;
         }
 
         @Override
@@ -190,21 +184,6 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
             sink.val(valueArg).val(" in ").val(cursorArg);
         }
 
-        private void buildValueSet() {
-            final Record record = cursor.getRecord();
-            StringSink sink = Misc.getThreadLocalSink();
-            while (cursor.hasNext()) {
-                CharSequence value = func.get(record, 0, sink);
-                if (value == null) {
-                    valueSet.addNull();
-                } else {
-                    int toIndex = valueSet.keyIndex(value);
-                    if (toIndex > -1) {
-                        valueSet.addAt(toIndex, Chars.toString(value));
-                    }
-                }
-            }
-        }
     }
 
     private static class StrInNullCursorFunc extends BooleanFunction implements UnaryFunction {
@@ -235,7 +214,6 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         private final Record.CharSequenceFunction func;
         private final IntHashSet symbolKeys = new IntHashSet();
         private final SymbolFunction valueArg;
-        private RecordCursor cursor;
 
         public SymbolInCursorFunc(SymbolFunction valueArg, Function cursorArg, Record.CharSequenceFunction func) {
             this.valueArg = valueArg;
@@ -244,14 +222,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void close() {
-            cursor = Misc.free(cursor);
-            BinaryFunction.super.close();
-        }
-
-        @Override
         public boolean getBool(Record rec) {
-            initCursor();
             return symbolKeys.keyIndex(valueArg.getInt(rec) + 1) < 0;
         }
 
@@ -267,30 +238,27 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            if (cursor != null) {
-                cursor = Misc.free(cursor);
-            }
             valueArg.init(symbolTableSource, executionContext);
             cursorArg.init(symbolTableSource, executionContext);
-
             symbolKeys.clear();
-
             RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
-            cursor = factory.getCursor(executionContext);
-        }
-
-        @Override
-        public void initCursor() {
-            if (cursor != null) {
-                BinaryFunction.super.initCursor();
-                buildSymbolKeys();
-                cursor = Misc.free(cursor);
+            try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                final StaticSymbolTable symbolTable = valueArg.getStaticSymbolTable();
+                assert symbolTable != null;
+                final Record record = cursor.getRecord();
+                StringSink sink = Misc.getThreadLocalSink();
+                while (cursor.hasNext()) {
+                    int key = symbolTable.keyOf(func.get(record, 0, sink));
+                    if (key != SymbolTable.VALUE_NOT_FOUND) {
+                        symbolKeys.add(key + 1);
+                    }
+                }
             }
         }
 
         @Override
         public boolean isThreadSafe() {
-            return false;
+            return true;
         }
 
         @Override
@@ -298,19 +266,6 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
             sink.val(valueArg).val(" in ").val(cursorArg);
         }
 
-        private void buildSymbolKeys() {
-            final StaticSymbolTable symbolTable = valueArg.getStaticSymbolTable();
-            assert symbolTable != null;
-
-            final Record record = cursor.getRecord();
-            StringSink sink = Misc.getThreadLocalSink();
-            while (cursor.hasNext()) {
-                int key = symbolTable.keyOf(func.get(record, 0, sink));
-                if (key != SymbolTable.VALUE_NOT_FOUND) {
-                    symbolKeys.add(key + 1);
-                }
-            }
-        }
     }
 
     private static class SymbolInNullCursorFunc extends BooleanFunction implements UnaryFunction {

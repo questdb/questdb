@@ -1074,7 +1074,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             " from long_sequence(1)" +
                             ") timestamp(t)",
                     expected +
-                            "48.52404686849972\tHYRX\t1971-01-01T00:00:00.000000Z\n",
+                            "24.45295612285482\tHYRX\t1971-01-01T00:00:00.000000Z\n",
                     true
             );
             Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
