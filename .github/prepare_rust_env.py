@@ -17,7 +17,8 @@ from collections import deque
 
 
 def log_command(args):
-    print(f'>>> {shlex.join(args)}')
+    sys.stderr.write(f'>>> {shlex.join(args)}\n')
+    sys.stderr.flush()
     return args
 
 
@@ -95,7 +96,7 @@ def linux_glibc_version():
     if sys.platform != 'linux':
         return ''
     output = subprocess.check_output(
-        ['ldd', '--version'],
+        log_command(['ldd', '--version']),
         stderr=subprocess.STDOUT).decode('utf-8')
     for line in output.splitlines():
         if line.startswith('ldd ('):
