@@ -107,7 +107,7 @@ def linux_glibc_version():
 def call_rustup_install(args):
     # We need watch the output for Azure CI setup issues and rectify them.
     proc = subprocess.Popen(
-        log_command(args),
+        args,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -156,6 +156,7 @@ def call_rustup_install(args):
         tool_filename = f'{tool}.exe' \
             if sys.platform == 'win32' else tool
         tool_path = path / tool_filename
+        sys.stderr.write(f'removing broken tool: {tool_path}\n')
         tool_path.unlink()
 
     return components
@@ -163,8 +164,9 @@ def call_rustup_install(args):
 
 def ensure_rust_version(rustup_bin, version, components):
     """Ensure the specified version of Rust is installed and defaulted."""
-    subprocess.check_call(log_command([
-        rustup_bin, 'self', 'update']))
+    if subprocess.call(log_command([
+        rustup_bin, 'self', 'update'])) != 0:
+        print('Failed to update rustup. Ignoring and hoping for the best.')
     components = components + call_rustup_install(log_command([
         rustup_bin, 'install', '--allow-downgrade', version]))
     subprocess.check_call(log_command([
