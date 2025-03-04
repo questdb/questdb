@@ -192,7 +192,7 @@ def ensure_rust(version, components):
     cargo_bin = shutil.which('cargo')
     if rustup_bin and cargo_bin:
         cargo_path = pathlib.Path(cargo_bin).parent.parent
-        print(f'Rustup and cargo are already installed. `cargo` path: {cargo_path}')
+        sys.stderr.write(f'Rustup and cargo are already installed. `cargo` path: {cargo_path}\n')
         ensure_rust_version(version, components)
         may_export_cargo_home(cargo_path)
     else:
