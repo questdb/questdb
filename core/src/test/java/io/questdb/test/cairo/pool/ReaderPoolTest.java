@@ -290,18 +290,28 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     barrier.await();
                     try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
                         boolean columnsAdded = false;
+                        boolean columnTypeChanged = false;
+                        boolean columnRenamed = false;
                         for (int i = 0; i < writerIterations; i++) {
                             final int prob = rnd.nextInt(100);
                             if (prob >= 95 && columnsAdded) {
                                 writer.removeColumn("sym2");
                                 writer.removeColumn("int2");
-                                writer.removeColumn("bool2");
+                                writer.removeColumn(columnRenamed ? "bool3" : "bool2");
                                 columnsAdded = false;
+                                columnTypeChanged = false;
+                                columnRenamed = false;
                             } else if (prob >= 90 && !columnsAdded) {
                                 writer.addColumn("sym2", ColumnType.SYMBOL, 256, true, true, 256, false);
                                 writer.addColumn("int2", ColumnType.INT);
                                 writer.addColumn("bool2", ColumnType.BOOLEAN);
                                 columnsAdded = true;
+                            } else if (prob >= 85 && columnsAdded && !columnTypeChanged) {
+                                writer.changeColumnType("sym2", ColumnType.STRING, 0, false, false, 0, false, null);
+                                columnTypeChanged = true;
+                            } else if (prob >= 80 && columnsAdded && !columnRenamed) {
+                                writer.renameColumn("bool2", "bool3");
+                                columnRenamed = true;
                             } else {
                                 for (int j = 0; j < writerBatchSize; j++) {
                                     TableWriter.Row r = writer.newRow(Timestamps.SECOND_MICROS * i);

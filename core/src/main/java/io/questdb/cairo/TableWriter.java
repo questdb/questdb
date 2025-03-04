@@ -934,7 +934,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean isSequential,
             SecurityContext securityContext
     ) {
-
         int existingColIndex = metadata.getColumnIndexQuiet(name);
         if (existingColIndex < 0) {
             throw CairoException.nonCritical().put("cannot change column type, column does not exist [table=")

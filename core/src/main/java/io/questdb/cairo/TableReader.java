@@ -615,10 +615,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                 }
             } catch (CairoException ex) {
                 // Scoreboard can be over allocated
-                LOG.critical().$("cannot lock txn in scoreboard [table=")
-                        .$(tableToken)
+                LOG.critical().$("cannot lock txn in scoreboard [table=").$(tableToken)
                         .$(", txn=").$(txn)
-                        .$(", error=").$(ex.getFlyweightMessage()).I$();
+                        .$(", error=").$(ex.getFlyweightMessage())
+                        .I$();
                 throw ex;
             }
         }
@@ -1393,7 +1393,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         releaseTxn();
         final long txn = srcReader.getTxn();
         if (!txnScoreboard.incrementTxn(txn)) {
-            throw CairoException.critical(0).put("could not increment txn when copying table reader state [txn=").put(txn).put(']');
+            throw CairoException.critical(0).put("could not acquire txn for copy, source reader has to be active [table=")
+                    .put(tableToken.getTableName()).put(", txn=").put(txn).put(']');
         }
         this.txn = txn;
         txnAcquired = true;
