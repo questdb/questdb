@@ -16,6 +16,10 @@ import re
 from collections import deque
 
 
+def export_ci_var(name, value):
+    print(f'##vso[task.setvariable variable={name}]{value}')
+
+
 def log_command(args):
     sys.stderr.write(f'>>> {shlex.join(args)}\n')
     sys.stderr.flush()
@@ -43,8 +47,9 @@ def export_cargo_bin_path(cargo_bin_path):
 def may_export_cargo_home(cargo_home):
     """Export CARGO_HOME env variable."""
     if not os.environ.get('CARGO_HOME'):
-        os.environ['CARGO_HOME'] = str(cargo_home)
-        print(f'##vso[task.setvariable variable=CARGO_HOME]{cargo_home}')
+        cargo_home = str(cargo_home)
+        os.environ['CARGO_HOME'] = cargo_home
+        export_ci_var('CARGO_HOME', cargo_home)
 
 
 def install_rust(nightly):
@@ -166,7 +171,8 @@ def ensure_rust_version(version, components):
     """Ensure the specified version of Rust is installed and defaulted."""
     if subprocess.call(log_command([
         'rustup', 'self', 'update'])) != 0:
-        sys.stderr('    !!! Failed to update rustup. Hoping for the best.\n')
+        sys.stderr.write(
+            '    !!! Failed to update rustup. Hoping for the best.\n')
         sys.stderr.flush()
     components = components + call_rustup_install(log_command([
         'rustup', 'toolchain', 'install', '--allow-downgrade', version]))
@@ -198,14 +204,15 @@ def ensure_rust(version, components):
     print(textwrap.indent(output, '    '))
 
     # Export keying info we can use for build caching.
-    print(f'##vso[task.setvariable variable=RUSTC_HOST_TRIPLE]{host_triple}')
-    print(f'##vso[task.setvariable variable=RUSTC_RELEASE]{release}')
-    print(f'##vso[task.setvariable variable=LINUX_GLIBC_VERSION]{linux_glibc_version()}')
+    libc_version = linux_glibc_version()
+    export_ci_var('RUSTC_HOST_TRIPLE', host_triple)
+    export_ci_var('RUSTC_RELEASE', release)
+    export_ci_var('LINUX_GLIBC_VERSION', libc_version)
 
 
 def export_cargo_install_env():
     cargo_install_path = pathlib.Path.home() / 'cargo-install'
-    print(f'##vso[task.setvariable variable=CARGO_INSTALL_PATH]{cargo_install_path}')
+    export_ci_var('CARGO_INSTALL_PATH', str(cargo_install_path))
     print(f'##vso[task.prependpath]{cargo_install_path / "bin"}')
 
 
@@ -213,11 +220,22 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--export-cargo-install-env', action='store_true')
     parser.add_argument('--components', nargs='*', default=[])
-    parser.add_argument(
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
         '--version', type=str, default='stable', 
         help='Specify the version (e.g., "stable", "beta", ' +
-        '"nightly-2025-01-07"). Default is "stable".')    
-    return parser.parse_args()
+        '"nightly-2025-01-07"). Default is "stable".')
+    group.add_argument(
+        '--match', type=pathlib.Path, metavar='VERSION_FILE',
+        help='Specify the path to a `rust-toolchain.toml` ' +
+        'containing a `toolchain.channel` field.')
+    args = parser.parse_args()
+    if args.match:
+        with open(args.match, 'rb') as f:
+            import tomllib
+            toolchain = tomllib.load(f)
+        args.version = toolchain['toolchain']['channel']
+    return args
 
 
 if __name__ == '__main__':
