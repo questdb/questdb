@@ -25,10 +25,12 @@
 package io.questdb.compat;
 
 import io.questdb.ServerMain;
+import io.questdb.std.Os;
 import io.r2dbc.postgresql.PostgresqlConnectionConfiguration;
 import io.r2dbc.postgresql.PostgresqlConnectionFactory;
 import io.r2dbc.spi.Connection;
 import io.r2dbc.spi.ConnectionFactory;
+import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
 import org.junit.AfterClass;
 import org.junit.Test;
@@ -40,8 +42,6 @@ import reactor.test.StepVerifier;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 
 public class R2DBCTest extends AbstractTest {
 
@@ -54,11 +54,9 @@ public class R2DBCTest extends AbstractTest {
     @Test
     public void testCachedAsyncFilterAfterTableTruncate() {
         assertWithR2RDBC(conn -> {
-            // Create table
-            String createTableSQL = "CREATE TABLE test_participants (" +
-                    "participantKey_participantId STRING, " +
+            String createTableSQL = "CREATE TABLE tab (" +
                     "timestamp TIMESTAMP, " +
-                    "inactivationProcessStatus SYMBOL " +
+                    "status SYMBOL " +
                     ") timestamp(timestamp) partition by day";
 
             Mono<Void> createTableMono = Mono.from(conn)
@@ -69,68 +67,65 @@ public class R2DBCTest extends AbstractTest {
                     .expectComplete()
                     .verify(Duration.ofSeconds(10));
 
-            // Insert 100 rows
-            AtomicInteger counter = new AtomicInteger(0);
-            Flux<Long> insertFlux = Flux.range(0, 10)
-                    .flatMap(i -> {
-                        String participantIdStr = String.valueOf(i);
-                        Instant now = Instant.now();
-
-                        String insertSQL = "INSERT INTO test_participants (" +
-                                "participantKey_participantId, " +
+            Mono<Long> insertFlux = Mono.from(conn)
+                    .flatMapMany(connection -> {
+                        String insertSQL = "INSERT INTO tab (" +
                                 "timestamp, " +
-                                "inactivationProcessStatus" +
+                                "status" +
                                 ") VALUES (" +
-                                "$1, $2, $3" +
+                                "$1, $2" +
                                 ")";
 
-                        return Mono.from(conn)
-                                .flatMap(connection -> {
+                        return Flux.range(0, 10)
+                                .flatMap(i -> {
                                     Statement statement = connection.createStatement(insertSQL);
-                                    statement.bind(0, participantIdStr);
-                                    statement.bind(1, now.plusSeconds(i));
-                                    statement.bind(2, "NONE");
+                                    statement.bind(0, Instant.now().plusSeconds(i));
+                                    statement.bind(1, "NONE");
+                                    return Mono.from(statement.execute());
+                                }, 10); // Concurrency of 10
+                    })
+                    .flatMap(Result::getRowsUpdated)
+                    .count();
 
-                                    return Mono.from(statement.execute())
-                                            .flatMap(result -> Mono.from(result.getRowsUpdated()))
-                                            .doOnNext(rowsUpdated -> counter.addAndGet(rowsUpdated.intValue()));
-                                });
-                    }, 1);
-
-            insertFlux.collectList().block();
-
-
-            String query = "SELECT * FROM test_participants WHERE inactivationProcessStatus != 'PURGED' LIMIT 8";
-
-            AtomicReference<Integer> rowCount = new AtomicReference<>(0);
-            Mono<Void> queryMono = Mono.from(conn)
-                    .flatMap(connection -> Mono.from(connection.createStatement(query).execute())
-                            .flatMapMany(result -> result.map((row, metadata) -> 1))
-                            .reduce(0, Integer::sum)
-                            .doOnNext(count -> rowCount.set(count))
-                            .then());
-
-            StepVerifier.create(queryMono)
+            StepVerifier.create(insertFlux)
+                    .expectNext(10L)
                     .expectComplete()
                     .verify(Duration.ofSeconds(10));
 
-            // Drop the table to clean up
-            Mono<Void> truncateTableMono = Mono.from(conn)
-                    .flatMap(connection -> Mono.from(connection.createStatement("TRUNCATE TABLE test_participants").execute())
-                            .then());
+
+            // async filter which stops before consuming all page frames
+            String query = "SELECT * FROM tab WHERE status != 'PURGED' LIMIT 8";
+
+            Mono<Long> tableSize = Mono.from(conn)
+                    .flatMap(connection -> Mono.from(connection.createStatement(query).execute())
+                            .flatMapMany(result -> result.map((row, metadata) -> 1))
+                            .count());
+
+            // all rows are matching the filter, but LIMIT makes us stop before consuming all page frames
+            StepVerifier.create(tableSize)
+                    .expectNext(8L)
+                    .expectComplete()
+                    .verify(Duration.ofSeconds(10));
+
+            // now empty the backing table
+            Mono<Long> truncateTableMono = Mono.from(conn)
+                    .flatMap(connection -> Mono.from(connection.createStatement("TRUNCATE TABLE tab").execute())
+                            .flatMapMany(result -> result.map((row, metadata) -> 1))
+                            .count());
 
             StepVerifier.create(truncateTableMono)
+                    .expectNext(0L)
                     .expectComplete()
                     .verify(Duration.ofSeconds(10));
 
-            queryMono = Mono.from(conn)
+            // verify the filter still works and return correct results, even it's been cached by PGWire
+            tableSize = Mono.from(conn)
                     .flatMap(connection -> Mono.from(connection.createStatement(query).execute())
                             .flatMapMany(result -> result.map((row, metadata) -> 1))
-                            .reduce(0, Integer::sum)
-                            .doOnNext(count -> rowCount.set(count))
-                            .then());
+                            .count());
 
-            StepVerifier.create(queryMono)
+            StepVerifier.create(tableSize)
+                    .expectNext(0L)
                     .expectComplete()
                     .verify(Duration.ofSeconds(10));
         });
