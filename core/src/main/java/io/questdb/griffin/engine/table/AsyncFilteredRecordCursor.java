@@ -280,12 +280,16 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     @Override
     public void toTop() {
+        if (frameIndex == 0 && frameRowIndex == 0) {
+            return;
+        }
+
         collectCursor(false);
         filter.toTop();
         frameSequence.toTop();
         rowsRemaining = ogRowsRemaining;
         frameIndex = -1;
-        frameRowCount = 0;
+        frameRowCount = -1;
         allFramesActive = true;
     }
 
