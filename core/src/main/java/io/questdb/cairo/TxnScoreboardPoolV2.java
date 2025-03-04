@@ -64,7 +64,9 @@ public class TxnScoreboardPoolV2 implements TxnScoreboardPool {
 
     @Override
     public TxnScoreboard getTxnScoreboard(TableToken token) {
-        return pool.compute(token.getDirName(), getOrCreateScoreboard);
+        ScoreboardPoolTenant val = pool.compute(token.getDirName(), getOrCreateScoreboard);
+        val.setTableToken(token);
+        return val;
     }
 
     @Override

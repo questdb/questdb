@@ -67,6 +67,16 @@ public class EmptyTxnScoreboardPool implements TxnScoreboardPool {
             public long releaseTxn(int id, long txn) {
                 return 0;
             }
+
+            @Override
+            public TableToken getTableToken() {
+                return null;
+            }
+
+            @Override
+            public boolean isMax(long txn) {
+                return false;
+            }
         };
     }
 

@@ -44,7 +44,7 @@ public class TxnScoreboardPoolV1 implements TxnScoreboardPool {
     public TxnScoreboard getTxnScoreboard(TableToken token) {
         var scoreboard = scoreboardPoolV1ThreadLocal.get();
         if (scoreboard == null) {
-            scoreboard = new ScoreboardPoolTenant(configuration, this);
+            scoreboard = new ScoreboardPoolTenant(configuration, this, token);
         } else {
             scoreboardPoolV1ThreadLocal.remove();
         }
@@ -67,8 +67,8 @@ public class TxnScoreboardPoolV1 implements TxnScoreboardPool {
     static class ScoreboardPoolTenant extends TxnScoreboardV1 {
         private final TxnScoreboardPoolV1 parent;
 
-        public ScoreboardPoolTenant(CairoConfiguration configuration, TxnScoreboardPoolV1 parent) {
-            super(configuration.getFilesFacade(), configuration.getTxnScoreboardEntryCount());
+        public ScoreboardPoolTenant(CairoConfiguration configuration, TxnScoreboardPoolV1 parent, TableToken tableToken) {
+            super(configuration.getFilesFacade(), configuration.getTxnScoreboardEntryCount(), tableToken);
             this.parent = parent;
         }
 

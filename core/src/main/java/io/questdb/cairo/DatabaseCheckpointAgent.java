@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
@@ -80,6 +81,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private final FilesFacade ff;
     private final boolean lightweightCheckpointSupported;
     private final ReentrantLock lock = new ReentrantLock();
+    private final MessageBus messageBus;
     private final WalWriterMetadata metadata; // protected with #lock
     private final MicrosecondClock microClock;
     private final StringSink nameSink = new StringSink(); // protected with #lock
@@ -102,6 +104,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     DatabaseCheckpointAgent(CairoEngine engine) {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
+        this.messageBus = engine.getMessageBus();
         this.microClock = configuration.getMicrosecondClock();
         this.ff = configuration.getFilesFacade();
         this.metadata = new WalWriterMetadata(ff);
@@ -303,6 +306,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                             throw CairoException.nonCritical().put("cannot lock table for checkpoint [table=").put(tableToken).put(']');
                                         }
                                         scoreboardTxns.add(txn);
+                                        scoreboardTxns.add(reader.getMetadata().getPartitionBy());
                                         scoreboards.add(scoreboard);
                                     }
 
@@ -354,7 +358,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 }
             } catch (Throwable e) {
                 startedAtTimestamp.set(Numbers.LONG_NULL);
-                releaseScoreboardTxns();
+                releaseScoreboardTxns(false);
                 throw e;
             }
         } finally {
@@ -362,11 +366,16 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         }
     }
 
-    private void releaseScoreboardTxns() {
+    private void releaseScoreboardTxns(boolean schedulePartitionPurge) {
         for (int i = 0, n = scoreboards.size(); i < n; i++) {
-            long txn = scoreboardTxns.get(i);
+            long txn = scoreboardTxns.get(2 * i);
             TxnScoreboard scoreboard = scoreboards.getQuick(i);
             scoreboard.releaseTxn(TxnScoreboard.CHECKPOINT_ID, txn);
+
+            if (schedulePartitionPurge && !scoreboard.isMax(txn)) {
+                int partitionBy = (int) scoreboardTxns.getQuick(2 * i + 1);
+                TableUtils.schedulePurgeO3Partitions(messageBus, scoreboard.getTableToken(), partitionBy);
+            }
         }
         scoreboardTxns.clear();
         Misc.freeObjList(scoreboards);
@@ -521,7 +530,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             throw SqlException.position(0).put("Another checkpoint command is in progress");
         }
         try {
-            releaseScoreboardTxns();
+            releaseScoreboardTxns(true);
 
             // Delete checkpoint's "db" directory.
             path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).$();

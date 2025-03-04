@@ -43,4 +43,8 @@ public interface TxnScoreboard extends Closeable {
     boolean isTxnAvailable(long txn);
 
     long releaseTxn(int id, long txn);
+
+    TableToken getTableToken();
+
+    boolean isMax(long txn);
 }

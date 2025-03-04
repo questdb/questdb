@@ -68,12 +68,12 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 @RunWith(Parameterized.class)
 public class O3PartitionPurgeTest extends AbstractCairoTest {
-    private static ScoreboardFormat VERSION = ScoreboardFormat.V1;
+    private static int SCOREBOARD_FORMAT = 1;
     private static O3PartitionPurgeJob purgeJob;
 
-    public O3PartitionPurgeTest(ScoreboardFormat version) throws Exception {
-        if (version != VERSION) {
-            VERSION = version;
+    public O3PartitionPurgeTest(int version) throws Exception {
+        if (version != SCOREBOARD_FORMAT) {
+            SCOREBOARD_FORMAT = version;
             tearDownStatic();
             setUpStatic();
         }
@@ -86,16 +86,16 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        setProperty(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, VERSION == ScoreboardFormat.V1 ? 1 : 2);
+        setProperty(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, SCOREBOARD_FORMAT);
         AbstractCairoTest.setUpStatic();
         purgeJob = new O3PartitionPurgeJob(engine, 1);
     }
 
-    @Parameterized.Parameters(name = "{0}")
+    @Parameterized.Parameters(name = "V{0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {ScoreboardFormat.V1},
-                {ScoreboardFormat.V2},
+                {1},
+                {2},
         });
     }
 
@@ -208,6 +208,43 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 readThread.join();
             } finally {
                 Misc.freeObjList(readers);
+            }
+        });
+    }
+
+    @Test
+    public void testCheckpointDoesNotBlockPurge() throws Exception {
+        Assume.assumeTrue(SCOREBOARD_FORMAT == 2 && Os.type != Os.WINDOWS);
+
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+
+                execute("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY");
+
+                path.concat(engine.getConfiguration().getDbRoot()).concat(engine.verifyTableName("tbl")).concat("1970-01-10");
+                int len = path.size();
+
+                // OOO insert
+                execute("insert into tbl select 4, '1970-01-10T09'");
+
+                // This should lock partition 1970-01-10.1 from being deleted from disk
+                engine.checkpointCreate(sqlExecutionContext);
+                runPartitionPurgeJobs();
+                testPartitionExist(path, len, true, false, false);
+
+                // OOO insert
+                execute("insert into tbl select 2, '1970-01-10T09'");
+                runPartitionPurgeJobs();
+                testPartitionExist(path, len, true, true, false);
+
+                // OOO insert
+                execute("insert into tbl select 4, '1970-01-10T08'");
+                runPartitionPurgeJobs();
+                testPartitionExist(path, len, true, false, true);
+
+                engine.checkpointRelease();
+                runPartitionPurgeJobs();
+                testPartitionExist(path, len, false, false, true);
             }
         });
     }
@@ -909,6 +946,13 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
         });
     }
 
+    private static void testPartitionExist(Path path, int len, boolean... existance) {
+        for (int i = 0, n = existance.length; i < n; i++) {
+            path.trimTo(len).put(".").put(Integer.toString(i + 1)).concat("x.d").$();
+            Assert.assertEquals(Utf8s.toString(path), existance[i], Files.exists(path.$()));
+        }
+    }
+
     private void runPartitionPurgeJobs() {
         // when reader is returned to pool it remains in open state
         // holding files such that purge fails with access violation
@@ -1021,10 +1065,5 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 Misc.free(readers);
             }
         });
-    }
-
-    public enum ScoreboardFormat {
-        V1,
-        V2
     }
 }

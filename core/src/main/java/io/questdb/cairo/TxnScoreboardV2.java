@@ -40,6 +40,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     private final long maxOffset;
     private final int pow2EntryCount;
     private long mem;
+    private TableToken tableToken;
 
     public TxnScoreboardV2(int entryCount) {
         pow2EntryCount = Numbers.ceilPow2(entryCount + RESERVED_ID_COUNT);
@@ -120,6 +121,11 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     }
 
     @Override
+    public TableToken getTableToken() {
+        return tableToken;
+    }
+
+    @Override
     public boolean hasEarlierTxnLocks(long txn) {
         if (!updateMax(txn)) {
             return true;
@@ -136,6 +142,11 @@ public class TxnScoreboardV2 implements TxnScoreboard {
             }
         }
         return false;
+    }
+
+    @Override
+    public boolean isMax(long txn) {
+        return txn >= getMax();
     }
 
     public boolean isRangeAvailable(long fromTxn, long toTxn) {
@@ -169,6 +180,10 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         assert internalId < entryScanCount;
         Unsafe.getUnsafe().putLongVolatile(null, entriesMem + internalId * Long.BYTES, UNLOCKED);
         return 0;
+    }
+
+    public void setTableToken(TableToken tableToken) {
+        this.tableToken = tableToken;
     }
 
     private static int toInternalId(int id) {

@@ -43,10 +43,11 @@ public class TxnScoreboardV1 implements TxnScoreboard {
     private long mem;
     private TableToken tableToken;
 
-    public TxnScoreboardV1(FilesFacade ff, int entryCount) {
+    public TxnScoreboardV1(FilesFacade ff, int entryCount, TableToken tableToken) {
         this.ff = ff;
         this.pow2EntryCount = Numbers.ceilPow2(entryCount);
         this.size = TxnScoreboardV1.getScoreboardSize(pow2EntryCount);
+        this.tableToken = tableToken;
     }
 
     public static native long getScoreboardSize(int entryCount);
@@ -100,6 +101,17 @@ public class TxnScoreboardV1 implements TxnScoreboard {
             return 0;
         }
         return fromInternalTxn(min);
+    }
+
+    @Override
+    public TableToken getTableToken() {
+        return tableToken;
+    }
+
+    @Override
+    public boolean isMax(long txn) {
+        // Unknown, return true as default
+        return true;
     }
 
     @Override
