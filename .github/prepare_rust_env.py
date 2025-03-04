@@ -177,11 +177,6 @@ def call_rustup_install(args):
 
 def ensure_rust_version(version, components):
     """Ensure the specified version of Rust is installed and defaulted."""
-    if subprocess.call(log_command([
-        'rustup', 'self', 'update'])) != 0:
-        sys.stderr.write(
-            '    !!! Failed to update rustup. Hoping for the best.\n')
-        sys.stderr.flush()
     components = components + call_rustup_install(log_command([
         'rustup', 'toolchain', 'install', '--allow-downgrade', version]))
     subprocess.check_call(log_command([
