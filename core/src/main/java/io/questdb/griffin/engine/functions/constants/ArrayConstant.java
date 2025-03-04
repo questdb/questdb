@@ -25,16 +25,21 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.FlatArrayView;
+import io.questdb.cairo.arr.FunctionArray;
+import io.questdb.cairo.arr.NoopArrayState;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
+import io.questdb.std.str.StringSink;
 
 public final class ArrayConstant extends ArrayFunction implements ConstantFunction {
     private final DirectArray array = new DirectArray();
 
-    public ArrayConstant(ArrayView arrayIn) {
+    public ArrayConstant(FunctionArray arrayIn) {
         this.type = arrayIn.getType();
         if (ColumnType.isNull(type)) {
             array.ofNull();
@@ -53,6 +58,29 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
         }
     }
 
+    public ArrayConstant(double[] vals) {
+        this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+        array.setType(type);
+        array.setDimLen(0, vals.length);
+        array.applyShape(-1);
+        for (int n = vals.length, i = 0; i < n; i++) {
+            array.putDouble(i, vals[i]);
+        }
+    }
+
+    public ArrayConstant(double[][] vals) {
+        this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
+        array.setType(type);
+        array.setDimLen(0, vals.length);
+        array.setDimLen(1, vals[0].length);
+        array.applyShape(-1);
+        for (int n = vals.length, i = 0; i < n; i++) {
+            for (int m = vals[0].length, j = 0; j < m; j++) {
+                array.putDouble(i * j, vals[i][j]);
+            }
+        }
+    }
+
     @Override
     public void close() {
         array.close();
@@ -61,5 +89,12 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
     @Override
     public ArrayView getArray(Record rec) {
         return array;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        StringSink strSink = new StringSink();
+        ArrayTypeDriver.arrayToJson(array, strSink, NoopArrayState.INSTANCE);
+        sink.val("ARRAY" + strSink);
     }
 }

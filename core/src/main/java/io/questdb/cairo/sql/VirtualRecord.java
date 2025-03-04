@@ -29,11 +29,13 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 
-public class VirtualRecord implements ColumnTypes, Record {
+public class VirtualRecord implements ColumnTypes, Record, QuietCloseable {
     private final int columnCount;
     private final ObjList<? extends Function> functions;
     private Record base;
@@ -41,6 +43,11 @@ public class VirtualRecord implements ColumnTypes, Record {
     public VirtualRecord(ObjList<? extends Function> functions) {
         this.functions = functions;
         this.columnCount = functions.size();
+    }
+
+    @Override
+    public void close() {
+        Misc.freeObjList(functions);
     }
 
     @Override

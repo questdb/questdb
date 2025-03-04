@@ -227,13 +227,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         functions.add(new ArrayCreateFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         FunctionParser functionParser = createFunctionParser();
-        try (Function f = parseFunction("ARRAY[1]", metadata, functionParser)) {
-            ArrayView array = f.getArray(null);
-            assertEquals(ColumnType.INT, decodeArrayElementType(array.getType()));
-            assertEquals(1, array.getDimCount());
-            assertEquals(1, f.getArray(null).getFlatViewLength());
-            assertEquals(1, array.flatView().getLong(0));
-        }
+        //TODO: Add more types as we support them
         try (Function f = parseFunction("ARRAY[1, 2.0]", metadata, functionParser)) {
             ArrayView array = f.getArray(null);
             assertEquals(ColumnType.DOUBLE, decodeArrayElementType(array.getType()));
@@ -241,15 +235,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             assertEquals(1, array.getDimCount());
             assertEquals(1.0, array.flatView().getDouble(0), 0.0001);
             assertEquals(2.0, array.flatView().getDouble(1), 0.0001);
-        }
-        try (Function f = parseFunction("ARRAY[[1]]", metadata, functionParser)) {
-            ArrayView array = f.getArray(null);
-            assertEquals(ColumnType.INT, decodeArrayElementType(array.getType()));
-            assertEquals(2, array.getDimCount());
-            assertEquals(1, array.getDimLen(0));
-            assertEquals(1, array.getDimLen(1));
-            assertEquals(1, array.getFlatViewLength());
-            assertEquals(1, array.flatView().getLong(0));
         }
         try (Function f = parseFunction("ARRAY[[1], [2.0]]", metadata, functionParser)) {
             ArrayView array = f.getArray(null);
@@ -259,17 +244,6 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             assertEquals(2, array.getFlatViewLength());
             assertEquals(1.0, array.flatView().getDouble(0), 0.0001);
             assertEquals(2.0, array.flatView().getDouble(1), 0.0001);
-        }
-        try (Function f = parseFunction("ARRAY[[1, 2], [3, 4]]", metadata, functionParser)) {
-            ArrayView array = f.getArray(null);
-            assertEquals(ColumnType.INT, decodeArrayElementType(array.getType()));
-            assertEquals(2, array.getDimLen(0));
-            assertEquals(2, array.getDimLen(1));
-            assertEquals(4, array.getFlatViewLength());
-            assertEquals(1, array.flatView().getLong(0));
-            assertEquals(2, array.flatView().getLong(1));
-            assertEquals(3, array.flatView().getLong(2));
-            assertEquals(4, array.flatView().getLong(3));
         }
     }
 
