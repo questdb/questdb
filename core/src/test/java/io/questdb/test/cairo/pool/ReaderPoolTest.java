@@ -267,12 +267,17 @@ public class ReaderPoolTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConcurrentGetAndGetCopyOf() throws Exception {
+    public void testConcurrentGetAndGetCopyOfFuzz() throws Exception {
         final int readerThreadCount = 4;
         final int readerIterations = 200;
         final int writerIterations = 50;
         final int writerBatchSize = 10;
         final String tableName = "test";
+
+        final Rnd[] rnds = new Rnd[readerThreadCount + 1];
+        for (int i = 0; i < readerThreadCount + 1; i++) {
+            rnds[i] = TestUtils.generateRandom(LOG);
+        }
 
         assertWithPool((ReaderPool pool) -> {
             TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
@@ -285,7 +290,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             final AtomicInteger errors = new AtomicInteger();
 
             new Thread(() -> {
-                final Rnd rnd = new Rnd();
+                final Rnd rnd = rnds[0];
                 try {
                     barrier.await();
                     try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
@@ -333,9 +338,10 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
             final TableToken tableToken = engine.verifyTableName(tableName);
             for (int t = 0; t < readerThreadCount; t++) {
+                int finalT = t;
                 new Thread(() -> {
                     final StringSink sink = new StringSink();
-                    final Rnd rnd = new Rnd();
+                    final Rnd rnd = rnds[finalT + 1];
                     try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()) {
                         barrier.await();
                         for (int i = 0; i < readerIterations; i++) {
