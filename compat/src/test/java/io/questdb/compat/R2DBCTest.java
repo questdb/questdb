@@ -52,7 +52,7 @@ public class R2DBCTest extends AbstractTest {
     }
 
     @Test
-    public void testCreateAndQueryParticipantsTable() {
+    public void testCachedAsyncFilterAfterTableTruncate() {
         assertWithR2RDBC(conn -> {
             // Create table
             String createTableSQL = "CREATE TABLE test_participants (" +
