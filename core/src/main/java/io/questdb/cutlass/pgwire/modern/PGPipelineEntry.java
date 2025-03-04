@@ -2046,6 +2046,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         } catch (NoSpaceLeftInResponseBufferException e) {
             throw e;
         } catch (Throwable th) {
+            LOG.debug().$("unexpected error in outCursor [ex=").$(th).I$();
             // We'll be sending an error to the client, so reset to the start of the last sent message.
             utf8Sink.resetToBookmark(recordStartAddress);
             if (th instanceof FlyweightMessageContainer) {
