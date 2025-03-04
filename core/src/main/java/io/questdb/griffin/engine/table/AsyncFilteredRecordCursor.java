@@ -280,15 +280,14 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     @Override
     public void toTop() {
-        // Check if we at the top already and there is nothing to do.
-        if (frameIndex == 0 && frameRowIndex == 0) {
-            return;
-        }
         collectCursor(false);
         filter.toTop();
         frameSequence.toTop();
         rowsRemaining = ogRowsRemaining;
+        // Don't reset frameLimit here since its value is used to prepare frame sequence for dispatch only once.
         frameIndex = -1;
+        frameRowIndex = -1;
+        frameRowCount = -1;
         allFramesActive = true;
     }
 
@@ -395,6 +394,8 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         ogRowsRemaining = rowsRemaining;
         frameIndex = -1;
         frameLimit = -1;
+        frameRowIndex = -1;
+        frameRowCount = -1;
         allFramesActive = true;
         frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
         record.of(frameSequence.getSymbolTableSource());

@@ -29,6 +29,35 @@ import org.junit.Test;
 public class SymbolTest extends AbstractCairoTest {
 
     @Test
+    public void testIndexedScanOverColTopColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create atomic table x as ( " +
+                            "  select rnd_symbol('AB', 'BC', 'CD') sym, timestamp_sequence('2022-02-24', 1000000L) ts " +
+                            "  from long_sequence(10000)" +
+                            "), index(sym) timestamp(ts) partition by DAY BYPASS WAL;"
+            );
+            execute("alter table x add column sym_top symbol index;");
+            execute("insert into x values('EF', '2022-02-01T00:00','STWEFZMJCWHFQEDUY');");
+
+            assertQueryNoLeakCheck(
+                    "sym\tts\tsym_top\n" +
+                            "EF\t2022-02-01T00:00:00.000000Z\tSTWEFZMJCWHFQEDUY\n",
+                    "x where \"sym_top\" = 'STWEFZMJCWHFQEDUY' order by ts asc",
+                    "ts",
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    "sym\tts\tsym_top\n" +
+                            "EF\t2022-02-01T00:00:00.000000Z\tSTWEFZMJCWHFQEDUY\n",
+                    "x where \"sym_top\" = 'STWEFZMJCWHFQEDUY' order by ts desc",
+                    "ts###desc",
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testNullIsReturnedAfterReaderReload() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (sym SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
@@ -118,7 +147,11 @@ public class SymbolTest extends AbstractCairoTest {
                     "select sym from x" +
                             " where timestamp in '2024-03-05T12:13'" +
                             " order by sym desc",
-                    null, true, true, false);
+                    null,
+                    true,
+                    true,
+                    false
+            );
         });
     }
 
