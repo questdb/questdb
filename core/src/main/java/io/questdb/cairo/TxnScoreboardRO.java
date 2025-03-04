@@ -24,23 +24,5 @@
 
 package io.questdb.cairo;
 
-import java.io.Closeable;
-
-public interface TxnScoreboard extends Closeable {
-    int CHECKPOINT_ID = -1;
-
-    boolean acquireTxn(int id, long txn);
-
-    @Override
-    void close();
-
-    int getEntryCount();
-
-    boolean hasEarlierTxnLocks(long maxTxn);
-
-    boolean isRangeAvailable(long fromTxn, long toTxn);
-
-    boolean isTxnAvailable(long txn);
-
-    long releaseTxn(int id, long txn);
+public interface TxnScoreboardRO {
 }

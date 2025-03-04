@@ -58,7 +58,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     private final AtomicBoolean halted = new AtomicBoolean(false);
     private final ObjList<DirectLongList> partitionList;
     private final ObjList<TxReader> txnReaders;
-    private final ObjList<TxnScoreboard> txnScoreboards;
 
     public O3PartitionPurgeJob(CairoEngine engine, int workerCount) {
         super(engine.getMessageBus().getO3PurgeDiscoveryQueue(), engine.getMessageBus().getO3PurgeDiscoverySubSeq());
@@ -67,13 +66,11 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             this.configuration = engine.getMessageBus().getConfiguration();
             this.fileNameSinks = new Utf8StringSink[workerCount];
             this.partitionList = new ObjList<>(workerCount);
-            this.txnScoreboards = new ObjList<>(workerCount);
             this.txnReaders = new ObjList<>(workerCount);
 
             for (int i = 0; i < workerCount; i++) {
                 fileNameSinks[i] = new Utf8StringSink();
                 partitionList.add(new DirectLongList(configuration.getPartitionPurgeListCapacity() * 2L, MemoryTag.NATIVE_O3));
-                txnScoreboards.add(new TxnScoreboard(configuration.getFilesFacade(), configuration.getTxnScoreboardEntryCount()));
                 txnReaders.add(new TxReader(configuration.getFilesFacade()));
             }
         } catch (Throwable th) {
@@ -87,7 +84,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         if (halted.compareAndSet(false, true)) {
             Misc.freeObjList(partitionList);
             Misc.freeObjList(txnReaders);
-            Misc.freeObjList(txnScoreboards);
         }
     }
 
@@ -140,7 +136,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             DirectLongList partitionList,
             CharSequence root,
             TableToken tableToken,
-            TxnScoreboard txnScoreboard,
             TxReader txReader,
             int partitionBy
     ) {
@@ -174,8 +169,9 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         path.of(root).concat(tableToken);
 
         int tableRootLen = path.size();
+        TxnScoreboard txnScoreboard = null;
         try {
-            txnScoreboard.ofRO(path);
+            txnScoreboard = engine.getTxnScoreboard(tableToken);
             txReader.ofRO(path.trimTo(tableRootLen).concat(TXN_FILE_NAME).$(), partitionBy);
             TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
 
@@ -233,7 +229,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             LOG.error().$(ex.getFlyweightMessage()).$();
         } finally {
             txReader.clear();
-            txnScoreboard.clear();
+            Misc.free(txnScoreboard);
         }
         LOG.info().$("processed [table=").$(tableToken).I$();
     }
@@ -403,7 +399,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 partitionList.get(workerId),
                 configuration.getDbRoot(),
                 task.getTableToken(),
-                txnScoreboards.get(workerId),
                 txnReaders.get(workerId),
                 task.getPartitionBy()
         );

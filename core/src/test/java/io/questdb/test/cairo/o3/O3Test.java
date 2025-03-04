@@ -2014,9 +2014,9 @@ public class O3Test extends AbstractO3Test {
                 ts += step;
 
                 long txn = w.getTxn();
-                txnScoreboard.acquireTxn(txn);
+                txnScoreboard.acquireTxn(0, txn);
                 w.commit();
-                txnScoreboard.releaseTxn(txn);
+                txnScoreboard.releaseTxn(0, txn);
             }
         }
     }

@@ -62,17 +62,19 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
-public class O3PartitionPurgeTest extends AbstractCairoTest {
+public class O3PartitionPurgeTestV2 extends AbstractCairoTest {
     private static O3PartitionPurgeJob purgeJob;
-
-    @BeforeClass
-    public static void begin() {
-        purgeJob = new O3PartitionPurgeJob(engine, 1);
-    }
 
     @AfterClass
     public static void end() {
         purgeJob = Misc.free(purgeJob);
+    }
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        setProperty(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, 2);
+        AbstractCairoTest.setUpStatic();
+        purgeJob = new O3PartitionPurgeJob(engine, 1);
     }
 
     @Test
@@ -787,7 +789,6 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             }
         });
     }
-
 
     @Test
     public void testTableWriterDeletePartitionWhenNoReadersOpen() throws Exception {

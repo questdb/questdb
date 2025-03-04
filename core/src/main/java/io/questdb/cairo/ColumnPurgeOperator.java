@@ -45,6 +45,7 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 public class ColumnPurgeOperator implements Closeable {
     private static final Log LOG = LogFactory.getLog(ColumnPurgeOperator.class);
     private final LongList completedRowIds = new LongList();
+    private final CairoEngine engine;
     private final FilesFacade ff;
     private final MicrosecondClock microClock;
     private final Path path;
@@ -59,8 +60,10 @@ public class ColumnPurgeOperator implements Closeable {
     private TxReader txReader;
     private TxnScoreboard txnScoreboard;
 
-    public ColumnPurgeOperator(CairoConfiguration configuration, TableWriter purgeLogWriter, String updateCompleteColumnName) {
+    public ColumnPurgeOperator(CairoEngine engine, TableWriter purgeLogWriter, String updateCompleteColumnName) {
         try {
+            CairoConfiguration configuration = engine.getConfiguration();
+            this.engine = engine;
             this.ff = configuration.getFilesFacade();
             this.path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
             path.of(configuration.getDbRoot());
@@ -68,7 +71,6 @@ public class ColumnPurgeOperator implements Closeable {
             this.purgeLogWriter = purgeLogWriter;
             this.updateCompleteColumnName = updateCompleteColumnName;
             this.updateCompleteColumnWriterIndex = purgeLogWriter.getMetadata().getColumnIndex(updateCompleteColumnName);
-            txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount());
             txReader = new TxReader(ff);
             microClock = configuration.getMicrosecondClock();
             longBytes = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_SQL_COMPILER);
@@ -78,8 +80,10 @@ public class ColumnPurgeOperator implements Closeable {
         }
     }
 
-    public ColumnPurgeOperator(CairoConfiguration configuration) {
+    public ColumnPurgeOperator(CairoEngine engine) {
         try {
+            CairoConfiguration configuration = engine.getConfiguration();
+            this.engine = engine;
             this.ff = configuration.getFilesFacade();
             this.path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
             path.of(configuration.getDbRoot());
@@ -183,7 +187,8 @@ public class ColumnPurgeOperator implements Closeable {
 
     private boolean openScoreboardAndTxn(ColumnPurgeTask task, ScoreboardUseMode scoreboardUseMode) {
         if (scoreboardUseMode == ScoreboardUseMode.INTERNAL) {
-            txnScoreboard.ofRO(path.trimTo(pathTableLen));
+            Misc.free(txnScoreboard);
+            txnScoreboard = engine.getTxnScoreboard(task.getTableName());
         }
 
         // In exclusive mode we still need to check that purge will delete column in correct table,
@@ -357,7 +362,7 @@ public class ColumnPurgeOperator implements Closeable {
             }
         } finally {
             if (scoreboardMode != ScoreboardUseMode.EXTERNAL) {
-                Misc.free(txnScoreboard);
+                txnScoreboard = Misc.free(txnScoreboard);
                 Misc.free(txReader);
             }
         }

@@ -67,6 +67,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
     private final MillisecondClock clock;
     private final ColumnVersionReader columnVersionReader;
+    private final int id;
     private final CairoConfiguration configuration;
     private final int dbRootSize;
     private final FilesFacade ff;
@@ -99,16 +100,19 @@ public class TableReader implements Closeable, SymbolTableSource {
     private long txn = TableUtils.INITIAL_TXN;
     private boolean txnAcquired = false;
 
-    public TableReader(CairoConfiguration configuration, TableToken tableToken) {
-        this(configuration, tableToken, null, null);
+    public TableReader(int id, CairoConfiguration configuration, TableToken tableToken, TxnScoreboardPool scoreboardFactory) {
+        this(id, configuration, tableToken, scoreboardFactory, null, null);
     }
 
     public TableReader(
+            int id,
             CairoConfiguration configuration,
             TableToken tableToken,
+            TxnScoreboardPool scoreboardPool,
             @Nullable MessageBus messageBus,
             @Nullable PartitionOverwriteControl partitionOverwriteControl
     ) {
+        this.id = id;
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
         this.maxOpenPartitions = configuration.getInactiveReaderMaxOpenPartitions();
@@ -126,8 +130,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             metadata = openMetaFile();
             partitionBy = metadata.getPartitionBy();
             columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
-            txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount());
-            txnScoreboard.ofRW(path.trimTo(rootLen));
+            txnScoreboard = scoreboardPool.getTxnScoreboard(tableToken);
             LOG.debug()
                     .$("open [id=").$(metadata.getTableId())
                     .$(", table=").utf8(tableToken.getTableName())
@@ -538,7 +541,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private boolean acquireTxn() {
         if (!txnAcquired) {
             try {
-                if (txnScoreboard.acquireTxn(txn)) {
+                if (txnScoreboard.acquireTxn(id, txn)) {
                     txnAcquired = true;
                 } else {
                     return false;
@@ -566,9 +569,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void checkSchedulePurgeO3Partitions() {
-        long txnLocks = txnScoreboard.getActiveReaderCount(txn);
+        boolean isTxnAvailable = txnScoreboard.isTxnAvailable(txn);
         long partitionTableVersion = txFile.getPartitionTableVersion();
-        if (txnLocks == 0 && txFile.unsafeLoadAll() && txFile.getPartitionTableVersion() > partitionTableVersion) {
+        if (isTxnAvailable && txFile.unsafeLoadAll() && txFile.getPartitionTableVersion() > partitionTableVersion) {
             // Last lock for this txn is released and this is not latest txn number
             // Schedule a job to clean up partition versions this reader may hold
             if (TableUtils.schedulePurgeO3Partitions(messageBus, tableToken, partitionBy)) {
@@ -1243,7 +1246,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private boolean releaseTxn() {
         if (txnAcquired) {
-            long readerCount = txnScoreboard.releaseTxn(txn);
+            long readerCount = txnScoreboard.releaseTxn(id, txn);
             txnAcquired = false;
             return readerCount == 0;
         }

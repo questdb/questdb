@@ -721,4 +721,6 @@ public interface CairoConfiguration {
     }
 
     boolean useFastAsOfJoin();
+
+    int getScoreboardFormat();
 }

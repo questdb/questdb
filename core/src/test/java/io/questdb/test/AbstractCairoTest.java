@@ -1444,7 +1444,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static TableReader newOffPoolReader(CairoConfiguration configuration, CharSequence tableName) {
-        return new TableReader(configuration, engine.verifyTableName(tableName));
+        return new TableReader(0, configuration, engine.verifyTableName(tableName), engine.getTxnScoreboardPool());
     }
 
     protected static TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName) {
@@ -1533,6 +1533,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         engine.releaseInactive();
         engine.releaseInactiveTableSequencers();
         engine.resetNameRegistryMemory();
+        engine.getTxnScoreboardPool().clear();
         Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
         Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
     }

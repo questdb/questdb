@@ -542,7 +542,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     MAT_VIEW_REFRESH_WORKER_NAP_THRESHOLD("mat.view.refresh.worker.nap.threshold"),
     MAT_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD("mat.view.refresh.worker.sleep.threshold"),
     MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT("mat.view.refresh.worker.sleep.timeout"),
-    MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD("mat.view.refresh.worker.yield.threshold");
+    MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD("mat.view.refresh.worker.yield.threshold"),
+    CAIRO_TXN_SCOREBOARD_FORMAT("cairo.txn.scoreboard.format");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

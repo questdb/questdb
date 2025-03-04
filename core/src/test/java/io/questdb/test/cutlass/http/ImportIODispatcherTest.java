@@ -24,7 +24,6 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
@@ -32,6 +31,8 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxnScoreboard;
+import io.questdb.cairo.TxnScoreboardV1;
+import io.questdb.cairo.TxnScoreboardV2;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -450,7 +451,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                     }
 
                     TableToken tableToken = new TableToken("syms", "syms", 0, false, false, false);
-                    try (TableReader reader = new TableReader(engine.getConfiguration(), tableToken)) {
+                    try (TableReader reader = new TableReader(0, engine.getConfiguration(), tableToken, engine.getTxnScoreboardPool())) {
                         TableReaderMetadata meta = reader.getMetadata();
                         Assert.assertEquals(5, meta.getColumnCount());
                         Assert.assertEquals(2, meta.getTimestampIndex());
@@ -755,7 +756,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                     }
 
                     TableToken tableToken = new TableToken("syms", "syms", 0, false, false, false);
-                    try (TableReader reader = new TableReader(engine.getConfiguration(), tableToken)) {
+                    try (TableReader reader = new TableReader(0, engine.getConfiguration(), tableToken, engine.getTxnScoreboardPool())) {
                         TableReaderMetadata meta = reader.getMetadata();
                         Assert.assertEquals(5, meta.getColumnCount());
                         Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("col1"));
@@ -1019,16 +1020,20 @@ public class ImportIODispatcherTest extends AbstractTest {
                     );
 
                     // Check that txn_scoreboard is fully unlocked, e.g. no reader scoreboard leaks after the failure
-                    CairoConfiguration configuration = engine.getConfiguration();
                     TableToken tableToken = engine.verifyTableName("xyz");
-                    try (
-                            Path path = new Path().concat(configuration.getDbRoot()).concat(tableToken);
-                            TxnScoreboard txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path)
-                    ) {
-                        Assert.assertEquals(2, txnScoreboard.getMin());
-                        Assert.assertEquals(0, txnScoreboard.getActiveReaderCount(2));
+                    try (TxnScoreboard txnScoreboard = engine.getTxnScoreboard(tableToken)) {
+                        Assert.assertEquals(2, getMin(txnScoreboard));
+                        Assert.assertTrue(txnScoreboard.isTxnAvailable(2));
                     }
                 });
+    }
+
+    private static long getMin(TxnScoreboard scoreboard) {
+        if (scoreboard instanceof TxnScoreboardV2) {
+            return ((TxnScoreboardV2) scoreboard).getMin();
+        } else {
+            return ((TxnScoreboardV1) scoreboard).getMin();
+        }
     }
 
     private static int stringLen(int number) {

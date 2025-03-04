@@ -71,6 +71,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.fail;
 
+@SuppressWarnings("CallToPrintStackTrace")
 public class ReaderPoolTest extends AbstractCairoTest {
 
     private TableToken uTableToken;
@@ -970,7 +971,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
     private void assertWithPool(PoolAwareCode code, final CairoConfiguration configuration) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (ReaderPool pool = new ReaderPool(configuration, messageBus)) {
+            try (ReaderPool pool = new ReaderPool(configuration, engine.getTxnScoreboardPool(), messageBus)) {
                 code.run(pool);
             }
         });
