@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
@@ -81,16 +82,24 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
 
     public static class ShowCreateMatViewCursor implements NoRandomAccessRecordCursor {
         protected final Utf8StringSink sink = new Utf8StringSink();
+        private final Path path;
         private final ShowCreateMatViewRecord record = new ShowCreateMatViewRecord();
         protected SqlExecutionContext executionContext;
         protected MatViewDefinition matViewDefinition;
         protected CairoTable table;
         private boolean hasRun;
+        private BlockFileReader reader;
         private TableToken tableToken;
+
+        public ShowCreateMatViewCursor() {
+            this.path = new Path();
+        }
 
         @Override
         public void close() {
             sink.clear();
+            Misc.free(path);
+            Misc.free(reader);
         }
 
         @Override
@@ -123,30 +132,32 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
                     throw SqlException.$(tokenPosition, "table does not exist [table=")
                             .put(tableToken.getTableName()).put(']');
                 } else if (!tableToken.equals(table.getTableToken())) {
-                    throw TableReferenceOutOfDateException.of(this.tableToken);
+                    throw TableReferenceOutOfDateException.of(tableToken);
                 }
             }
 
             if (!tableToken.isMatView()) {
-                throw SqlException.$(0, "materialized view expected, got table");
+                throw SqlException.$(tokenPosition, "materialized view expected, got table");
             }
 
             CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
-            Path path = Path.getThreadLocal(configuration.getDbRoot());
+            path.of(configuration.getDbRoot());
             final int pathLen = path.size();
-            try (BlockFileReader reader = new BlockFileReader(configuration)) {
-                try {
-                    this.matViewDefinition = MatViewDefinition.readFrom(
-                            reader,
-                            path,
-                            pathLen,
-                            tableToken
-                    );
-                } catch (CairoException e) {
-                    throw SqlException.$(0, "could not read materialized view definition [table=").put(tableToken)
-                            .put(", msg=").put(e)
-                            .put(']');
-                }
+            if (reader == null) {
+                reader = new BlockFileReader(configuration);
+            }
+            final BlockFileReader finalReader = reader;
+            try (finalReader) {
+                this.matViewDefinition = MatViewDefinition.readFrom(
+                        finalReader,
+                        path,
+                        pathLen,
+                        tableToken
+                );
+            } catch (CairoException e) {
+                throw SqlException.$(tokenPosition, "could not read materialized view definition [table=").put(tableToken)
+                        .put(", msg=").put(e)
+                        .put(']');
             }
 
             toTop();
