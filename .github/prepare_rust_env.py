@@ -61,7 +61,7 @@ def may_export_cargo_home(cargo_home):
         export_ci_var('CARGO_HOME', cargo_home)
 
 
-def install_rust(nightly):
+def install_rust(version):
     platform_key = {'linux': 'unix', 'darwin': 'unix',
                     'win32': 'windows'}.get(sys.platform)
     if not platform_key:
@@ -78,8 +78,7 @@ def install_rust(nightly):
             ['rustup-init.exe', '-y', '--profile', 'minimal'],
         ),
     }[platform_key]
-    if nightly:
-        install_cmd.extend(['--default-toolchain', 'nightly'])
+    install_cmd.extend(['--default-toolchain', version])
     try:
         download_file(download_url, file_name)
         subprocess.check_call(
