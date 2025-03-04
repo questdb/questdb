@@ -27,48 +27,37 @@ package io.questdb.cairo;
 
 import io.questdb.std.ConcurrentHashMap;
 
+import java.util.Iterator;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
 
 import static io.questdb.cairo.pool.AbstractMultiTenantPool.ENTRY_SIZE;
 
 public class TxnScoreboardPoolV2 implements TxnScoreboardPool {
-    private final CairoConfiguration configuration;
     private final BiFunction<CharSequence, ScoreboardPoolTenant, ScoreboardPoolTenant> getOrCreateScoreboard;
     private final ConcurrentHashMap<ScoreboardPoolTenant> pool = new ConcurrentHashMap<>();
 
     public TxnScoreboardPoolV2(CairoConfiguration configuration) {
-        this.configuration = configuration;
         getOrCreateScoreboard = (key, value) -> {
-            if (value == null || value.closed) {
+            if (value == null || !value.incrementRefCount()) {
                 //noinspection resource
-                value = new ScoreboardPoolTenant(configuration);
+                value = new ScoreboardPoolTenant(configuration.getReaderPoolMaxSegments() * ENTRY_SIZE);
             }
-            value.refCount.incrementAndGet();
             return value;
         };
     }
 
     @Override
     public void clear() {
-        for (var tt : pool.keySet()) {
-            var scoreboard = pool.remove(tt);
+        final Iterator<CharSequence> iterator = pool.keySet().iterator();
+        while (iterator.hasNext()) {
+            final CharSequence tableDir = iterator.next();
+            final var scoreboard = pool.get(tableDir);
             if (scoreboard != null) {
-                scoreboard.closed = true;
-                if (scoreboard.refCount.get() == 0) {
-                    scoreboard.doClose();
+                iterator.remove();
+                if (!scoreboard.tryFullClose()) {
+                    scoreboard.closePending = true;
                 }
-            }
-        }
-    }
-
-    @Override
-    public void remove(TableToken token) {
-        var scoreboard = pool.remove(token.getDirName());
-        if (scoreboard != null) {
-            scoreboard.closed = true;
-            if (scoreboard.refCount.get() == 0) {
-                scoreboard.doClose();
             }
         }
     }
@@ -78,23 +67,64 @@ public class TxnScoreboardPoolV2 implements TxnScoreboardPool {
         return pool.compute(token.getDirName(), getOrCreateScoreboard);
     }
 
-    private static class ScoreboardPoolTenant extends TxnScoreboardV2 {
-        private final AtomicInteger refCount = new AtomicInteger();
-        private volatile boolean closed = false;
+    @Override
+    public boolean releaseInactive() {
+        // Remove all with ref count == 0
+        boolean removed = false;
+        final Iterator<CharSequence> iterator = pool.keySet().iterator();
+        while (iterator.hasNext()) {
+            final CharSequence tableDir = iterator.next();
+            final var scoreboard = pool.get(tableDir);
+            if (scoreboard != null && scoreboard.tryFullClose()) {
+                iterator.remove();
+                removed = true;
+            }
+        }
+        return removed;
+    }
 
-        public ScoreboardPoolTenant(CairoConfiguration configuration) {
-            super(configuration.getReaderPoolMaxSegments() * ENTRY_SIZE);
+    @Override
+    public void remove(TableToken token) {
+        var scoreboard = pool.remove(token.getDirName());
+        if (scoreboard != null) {
+            scoreboard.closePending = true;
+            scoreboard.tryFullClose();
+        }
+    }
+
+    private static class ScoreboardPoolTenant extends TxnScoreboardV2 {
+        private final AtomicInteger refCount = new AtomicInteger(1);
+        private volatile boolean closePending = false;
+
+        public ScoreboardPoolTenant(int entryCount) {
+            super(entryCount);
         }
 
         @Override
         public void close() {
-            if (refCount.decrementAndGet() == 0 && closed) {
-                doClose();
+            if (refCount.decrementAndGet() == 0 && closePending) {
+                tryFullClose();
             }
         }
 
-        private void doClose() {
-            super.close();
+        public boolean incrementRefCount() {
+            do {
+                int count = refCount.get();
+                if (count < 0 || closePending) {
+                    return false;
+                }
+                if (refCount.compareAndSet(count, count + 1)) {
+                    return true;
+                }
+            } while (true);
+        }
+
+        public boolean tryFullClose() {
+            if (refCount.compareAndSet(0, -1)) {
+                super.close();
+                return true;
+            }
+            return false;
         }
     }
 }

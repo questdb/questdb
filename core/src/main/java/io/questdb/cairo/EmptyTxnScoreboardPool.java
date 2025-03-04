@@ -71,6 +71,11 @@ public class EmptyTxnScoreboardPool implements TxnScoreboardPool {
     }
 
     @Override
+    public boolean releaseInactive() {
+        return false;
+    }
+
+    @Override
     public void remove(TableToken token) {
     }
 }

@@ -77,7 +77,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testClose() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).
                     col("a", ColumnType.INT).
                     col("b", ColumnType.INT).
@@ -96,7 +96,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testEmptyPartitionSkip() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).
                     col("a", ColumnType.INT).
                     col("b", ColumnType.INT).
@@ -877,7 +877,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testSimpleSymbolIndex() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             int N = 1000000;
             int S = 128;
             Rnd rnd = new Rnd();
@@ -1157,7 +1157,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     private void testFailToRemoveDistressFile(int partitionBy, long increment) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             int N = 10000;
             int S = 512;
             Rnd rnd = new Rnd();
@@ -1252,7 +1252,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     private void testIndexFailureAtRuntime(int partitionBy, long increment, boolean empty, String fileUnderAttack, int expectedPartitionCount) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             int N = 10000;
             int S = 512;
             Rnd rnd = new Rnd();
@@ -1411,7 +1411,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     private void testIndexFailureInConstructor(int partitionBy, long increment, boolean empty, String fileUnderAttack) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             int N = 10000;
             int S = 512;
             Rnd rnd = new Rnd();
@@ -1473,7 +1473,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     private void testParallelIndex(int partitionBy, long increment, int expectedPartitionMin, int testWorkStealing) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             int N = 1000000;
             int S = 128;
             Rnd rnd = new Rnd();
@@ -1585,7 +1585,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     private void testParallelIndexFailureAtRuntime(int partitionBy, long increment, boolean empty, String fileUnderAttack, int expectedPartitionCount) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             int N = 10000;
             int S = 512;
             Rnd rnd = new Rnd();
@@ -1761,7 +1761,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     private void testRemoveFirstColumn(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int N = 100;
             // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
             TableModel model = new TableModel(configuration, "x", partitionBy).
@@ -1835,7 +1835,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     private void testRemoveLastColumn(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int N = 100;
             // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
             TableModel model = new TableModel(configuration, "x", partitionBy).
@@ -1904,7 +1904,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     private void testRemoveMidColumn(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int N = 100;
             // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
             TableModel model = new TableModel(configuration, "x", partitionBy).
@@ -1978,7 +1978,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     private void testReplaceIndexedColWithIndexed(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int M = 1000;
             final int N = 100;
 
@@ -2050,7 +2050,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     private void testReplaceIndexedColWithIndexedWithTruncate(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int M = 1000;
             final int N = 100;
 
@@ -2145,7 +2145,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     private void testReplaceIndexedColWithUnindexed(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int M = 1000;
             final int N = 100;
 
@@ -2215,7 +2215,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     private void testReplaceUnindexedColWithIndexed(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int M = 1000;
             final int N = 100;
 
@@ -2287,7 +2287,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     private void testSymbolIndexRead(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int N = 100;
             TableModel model = new TableModel(configuration, "x", partitionBy).
                     col("a", ColumnType.SYMBOL).indexed(true, N / 4).
@@ -2334,7 +2334,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     private void testSymbolIndexReadAfterAlter(int partitionBy, long increment, int expectedPartitionMin, int M) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int N = 100;
             TableModel model = new TableModel(configuration, "x", partitionBy).
                     col("a", ColumnType.SYMBOL).indexed(false, N / 4).
@@ -2384,7 +2384,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     private void testSymbolIndexReadAfterRollback(int partitionBy, long increment, int expectedPartitionMin) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int N = 100;
             TableModel model = new TableModel(configuration, "x", partitionBy).
                     col("a", ColumnType.SYMBOL).indexed(true, N / 4).
@@ -2436,7 +2436,7 @@ public class FullFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     private void testSymbolIndexReadColumnAddAndAlter(int partitionBy, long increment, int expectedPartitionMin, int M) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int N = 100;
             TableModel model = new TableModel(configuration, "x", partitionBy).timestamp();
             AbstractCairoTest.create(model);

@@ -102,12 +102,12 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
                     Assert.assertTrue(txnScoreboard.isTxnAvailable(5));
                 }
 
-                Assert.assertEquals(4, getMin(txnScoreboard));
+                assertMin(4, txnScoreboard);
                 Assert.assertTrue(txnScoreboard.isTxnAvailable(4));
 
                 try (TableReader reader = getReader(tt)) {
                     Assert.assertEquals(4, reader.getTxn());
-                    Assert.assertEquals(4, getMin(txnScoreboard));
+                    assertMin(4, txnScoreboard);
                     Assert.assertFalse(txnScoreboard.isTxnAvailable(4));
                 }
                 Assert.assertTrue(txnScoreboard.isTxnAvailable(4));
@@ -150,10 +150,18 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
                     Assert.assertFalse(txnScoreboard.isTxnAvailable(2));
                 }
 
-                Assert.assertEquals(2, getMin(txnScoreboard));
+                assertMin(2, txnScoreboard);
                 Assert.assertTrue(txnScoreboard.isTxnAvailable(2));
             }
         });
+    }
+
+    private void assertMin(int min, TxnScoreboard txnScoreboard) {
+        if (txnScoreboard instanceof TxnScoreboardV2) {
+            Assert.assertTrue(min == ((TxnScoreboardV2) txnScoreboard).getMin() || -1 == ((TxnScoreboardV2) txnScoreboard).getMin());
+        } else {
+            Assert.assertEquals(min, ((TxnScoreboardV1) txnScoreboard).getMin());
+        }
     }
 
     private static long getMin(TxnScoreboard scoreboard) {

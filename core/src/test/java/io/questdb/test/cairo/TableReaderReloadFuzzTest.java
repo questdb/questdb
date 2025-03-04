@@ -96,7 +96,7 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
             row.append();
             writer.commit();
 
-            try (TableReader reader = newOffPoolReader(configuration, tableName)) {
+            try (TableReader reader = engine.getReader(engine.verifyTableName(tableName))) {
                 engine.print(tableName, sink, sqlExecutionContext);
 
                 for (int i = 0; i < 64; i++) {

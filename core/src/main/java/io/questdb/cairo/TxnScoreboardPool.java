@@ -36,4 +36,6 @@ public interface TxnScoreboardPool extends Closeable {
     void remove(TableToken token);
 
     TxnScoreboard getTxnScoreboard(TableToken token);
+
+    boolean releaseInactive();
 }

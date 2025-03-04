@@ -98,6 +98,10 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         return entryScanCount;
     }
 
+    public long getMax() {
+        return Unsafe.getUnsafe().getLongVolatile(null, maxOffset);
+    }
+
     @TestOnly
     public long getMin() {
         if (getActiveReaderCount() == 0) {

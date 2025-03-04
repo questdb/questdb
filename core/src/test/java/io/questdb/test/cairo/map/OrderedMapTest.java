@@ -896,7 +896,7 @@ public class OrderedMapTest extends AbstractCairoTest {
 
     @Test
     public void testGeoHashRecordAsKey() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int N = 5000;
             final Rnd rnd = new Rnd();
             int precisionBits = 10;
@@ -1597,7 +1597,7 @@ public class OrderedMapTest extends AbstractCairoTest {
 
     @Test
     public void testRecordAsKey() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int N = 5000;
             final Rnd rnd = new Rnd();
             TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
@@ -1770,7 +1770,7 @@ public class OrderedMapTest extends AbstractCairoTest {
 
     @Test
     public void testValueAccess() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int N = 1000;
             final Rnd rnd = new Rnd();
             TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
@@ -1852,7 +1852,7 @@ public class OrderedMapTest extends AbstractCairoTest {
 
     @Test
     public void testValueRandomWrite() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int N = 10000;
             final Rnd rnd = new Rnd();
             TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();

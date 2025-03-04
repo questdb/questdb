@@ -165,6 +165,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static SqlExecutionContext sqlExecutionContext;
     static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
     private static long memoryUsage = -1;
+    private static final AtomicInteger OFF_POOL_READER_ID = new AtomicInteger();
     @Rule
     public final TestWatcher flushLogsOnFailure = new TestWatcher() {
         @Override
@@ -552,6 +553,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
         sink.clear();
         memoryUsage = -1;
+        OFF_POOL_READER_ID.set(0);
         if (inputWorkRoot != null) {
             try (Path path = new Path().of(inputWorkRoot)) {
                 if (Files.exists(path.$())) {
@@ -1444,7 +1446,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static TableReader newOffPoolReader(CairoConfiguration configuration, CharSequence tableName) {
-        return new TableReader(0, configuration, engine.verifyTableName(tableName), engine.getTxnScoreboardPool());
+        return new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, engine.verifyTableName(tableName), engine.getTxnScoreboardPool());
     }
 
     protected static TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName) {
