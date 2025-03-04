@@ -75,13 +75,13 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     // LIFO list of nodes to reuse, instead of releasing and reallocating
     private final DirectIntList freeList;
     private final long initialValueHeapSize;
-    // firstN - keep <first->N> set , otherwise keep <last-N->last> set
-    private final boolean isFirstN;
     private final long maxValueHeapSize;
-    // maximum number of values tree can store (including repeating values)
-    private final long maxValues; // -1 means 'almost' unlimited
     // number of all values stored in tree (including repeating ones)
     private int currentValues = 0;
+    // firstN - keep <first->N> set , otherwise keep <last-N->last> set
+    private boolean isFirstN;
+    // maximum number of values tree can store (including repeating values)
+    private long limit; // -1 means 'almost' unlimited
     private int minMaxNode = -1;
     // for fast filtering out of records in here we store rowId of:
     //  - record with max value for firstN/bottomN query
@@ -92,11 +92,9 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     private long valueHeapSize;
     private long valueHeapStart;
 
-    public LimitedSizeLongTreeChain(long keyPageSize, int keyMaxPages, long valuePageSize, int valueMaxPages, boolean isFirstN, long maxValues) {
+    public LimitedSizeLongTreeChain(long keyPageSize, int keyMaxPages, long valuePageSize, int valueMaxPages) {
         super(keyPageSize, keyMaxPages);
         try {
-            this.isFirstN = isFirstN;
-            this.maxValues = maxValues;
             freeList = new DirectIntList(16, MemoryTag.NATIVE_TREE_CHAIN);
             chainFreeList = new DirectIntList(16, MemoryTag.NATIVE_TREE_CHAIN);
             valueHeapSize = initialValueHeapSize = valuePageSize;
@@ -206,12 +204,12 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
             Record ownedRecord,
             RecordComparator comparator
     ) {
-        if (maxValues == 0) {
+        if (limit == 0) {
             return;
         }
 
         // if maxValues < 0 then there's no limit (unless there's more than 2^64 records, which is unlikely)
-        if (maxValues == currentValues) {
+        if (limit == currentValues) {
             int cmp = comparator.compare(currentRecord);
 
             if (isFirstN && cmp <= 0) { // bigger than max for firstN/bottomN
@@ -308,6 +306,11 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         return currentValues;
     }
 
+    public void updateLimits(boolean isFirstN, long limit) {
+        this.isFirstN = isFirstN;
+        this.limit = limit;
+    }
+
     private static int compressValueOffset(long rawOffset) {
         return (int) (rawOffset >> 2);
     }
@@ -374,7 +377,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     }
 
     private void prepareComparatorLeftSideIfAtMaxCapacity(RecordCursor sourceCursor, Record ownedRecord, RecordComparator comparator) {
-        if (currentValues == maxValues) {
+        if (currentValues == limit) {
             assert minMaxRowId != -1;
             sourceCursor.recordAt(ownedRecord, minMaxRowId);
             comparator.setLeft(ownedRecord);

@@ -182,11 +182,11 @@ public class MatViewRefreshState implements QuietCloseable {
         telemetryFacade.store(MAT_VIEW_DROP, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, null, 0);
     }
 
-    public void markAsInvalid(@NotNull BlockFileWriter blockFileWriter, @NotNull Path dbRoot, @Nullable CharSequence invalidationReason) {
+    public void markAsInvalid(@NotNull BlockFileWriter blockFileWriter, @NotNull Path dbRoot, @Nullable String invalidationReason) {
         final boolean wasValid = !invalid;
         final boolean invalidationReasonChanged = Chars.compare(this.invalidationReason, invalidationReason) != 0;
         if (invalidationReasonChanged) {
-            this.invalidationReason = Chars.toString(invalidationReason);
+            this.invalidationReason = invalidationReason;
         }
         this.invalid = true;
         if (wasValid || invalidationReasonChanged) {
@@ -209,7 +209,7 @@ public class MatViewRefreshState implements QuietCloseable {
         }
     }
 
-    public void refreshFail(@NotNull BlockFileWriter blockFileWriter, @NotNull Path dbRoot, long refreshTimestamp, CharSequence errorMessage) {
+    public void refreshFail(@NotNull BlockFileWriter blockFileWriter, @NotNull Path dbRoot, long refreshTimestamp, String errorMessage) {
         assert latch.get();
         markAsInvalid(blockFileWriter, dbRoot, errorMessage);
         this.lastRefreshTimestamp = refreshTimestamp;

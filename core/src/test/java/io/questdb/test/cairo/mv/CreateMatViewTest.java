@@ -1006,7 +1006,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                         );
                         Assert.fail();
                     } catch (CairoException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "unsupported refresh strategy");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "unsupported refresh type");
                     }
                 }
             }

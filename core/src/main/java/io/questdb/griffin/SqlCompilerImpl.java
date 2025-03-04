@@ -1188,7 +1188,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compiledQuery.ofTableResume();
         } catch (CairoException ex) {
             LOG.critical().$("table resume failed [table=").$(tableToken)
-                    .$(", error=").$(ex.getFlyweightMessage())
+                    .$(", msg=").$(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
             ex.position(tableNamePosition);
@@ -2827,12 +2827,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         dropAllTablesFailedTableNames.clear();
         tableTokenBucket.clear();
         engine.getTableTokens(tableTokenBucket, false);
-        SecurityContext securityContext = executionContext.getSecurityContext();
+        final SecurityContext securityContext = executionContext.getSecurityContext();
         TableToken tableToken;
         for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
             tableToken = tableTokenBucket.get(i);
             if (!tableToken.isSystem()) {
-                securityContext.authorizeTableDrop(tableToken);
+                if (tableToken.isMatView()) {
+                    securityContext.authorizeMatViewDrop(tableToken);
+                } else {
+                    securityContext.authorizeTableDrop(tableToken);
+                }
                 try {
                     engine.dropTableOrMatView(path, tableToken);
                 } catch (CairoException report) {
@@ -2842,10 +2846,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
         if (dropAllTablesFailedTableNames.size() > 0) {
-            CairoException ex = CairoException.nonCritical().put("failed to drop tables [");
+            final CairoException ex = CairoException.nonCritical().put("failed to drop tables and materialized views [");
             CharSequence tableName;
             String reason;
-            ObjList<CharSequence> keys = dropAllTablesFailedTableNames.keys();
+            final ObjList<CharSequence> keys = dropAllTablesFailedTableNames.keys();
             for (int i = 0, n = keys.size(); i < n; i++) {
                 tableName = keys.get(i);
                 reason = dropAllTablesFailedTableNames.get(tableName);

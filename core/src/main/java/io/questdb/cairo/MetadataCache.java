@@ -264,14 +264,13 @@ public class MetadataCache implements QuietCloseable {
             try {
                 log
                         .$("could not hydrate metadata [table=").$(token)
-                        .$(", errno=").$(e instanceof CairoException ? ((CairoException) e).errno : 0)
-                        .$(", message=");
-
+                        .$(", msg=");
                 if (e instanceof FlyweightMessageContainer) {
                     log.$(((FlyweightMessageContainer) e).getFlyweightMessage());
                 } else {
                     log.$(e.getMessage());
                 }
+                log.$(", errno=").$(e instanceof CairoException ? ((CairoException) e).errno : 0);
             } finally {
                 log.I$();
             }

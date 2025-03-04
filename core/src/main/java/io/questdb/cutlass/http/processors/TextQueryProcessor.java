@@ -78,8 +78,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     // Being asynchronous we may need to be able to return factory to the cache
     // by the same thread that executes the dispatcher.
     private static final LocalValue<TextQueryProcessorState> LV = new LocalValue<>();
-    @SuppressWarnings("FieldMayBeFinal")
-    private static Log LOG = LogFactory.getLog(TextQueryProcessor.class);
+    private static final Log LOG = LogFactory.getLog(TextQueryProcessor.class);
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final MillisecondClock clock;
     private final JsonQueryProcessorConfiguration configuration;

@@ -869,8 +869,9 @@ public final class TableUtils {
         if (ex.errnoReadPathDoesNotExist()) {
             if (millisecondClock.getTicks() < deadline) {
                 LOG.info().$("error reloading metadata [table=").utf8(tableName)
+                        .$(", msg=").utf8(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
-                        .$(", error=").utf8(ex.getFlyweightMessage()).I$();
+                        .I$();
                 Os.pause();
             } else {
                 throw CairoException.critical(ex.getErrno()).put("Metadata read timeout [src=writer, timeout=").put(spinLockTimeout).put("ms, err=").put(ex.getFlyweightMessage()).put(']');

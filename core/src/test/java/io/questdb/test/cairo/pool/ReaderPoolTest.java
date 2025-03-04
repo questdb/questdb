@@ -769,6 +769,33 @@ public class ReaderPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDetachedRefCount() throws Exception {
+        TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE);
+        AbstractCairoTest.create(model);
+        TableToken tableToken = engine.verifyTableName("x");
+        assertWithPool(pool -> {
+            ReaderPool.R reader = pool.get(tableToken);
+            Assert.assertEquals(0, reader.getDetachedRefCount());
+
+            pool.detach(reader);
+            Assert.assertEquals(0, reader.getDetachedRefCount());
+
+            for (int i = 0; i < 10; i++) {
+                reader.incrementDetachedRefCount();
+                Assert.assertEquals(i + 1, reader.getDetachedRefCount());
+            }
+            for (int i = 9; i > -1; i--) {
+                reader.close();
+                Assert.assertEquals(i, reader.getDetachedRefCount());
+            }
+
+            pool.attach(reader);
+            reader.close();
+            Assert.assertEquals(0, reader.getDetachedRefCount());
+        });
+    }
+
+    @Test
     public void testDoubleLock() throws Exception {
         TableModel model = new TableModel(configuration, "xyz", PartitionBy.NONE).col("ts", ColumnType.DATE);
         AbstractCairoTest.create(model);
