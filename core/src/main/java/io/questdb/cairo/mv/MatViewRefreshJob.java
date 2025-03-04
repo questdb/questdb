@@ -76,6 +76,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final MatViewRefreshExecutionContext refreshExecutionContext;
     private final MatViewRefreshTask refreshTask = new MatViewRefreshTask();
     private final WalTxnRangeLoader txnRangeLoader;
+    private final MatViewGraph viewGraph;
     private final int workerId;
 
     public MatViewRefreshJob(int workerId, CairoEngine engine, int workerCount, int sharedWorkerCount) {
@@ -83,6 +84,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             this.workerId = workerId;
             this.engine = engine;
             this.refreshExecutionContext = new MatViewRefreshExecutionContext(engine, workerCount, sharedWorkerCount);
+            this.viewGraph = engine.getMatViewGraph();
             final CairoConfiguration configuration = engine.getConfiguration();
             this.txnRangeLoader = new WalTxnRangeLoader(configuration.getFilesFacade());
             this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
@@ -116,6 +118,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // there is job instance per thread, the worker id must never change for this job
         assert this.workerId == workerId;
         return processNotifications();
+    }
+
+    private void enqueueInvalidateDependentViews(TableToken viewToken, String invalidationReason) {
+        childViewSink2.clear();
+        viewGraph.getDependentMatViews(viewToken, childViewSink2);
+        for (int v = 0, n = childViewSink2.size(); v < n; v++) {
+            viewGraph.enqueueInvalidate(childViewSink2.get(v), invalidationReason);
+        }
     }
 
     private boolean findCommitTimestampRanges(
@@ -240,7 +250,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             LOG.error().$("error refreshing materialized view, compilation error [view=").$(viewDef.getMatViewToken())
                                     .$(", error=").$(e.getFlyweightMessage())
                                     .I$();
-                            refreshFailState(state, refreshTimestamp, e.getFlyweightMessage());
+                            refreshFailState(state, refreshTimestamp, e.getMessage());
                             return false;
                         }
                     }
@@ -278,7 +288,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         LOG.info().$("base table is under heavy DDL changes, will reattempt refresh later [view=").$(viewDef.getMatViewToken())
                                 .$(", recompileAttempts=").$(maxRecompileAttempts)
                                 .I$();
-                        engine.getMatViewGraph().enqueueIncrementalRefresh(viewDef.getMatViewToken());
+                        viewGraph.enqueueIncrementalRefresh(viewDef.getMatViewToken());
                         return false;
                     }
                 } catch (Throwable th) {
@@ -305,12 +315,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         viewGraph.getDependentMatViews(baseTableToken, childViewSink);
         for (int v = 0, n = childViewSink.size(); v < n; v++) {
             final TableToken viewToken = childViewSink.get(v);
-            invalidateView(viewToken, viewGraph, invalidationReason);
+            invalidateView(viewToken, viewGraph, invalidationReason, false);
         }
         viewGraph.notifyBaseInvalidated(baseTableToken);
     }
 
-    private void invalidateView(TableToken viewToken, MatViewGraph viewGraph, String invalidationReason) {
+    private void invalidateView(TableToken viewToken, MatViewGraph viewGraph, String invalidationReason, boolean force) {
         final MatViewRefreshState state = viewGraph.getViewRefreshState(viewToken);
         if (state != null && !state.isDropped()) {
             if (!state.tryLock()) {
@@ -319,9 +329,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 viewGraph.enqueueInvalidate(viewToken, invalidationReason);
                 return;
             }
+
             try {
-                // Mark the view invalid only if it was ever refreshed.
-                if (state.getLastRefreshBaseTxn() != -1) {
+                // Mark the view invalid only if the operation is forced or the view was ever refreshed.
+                if (force || state.getLastRefreshBaseTxn() != -1) {
                     setInvalidState(state, invalidationReason);
                 }
             } finally {
@@ -329,18 +340,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
 
             // Invalidate dependent views recursively.
-            childViewSink2.clear();
-            viewGraph.getDependentMatViews(viewToken, childViewSink2);
-            for (int v = 0, n = childViewSink2.size(); v < n; v++) {
-                viewGraph.enqueueInvalidate(childViewSink2.get(v), invalidationReason);
-            }
+            enqueueInvalidateDependentViews(viewToken, invalidationReason);
         }
     }
 
     private boolean processNotifications() {
-        final MatViewGraph matViewGraph = engine.getMatViewGraph();
         boolean refreshed = false;
-        while (matViewGraph.tryDequeueRefreshTask(refreshTask)) {
+        while (viewGraph.tryDequeueRefreshTask(refreshTask)) {
             final int operation = refreshTask.operation;
             final TableToken baseTableToken = refreshTask.baseTableToken;
             final TableToken matViewToken = refreshTask.matViewToken;
@@ -354,7 +360,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     LOG.info().$("base table is dropped or renamed [table=").$(baseTableToken)
                             .$(", error=").$(e.getFlyweightMessage())
                             .I$();
-                    invalidateDependentViews(baseTableToken, matViewGraph, "base table is dropped or renamed");
+                    invalidateDependentViews(baseTableToken, viewGraph, "base table is dropped or renamed");
                     continue;
                 }
             }
@@ -362,20 +368,21 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             switch (operation) {
                 case MatViewRefreshTask.INCREMENTAL_REFRESH:
                     if (matViewToken == null) {
-                        refreshed |= refreshDependentViewsIncremental(baseTableToken, matViewGraph, refreshTriggeredTimestamp);
+                        refreshed |= refreshDependentViewsIncremental(baseTableToken, viewGraph, refreshTriggeredTimestamp);
                     } else {
-                        refreshed |= refreshIncremental(matViewToken, matViewGraph, refreshTriggeredTimestamp);
+                        refreshed |= refreshIncremental(matViewToken, viewGraph, refreshTriggeredTimestamp);
                     }
                     break;
                 case MatViewRefreshTask.FULL_REFRESH:
                     assert matViewToken != null;
-                    refreshed |= refreshFull(matViewToken, matViewGraph, refreshTriggeredTimestamp);
+                    refreshed |= refreshFull(matViewToken, viewGraph, refreshTriggeredTimestamp);
                     break;
                 case MatViewRefreshTask.INVALIDATE:
                     if (matViewToken == null) {
-                        invalidateDependentViews(baseTableToken, matViewGraph, invalidationReason);
+                        invalidateDependentViews(baseTableToken, viewGraph, invalidationReason);
                     } else {
-                        invalidateView(matViewToken, matViewGraph, invalidationReason);
+                        // Force invalidation was requested for the specific mat view.
+                        invalidateView(matViewToken, viewGraph, invalidationReason, true);
                     }
                     break;
                 default:
@@ -426,8 +433,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return refreshed;
     }
 
-    private void refreshFailState(MatViewRefreshState state, long refreshTimestamp, CharSequence errorMessage) {
+    private void refreshFailState(MatViewRefreshState state, long refreshTimestamp, String errorMessage) {
         state.refreshFail(blockFileWriter, dbRoot.trimTo(dbRootLen), refreshTimestamp, errorMessage);
+        // Invalidate dependent views recursively.
+        enqueueInvalidateDependentViews(state.getViewDefinition().getMatViewToken(), errorMessage);
     }
 
     private boolean refreshFull(@NotNull TableToken viewToken, MatViewGraph viewGraph, long refreshTriggeredTimestamp) {
@@ -454,7 +463,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 LOG.error().$("full refresh error, cannot resolve base table [view=").$(viewToken)
                         .$(", error=").$(th.getFlyweightMessage())
                         .I$();
-                refreshFailState(state, microsecondClock.getTicks(), th.getFlyweightMessage());
+                refreshFailState(state, microsecondClock.getTicks(), th.getMessage());
                 return false;
             }
 
@@ -535,7 +544,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             LOG.error().$("error refreshing materialized view [view=").$(viewToken)
                     .$(", error=").$(e.getFlyweightMessage())
                     .I$();
-            refreshFailState(state, microsecondClock.getTicks(), e.getFlyweightMessage());
+            refreshFailState(state, microsecondClock.getTicks(), e.getMessage());
         }
         return false;
     }
@@ -605,7 +614,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             LOG.error().$("error refreshing materialized view [view=").$(viewToken)
                     .$(", error=").$(e.getFlyweightMessage())
                     .I$();
-            refreshFailState(state, microsecondClock.getTicks(), e.getFlyweightMessage());
+            refreshFailState(state, microsecondClock.getTicks(), e.getMessage());
         }
         return false;
     }
@@ -629,7 +638,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 LOG.error().$("error refreshing materialized view, cannot resolve base table [view=").$(viewToken)
                         .$(", error=").$(th.getFlyweightMessage())
                         .I$();
-                refreshFailState(state, microsecondClock.getTicks(), th.getFlyweightMessage());
+                refreshFailState(state, microsecondClock.getTicks(), th.getMessage());
                 return false;
             }
 

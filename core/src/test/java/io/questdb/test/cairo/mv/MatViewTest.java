@@ -169,7 +169,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertSql(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
-                            "price_1h\tincremental\tbase_price\t2024-10-24T18:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\ttable does not exist [table=base_price]\tinvalid\t1\t-1\n",
+                            "price_1h\tincremental\tbase_price\t2024-10-24T18:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t[-105] table does not exist [table=base_price]\tinvalid\t1\t-1\n",
                     "materialized_views"
             );
 
@@ -1099,6 +1099,39 @@ public class MatViewTest extends AbstractCairoTest {
                             "v2_v1\tincremental\tv1_base\tvalid\t\n" +
                             "v3_v1\tincremental\tv1_base\tvalid\t\n" +
                             "v4_v3\tincremental\tv3_v1\tvalid\t\n",
+                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name"
+            );
+        });
+    }
+
+    @Test
+    public void testRecursiveInvalidationOnFailedRefresh() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, amount int, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("price_1h", "select sym, last(price) as price, ts from base_price where npe() sample by 1h");
+            createMatView("price_1d", "select sym, last(price) as price, ts from price_1h sample by 1d");
+            createMatView("price_1d_2", "select sym, last(price) as price, ts from price_1h sample by 1d");
+            createMatView("price_1w", "select sym, last(price) as price, ts from price_1d sample by 1w");
+
+            execute(
+                    "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+            drainQueues();
+
+            assertSql(
+                    "view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\n" +
+                            "price_1d\tincremental\tprice_1h\tinvalid\t[-1] unexpected filter error\n" +
+                            "price_1d_2\tincremental\tprice_1h\tinvalid\t[-1] unexpected filter error\n" +
+                            "price_1h\tincremental\tbase_price\tinvalid\t[-1] unexpected filter error\n" +
+                            "price_1w\tincremental\tprice_1d\tinvalid\t[-1] unexpected filter error\n",
                     "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name"
             );
         });
