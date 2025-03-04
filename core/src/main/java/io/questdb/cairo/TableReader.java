@@ -1275,10 +1275,11 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
             return;
         }
-        reconcileOpenPartitionsFrom(0, truncateHappened);
+        reconcileOpenPartitions0(truncateHappened);
     }
 
-    private void reconcileOpenPartitionsFrom(int partitionIndex, boolean forceTruncate) {
+    private void reconcileOpenPartitions0(boolean forceTruncate) {
+        int partitionIndex = 0;
         int txPartitionCount = txFile.getPartitionCount();
         int txPartitionIndex = partitionIndex;
         boolean changed = false;
