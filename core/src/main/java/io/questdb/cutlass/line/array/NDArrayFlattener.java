@@ -36,11 +36,13 @@ public class NDArrayFlattener {
 
     private static final short[] ELEM_TYPE_INDEX = new short[ColumnType.NULL + 1];
 
-    public static long processArray(long addr,
-                                    CheckCapacity checkCapacity,
-                                    Object array,
-                                    int dims,
-                                    short elemType) {
+    public static long processArray(
+            long addr,
+            CheckCapacity checkCapacity,
+            Object array,
+            int dims,
+            short elemType
+    ) {
         check(checkCapacity, (long) dims * Integer.BYTES);
         int flatLength = processArrayShape(addr, array, dims);
         if (flatLength == 0) {

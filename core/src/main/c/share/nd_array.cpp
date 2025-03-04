@@ -34,8 +34,7 @@
 template <jint DIM, typename T> struct ProcessData {
   static jlong process(JNIEnv *env, jlong addr, jobject array) {
     jsize length = -1;
-    for (jsize i = 0, size = env->GetArrayLength(static_cast<jarray>(array));
-         i < size; i++) {
+    for (jsize i = 0, size = env->GetArrayLength(static_cast<jarray>(array)); i < size; i++) {
       jobject subArray =
           env->GetObjectArrayElement(static_cast<jobjectArray>(array), i);
 
@@ -230,8 +229,8 @@ static process_array_shape_t process_array_shapes[32] = {
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_io_questdb_cutlass_line_array_NDArrayFlattener_processArrayData(
-    JNIEnv *env, jclass, jlong addr, jobject array, jint dims,
-    jint elementType) {
+    JNIEnv *env, jclass, jlong addr, jobject array, jint dims, jint elementType
+) {
   assert(elementType <= MAX_ARRAY_TYPE_INDEX);
   assert(0 < dims && dims <= MAX_ARRAY_DIMS);
   return process_array_datas[elementType][dims - 1](env, addr, array);
@@ -239,7 +238,8 @@ Java_io_questdb_cutlass_line_array_NDArrayFlattener_processArrayData(
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_io_questdb_cutlass_line_array_NDArrayFlattener_processArrayShape(
-    JNIEnv *env, jclass, jlong addr, jobject array, jint dims) {
+    JNIEnv *env, jclass, jlong addr, jobject array, jint dims
+) {
   assert(0 < dims && dims <= MAX_ARRAY_DIMS);
   return process_array_shapes[dims - 1](env, addr, array);
 }
