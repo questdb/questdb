@@ -25,7 +25,6 @@
 package io.questdb.compat;
 
 import io.questdb.ServerMain;
-import io.questdb.std.Os;
 import io.r2dbc.postgresql.PostgresqlConnectionConfiguration;
 import io.r2dbc.postgresql.PostgresqlConnectionFactory;
 import io.r2dbc.spi.Connection;
