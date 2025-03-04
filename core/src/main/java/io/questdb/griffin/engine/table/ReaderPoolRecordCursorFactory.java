@@ -24,7 +24,15 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.AbstractMultiTenantPool;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -174,6 +182,11 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
             @Override
             public CharSequence getStrB(int col) {
                 return getStrA(col);
+            }
+
+            @Override
+            public int getStrLen(int col) {
+                return TableUtils.lengthOf(getStrA(col));
             }
 
             @Override

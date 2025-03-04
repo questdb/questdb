@@ -1019,12 +1019,14 @@ public class CreateMatViewTest extends AbstractCairoTest {
             createTable(TABLE1);
             final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
             execute("create materialized view test as (" + query + ") partition by day TTL 3 WEEKS");
-            assertSql(
+            assertQueryNoLeakCheck(
                     "ddl\n" +
                             "CREATE MATERIALIZED VIEW 'test' WITH BASE 'table1' REFRESH INCREMENTAL AS ( \n" +
                             "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
                             ") PARTITION BY DAY TTL 3 WEEKS;\n",
-                    "show create materialized view test"
+                    "show create materialized view test",
+                    null,
+                    false
             );
         });
     }
@@ -1043,7 +1045,6 @@ public class CreateMatViewTest extends AbstractCairoTest {
                                 ") timestamp(ts) PARTITION BY DAY WAL;\n",
                         "show create materialized test"
                 );
-
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "'view' expected");

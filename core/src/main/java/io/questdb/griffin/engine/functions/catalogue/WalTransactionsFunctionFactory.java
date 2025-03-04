@@ -24,8 +24,15 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -136,7 +143,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
         }
 
 
-        private static class TableListRecordCursor implements RecordCursor {
+        private static class TableListRecordCursor implements NoRandomAccessRecordCursor {
             TransactionRecord record = new TransactionRecord();
             private TransactionLogCursor logCursor;
 
@@ -151,18 +158,8 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public Record getRecordB() {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
             public boolean hasNext() {
                 return logCursor.hasNext();
-            }
-
-            @Override
-            public void recordAt(Record record, long atRowId) {
-                throw new UnsupportedOperationException();
             }
 
             @Override

@@ -156,10 +156,12 @@ public class MatViewTest extends AbstractCairoTest {
             currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
                             "price_1h\tincremental\tbase_price\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\n",
-                    "materialized_views"
+                    "materialized_views",
+                    null,
+                    false
             );
 
             execute("rename table base_price to base_price2");
@@ -167,10 +169,12 @@ public class MatViewTest extends AbstractCairoTest {
             currentMicros = parseFloorPartialTimestamp("2024-10-24T18");
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
                             "price_1h\tincremental\tbase_price\t2024-10-24T18:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t[-105] table does not exist [table=base_price]\tinvalid\t1\t-1\n",
-                    "materialized_views"
+                    "materialized_views",
+                    null,
+                    false
             );
 
             // Create another base table instead of the one that was renamed.
@@ -184,10 +188,12 @@ public class MatViewTest extends AbstractCairoTest {
             currentMicros = parseFloorPartialTimestamp("2024-10-24T19");
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
                             "price_1h\tincremental\tbase_price\t2024-10-24T19:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tbase table is not a WAL table\tinvalid\t1\t-1\n",
-                    "materialized_views"
+                    "materialized_views",
+                    null,
+                    false
             );
         });
     }
@@ -228,10 +234,12 @@ public class MatViewTest extends AbstractCairoTest {
             currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
                             "price_1h\tincremental\tbase_price\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~3\t\tvalid\t1\t1\n",
-                    "materialized_views"
+                    "materialized_views",
+                    null,
+                    false
             );
 
             // Swap the tables with each other.
@@ -241,10 +249,12 @@ public class MatViewTest extends AbstractCairoTest {
             currentMicros = parseFloorPartialTimestamp("2024-10-24T18");
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
                             "price_1h\tincremental\tbase_price\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~3\ttable rename operation\tinvalid\t1\t1\n",
-                    "materialized_views"
+                    "materialized_views",
+                    null,
+                    false
             );
         });
     }
@@ -264,10 +274,12 @@ public class MatViewTest extends AbstractCairoTest {
             execute("truncate table base_price;");
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "view_name\tview_status\n" +
                             "price_1h\tvalid\n",
-                    "select view_name, view_status from materialized_views"
+                    "select view_name, view_status from materialized_views",
+                    null,
+                    false
             );
         });
     }
@@ -327,10 +339,12 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             // Expect 3 (30 rows / 10 rows per batch) commits.
-            assertSql(
+            assertQueryNoLeakCheck(
                     "writerTxn\tsequencerTxn\n" +
                             "3\t3\n",
-                    "select writerTxn, sequencerTxn from wal_tables() where name = 'price_1h'"
+                    "select writerTxn, sequencerTxn from wal_tables() where name = 'price_1h'",
+                    null,
+                    false
             );
         });
     }
@@ -467,15 +481,21 @@ public class MatViewTest extends AbstractCairoTest {
 
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "count\n" +
                             "0\n",
-                    "select count() from materialized_views();"
+                    "select count() from materialized_views();",
+                    null,
+                    false,
+                    true
             );
-            assertSql(
+            assertQueryNoLeakCheck(
                     "count\n" +
                             "0\n",
-                    "select count() from tables();"
+                    "select count() from tables();",
+                    null,
+                    false,
+                    true
             );
 
             Assert.assertNull(engine.getMatViewGraph().getViewRefreshState(matViewToken));
@@ -518,10 +538,12 @@ public class MatViewTest extends AbstractCairoTest {
             currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
                             "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\n",
-                    "materialized_views"
+                    "materialized_views",
+                    null,
+                    false
             );
 
             final String expected = "sym\tprice\tts\n" +
@@ -533,19 +555,23 @@ public class MatViewTest extends AbstractCairoTest {
             execute("alter table base_price drop column extra_col");
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
                             "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tdrop column operation\tinvalid\t1\t2\n",
-                    "materialized_views"
+                    "materialized_views",
+                    null,
+                    false
             );
 
             execute("refresh materialized view price_1h full");
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
                             "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t2\t2\n",
-                    "materialized_views"
+                    "materialized_views",
+                    null,
+                    false
             );
             assertQueryNoLeakCheck(expected, "price_1h order by sym");
         });
@@ -580,10 +606,12 @@ public class MatViewTest extends AbstractCairoTest {
             execute("refresh materialized view price_1h incremental");
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
                             "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\n",
-                    "materialized_views"
+                    "materialized_views",
+                    null,
+                    false
             );
 
             assertQueryNoLeakCheck(
@@ -962,10 +990,12 @@ public class MatViewTest extends AbstractCairoTest {
             );
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
                             "price_1h\tbase_price\tinvalid\t[-1] unexpected filter error\n",
-                    "select view_name, base_table_name, view_status, invalidation_reason from materialized_views"
+                    "select view_name, base_table_name, view_status, invalidation_reason from materialized_views",
+                    null,
+                    false
             );
         });
     }
@@ -1048,13 +1078,15 @@ public class MatViewTest extends AbstractCairoTest {
 
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\n" +
                             "v1_base\tincremental\tbase\tvalid\t\n" +
                             "v2_v1\tincremental\tv1_base\tvalid\t\n" +
                             "v3_v1\tincremental\tv1_base\tvalid\t\n" +
                             "v4_v3\tincremental\tv3_v1\tvalid\t\n",
-                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name"
+                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name",
+                    null,
+                    true
             );
 
             execute("truncate table " + tableName);
@@ -1064,25 +1096,29 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             // all views should be invalid
-            assertSql(
+            assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\n" +
                             "v1_base\tincremental\tbase\tinvalid\ttruncate operation\n" +
                             "v2_v1\tincremental\tv1_base\tinvalid\ttruncate operation\n" +
                             "v3_v1\tincremental\tv1_base\tinvalid\ttruncate operation\n" +
                             "v4_v3\tincremental\tv3_v1\tinvalid\ttruncate operation\n",
-                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name"
+                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name",
+                    null,
+                    true
             );
 
             execute("refresh materialized view " + view1Name + " full");
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\n" +
                             "v1_base\tincremental\tbase\tvalid\t\n" +
                             "v2_v1\tincremental\tv1_base\tinvalid\ttruncate operation\n" +
                             "v3_v1\tincremental\tv1_base\tinvalid\ttruncate operation\n" +
                             "v4_v3\tincremental\tv3_v1\tinvalid\ttruncate operation\n",
-                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name"
+                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name",
+                    null,
+                    true
             );
 
             // Refresh the rest
@@ -1093,13 +1129,15 @@ public class MatViewTest extends AbstractCairoTest {
             execute("refresh materialized view " + view4Name + " full");
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\n" +
                             "v1_base\tincremental\tbase\tvalid\t\n" +
                             "v2_v1\tincremental\tv1_base\tvalid\t\n" +
                             "v3_v1\tincremental\tv1_base\tvalid\t\n" +
                             "v4_v3\tincremental\tv3_v1\tvalid\t\n",
-                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name"
+                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name",
+                    null,
+                    true
             );
         });
     }
@@ -1126,13 +1164,15 @@ public class MatViewTest extends AbstractCairoTest {
             );
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\n" +
                             "price_1d\tincremental\tprice_1h\tinvalid\t[-1] unexpected filter error\n" +
                             "price_1d_2\tincremental\tprice_1h\tinvalid\t[-1] unexpected filter error\n" +
                             "price_1h\tincremental\tbase_price\tinvalid\t[-1] unexpected filter error\n" +
                             "price_1w\tincremental\tprice_1d\tinvalid\t[-1] unexpected filter error\n",
-                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name"
+                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name",
+                    null,
+                    true
             );
         });
     }
@@ -1159,10 +1199,12 @@ public class MatViewTest extends AbstractCairoTest {
             currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
                             "price_1h\tincremental\tbase_price\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\n",
-                    "materialized_views"
+                    "materialized_views",
+                    null,
+                    false
             );
 
             assertQueryNoLeakCheck(
@@ -1187,11 +1229,13 @@ public class MatViewTest extends AbstractCairoTest {
                     "price_1h order by sym"
             );
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
                             "base_price\tfalse\t2\t0\t2\t\t\t0\n" +
                             "price_1h\ttrue\t1\t0\t2\t\t\t0\n",
-                    "wal_tables()"
+                    "wal_tables()",
+                    null,
+                    false
             );
 
             // resume mat view
@@ -1207,11 +1251,13 @@ public class MatViewTest extends AbstractCairoTest {
                     "price_1h order by sym"
             );
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
                             "base_price\tfalse\t2\t0\t2\t\t\t0\n" +
                             "price_1h\tfalse\t2\t0\t2\t\t\t0\n",
-                    "wal_tables()"
+                    "wal_tables()",
+                    null,
+                    false
             );
 
             // suspend mat view again
@@ -1229,11 +1275,13 @@ public class MatViewTest extends AbstractCairoTest {
                     "price_1h order by sym"
             );
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
                             "base_price\tfalse\t3\t0\t3\t\t\t0\n" +
                             "price_1h\ttrue\t2\t0\t3\t\t\t0\n",
-                    "wal_tables()"
+                    "wal_tables()",
+                    null,
+                    false
             );
 
             // resume mat view from txn
@@ -1249,11 +1297,13 @@ public class MatViewTest extends AbstractCairoTest {
                     "price_1h order by sym"
             );
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
                             "base_price\tfalse\t3\t0\t3\t\t\t0\n" +
                             "price_1h\tfalse\t3\t0\t3\t\t\t0\n",
-                    "wal_tables()"
+                    "wal_tables()",
+                    null,
+                    false
             );
         });
     }
@@ -1541,10 +1591,12 @@ public class MatViewTest extends AbstractCairoTest {
             currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "view_name\tbase_table_name\tview_status\n" +
                             "price_1h\tbase_price\tvalid\n",
-                    "select view_name, base_table_name, view_status from materialized_views"
+                    "select view_name, base_table_name, view_status from materialized_views",
+                    null,
+                    false
             );
 
             final String expected = "sym_a\tsym_b\tsym2_a\tsym2_b\tprice\tts\n" +
@@ -1617,10 +1669,12 @@ public class MatViewTest extends AbstractCairoTest {
             execute("cancel query " + queryId);
             stopped.await();
             Assert.assertFalse(refreshed.get());
-            assertSql(
+            assertQueryNoLeakCheck(
                     "view_name\tview_status\n" +
                             "price_1h\tinvalid\n",
-                    "select view_name, view_status from materialized_views"
+                    "select view_name, view_status from materialized_views",
+                    null,
+                    false
             );
         });
     }
@@ -1864,19 +1918,23 @@ public class MatViewTest extends AbstractCairoTest {
             currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "view_name\tbase_table_name\tview_status\n" +
                             "price_1h\tbase_price\tvalid\n",
-                    "select view_name, base_table_name, view_status from materialized_views"
+                    "select view_name, base_table_name, view_status from materialized_views",
+                    null,
+                    false
             );
 
             execute(operationSql);
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
                             "price_1h\tbase_price\tinvalid\t" + invalidationReason + "\n",
-                    "select view_name, base_table_name, view_status, invalidation_reason from materialized_views"
+                    "select view_name, base_table_name, view_status, invalidation_reason from materialized_views",
+                    null,
+                    false
             );
         });
     }
@@ -1907,10 +1965,12 @@ public class MatViewTest extends AbstractCairoTest {
             execute("rename table base_price2 to base_price");
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
                             "price_1h\tincremental\tbase_price\t2024-10-24T19:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\ttable rename operation\tinvalid\t1\t3\n",
-                    "materialized_views"
+                    "materialized_views",
+                    null,
+                    false
             );
         });
     }
@@ -1936,19 +1996,23 @@ public class MatViewTest extends AbstractCairoTest {
             currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "view_name\tbase_table_name\tview_status\n" +
                             "price_1h\tbase_price\tvalid\n",
-                    "select view_name, base_table_name, view_status from materialized_views"
+                    "select view_name, base_table_name, view_status from materialized_views",
+                    null,
+                    false
             );
 
             execute(enableDedupSql);
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "view_name\tbase_table_name\tview_status\n" +
                             "price_1h\tbase_price\t" + (expectInvalid ? "invalid" : "valid") + "\n",
-                    "select view_name, base_table_name, view_status from materialized_views"
+                    "select view_name, base_table_name, view_status from materialized_views",
+                    null,
+                    false
             );
         });
     }
@@ -1970,10 +2034,12 @@ public class MatViewTest extends AbstractCairoTest {
             );
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "sequencerTxn\tminTimestamp\tmaxTimestamp\n" +
                             "1\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z\n",
-                    "select sequencerTxn, minTimestamp, maxTimestamp from wal_transactions('price_1h')"
+                    "select sequencerTxn, minTimestamp, maxTimestamp from wal_transactions('price_1h')",
+                    null,
+                    false
             );
 
             execute(
@@ -1982,11 +2048,13 @@ public class MatViewTest extends AbstractCairoTest {
             );
             drainQueues();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "sequencerTxn\tminTimestamp\tmaxTimestamp\n" +
                             "1\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z\n" +
                             "2\t2024-09-10T12:00:00.000000Z\t2024-09-10T13:00:00.000000Z\n",
-                    "select sequencerTxn, minTimestamp, maxTimestamp from wal_transactions('price_1h')"
+                    "select sequencerTxn, minTimestamp, maxTimestamp from wal_transactions('price_1h')",
+                    null,
+                    false
             );
 
             assertViewMatchesSqlOverBaseTable(viewSql);
