@@ -28,12 +28,12 @@
 #include <jni.h>
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_io_questdb_cutlass_line_array_NDArrayFlattener_processArrayData(
+Java_io_questdb_cutlass_line_array_NDArrayFlattener_flattenIntoBuf(
     JNIEnv *env, jclass, jlong addr, jobject array, jint dims, jint elementType
 );
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_io_questdb_cutlass_line_array_NDArrayFlattener_processArrayShape(
+Java_io_questdb_cutlass_line_array_NDArrayFlattener_determineFlatLength(
     JNIEnv *env, jclass, jlong addr, jobject array, jint dims
 );
 

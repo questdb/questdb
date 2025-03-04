@@ -155,83 +155,67 @@ public final class LineHttpSender implements Sender {
     }
 
     @Override
-    public Sender longArray(CharSequence name, long[] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 1, values);
+    public void at(long timestamp, ChronoUnit unit) {
+        request.putAscii(' ').put(Timestamps.toMicros(timestamp, unit)).put('t');
+        atNow();
     }
 
     @Override
-    public Sender longArray(CharSequence name, long[][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 2, values);
+    public void at(Instant timestamp) {
+        long micros = timestamp.getEpochSecond() * Timestamps.SECOND_MICROS + timestamp.getNano() / 1_000;
+        request.putAscii(' ').put(micros).put('t');
+        atNow();
     }
 
     @Override
-    public Sender longArray(CharSequence name, long[][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 3, values);
+    public void atNow() {
+        switch (state) {
+            case EMPTY:
+                throw new LineSenderException("no table name was provided");
+            case TABLE_NAME_SET:
+                throw new LineSenderException("no symbols or columns were provided");
+            case ADDING_SYMBOLS:
+            case ADDING_COLUMNS:
+                request.put('\n');
+                state = RequestState.EMPTY;
+                break;
+        }
+        if (rowAdded()) {
+            flush();
+        }
+        rowBookmark = request.getContentLength();
     }
 
     @Override
-    public Sender longArray(CharSequence name, long[][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 4, values);
+    public Sender boolColumn(CharSequence name, boolean value) {
+        writeFieldName(name, false);
+        request.put(value ? 't' : 'f');
+        return this;
     }
 
     @Override
-    public Sender longArray(CharSequence name, long[][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 5, values);
+    public void cancelRow() {
+        validateNotClosed();
+        request.trimContentToLen(rowBookmark);
+        state = RequestState.EMPTY;
     }
 
     @Override
-    public Sender longArray(CharSequence name, long[][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 6, values);
-    }
-
-    @Override
-    public Sender longArray(CharSequence name, long[][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 7, values);
-    }
-
-    @Override
-    public Sender longArray(CharSequence name, long[][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 8, values);
-    }
-
-    @Override
-    public Sender longArray(CharSequence name, long[][][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 9, values);
-    }
-
-    @Override
-    public Sender longArray(CharSequence name, long[][][][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 10, values);
-    }
-
-    @Override
-    public Sender longArray(CharSequence name, long[][][][][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 11, values);
-    }
-
-    @Override
-    public Sender longArray(CharSequence name, long[][][][][][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 12, values);
-    }
-
-    @Override
-    public Sender longArray(CharSequence name, long[][][][][][][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 13, values);
-    }
-
-    @Override
-    public Sender longArray(CharSequence name, long[][][][][][][][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 14, values);
-    }
-
-    @Override
-    public Sender longArray(CharSequence name, long[][][][][][][][][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 15, values);
-    }
-
-    @Override
-    public Sender longArray(CharSequence name, long[][][][][][][][][][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 16, values);
+    public void close() {
+        if (closed) {
+            return;
+        }
+        try {
+            if (autoFlushRows != 0 || flushIntervalNanos != Long.MAX_VALUE) {
+                // either row-based or time-based auto flushing is enabled
+                // => let's auto-flush on close
+                flush0(true);
+            }
+        } finally {
+            Misc.free(jsonErrorParser);
+            closed = true;
+            client = Misc.free(client);
+        }
     }
 
     @Override
@@ -315,70 +299,6 @@ public final class LineHttpSender implements Sender {
     }
 
     @Override
-    public void at(long timestamp, ChronoUnit unit) {
-        request.putAscii(' ').put(Timestamps.toMicros(timestamp, unit)).put('t');
-        atNow();
-    }
-
-    @Override
-    public void at(Instant timestamp) {
-        long micros = timestamp.getEpochSecond() * Timestamps.SECOND_MICROS + timestamp.getNano() / 1_000;
-        request.putAscii(' ').put(micros).put('t');
-        atNow();
-    }
-
-    @Override
-    public void atNow() {
-        switch (state) {
-            case EMPTY:
-                throw new LineSenderException("no table name was provided");
-            case TABLE_NAME_SET:
-                throw new LineSenderException("no symbols or columns were provided");
-            case ADDING_SYMBOLS:
-            case ADDING_COLUMNS:
-                request.put('\n');
-                state = RequestState.EMPTY;
-                break;
-        }
-        if (rowAdded()) {
-            flush();
-        }
-        rowBookmark = request.getContentLength();
-    }
-
-    @Override
-    public Sender boolColumn(CharSequence name, boolean value) {
-        writeFieldName(name, false);
-        request.put(value ? 't' : 'f');
-        return this;
-    }
-
-    @Override
-    public void cancelRow() {
-        validateNotClosed();
-        request.trimContentToLen(rowBookmark);
-        state = RequestState.EMPTY;
-    }
-
-    @Override
-    public void close() {
-        if (closed) {
-            return;
-        }
-        try {
-            if (autoFlushRows != 0 || flushIntervalNanos != Long.MAX_VALUE) {
-                // either row-based or time-based auto flushing is enabled
-                // => let's auto-flush on close
-                flush0(true);
-            }
-        } finally {
-            Misc.free(jsonErrorParser);
-            closed = true;
-            client = Misc.free(client);
-        }
-    }
-
-    @Override
     public Sender doubleColumn(CharSequence name, double value) {
         writeFieldName(name, false);
         request.put(value);
@@ -388,6 +308,86 @@ public final class LineHttpSender implements Sender {
     @Override
     public void flush() {
         flush0(false);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 1, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 2, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 3, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 4, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 5, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 6, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 7, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][][][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 8, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][][][][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 9, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][][][][][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 10, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][][][][][][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 11, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][][][][][][][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 12, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][][][][][][][][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 13, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][][][][][][][][][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 14, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][][][][][][][][][][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 15, values);
+    }
+
+    @Override
+    public Sender longArray(CharSequence name, long[][][][][][][][][][][][][][][][] values) {
+        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 16, values);
     }
 
     @Override
@@ -488,6 +488,19 @@ public final class LineHttpSender implements Sender {
     private static boolean keepAliveDisabled(HttpClient.ResponseHeaders response) {
         DirectUtf8Sequence connectionHeader = response.getHeader(HttpConstants.HEADER_CONNECTION);
         return connectionHeader != null && Utf8s.equalsAscii("close", connectionHeader);
+    }
+
+    private Sender arrayColumn(CharSequence name, short columnType, byte nDims, Object array) {
+        if (processNullArray(name, array)) {
+            return this;
+        }
+
+        writeFieldName(name, true);
+        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                .put((byte) columnType) // element type
+                .put(nDims); // dims.
+        request.setPtr(NDArrayFlattener.flattenIntoBuf(request.getPtr(), request::checkCapacity, array, nDims, columnType));
+        return this;
     }
 
     private int backoff(int retryBackoff) {
@@ -657,6 +670,16 @@ public final class LineHttpSender implements Sender {
         return r;
     }
 
+    private boolean processNullArray(CharSequence name, Object value) {
+        if (value == null) {
+            writeFieldName(name, true);
+            request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                    .put((byte) ColumnType.NULL); // element type
+            return true;
+        }
+        return false;
+    }
+
     /**
      * @return true if flush is required
      */
@@ -762,29 +785,6 @@ public final class LineHttpSender implements Sender {
         TABLE_NAME_SET,
         ADDING_SYMBOLS,
         ADDING_COLUMNS,
-    }
-
-    private Sender arrayColumn(CharSequence name, short columnType, byte dims, Object values) {
-        if (processNullArray(name, values)) {
-            return this;
-        }
-
-        writeFieldName(name, true);
-        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
-                .put((byte) columnType) // element type
-                .put(dims); // dims.
-        request.setPtr(NDArrayFlattener.processArray(request.getPtr(), request::checkCapacity, values, dims, columnType));
-        return this;
-    }
-
-    private boolean processNullArray(CharSequence name, Object value) {
-        if (value == null) {
-            writeFieldName(name, true);
-            request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
-                    .put((byte) ColumnType.NULL); // element type
-            return true;
-        }
-        return false;
     }
 
     private static class JsonErrorParser implements JsonParser, Closeable {

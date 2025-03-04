@@ -228,7 +228,7 @@ static process_array_shape_t process_array_shapes[32] = {
 };
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_io_questdb_cutlass_line_array_NDArrayFlattener_processArrayData(
+Java_io_questdb_cutlass_line_array_NDArrayFlattener_flattenIntoBuf(
     JNIEnv *env, jclass, jlong addr, jobject array, jint dims, jint elementType
 ) {
   assert(elementType <= MAX_ARRAY_TYPE_INDEX);
@@ -237,7 +237,7 @@ Java_io_questdb_cutlass_line_array_NDArrayFlattener_processArrayData(
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_io_questdb_cutlass_line_array_NDArrayFlattener_processArrayShape(
+Java_io_questdb_cutlass_line_array_NDArrayFlattener_determineFlatLength(
     JNIEnv *env, jclass, jlong addr, jobject array, jint dims
 ) {
   assert(0 < dims && dims <= MAX_ARRAY_DIMS);

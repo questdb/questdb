@@ -36,38 +36,38 @@ public class NDArrayFlattener {
 
     private static final short[] ELEM_TYPE_INDEX = new short[ColumnType.NULL + 1];
 
-    public static long processArray(
-            long addr,
-            CheckCapacity checkCapacity,
+    public static long flattenIntoBuf(
+            long bufPtr,
+            CheckCapacity checkCapacityFn,
             Object array,
-            int dims,
+            int nDims,
             short elemType
     ) {
-        check(checkCapacity, (long) dims * Integer.BYTES);
-        int flatLength = processArrayShape(addr, array, dims);
+        check(checkCapacityFn, (long) nDims * Integer.BYTES);
+        int flatLength = determineFlatLength(bufPtr, array, nDims);
         if (flatLength == 0) {
             throw new LineSenderException("zero length array not supported");
         }
 
         final int elementSize = ColumnType.sizeOf(elemType);
-        check(checkCapacity, (long) flatLength * elementSize);
-        addr += (long) dims * Integer.BYTES;
-        long ptr = processArrayData(addr, array, dims, ELEM_TYPE_INDEX[elemType]);
+        check(checkCapacityFn, (long) flatLength * elementSize);
+        bufPtr += (long) nDims * Integer.BYTES;
+        long ptr = flattenIntoBuf(bufPtr, array, nDims, ELEM_TYPE_INDEX[elemType]);
         if (ptr == 0) {
             throw new LineSenderException("array is not regular");
         }
         return ptr;
     }
 
-    private static void check(CheckCapacity func, long addr) {
-        if (func != null) {
-            func.checkCapacity(addr);
+    private static void check(CheckCapacity checkFn, long addr) {
+        if (checkFn != null) {
+            checkFn.checkCapacity(addr);
         }
     }
 
-    private native static long processArrayData(long addr, Object array, int dims, int elemTypeIndex);
+    private native static int determineFlatLength(long addr, Object array, int nDims);
 
-    private native static int processArrayShape(long addr, Object array, int dims);
+    private native static long flattenIntoBuf(long addr, Object array, int nDims, int elemTypeIndex);
 
     static {
         // Corresponding to index of `process_array_datas` and `process_array_shapes` function arrays in nd_array.cpp.

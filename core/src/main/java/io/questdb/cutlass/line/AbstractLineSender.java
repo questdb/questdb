@@ -145,35 +145,6 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
     }
 
     @Override
-    public final AbstractLineSender doubleColumn(CharSequence name, double value) {
-        return field(name, value);
-    }
-
-    public AbstractLineSender field(CharSequence name, long value) {
-        writeFieldName(name, false).put(value).put('i');
-        return this;
-    }
-
-    public AbstractLineSender field(CharSequence name, CharSequence value) {
-        writeFieldName(name, false).put('"');
-        quoted = true;
-        put(value);
-        quoted = false;
-        putAsciiInternal('"');
-        return this;
-    }
-
-    public AbstractLineSender field(CharSequence name, double value) {
-        writeFieldName(name, false).put(value);
-        return this;
-    }
-
-    public AbstractLineSender field(CharSequence name, boolean value) {
-        writeFieldName(name, false).putAsciiInternal(value ? 't' : 'f');
-        return this;
-    }
-
-    @Override
     public Sender doubleArray(CharSequence name, double[] values) {
         return arrayColumn(name, ColumnType.DOUBLE, (byte) 1, values);
     }
@@ -254,6 +225,42 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
     }
 
     @Override
+    public final AbstractLineSender doubleColumn(CharSequence name, double value) {
+        return field(name, value);
+    }
+
+    public AbstractLineSender field(CharSequence name, long value) {
+        writeFieldName(name, false).put(value).put('i');
+        return this;
+    }
+
+    public AbstractLineSender field(CharSequence name, CharSequence value) {
+        writeFieldName(name, false).put('"');
+        quoted = true;
+        put(value);
+        quoted = false;
+        putAsciiInternal('"');
+        return this;
+    }
+
+    public AbstractLineSender field(CharSequence name, double value) {
+        writeFieldName(name, false).put(value);
+        return this;
+    }
+
+    public AbstractLineSender field(CharSequence name, boolean value) {
+        writeFieldName(name, false).putAsciiInternal(value ? 't' : 'f');
+        return this;
+    }
+
+    @Override
+    public void flush() {
+        validateNotClosed();
+        sendLine();
+        ptr = lineStart = lo;
+    }
+
+    @Override
     public Sender longArray(CharSequence name, long[] values) {
         return arrayColumn(name, ColumnType.LONG, (byte) 1, values);
     }
@@ -331,13 +338,6 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
     @Override
     public Sender longArray(CharSequence name, long[][][][][][][][][][][][][][][][] values) {
         return arrayColumn(name, ColumnType.LONG, (byte) 16, values);
-    }
-
-    @Override
-    public void flush() {
-        validateNotClosed();
-        sendLine();
-        ptr = lineStart = lo;
     }
 
     @Override
@@ -521,6 +521,28 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
         return -1;
     }
 
+    private Sender arrayColumn(CharSequence name, short columnType, byte dims, Object values) {
+        if (processNullArray(name, values)) {
+            return this;
+        }
+        writeFieldName(name, true)
+                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
+                .put((byte) columnType)
+                .put(dims);
+        ptr = NDArrayFlattener.flattenIntoBuf(ptr, null, values, dims, columnType);
+        return this;
+    }
+
+    private boolean processNullArray(CharSequence name, Object value) {
+        if (value == null) {
+            writeFieldName(name, true)
+                    .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                    .put((byte) ColumnType.NULL); // element type
+            return true;
+        }
+        return false;
+    }
+
     private byte[] receiveChallengeBytes() {
         int n = 0;
         for (; ; ) {
@@ -663,27 +685,5 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
             }
         }
         throw new LineSenderException("table expected");
-    }
-
-    private Sender arrayColumn(CharSequence name, short columnType, byte dims, Object values) {
-        if (processNullArray(name, values)) {
-            return this;
-        }
-        writeFieldName(name, true)
-                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
-                .put((byte) columnType)
-                .put(dims);
-        ptr = NDArrayFlattener.processArray(ptr, null, values, dims, columnType);
-        return this;
-    }
-
-    private boolean processNullArray(CharSequence name, Object value) {
-        if (value == null) {
-            writeFieldName(name, true)
-                    .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
-                    .put((byte) ColumnType.NULL); // element type
-            return true;
-        }
-        return false;
     }
 }
