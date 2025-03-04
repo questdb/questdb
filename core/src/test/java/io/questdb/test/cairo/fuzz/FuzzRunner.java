@@ -381,6 +381,7 @@ public class FuzzRunner {
                                 tableNameNoWal,
                                 tableNameWal,
                                 rnd,
+                                reader.size(),
                                 metadata.getColumnName(columnIndex),
                                 metadata.getColumnName(metadata.getTimestampIndex())
                         );
@@ -609,10 +610,11 @@ public class FuzzRunner {
             String expectedTableName,
             String actualTableName,
             Rnd rnd,
+            long recordCount,
             String symbolColumnName,
             String tsColumnName
     ) throws SqlException {
-        long randomRow = rnd.nextLong(3);
+        long randomRow = rnd.nextLong(recordCount);
         sink.clear();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             TestUtils.printSql(compiler, sqlExecutionContext, "select \"" + symbolColumnName + "\" as a from " + expectedTableName + " limit " + randomRow + ", 1", sink);
