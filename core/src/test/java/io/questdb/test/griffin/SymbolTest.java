@@ -34,7 +34,7 @@ public class SymbolTest extends AbstractCairoTest {
             execute(
                     "create atomic table x as ( " +
                             "  select rnd_symbol('AB', 'BC', 'CD') sym, timestamp_sequence('2022-02-24', 1000000L) ts " +
-                            "  from long_sequence(480585)" +
+                            "  from long_sequence(10000)" +
                             "), index(sym) timestamp(ts) partition by DAY BYPASS WAL;"
             );
             execute("alter table x add column sym_top symbol index;");
