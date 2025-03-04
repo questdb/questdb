@@ -45,6 +45,42 @@ import static io.questdb.griffin.CompiledQuery.TRUNCATE;
 public class TruncateTest extends AbstractCairoTest {
 
     @Test
+    public void testCachedFilterAfterTruncate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table tab as (" +
+                            "select timestamp_sequence(0, 1000000000) timestamp," +
+                            " rnd_symbol('a','b') symbol " +
+                            " from long_sequence(10)" +
+                            ") timestamp (timestamp)"
+            );
+
+            String sql = "select * from tab where symbol != 'c' limit 6";
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        assertCursor("timestamp\tsymbol\n" +
+                                        "1970-01-01T00:00:00.000000Z\ta\n" +
+                                        "1970-01-01T00:16:40.000000Z\ta\n" +
+                                        "1970-01-01T00:33:20.000000Z\tb\n" +
+                                        "1970-01-01T00:50:00.000000Z\tb\n" +
+                                        "1970-01-01T01:06:40.000000Z\tb\n" +
+                                        "1970-01-01T01:23:20.000000Z\tb\n",
+                                true, true, true, cursor, factory.getMetadata(), false);
+                    }
+
+                    execute("truncate table tab");
+
+                    drainWalQueue();
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        assertCursor("timestamp\tsymbol\n", true, true, true, cursor, factory.getMetadata(), false);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAddColumnTruncate() throws Exception {
         assertMemoryLeak(() -> {
             execute(
