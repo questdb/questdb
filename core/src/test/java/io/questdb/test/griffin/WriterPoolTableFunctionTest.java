@@ -28,8 +28,11 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.table.WriterPoolFunctionFactory;
 import io.questdb.griffin.engine.table.ReaderPoolRecordCursorFactory;
 import io.questdb.griffin.engine.table.WriterPoolRecordCursorFactory;
@@ -43,6 +46,7 @@ import org.junit.Test;
 import static org.junit.Assert.assertTrue;
 
 public class WriterPoolTableFunctionTest extends AbstractCairoTest {
+
     @Test
     public void testCursorDoesHaveUpfrontSize() throws Exception {
         assertMemoryLeak(() -> {
@@ -66,7 +70,7 @@ public class WriterPoolTableFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testEmptyPool() throws Exception {
-        assertMemoryLeak(() -> assertSql("table_name\towner_thread_id\tlast_access_timestamp\townership_reason\n", "select * from writer_pool()"));
+        assertQuery("table_name\towner_thread_id\tlast_access_timestamp\townership_reason\n", "select * from writer_pool()", null);
     }
 
     @Test
@@ -153,49 +157,61 @@ public class WriterPoolTableFunctionTest extends AbstractCairoTest {
             execute("create table c as (select 1 as u)");
             execute("create table d as (select 1 as u)");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "table_name\townership_reason\n" +
                             "a\t\n" +
                             "b\t\n" +
                             "c\t\n" +
                             "d\t\n",
-                    "select table_name,ownership_reason from writer_pool order by 1"
+                    "select table_name,ownership_reason from writer_pool order by 1",
+                    null,
+                    true
             );
 
             // assert ordering
-            assertSql(
+            assertQueryNoLeakCheck(
                     "table_name\townership_reason\n" +
                             "d\t\n" +
                             "c\t\n" +
                             "b\t\n" +
                             "a\t\n",
-                    "select table_name,ownership_reason from writer_pool order by 1 desc"
+                    "select table_name,ownership_reason from writer_pool order by 1 desc",
+                    null,
+                    true
             );
 
             engine.releaseAllWriters();
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "table_name\townership_reason\n",
-                    "select table_name,ownership_reason from writer_pool order by 1"
+                    "select table_name,ownership_reason from writer_pool order by 1",
+                    null,
+                    true
             );
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "table_name\townership_reason\n",
-                    "select table_name,ownership_reason from writer_pool order by 1 desc"
+                    "select table_name,ownership_reason from writer_pool order by 1 desc",
+                    null,
+                    true
             );
 
             try (TableWriter ignored = engine.getWriter(engine.getTableTokenIfExists("a"), "test reason")) {
-                assertSql(
+                assertQueryNoLeakCheck(
                         "table_name\townership_reason\n" +
                                 "a\ttest reason\n",
-                        "select table_name,ownership_reason from writer_pool order by 1 desc"
+                        "select table_name,ownership_reason from writer_pool order by 1 desc",
+                        null,
+                        true
                 );
             }
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "table_name\townership_reason\n" +
                             "a\t\n",
-                    "select table_name,ownership_reason from writer_pool order by 1 desc"
+                    "select table_name,ownership_reason from writer_pool order by 1 desc",
+                    null,
+                    true
             );
         });
     }
