@@ -16,8 +16,16 @@ import re
 from collections import deque
 
 
+ON_GITHUB_ACTIONS = bool(os.environ.get('GITHUB_ACTIONS'))
+
+
 def export_ci_var(name, value):
-    print(f'##vso[task.setvariable variable={name}]{value}')
+    sys.stderr.write(f'>>> export {name}="{value}"\n')
+    if ON_GITHUB_ACTIONS:
+        with open(os.environ['GITHUB_ENV'], 'a') as env_file:
+            env_file.write(f'{name}={value}\n')
+    else:
+        print(f'##vso[task.setvariable variable={name}]{value}')
 
 
 def log_command(args):
@@ -231,15 +239,19 @@ def parse_args():
         'containing a `toolchain.channel` field.')
     args = parser.parse_args()
     if args.match:
-        with open(args.match, 'rb') as f:
-            import tomllib
-            toolchain = tomllib.load(f)
-        args.version = toolchain['toolchain']['channel']
+        with open(args.match, 'r', encoding='utf-8') as f:
+            contents = f.read()
+            pat = re.compile(r'(?<=\[toolchain\]\n)(?:.*\n)*?channel\s*=\s*"(?P<channel>[^"]+)"')
+            match = pat.search(contents)
+            if not match:
+                raise ValueError(f'No `toolchain.channel` field found in {args.match}')
+            args.version = match.group('channel')
     return args
 
 
 if __name__ == '__main__':
     args = parse_args()
+    sys.stderr.write(f'===== Ensuring installation of {args.version} with components {args.components} =====\n')
     ensure_rust(args.version, args.components)
     if args.export_cargo_install_env:
         export_cargo_install_env()
