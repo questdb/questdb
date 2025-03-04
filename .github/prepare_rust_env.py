@@ -29,7 +29,8 @@ def export_ci_var(name, value):
 
 
 def log_command(args):
-    sys.stderr.write(f'>>> {shlex.join(args)}\n')
+    args_line = ' '.join(shlex.quote(arg) for arg in args)
+    sys.stderr.write(f'>>> {args_line}\n')
     sys.stderr.flush()
     return args
 
