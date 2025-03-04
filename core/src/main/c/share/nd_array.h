@@ -28,11 +28,13 @@
 #include <jni.h>
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_io_questdb_cutlass_line_array_DoubleArray_processArrayData(
-    JNIEnv *env, jclass, jlong addr, jobject array, jint dims, jint elemIndex);
+Java_io_questdb_cutlass_line_array_NDArrayFlattener_processArrayData(
+    JNIEnv *env, jclass, jlong addr, jobject array, jint dims, jint elementType
+);
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_io_questdb_cutlass_line_array_NDArrayFlattener_processArrayShape(
-    JNIEnv *env, jclass, jlong addr, jobject array, jint dims);
+    JNIEnv *env, jclass, jlong addr, jobject array, jint dims
+);
 
 #endif // QUESTDB_ARRAY_H
