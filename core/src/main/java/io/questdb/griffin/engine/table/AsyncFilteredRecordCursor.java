@@ -392,7 +392,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         ogRowsRemaining = rowsRemaining;
         frameIndex = -1;
         frameLimit = -1;
-        frameRowCount = 0;
+        frameRowCount = -1;
         allFramesActive = true;
         frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
         record.of(frameSequence.getSymbolTableSource());
