@@ -507,9 +507,21 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         fillStride = null;
         fillValues = null;
         skipped = false;
+        if (pivotColumns != null) {
+            pivotColumns.clear();
+        }
+        if (pivotFor != null) {
+            pivotFor.clear();
+        }
         pivotColumns = null;
         pivotFor = null;
+        if (unpivotColumns != null) {
+            unpivotColumns.clear();
+        }
         unpivotColumns = null;
+        if (unpivotFor != null) {
+            unpivotFor.clear();
+        }
         unpivotFor = null;
         unpivotIncludeNulls = false;
         allowPropagationOfOrderByAdvice = true;
