@@ -284,7 +284,9 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         filter.toTop();
         frameSequence.toTop();
         rowsRemaining = ogRowsRemaining;
+        // Don't reset frameLimit here since its value is used to prepare frame sequence for dispatch only once.
         frameIndex = -1;
+        frameRowIndex = -1;
         frameRowCount = -1;
         allFramesActive = true;
     }
@@ -392,6 +394,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         ogRowsRemaining = rowsRemaining;
         frameIndex = -1;
         frameLimit = -1;
+        frameRowIndex = -1;
         frameRowCount = -1;
         allFramesActive = true;
         frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
