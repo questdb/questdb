@@ -47,6 +47,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
@@ -105,6 +106,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         }
                     } catch (Throwable th) {
                         errors.put(threadIndex, th);
+                    } finally {
+                        Path.clearThreadLocals();
                     }
                     end.countDown();
                 }).start();
@@ -149,6 +152,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     e.printStackTrace();
                     errors.incrementAndGet();
                 } finally {
+                    Path.clearThreadLocals();
                     halt.countDown();
                 }
             }).start();
@@ -166,6 +170,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                     e.printStackTrace();
                     errors.incrementAndGet();
                 } finally {
+                    Path.clearThreadLocals();
                     halt.countDown();
                 }
             }).start();
@@ -307,6 +312,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         e.printStackTrace();
                         errors.incrementAndGet();
                     } finally {
+                        Path.clearThreadLocals();
                         halt.countDown();
                     }
                 }).start();
@@ -421,6 +427,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                             for (int i = 0; i < readers.size(); i++) {
                                 readers.get(i).close();
                             }
+                            Path.clearThreadLocals();
                             halt.countDown();
                         }
                     }
@@ -483,6 +490,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         exceptionCount.incrementAndGet();
                         e.printStackTrace();
                     } finally {
+                        Path.clearThreadLocals();
                         stopLatch.countDown();
                     }
                 }).start();
@@ -499,6 +507,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         exceptionCount.incrementAndGet();
                         e.printStackTrace();
                     } finally {
+                        Path.clearThreadLocals();
                         stopLatch.countDown();
                     }
                 }).start();
@@ -649,6 +658,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         ref.set(pool.get(nameX));
                     } catch (Throwable ignored) {
                     } finally {
+                        Path.clearThreadLocals();
                         // the end
                         halt.countDown();
                     }

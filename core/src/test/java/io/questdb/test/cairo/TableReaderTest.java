@@ -1784,6 +1784,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     e.printStackTrace();
                     errors.incrementAndGet();
                 } finally {
+                    Path.clearThreadLocals();
                     stopLatch.countDown();
                 }
             }).start();
@@ -1816,6 +1817,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     e.printStackTrace();
                     errors.incrementAndGet();
                 } finally {
+                    Path.clearThreadLocals();
                     stopLatch.countDown();
                 }
             }).start();
@@ -3945,6 +3947,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     e.printStackTrace();
                     errors.incrementAndGet();
                 } finally {
+                    Path.clearThreadLocals();
                     stopLatch.countDown();
                 }
             }).start();
@@ -3985,6 +3988,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     e.printStackTrace();
                     errors.incrementAndGet();
                 } finally {
+                    Path.clearThreadLocals();
                     stopLatch.countDown();
                 }
             }).start();

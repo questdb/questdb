@@ -122,9 +122,6 @@ public class TxnScoreboardV1 implements TxnScoreboard {
 
     @Override
     public boolean isRangeAvailable(long fromTxn, long toTxn) {
-        if (mem == 0) {
-            int i = 0;
-        }
         return isRangeAvailable0(mem, toInternalTxn(fromTxn), toInternalTxn(toTxn));
     }
 

@@ -333,6 +333,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             DatabaseCheckpointStatus checkpointStatus,
             CairoEngine cairoEngine
     ) {
+        this(
+                configuration,
+                tableToken,
+                messageBus,
+                ownMessageBus,
+                lock,
+                lifecycleManager,
+                root,
+                ddlListener,
+                checkpointStatus,
+                cairoEngine,
+                cairoEngine.getTxnScoreboardPool()
+        );
+    }
+
+    public TableWriter(
+            CairoConfiguration configuration,
+            TableToken tableToken,
+            MessageBus messageBus,
+            MessageBus ownMessageBus,
+            boolean lock,
+            LifecycleManager lifecycleManager,
+            CharSequence root,
+            DdlListener ddlListener,
+            DatabaseCheckpointStatus checkpointStatus,
+            CairoEngine cairoEngine,
+            TxnScoreboardPool txnScoreboardPool
+    ) {
         LOG.info().$("open '").utf8(tableToken.getTableName()).$('\'').$();
         this.configuration = configuration;
         this.ddlListener = ddlListener;
@@ -374,7 +402,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             openMetaFile(ff, path, pathSize, ddlMem, metadata);
             this.partitionBy = metadata.getPartitionBy();
             this.txWriter = new TxWriter(ff, configuration).ofRW(path.concat(TXN_FILE_NAME).$(), partitionBy);
-            this.txnScoreboard = engine.getTxnScoreboard(tableToken);
+            this.txnScoreboard = txnScoreboardPool.getTxnScoreboard(tableToken);
             path.trimTo(pathSize);
             this.columnVersionWriter = openColumnVersionFile(configuration, path, pathSize, partitionBy != PartitionBy.NONE);
             this.o3ColumnOverrides = metadata.isWalEnabled() ? new ObjList<>() : null;

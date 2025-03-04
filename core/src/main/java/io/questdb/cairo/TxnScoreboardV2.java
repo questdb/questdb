@@ -24,8 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
@@ -33,7 +31,6 @@ import io.questdb.std.Vect;
 import org.jetbrains.annotations.TestOnly;
 
 public class TxnScoreboardV2 implements TxnScoreboard {
-    private static final Log LOG = LogFactory.getLog(TxnScoreboardV2.class);
     private static final int RESERVED_ID_COUNT = 16;
     private static final long UNLOCKED = -1;
     private static final int VIRTUAL_ID_COUNT = 1;
@@ -63,9 +60,17 @@ public class TxnScoreboardV2 implements TxnScoreboard {
             return false;
         }
 
-        Unsafe.getUnsafe().putLongVolatile(null, entriesMem + internalId * Long.BYTES, txn);
-        incrementActiveReaderCount();
-        return true;
+        if (Unsafe.getUnsafe().compareAndSwapLong(null, entriesMem + internalId * Long.BYTES, UNLOCKED, txn)) {
+            if (!updateMax(txn)) {
+                // Max moved, cannot acquire the txn.
+                Unsafe.getUnsafe().putLongVolatile(null, entriesMem + internalId * Long.BYTES, UNLOCKED);
+                return false;
+            }
+            incrementActiveReaderCount();
+            return true;
+        } else {
+            return false;
+        }
     }
 
     @Override
@@ -95,6 +100,10 @@ public class TxnScoreboardV2 implements TxnScoreboard {
 
     @TestOnly
     public long getMin() {
+        if (getActiveReaderCount() == 0) {
+            return UNLOCKED;
+        }
+
         long min = Long.MAX_VALUE;
         for (int i = 0; i < entryScanCount; i++) {
             long lockedTxn = Unsafe.getUnsafe().getLongVolatile(null, entriesMem + (long) i * Long.BYTES);
@@ -107,6 +116,10 @@ public class TxnScoreboardV2 implements TxnScoreboard {
 
     @Override
     public boolean hasEarlierTxnLocks(long txn) {
+        if (!updateMax(txn)) {
+            return true;
+        }
+
         if (getActiveReaderCount() == 0) {
             return false;
         }

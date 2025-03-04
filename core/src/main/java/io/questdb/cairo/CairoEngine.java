@@ -158,7 +158,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final WriterPool writerPool;
     private @NotNull ConfigReloader configReloader = () -> false; // no-op
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
-    private TxnScoreboardPool scoreboardPool;
+    private final TxnScoreboardPool scoreboardPool;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
 
@@ -467,6 +467,7 @@ public class CairoEngine implements Closeable, WriterSource {
             }
         } else {
             CharSequence lockedReason = lockAll(tableToken, "removeTable", false);
+            scoreboardPool.remove(tableToken);
             if (lockedReason == null) {
                 try {
                     path.of(configuration.getDbRoot()).concat(tableToken).$();
@@ -852,14 +853,8 @@ public class CairoEngine implements Closeable, WriterSource {
         return scoreboardPool.getTxnScoreboard(tableToken);
     }
 
-    @TestOnly
     public TxnScoreboardPool getTxnScoreboardPool() {
         return scoreboardPool;
-    }
-
-    @TestOnly
-    public void initScoreboardPool() {
-        scoreboardPool = TxnScoreboardPoolFactory.createPool(configuration);
     }
 
     public long getUnpublishedWalTxnCount() {

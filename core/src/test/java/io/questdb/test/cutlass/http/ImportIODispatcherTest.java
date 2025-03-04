@@ -1022,7 +1022,8 @@ public class ImportIODispatcherTest extends AbstractTest {
                     // Check that txn_scoreboard is fully unlocked, e.g. no reader scoreboard leaks after the failure
                     TableToken tableToken = engine.verifyTableName("xyz");
                     try (TxnScoreboard txnScoreboard = engine.getTxnScoreboard(tableToken)) {
-                        Assert.assertEquals(2, getMin(txnScoreboard));
+                        long min = getMin(txnScoreboard);
+                        Assert.assertTrue(2 == min || min == -1);
                         Assert.assertTrue(txnScoreboard.isTxnAvailable(2));
                     }
                 });

@@ -97,6 +97,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                     e.printStackTrace();
                     errors1.incrementAndGet();
                 } finally {
+                    Path.clearThreadLocals();
                     halt.countDown();
                 }
             }).start();
@@ -114,6 +115,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                     e.printStackTrace();
                     errors2.incrementAndGet();
                 } finally {
+                    Path.clearThreadLocals();
                     halt.countDown();
                 }
             }).start();
@@ -350,6 +352,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                         exceptionCount.incrementAndGet();
                         e.printStackTrace();
                     } finally {
+                        Path.clearThreadLocals();
                         stopLatch.countDown();
                     }
                 }).start();
@@ -367,6 +370,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                         exceptionCount.incrementAndGet();
                         e.printStackTrace();
                     } finally {
+                        Path.clearThreadLocals();
                         stopLatch.countDown();
                     }
                 }).start();
@@ -593,6 +597,8 @@ public class WriterPoolTest extends AbstractCairoTest {
                     try (TableWriter ignored1 = pool.get(zTableToken, "testing")) {
                     } catch (Throwable ignored) {
                         errors.incrementAndGet();
+                    } finally {
+                        Path.clearThreadLocals();
                     }
                 });
                 threads[i].start();
@@ -721,6 +727,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                             e.printStackTrace();
                             errors.incrementAndGet();
                         } finally {
+                            Path.clearThreadLocals();
                             halt.countDown();
                         }
                     }).start();
@@ -951,6 +958,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                 new Thread(() -> {
                     // trigger the release
                     pool.get(zTableToken, "test").close();
+                    Path.clearThreadLocals();
                 }).start();
 
                 next.await();

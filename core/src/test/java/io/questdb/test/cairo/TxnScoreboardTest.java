@@ -34,11 +34,13 @@ import io.questdb.cairo.TxnScoreboardPool;
 import io.questdb.cairo.TxnScoreboardPoolFactory;
 import io.questdb.cairo.TxnScoreboardV1;
 import io.questdb.cairo.TxnScoreboardV2;
+import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -289,7 +291,8 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
     @Test
     public void testHammer() throws Exception {
-        testHammerScoreboard(8, 10000);
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        testHammerScoreboard(rnd.nextInt(1000) + 1, 10000);
     }
 
     @Test
@@ -623,6 +626,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     private void testHammerScoreboard(int readers, int iterations) throws Exception {
         int entryCount = Math.max(Numbers.ceilPow2(readers) * 8, Numbers.ceilPow2(iterations));
         setProperty(PropertyKey.CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT, entryCount);
+        setProperty(PropertyKey.CAIRO_READER_POOL_MAX_SEGMENTS, (int) Math.ceil((double) readers / ReaderPool.ENTRY_SIZE));
         try (final TxnScoreboard scoreboard = newTxnScoreboard()) {
             final CyclicBarrier barrier = new CyclicBarrier(readers + 1);
             final CountDownLatch latch = new CountDownLatch(readers + 1);
@@ -752,7 +756,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 for (int i = 0; i < iterations; i++) {
                     if (version == ScoreboardFormat.V1) {
                         for (int sleepCount = 0; sleepCount < 50 && txn - getMin(scoreboard) > publishWaitBarrier; sleepCount++) {
-                            // Some readers are slow and haven't release transaction yet. Give them a bit more time
+                            // Some readers are slow and haven't released transaction yet. Give them a bit more time
                             LOG.infoW().$("slow reader release, waiting... [txn=")
                                     .$(txn)
                                     .$(", min=").$(getMin(scoreboard))
@@ -781,8 +785,8 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
                     // Simulate TableWriter trying to find if there are readers before the published transaction
                     scoreboard.hasEarlierTxnLocks(nextTxn);
-
                     writerMin = getMin(scoreboard);
+
                     if (writerMin > nextTxn) {
                         LOG.errorW()
                                 .$("writer min is above max published transaction=").$(writerMin)

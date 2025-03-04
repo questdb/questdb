@@ -41,6 +41,11 @@ public class TxnScoreboardPoolV1 implements TxnScoreboardPool {
     }
 
     @Override
+    public void remove(TableToken token) {
+        // no op
+    }
+
+    @Override
     public TxnScoreboard getTxnScoreboard(TableToken token) {
         var scoreboard = scoreboardPoolV1ThreadLocal.get();
         if (scoreboard == null) {

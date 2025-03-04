@@ -627,10 +627,11 @@ public class DropIndexTest extends AbstractCairoTest {
     }
 
     private void assertIndexFileExist(String tableName, String index, String version, boolean exists) {
-        Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
         TableToken token = engine.verifyTableName(tableName);
-        path.concat(token);
+        Path path;
         try (TableReader rdr = engine.getReader(token)) {
+            path = Path.getThreadLocal(engine.getConfiguration().getDbRoot());
+            path.concat(token);
             long lastPartition = rdr.getTxFile().getLastPartitionTimestamp();
             long lastPartitionNameTxn = rdr.getTxFile().getPartitionNameTxnByPartitionTimestamp(lastPartition);
             int partitionBy = rdr.getPartitionedBy();

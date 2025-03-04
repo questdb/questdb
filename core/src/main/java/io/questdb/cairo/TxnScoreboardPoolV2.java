@@ -41,7 +41,8 @@ public class TxnScoreboardPoolV2 implements TxnScoreboardPool {
         this.configuration = configuration;
         getOrCreateScoreboard = (key, value) -> {
             if (value == null || value.closed) {
-                value = new ScoreboardPoolTenant(configuration, this);
+                //noinspection resource
+                value = new ScoreboardPoolTenant(configuration);
             }
             value.refCount.incrementAndGet();
             return value;
@@ -52,6 +53,19 @@ public class TxnScoreboardPoolV2 implements TxnScoreboardPool {
     public void clear() {
         for (var tt : pool.keySet()) {
             var scoreboard = pool.remove(tt);
+            if (scoreboard != null) {
+                scoreboard.closed = true;
+                if (scoreboard.refCount.get() == 0) {
+                    scoreboard.doClose();
+                }
+            }
+        }
+    }
+
+    @Override
+    public void remove(TableToken token) {
+        var scoreboard = pool.remove(token.getDirName());
+        if (scoreboard != null) {
             scoreboard.closed = true;
             if (scoreboard.refCount.get() == 0) {
                 scoreboard.doClose();
@@ -65,13 +79,11 @@ public class TxnScoreboardPoolV2 implements TxnScoreboardPool {
     }
 
     private static class ScoreboardPoolTenant extends TxnScoreboardV2 {
-        private final TxnScoreboardPoolV2 parent;
         private final AtomicInteger refCount = new AtomicInteger();
         private volatile boolean closed = false;
 
-        public ScoreboardPoolTenant(CairoConfiguration configuration, TxnScoreboardPoolV2 parent) {
+        public ScoreboardPoolTenant(CairoConfiguration configuration) {
             super(configuration.getReaderPoolMaxSegments() * ENTRY_SIZE);
-            this.parent = parent;
         }
 
         @Override
