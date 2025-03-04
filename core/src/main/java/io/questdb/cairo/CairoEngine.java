@@ -1445,7 +1445,10 @@ public class CairoEngine implements Closeable, WriterSource {
                                 long seqTxn = getTableSequencerAPI().lastTxn(tableToken);
                                 long baseSeqTxn = getTableSequencerAPI().lastTxn(baseTableToken);
                                 if (state.getLastRefreshBaseTxn() > baseSeqTxn || state.getSeqTxn() > seqTxn) {
-                                    // materialized view state is ahead of the base table or the view itself
+                                    // Materialized view state is ahead of the base table or the view itself.
+                                    // This may happen when a read-only replica node which isn't fully caught up
+                                    // was converted to primary.
+                                    // Set the last refreshed txn to -1 to have the view fully refreshed.
                                     state.setLastRefreshBaseTxn(-1);
                                 }
                                 matViewGraph.enqueueIncrementalRefresh(tableToken);
