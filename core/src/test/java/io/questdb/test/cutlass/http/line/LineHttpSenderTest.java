@@ -47,18 +47,26 @@ import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.lang.reflect.Array;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.Arrays;
 
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.PropertyKey.LINE_HTTP_ENABLED;
 
 public class LineHttpSenderTest extends AbstractBootstrapTest {
+
+    public static Object createDoubleArray(int[] shape) {
+        int[] indices = new int[shape.length];
+        return buildNestedArray(ArrayDataType.DOUBLE, shape, 0, indices);
+    }
+
+    public static Object createLongArray(int[] shape) {
+        int[] indices = new int[shape.length];
+        return buildNestedArray(ArrayDataType.LONG, shape, 0, indices);
+    }
 
     public void assertSql(CairoEngine engine, CharSequence sql, CharSequence expectedResult) throws SqlException {
         StringSink sink = Misc.getThreadLocalSink();
@@ -350,22 +358,22 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .symbol("x", "42i")
                             .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")  // ensuring no array parsing for symbol
                             .longColumn("l1", 23452345)
-                            .doubleArray("a1", (double[]) createDoubleArrays(new int[]{5}))
-                            .doubleArray("a2", (double[][]) createDoubleArrays(new int[]{2, 3}))
-                            .doubleArray("a3", (double[][][]) createDoubleArrays(new int[]{1, 2, 3}))
-                            .doubleArray("a4", (double[][][][]) createDoubleArrays(new int[]{1, 2, 1, 1}))
-                            .doubleArray("a5", (double[][][][][]) createDoubleArrays(new int[]{3, 2, 1, 4, 1}))
-                            .doubleArray("a6", (double[][][][][][]) createDoubleArrays(new int[]{1, 3, 4, 2, 1, 1}))
-                            .doubleArray("a7", (double[][][][][][][]) createDoubleArrays(new int[]{2, 2, 2, 1, 1, 1, 2}))
-                            .doubleArray("a8", (double[][][][][][][][]) createDoubleArrays(new int[]{1, 1, 2, 1, 1, 1, 2, 1}))
-                            .doubleArray("a9", (double[][][][][][][][][]) createDoubleArrays(new int[]{1, 2, 1, 2, 1, 1, 2, 1, 1}))
-                            .doubleArray("a10", (double[][][][][][][][][][]) createDoubleArrays(new int[]{2, 1, 1, 2, 1, 1, 1, 1, 1, 2}))
-                            .doubleArray("a11", (double[][][][][][][][][][][]) createDoubleArrays(new int[]{3, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1}))
-                            .doubleArray("a12", (double[][][][][][][][][][][][]) createDoubleArrays(new int[]{1, 2, 1, 2, 1, 1, 1, 1, 2, 2, 1, 1}))
-                            .doubleArray("a13", (double[][][][][][][][][][][][][]) createDoubleArrays(new int[]{1, 1, 2, 2, 1, 2, 1, 1, 2, 1, 1, 2, 1}))
-                            .doubleArray("a14", (double[][][][][][][][][][][][][][]) createDoubleArrays(new int[]{1, 1, 3, 1, 1, 1, 1, 1, 2, 1, 1, 2, 2, 1}))
-                            .doubleArray("a15", (double[][][][][][][][][][][][][][][]) createDoubleArrays(new int[]{1, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 3, 1, 1, 1}))
-                            .doubleArray("a16", (double[][][][][][][][][][][][][][][][]) createDoubleArrays(new int[]{1, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}))
+                            .doubleArray("a1", (double[]) createDoubleArray(new int[]{5}))
+                            .doubleArray("a2", (double[][]) createDoubleArray(new int[]{2, 3}))
+                            .doubleArray("a3", (double[][][]) createDoubleArray(new int[]{1, 2, 3}))
+                            .doubleArray("a4", (double[][][][]) createDoubleArray(new int[]{1, 2, 1, 1}))
+                            .doubleArray("a5", (double[][][][][]) createDoubleArray(new int[]{3, 2, 1, 4, 1}))
+                            .doubleArray("a6", (double[][][][][][]) createDoubleArray(new int[]{1, 3, 4, 2, 1, 1}))
+                            .doubleArray("a7", (double[][][][][][][]) createDoubleArray(new int[]{2, 2, 2, 1, 1, 1, 2}))
+                            .doubleArray("a8", (double[][][][][][][][]) createDoubleArray(new int[]{1, 1, 2, 1, 1, 1, 2, 1}))
+                            .doubleArray("a9", (double[][][][][][][][][]) createDoubleArray(new int[]{1, 2, 1, 2, 1, 1, 2, 1, 1}))
+                            .doubleArray("a10", (double[][][][][][][][][][]) createDoubleArray(new int[]{2, 1, 1, 2, 1, 1, 1, 1, 1, 2}))
+                            .doubleArray("a11", (double[][][][][][][][][][][]) createDoubleArray(new int[]{3, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1}))
+                            .doubleArray("a12", (double[][][][][][][][][][][][]) createDoubleArray(new int[]{1, 2, 1, 2, 1, 1, 1, 1, 2, 2, 1, 1}))
+                            .doubleArray("a13", (double[][][][][][][][][][][][][]) createDoubleArray(new int[]{1, 1, 2, 2, 1, 2, 1, 1, 2, 1, 1, 2, 1}))
+                            .doubleArray("a14", (double[][][][][][][][][][][][][][]) createDoubleArray(new int[]{1, 1, 3, 1, 1, 1, 1, 1, 2, 1, 1, 2, 2, 1}))
+                            .doubleArray("a15", (double[][][][][][][][][][][][][][][]) createDoubleArray(new int[]{1, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 3, 1, 1, 1}))
+                            .doubleArray("a16", (double[][][][][][][][][][][][][][][][]) createDoubleArray(new int[]{1, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}))
                             .at(100000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
@@ -421,22 +429,22 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .symbol("x", "42i")
                             .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")  // ensuring no array parsing for symbol
                             .longColumn("l1", 23452345)
-                            .longArray("a1", (long[]) createLongArrays(new int[]{5}))
-                            .longArray("a2", (long[][]) createLongArrays(new int[]{2, 3}))
-                            .longArray("a3", (long[][][]) createLongArrays(new int[]{1, 2, 3}))
-                            .longArray("a4", (long[][][][]) createLongArrays(new int[]{1, 2, 1, 1}))
-                            .longArray("a5", (long[][][][][]) createLongArrays(new int[]{3, 2, 1, 4, 1}))
-                            .longArray("a6", (long[][][][][][]) createLongArrays(new int[]{1, 3, 4, 2, 1, 1}))
-                            .longArray("a7", (long[][][][][][][]) createLongArrays(new int[]{2, 2, 2, 1, 1, 1, 2}))
-                            .longArray("a8", (long[][][][][][][][]) createLongArrays(new int[]{1, 1, 2, 1, 1, 1, 2, 1}))
-                            .longArray("a9", (long[][][][][][][][][]) createLongArrays(new int[]{1, 2, 1, 2, 1, 1, 2, 1, 1}))
-                            .longArray("a10", (long[][][][][][][][][][]) createLongArrays(new int[]{2, 1, 1, 2, 1, 1, 1, 1, 1, 2}))
-                            .longArray("a11", (long[][][][][][][][][][][]) createLongArrays(new int[]{3, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1}))
-                            .longArray("a12", (long[][][][][][][][][][][][]) createLongArrays(new int[]{1, 2, 1, 2, 1, 1, 1, 1, 2, 2, 1, 1}))
-                            .longArray("a13", (long[][][][][][][][][][][][][]) createLongArrays(new int[]{1, 1, 2, 2, 1, 2, 1, 1, 2, 1, 1, 2, 1}))
-                            .longArray("a14", (long[][][][][][][][][][][][][][]) createLongArrays(new int[]{1, 1, 3, 1, 1, 1, 1, 1, 2, 1, 1, 2, 2, 1}))
-                            .longArray("a15", (long[][][][][][][][][][][][][][][]) createLongArrays(new int[]{1, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 3, 1, 1, 1}))
-                            .longArray("a16", (long[][][][][][][][][][][][][][][][]) createLongArrays(new int[]{1, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}))
+                            .longArray("a1", (long[]) createLongArray(new int[]{5}))
+                            .longArray("a2", (long[][]) createLongArray(new int[]{2, 3}))
+                            .longArray("a3", (long[][][]) createLongArray(new int[]{1, 2, 3}))
+                            .longArray("a4", (long[][][][]) createLongArray(new int[]{1, 2, 1, 1}))
+                            .longArray("a5", (long[][][][][]) createLongArray(new int[]{3, 2, 1, 4, 1}))
+                            .longArray("a6", (long[][][][][][]) createLongArray(new int[]{1, 3, 4, 2, 1, 1}))
+                            .longArray("a7", (long[][][][][][][]) createLongArray(new int[]{2, 2, 2, 1, 1, 1, 2}))
+                            .longArray("a8", (long[][][][][][][][]) createLongArray(new int[]{1, 1, 2, 1, 1, 1, 2, 1}))
+                            .longArray("a9", (long[][][][][][][][][]) createLongArray(new int[]{1, 2, 1, 2, 1, 1, 2, 1, 1}))
+                            .longArray("a10", (long[][][][][][][][][][]) createLongArray(new int[]{2, 1, 1, 2, 1, 1, 1, 1, 1, 2}))
+                            .longArray("a11", (long[][][][][][][][][][][]) createLongArray(new int[]{3, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1}))
+                            .longArray("a12", (long[][][][][][][][][][][][]) createLongArray(new int[]{1, 2, 1, 2, 1, 1, 1, 1, 2, 2, 1, 1}))
+                            .longArray("a13", (long[][][][][][][][][][][][][]) createLongArray(new int[]{1, 1, 2, 2, 1, 2, 1, 1, 2, 1, 1, 2, 1}))
+                            .longArray("a14", (long[][][][][][][][][][][][][][]) createLongArray(new int[]{1, 1, 3, 1, 1, 1, 1, 1, 2, 1, 1, 2, 2, 1}))
+                            .longArray("a15", (long[][][][][][][][][][][][][][][]) createLongArray(new int[]{1, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 3, 1, 1, 1}))
+                            .longArray("a16", (long[][][][][][][][][][][][][][][][]) createLongArray(new int[]{1, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}))
                             .at(100000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
@@ -801,6 +809,26 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         });
     }
 
+    private static Object buildNestedArray(ArrayDataType dataType, int[] shapes, int currentDim, int[] indices) {
+        if (currentDim == shapes.length - 1) {
+            Object arr = dataType.createArray(shapes[currentDim]);
+            for (int i = 0; i < Array.getLength(arr); i++) {
+                indices[currentDim] = i;
+                dataType.setElement(arr, i, indices);
+            }
+            return arr;
+        } else {
+            Class<?> componentType = dataType.getComponentType(shapes.length - currentDim - 1);
+            Object arr = Array.newInstance(componentType, shapes[currentDim]);
+            for (int i = 0; i < shapes[currentDim]; i++) {
+                indices[currentDim] = i;
+                Object subArr = buildNestedArray(dataType, shapes, currentDim + 1, indices);
+                Array.set(arr, i, subArr);
+            }
+            return arr;
+        }
+    }
+
     private static void flushAndAssertError(Sender sender, String... errors) {
         try {
             sender.flush();
@@ -851,18 +879,6 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         }
     }
 
-
-
-    public static Object createDoubleArrays(int[] shapes) {
-        int[] indices = new int[shapes.length];
-        return buildNestedArray(ArrayDataType.DOUBLE, shapes, 0, indices);
-    }
-
-    public static Object createLongArrays(int[] shapes) {
-        int[] indices = new int[shapes.length];
-        return buildNestedArray(ArrayDataType.LONG, shapes, 0, indices);
-    }
-
     private enum ArrayDataType {
         DOUBLE(double.class) {
             @Override
@@ -905,12 +921,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             initComponentTypes();
         }
 
-        private void initComponentTypes() {
-            componentTypes[0] = baseType;
-            for (int dim = 1; dim <= 16; dim++) {
-                componentTypes[dim] = Array.newInstance(componentTypes[dim - 1], 0).getClass();
-            }
-        }
+        public abstract Object createArray(int length);
 
         public Class<?> getComponentType(int dimsRemaining) {
             if (dimsRemaining < 0 || dimsRemaining > 16) {
@@ -919,27 +930,13 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             return componentTypes[dimsRemaining];
         }
 
-        public abstract Object createArray(int length);
         public abstract void setElement(Object array, int index, int[] indices);
-    }
 
-    private static Object buildNestedArray(ArrayDataType dataType, int[] shapes, int currentDim, int[] indices) {
-        if (currentDim == shapes.length - 1) {
-            Object arr = dataType.createArray(shapes[currentDim]);
-            for (int i = 0; i < Array.getLength(arr); i++) {
-                indices[currentDim] = i;
-                dataType.setElement(arr, i, indices);
+        private void initComponentTypes() {
+            componentTypes[0] = baseType;
+            for (int dim = 1; dim <= 16; dim++) {
+                componentTypes[dim] = Array.newInstance(componentTypes[dim - 1], 0).getClass();
             }
-            return arr;
-        } else {
-            Class<?> componentType = dataType.getComponentType(shapes.length - currentDim - 1);
-            Object arr = Array.newInstance(componentType, shapes[currentDim]);
-            for (int i = 0; i < shapes[currentDim]; i++) {
-                indices[currentDim] = i;
-                Object subArr = buildNestedArray(dataType, shapes, currentDim + 1, indices);
-                Array.set(arr, i, subArr);
-            }
-            return arr;
         }
     }
 }

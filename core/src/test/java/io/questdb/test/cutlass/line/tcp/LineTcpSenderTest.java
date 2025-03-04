@@ -51,8 +51,8 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.function.Consumer;
 
-import static io.questdb.test.cutlass.http.line.LineHttpSenderTest.createDoubleArrays;
-import static io.questdb.test.cutlass.http.line.LineHttpSenderTest.createLongArrays;
+import static io.questdb.test.cutlass.http.line.LineHttpSenderTest.createDoubleArray;
+import static io.questdb.test.cutlass.http.line.LineHttpSenderTest.createLongArray;
 import static io.questdb.test.tools.TestUtils.assertContains;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.Assert.*;
@@ -498,6 +498,88 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testNDDoubleArrayTest() throws Exception {
+        runInContext(r -> {
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+                String table = "nd_test";
+                long ts = IntervalUtils.parseFloorPartialTimestamp("2025-02-22");
+                sender.table(table)
+                        .symbol("x", "42i")
+                        .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")  // ensuring no array parsing for symbol
+                        .longColumn("l1", 23452345)
+                        .doubleArray("a1", (double[]) createDoubleArray(new int[]{5}))
+                        .doubleArray("a2", (double[][]) createDoubleArray(new int[]{2, 3}))
+                        .doubleArray("a3", (double[][][]) createDoubleArray(new int[]{1, 2, 3}))
+                        .doubleArray("a4", (double[][][][]) createDoubleArray(new int[]{1, 2, 1, 1}))
+                        .doubleArray("a5", (double[][][][][]) createDoubleArray(new int[]{3, 2, 1, 4, 1}))
+                        .doubleArray("a6", (double[][][][][][]) createDoubleArray(new int[]{1, 3, 4, 2, 1, 1}))
+                        .doubleArray("a7", (double[][][][][][][]) createDoubleArray(new int[]{2, 2, 2, 1, 1, 1, 2}))
+                        .doubleArray("a8", (double[][][][][][][][]) createDoubleArray(new int[]{1, 1, 2, 1, 1, 1, 2, 1}))
+                        .doubleArray("a9", (double[][][][][][][][][]) createDoubleArray(new int[]{1, 2, 1, 2, 1, 1, 2, 1, 1}))
+                        .doubleArray("a10", (double[][][][][][][][][][]) createDoubleArray(new int[]{2, 1, 1, 2, 1, 1, 1, 1, 1, 2}))
+                        .doubleArray("a11", (double[][][][][][][][][][][]) createDoubleArray(new int[]{3, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1}))
+                        .doubleArray("a12", (double[][][][][][][][][][][][]) createDoubleArray(new int[]{1, 2, 1, 2, 1, 1, 1, 1, 2, 2, 1, 1}))
+                        .doubleArray("a13", (double[][][][][][][][][][][][][]) createDoubleArray(new int[]{1, 1, 2, 2, 1, 2, 1, 1, 2, 1, 1, 2, 1}))
+                        .doubleArray("a14", (double[][][][][][][][][][][][][][]) createDoubleArray(new int[]{1, 1, 3, 1, 1, 1, 1, 1, 2, 1, 1, 2, 2, 1}))
+                        .doubleArray("a15", (double[][][][][][][][][][][][][][][]) createDoubleArray(new int[]{1, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 3, 1, 1, 1}))
+                        .doubleArray("a16", (double[][][][][][][][][][][][][][][][]) createDoubleArray(new int[]{1, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}))
+                        .at(ts, ChronoUnit.MICROS);
+                sender.flush();
+
+                assertTableSizeEventually(engine, table, 1);
+                // @todo getArray support in TestTableReadCursor
+/*                try (TableReader reader = getReader(table)) {
+                    TestUtils.assertReader("", reader, new StringSink());
+                }*/
+            }
+        });
+    }
+
+    @Test
+    public void testNDLongArrayTest() throws Exception {
+        runInContext(r -> {
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+                String table = "nd_test";
+                long ts = IntervalUtils.parseFloorPartialTimestamp("2025-02-22");
+                sender.table(table)
+                        .symbol("x", "42i")
+                        .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")  // ensuring no array parsing for symbol
+                        .longColumn("l1", 23452345)
+                        .longArray("a1", (long[]) createLongArray(new int[]{5}))
+                        .longArray("a2", (long[][]) createLongArray(new int[]{2, 3}))
+                        .longArray("a3", (long[][][]) createLongArray(new int[]{1, 2, 3}))
+                        .longArray("a4", (long[][][][]) createLongArray(new int[]{1, 2, 1, 1}))
+                        .longArray("a5", (long[][][][][]) createLongArray(new int[]{3, 2, 1, 4, 1}))
+                        .longArray("a6", (long[][][][][][]) createLongArray(new int[]{1, 3, 4, 2, 1, 1}))
+                        .longArray("a7", (long[][][][][][][]) createLongArray(new int[]{2, 2, 2, 1, 1, 1, 2}))
+                        .longArray("a8", (long[][][][][][][][]) createLongArray(new int[]{1, 1, 2, 1, 1, 1, 2, 1}))
+                        .longArray("a9", (long[][][][][][][][][]) createLongArray(new int[]{1, 2, 1, 2, 1, 1, 2, 1, 1}))
+                        .longArray("a10", (long[][][][][][][][][][]) createLongArray(new int[]{2, 1, 1, 2, 1, 1, 1, 1, 1, 2}))
+                        .longArray("a11", (long[][][][][][][][][][][]) createLongArray(new int[]{3, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1}))
+                        .longArray("a12", (long[][][][][][][][][][][][]) createLongArray(new int[]{1, 2, 1, 2, 1, 1, 1, 1, 2, 2, 1, 1}))
+                        .longArray("a13", (long[][][][][][][][][][][][][]) createLongArray(new int[]{1, 1, 2, 2, 1, 2, 1, 1, 2, 1, 1, 2, 1}))
+                        .longArray("a14", (long[][][][][][][][][][][][][][]) createLongArray(new int[]{1, 1, 3, 1, 1, 1, 1, 1, 2, 1, 1, 2, 2, 1}))
+                        .longArray("a15", (long[][][][][][][][][][][][][][][]) createLongArray(new int[]{1, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 3, 1, 1, 1}))
+                        .longArray("a16", (long[][][][][][][][][][][][][][][][]) createLongArray(new int[]{1, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}))
+                        .at(ts, ChronoUnit.MICROS);
+                sender.flush();
+
+                assertTableSizeEventually(engine, table, 1);
+                // @todo getArray support in TestTableReadCursor
+/*                try (TableReader reader = getReader(table)) {
+                    TestUtils.assertReader("", reader, new StringSink());
+                }*/
+            }
+        });
+    }
+
+    @Test
     public void testServerIgnoresUnfinishedRows() throws Exception {
         String tableName = "myTable";
         runInContext(r -> {
@@ -694,88 +776,6 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (TableReader reader = getReader(table)) {
                 TestUtils.assertReader("max\tmin\ttimestamp\n" +
                         "9223372036854775807\tnull\t2023-02-22T00:00:00.000000Z\n", reader, new StringSink());
-            }
-        });
-    }
-
-    @Test
-    public void testNDDoubleArrayTest() throws Exception {
-        runInContext(r -> {
-            try (Sender sender = Sender.builder(Sender.Transport.TCP)
-                    .address("127.0.0.1")
-                    .port(bindPort)
-                    .build()) {
-                String table = "nd_test";
-                long ts = IntervalUtils.parseFloorPartialTimestamp("2025-02-22");
-                sender.table(table)
-                        .symbol("x", "42i")
-                        .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")  // ensuring no array parsing for symbol
-                        .longColumn("l1", 23452345)
-                        .doubleArray("a1", (double[]) createDoubleArrays(new int[]{5}))
-                        .doubleArray("a2", (double[][]) createDoubleArrays(new int[]{2, 3}))
-                        .doubleArray("a3", (double[][][]) createDoubleArrays(new int[]{1, 2, 3}))
-                        .doubleArray("a4", (double[][][][]) createDoubleArrays(new int[]{1, 2, 1, 1}))
-                        .doubleArray("a5", (double[][][][][]) createDoubleArrays(new int[]{3, 2, 1, 4, 1}))
-                        .doubleArray("a6", (double[][][][][][]) createDoubleArrays(new int[]{1, 3, 4, 2, 1, 1}))
-                        .doubleArray("a7", (double[][][][][][][]) createDoubleArrays(new int[]{2, 2, 2, 1, 1, 1, 2}))
-                        .doubleArray("a8", (double[][][][][][][][]) createDoubleArrays(new int[]{1, 1, 2, 1, 1, 1, 2, 1}))
-                        .doubleArray("a9", (double[][][][][][][][][]) createDoubleArrays(new int[]{1, 2, 1, 2, 1, 1, 2, 1, 1}))
-                        .doubleArray("a10", (double[][][][][][][][][][]) createDoubleArrays(new int[]{2, 1, 1, 2, 1, 1, 1, 1, 1, 2}))
-                        .doubleArray("a11", (double[][][][][][][][][][][]) createDoubleArrays(new int[]{3, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1}))
-                        .doubleArray("a12", (double[][][][][][][][][][][][]) createDoubleArrays(new int[]{1, 2, 1, 2, 1, 1, 1, 1, 2, 2, 1, 1}))
-                        .doubleArray("a13", (double[][][][][][][][][][][][][]) createDoubleArrays(new int[]{1, 1, 2, 2, 1, 2, 1, 1, 2, 1, 1, 2, 1}))
-                        .doubleArray("a14", (double[][][][][][][][][][][][][][]) createDoubleArrays(new int[]{1, 1, 3, 1, 1, 1, 1, 1, 2, 1, 1, 2, 2, 1}))
-                        .doubleArray("a15", (double[][][][][][][][][][][][][][][]) createDoubleArrays(new int[]{1, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 3, 1, 1, 1}))
-                        .doubleArray("a16", (double[][][][][][][][][][][][][][][][]) createDoubleArrays(new int[]{1, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}))
-                        .at(ts, ChronoUnit.MICROS);
-                sender.flush();
-
-                assertTableSizeEventually(engine, table, 1);
-                // @todo getArray support in TestTableReadCursor
-/*                try (TableReader reader = getReader(table)) {
-                    TestUtils.assertReader("", reader, new StringSink());
-                }*/
-            }
-        });
-    }
-
-    @Test
-    public void testNDLongArrayTest() throws Exception {
-        runInContext(r -> {
-            try (Sender sender = Sender.builder(Sender.Transport.TCP)
-                    .address("127.0.0.1")
-                    .port(bindPort)
-                    .build()) {
-                String table = "nd_test";
-                long ts = IntervalUtils.parseFloorPartialTimestamp("2025-02-22");
-                sender.table(table)
-                        .symbol("x", "42i")
-                        .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")  // ensuring no array parsing for symbol
-                        .longColumn("l1", 23452345)
-                        .longArray("a1", (long[]) createLongArrays(new int[]{5}))
-                        .longArray("a2", (long[][]) createLongArrays(new int[]{2, 3}))
-                        .longArray("a3", (long[][][]) createLongArrays(new int[]{1, 2, 3}))
-                        .longArray("a4", (long[][][][]) createLongArrays(new int[]{1, 2, 1, 1}))
-                        .longArray("a5", (long[][][][][]) createLongArrays(new int[]{3, 2, 1, 4, 1}))
-                        .longArray("a6", (long[][][][][][]) createLongArrays(new int[]{1, 3, 4, 2, 1, 1}))
-                        .longArray("a7", (long[][][][][][][]) createLongArrays(new int[]{2, 2, 2, 1, 1, 1, 2}))
-                        .longArray("a8", (long[][][][][][][][]) createLongArrays(new int[]{1, 1, 2, 1, 1, 1, 2, 1}))
-                        .longArray("a9", (long[][][][][][][][][]) createLongArrays(new int[]{1, 2, 1, 2, 1, 1, 2, 1, 1}))
-                        .longArray("a10", (long[][][][][][][][][][]) createLongArrays(new int[]{2, 1, 1, 2, 1, 1, 1, 1, 1, 2}))
-                        .longArray("a11", (long[][][][][][][][][][][]) createLongArrays(new int[]{3, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1}))
-                        .longArray("a12", (long[][][][][][][][][][][][]) createLongArrays(new int[]{1, 2, 1, 2, 1, 1, 1, 1, 2, 2, 1, 1}))
-                        .longArray("a13", (long[][][][][][][][][][][][][]) createLongArrays(new int[]{1, 1, 2, 2, 1, 2, 1, 1, 2, 1, 1, 2, 1}))
-                        .longArray("a14", (long[][][][][][][][][][][][][][]) createLongArrays(new int[]{1, 1, 3, 1, 1, 1, 1, 1, 2, 1, 1, 2, 2, 1}))
-                        .longArray("a15", (long[][][][][][][][][][][][][][][]) createLongArrays(new int[]{1, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 3, 1, 1, 1}))
-                        .longArray("a16", (long[][][][][][][][][][][][][][][][]) createLongArrays(new int[]{1, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1}))
-                        .at(ts, ChronoUnit.MICROS);
-                sender.flush();
-
-                assertTableSizeEventually(engine, table, 1);
-                // @todo getArray support in TestTableReadCursor
-/*                try (TableReader reader = getReader(table)) {
-                    TestUtils.assertReader("", reader, new StringSink());
-                }*/
             }
         });
     }
