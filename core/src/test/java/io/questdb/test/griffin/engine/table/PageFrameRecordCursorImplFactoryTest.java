@@ -62,7 +62,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testFactory() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             final int N = 100;
             // separate two symbol columns with primitive. It will make problems apparent if index does not shift correctly
             TableToken tableToken;
@@ -203,7 +203,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
     private void testBwdPageFrameCursor(int rowCount, int maxSize, int startTopAt) throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, maxSize);
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             TableToken tableToken;
             TableModel model = new TableModel(configuration, "x", PartitionBy.HOUR).
                     col("i", ColumnType.INT).
@@ -320,7 +320,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
     private void testFwdPageFrameCursor(int rowCount, int maxSize, int startTopAt) throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, maxSize);
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             TableToken tt;
             TableModel model = new TableModel(configuration, "x", PartitionBy.HOUR).
                     col("i", ColumnType.INT).

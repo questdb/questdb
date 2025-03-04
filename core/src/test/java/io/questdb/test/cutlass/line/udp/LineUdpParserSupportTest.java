@@ -319,7 +319,7 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
             String expected,
             Consumer<AbstractLineSender> senderConsumer
     ) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 final SOCountDownLatch waitForData = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
