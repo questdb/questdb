@@ -57,15 +57,15 @@ public class NDArrayFlattener {
         return ptr;
     }
 
-    private native static int processArrayShape(long addr, Object array, int dims);
-
-    private native static long processArrayData(long addr, Object array, int dims, int elemTypeIndex);
-
     private static void check(CheckCapacity func, long addr) {
         if (func != null) {
             func.checkCapacity(addr);
         }
     }
+
+    private native static long processArrayData(long addr, Object array, int dims, int elemTypeIndex);
+
+    private native static int processArrayShape(long addr, Object array, int dims);
 
     static {
         // Corresponding to index of `process_array_datas` and `process_array_shapes` function arrays in nd_array.cpp.

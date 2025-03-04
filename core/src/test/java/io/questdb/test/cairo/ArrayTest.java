@@ -34,7 +34,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8Sink;
-import io.questdb.std.str.DirectUtf8String;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -42,6 +41,24 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 
 public class ArrayTest extends AbstractCairoTest {
+
+    public static long arrayViewToBinaryFormat(DirectArray view, long addr) {
+        long size = 0;
+        Unsafe.getUnsafe().putByte(addr, (byte) ColumnType.decodeArrayElementType(view.getType()));
+        addr++;
+        size++;
+        Unsafe.getUnsafe().putByte(addr, (byte) ColumnType.decodeArrayDimensionality(view.getType()));
+        addr++;
+        size++;
+        for (int i = 0, dims = view.getDimCount(); i < dims; i++) {
+            Unsafe.getUnsafe().putInt(addr, view.getDimLen(i));
+            addr += 4;
+            size += 4;
+        }
+        Vect.memcpy(addr, view.getFlatViewPtr(), view.getFlatViewSize());
+        size += view.getFlatViewSize();
+        return size;
+    }
 
     @Test
     public void testAccessArray1d() throws Exception {
@@ -108,6 +125,49 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("x\n[" + subArr0 + "]\n", "SELECT arr[i:j-i] x FROM tango");
             assertSql("x\n[" + subArr1 + "]\n", "SELECT arr[j-i:j+j] x FROM tango");
         });
+    }
+
+    @Test
+    public void testArrayNativeFormatParser() {
+        final long allocSize = 2048;
+        long mem = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
+        try (DirectArray array = new DirectArray(configuration);
+             ArrayNativeFormatParser parserNative = new ArrayNativeFormatParser();
+             DirectUtf8Sink sink = new DirectUtf8Sink(100)
+        ) {
+            // [[1, 2], [3, 4], [5, 6]]
+            array.setType(ColumnType.encodeArrayType(ColumnType.LONG, 2));
+            array.setDimLen(0, 3);
+            array.setDimLen(1, 2);
+            array.applyShape(1);
+            array.putLong(0, 1);
+            array.putLong(1, 2);
+            array.putLong(2, 3);
+            array.putLong(3, 4);
+            array.putLong(4, 5);
+            array.putLong(5, 6);
+            sink.clear();
+            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayState.INSTANCE);
+            String textViewStr = sink.toString();
+
+            long start = mem;
+            sink.clear();
+            parserNative.reset();
+            arrayViewToBinaryFormat(array, mem);
+            boolean finish;
+            do {
+                long size = parserNative.getNextExpectSize();
+                finish = parserNative.processNextBinaryPart(start);
+                start += size;
+            } while (!finish);
+
+            ArrayTypeDriver.arrayToJson(parserNative.getArray(), sink, NoopArrayState.INSTANCE);
+            assertEquals(textViewStr, sink.toString());
+        } catch (ArrayNativeFormatParser.ParseException e) {
+            throw new RuntimeException(e);
+        } finally {
+            Unsafe.free(mem, allocSize, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test
@@ -764,67 +824,5 @@ public class ArrayTest extends AbstractCairoTest {
                     "VARCHAR array type is not supported"
             );
         });
-    }
-
-    @Test
-    public void testArrayNativeFormatParser() {
-        DirectUtf8String str = new DirectUtf8String();
-        final long allocSize = 2048;
-        long mem = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
-        try (DirectArray array = new DirectArray(configuration);
-             ArrayNativeFormatParser parserNative = new ArrayNativeFormatParser();
-             DirectUtf8Sink sink = new DirectUtf8Sink(100)
-        ) {
-            // [[1, 2], [3, 4], [5, 6]]
-            array.setType(ColumnType.encodeArrayType(ColumnType.LONG, 2));
-            array.setDimLen(0, 3);
-            array.setDimLen(1, 2);
-            array.applyShape(1);
-            array.putLong(0, 1);
-            array.putLong(1, 2);
-            array.putLong(2, 3);
-            array.putLong(3, 4);
-            array.putLong(4, 5);
-            array.putLong(5, 6);
-            sink.clear();
-            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayState.INSTANCE);
-            String textViewStr = sink.toString();
-
-            long start = mem;
-            sink.clear();
-            parserNative.reset();
-            arrayViewToBinaryFormat(array, mem);
-            boolean finish;
-            do {
-                long size = parserNative.getNextExpectSize();
-                finish = parserNative.processNextBinaryPart(start);
-                start += size;
-            } while (!finish);
-
-            ArrayTypeDriver.arrayToJson(parserNative.getArray(), sink, NoopArrayState.INSTANCE);
-            assertEquals(textViewStr, sink.toString());
-        } catch (ArrayNativeFormatParser.ParseException e) {
-            throw new RuntimeException(e);
-        } finally {
-            Unsafe.free(mem, allocSize, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    public static long arrayViewToBinaryFormat(DirectArray view, long addr) {
-        long size = 0;
-        Unsafe.getUnsafe().putByte(addr, (byte) ColumnType.decodeArrayElementType(view.getType()));
-        addr++;
-        size++;
-        Unsafe.getUnsafe().putByte(addr, (byte) ColumnType.decodeArrayDimensionality(view.getType()));
-        addr++;
-        size++;
-        for (int i = 0, dims = view.getDimCount(); i < dims; i++) {
-            Unsafe.getUnsafe().putInt(addr, view.getDimLen(i));
-            addr += 4;
-            size += 4;
-        }
-        Vect.memcpy(addr, view.getFlatViewPtr(), view.getFlatViewSize());
-        size += view.getFlatViewSize();
-        return size;
     }
 }
