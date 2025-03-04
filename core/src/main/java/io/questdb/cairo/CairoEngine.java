@@ -190,7 +190,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.telemetryWal = createTelemetry(TelemetryWalTask.WAL_TELEMETRY, configuration);
             this.telemetryMatView = createTelemetry(TelemetryMatViewTask.MAT_VIEW_TELEMETRY, configuration);
             this.telemetries = new ObjList<>(telemetry, telemetryWal, telemetryMatView);
-            this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
+            this.tableIdGenerator = IDGeneratorFactory.newIDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME, 1);
             this.checkpointAgent = new DatabaseCheckpointAgent(this);
             this.queryRegistry = new QueryRegistry(configuration);
             this.rootExecutionContext = new SqlExecutionContextImpl(this, 1)

@@ -95,7 +95,6 @@ import org.postgresql.jdbc.PgResultSet;
 import org.postgresql.util.PGTimestamp;
 import org.postgresql.util.PSQLException;
 
-import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.sql.CallableStatement;
@@ -3714,7 +3713,7 @@ if __name__ == "__main__":
                 try (ResultSet rs = statement.getResultSet()) {
                     assertResultSet(
                             "QUERY PLAN[VARCHAR]\n" +
-                                    "Limit lo: 10\n" +
+                                    "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
                                     "    PageFrame\n" +
                                     "        Row forward scan\n" +
                                     "        Frame forward scan on: xx\n",
@@ -6780,7 +6779,7 @@ nodejs code:
                                 + "ABC,xy,a,brown fox jumped over the fence,10\n"
                                 + "CDE,bb,b,sentence 1\n"
                                 + "sentence 2,12\n", sink, rs);
-                    } catch (IOException | SQLException e) {
+                    } catch (SQLException e) {
                         throw new AssertionError(e);
                     }
                 });
@@ -11891,7 +11890,7 @@ create table tab as (
         }
     }
 
-    private void assertResultTenTimes(Connection connection, String sql, String expected, int maxRows) throws SQLException, IOException {
+    private void assertResultTenTimes(Connection connection, String sql, String expected, int maxRows) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setMaxRows(maxRows);
 
@@ -11903,7 +11902,7 @@ create table tab as (
         }
     }
 
-    private void assertSql(Connection conn, String sql, String expectedResult) throws SQLException, IOException {
+    private void assertSql(Connection conn, String sql, String expectedResult) throws SQLException {
         final StringSink sink = Misc.getThreadLocalSink();
         sink.clear();
 
@@ -11988,7 +11987,7 @@ create table tab as (
         }
     }
 
-    private void queryTimestampsInRange(Connection connection) throws SQLException, IOException {
+    private void queryTimestampsInRange(Connection connection) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement(
                 "select ts FROM xts WHERE ts <= dateadd('d', -1, ?) and ts >= dateadd('d', -2, ?)")
         ) {
@@ -12440,7 +12439,7 @@ create table tab as (
         });
     }
 
-    private void testExecuteWithDifferentBindVariables(Connection connection, String query) throws SQLException, IOException {
+    private void testExecuteWithDifferentBindVariables(Connection connection, String query) throws SQLException {
         try (PreparedStatement stmt = connection.prepareStatement(query)) {
             stmt.setString(1, "S1");
             sink.clear();

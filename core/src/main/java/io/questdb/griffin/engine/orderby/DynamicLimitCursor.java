@@ -22,22 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.griffin.engine.orderby;
 
-import io.questdb.std.str.Path;
-
-import java.io.Closeable;
-
-public interface IDGenerator extends Closeable {
-    default void open() {
-        open(null);
-    }
-
-    void open(Path path);
-
-    long getNextId();
-
-    void reset();
-
-    void close();
+public interface DynamicLimitCursor {
+    void updateLimits(long limit, long skipFirst, long skipLast);
 }
