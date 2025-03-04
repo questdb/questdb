@@ -1072,7 +1072,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
-        if (checkpointStatus.isInProgress()) {
+        if (checkpointStatus.partitionsLocked()) {
             // do not alter scoreboard while checkpoint is in progress
             return true;
         }
@@ -8163,7 +8163,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
 
-        if (checkpointStatus.isInProgress()) {
+        if (checkpointStatus.partitionsLocked()) {
             LOG.info().$("cannot squash partition [table=").$(tableToken.getTableName()).$("], checkpoint in progress").$();
             return;
         }

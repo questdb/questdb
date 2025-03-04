@@ -55,15 +55,29 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
-public class O3PartitionPurgeTestV2 extends AbstractCairoTest {
+@RunWith(Parameterized.class)
+public class O3PartitionPurgeTest extends AbstractCairoTest {
+    private static ScoreboardFormat VERSION = ScoreboardFormat.V1;
     private static O3PartitionPurgeJob purgeJob;
+
+    public O3PartitionPurgeTest(ScoreboardFormat version) throws Exception {
+        if (version != VERSION) {
+            VERSION = version;
+            tearDownStatic();
+            setUpStatic();
+        }
+    }
 
     @AfterClass
     public static void end() {
@@ -72,9 +86,17 @@ public class O3PartitionPurgeTestV2 extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        setProperty(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, 2);
+        setProperty(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, VERSION == ScoreboardFormat.V1 ? 1 : 2);
         AbstractCairoTest.setUpStatic();
         purgeJob = new O3PartitionPurgeJob(engine, 1);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {ScoreboardFormat.V1},
+                {ScoreboardFormat.V2},
+        });
     }
 
     @Test
@@ -999,5 +1021,10 @@ public class O3PartitionPurgeTestV2 extends AbstractCairoTest {
                 Misc.free(readers);
             }
         });
+    }
+
+    public enum ScoreboardFormat {
+        V1,
+        V2
     }
 }

@@ -56,12 +56,13 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     public boolean acquireTxn(int id, long txn) {
         long internalId = toInternalId(id);
         assert internalId < entryScanCount;
-        if (!updateMax(txn)) {
+        // Don not check max if it's a special id, like CHECKPOINT_ID.
+        if (id > -1 && !updateMax(txn)) {
             return false;
         }
 
         if (Unsafe.getUnsafe().compareAndSwapLong(null, entriesMem + internalId * Long.BYTES, UNLOCKED, txn)) {
-            if (!updateMax(txn)) {
+            if (id > -1 && !updateMax(txn)) {
                 // Max moved, cannot acquire the txn.
                 Unsafe.getUnsafe().putLongVolatile(null, entriesMem + internalId * Long.BYTES, UNLOCKED);
                 return false;

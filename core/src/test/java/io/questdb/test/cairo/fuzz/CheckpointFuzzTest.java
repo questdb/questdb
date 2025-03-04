@@ -45,16 +45,39 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.atomic.AtomicReference;
 
+@RunWith(Parameterized.class)
 public class CheckpointFuzzTest extends AbstractFuzzTest {
+    static int SCOREBOARD_FORMAT = 1;
     private static Path triggerFilePath;
+
+    public CheckpointFuzzTest(int scoreboardFormat) throws Exception {
+        if (scoreboardFormat != SCOREBOARD_FORMAT) {
+            SCOREBOARD_FORMAT = scoreboardFormat;
+            tearDownStatic();
+            setUpStatic();
+        }
+    }
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
+        setProperty(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, SCOREBOARD_FORMAT);
         AbstractFuzzTest.setUpStatic();
         triggerFilePath = new Path();
+    }
+
+    @Parameterized.Parameters(name = "V{0}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {1},
+                {2},
+        });
     }
 
     @AfterClass
@@ -323,6 +346,10 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         }
     }
 
+    private String getTestTableName() {
+        return testName.getMethodName().replace('[', '_').replace(']', '_');
+    }
+
     protected void runFuzzWithCheckpoint(Rnd rnd) throws Exception {
         // Snapshot is not supported on Windows.
         Assume.assumeFalse(Os.isWindows());
@@ -335,9 +362,9 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "100G");
             }
 
-            String tableNameNonWal = testName.getMethodName() + "_non_wal";
+            String tableNameNonWal = getTestTableName() + "_non_wal";
             fuzzer.createInitialTable(tableNameNonWal, false, fuzzer.initialRowCount);
-            String tableNameWal = testName.getMethodName();
+            String tableNameWal = getTestTableName();
             TableToken walTable = fuzzer.createInitialTable(tableNameWal, true, fuzzer.initialRowCount);
             if (rnd.nextBoolean()) {
                 drainWalQueue();
