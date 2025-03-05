@@ -34,6 +34,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -134,6 +135,8 @@ public class TxnScoreboardPoolTest extends AbstractCairoTest {
 
     @Test
     public void testNonWalTableRename() throws SqlException {
+        Assume.assumeFalse(Os.isWindows() || SCOREBOARD_FORMAT != 1);
+
         engine.execute("create table x (i int)");
         TableToken token = engine.verifyTableName("x");
 
