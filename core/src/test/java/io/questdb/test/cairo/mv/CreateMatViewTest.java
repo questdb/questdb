@@ -897,7 +897,9 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 try (BlockFileReader reader = new BlockFileReader(configuration)) {
                     path.of(configuration.getDbRoot());
                     final int rootLen = path.size();
-                    MatViewDefinition actualDefinition = MatViewDefinition.readFrom(
+                    MatViewDefinition actualDefinition = new MatViewDefinition();
+                    MatViewDefinition.readFrom(
+                            actualDefinition,
                             reader,
                             path,
                             rootLen,
@@ -977,7 +979,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
                 try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
                     writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
-                    MatViewDefinition unknownDefinition = new MatViewDefinition(
+                    MatViewDefinition unknownDefinition = new MatViewDefinition();
+                    unknownDefinition.init(
                             MatViewDefinition.INCREMENTAL_REFRESH_TYPE + 1,
                             matViewToken,
                             matViewDefinition.getMatViewSql(),
@@ -999,6 +1002,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     final int rootLen = path.size();
                     try {
                         MatViewDefinition.readFrom(
+                                new MatViewDefinition(),
                                 reader,
                                 path,
                                 rootLen,
@@ -1095,20 +1099,22 @@ public class CreateMatViewTest extends AbstractCairoTest {
         try (BlockFileReader reader = new BlockFileReader(configuration); Path path = new Path()) {
             path.of(configuration.getDbRoot());
             final int rootLen = path.size();
-            MatViewDefinition mvd = MatViewDefinition.readFrom(
+            MatViewDefinition matViewDefinition = new MatViewDefinition();
+            MatViewDefinition.readFrom(
+                    matViewDefinition,
                     reader,
                     path,
                     rootLen,
                     matViewToken
             );
 
-            assertEquals(mvd.getMatViewSql(), query);
+            assertEquals(matViewDefinition.getMatViewSql(), query);
 
-            assertEquals(mvd.getBaseTableName(), baseTableName);
-            assertEquals(mvd.getSamplingInterval(), samplingInterval);
-            assertEquals(mvd.getSamplingIntervalUnit(), samplingIntervalUnit);
-            assertEquals(Chars.toString(mvd.getTimeZone()), timeZone);
-            assertEquals(mvd.getTimeZoneOffset(), timeZoneOffset != null ? timeZoneOffset : "00:00");
+            assertEquals(matViewDefinition.getBaseTableName(), baseTableName);
+            assertEquals(matViewDefinition.getSamplingInterval(), samplingInterval);
+            assertEquals(matViewDefinition.getSamplingIntervalUnit(), samplingIntervalUnit);
+            assertEquals(Chars.toString(matViewDefinition.getTimeZone()), timeZone);
+            assertEquals(matViewDefinition.getTimeZoneOffset(), timeZoneOffset != null ? timeZoneOffset : "00:00");
         }
     }
 

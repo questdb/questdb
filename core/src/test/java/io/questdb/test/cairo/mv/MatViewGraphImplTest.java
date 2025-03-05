@@ -99,7 +99,8 @@ public class MatViewGraphImplTest extends AbstractCairoTest {
     }
 
     private void addDefinition(TableToken viewToken, TableToken baseTableToken) {
-        MatViewDefinition def = new MatViewDefinition(
+        MatViewDefinition viewDefinition = new MatViewDefinition();
+        viewDefinition.init(
                 MatViewDefinition.INCREMENTAL_REFRESH_TYPE,
                 viewToken,
                 "x",
@@ -109,7 +110,7 @@ public class MatViewGraphImplTest extends AbstractCairoTest {
                 null,
                 null
         );
-        graph.addView(def);
+        graph.addView(viewDefinition);
     }
 
     private TableToken newTableToken(String tableName) {

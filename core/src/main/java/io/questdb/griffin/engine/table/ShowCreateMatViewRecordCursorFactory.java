@@ -81,11 +81,11 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
     }
 
     public static class ShowCreateMatViewCursor implements NoRandomAccessRecordCursor {
+        protected final MatViewDefinition matViewDefinition = new MatViewDefinition();
         protected final Utf8StringSink sink = new Utf8StringSink();
         private final Path path;
         private final ShowCreateMatViewRecord record = new ShowCreateMatViewRecord();
         protected SqlExecutionContext executionContext;
-        protected MatViewDefinition matViewDefinition;
         protected CairoTable table;
         private boolean hasRun;
         private BlockFileReader reader;
@@ -98,6 +98,7 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
         @Override
         public void close() {
             sink.clear();
+            matViewDefinition.clear();
             Misc.free(path);
             Misc.free(reader);
         }
@@ -146,10 +147,10 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
             if (reader == null) {
                 reader = new BlockFileReader(configuration);
             }
-            final BlockFileReader finalReader = reader;
-            try (finalReader) {
-                this.matViewDefinition = MatViewDefinition.readFrom(
-                        finalReader,
+            try {
+                MatViewDefinition.readFrom(
+                        matViewDefinition,
+                        reader,
                         path,
                         pathLen,
                         tableToken
@@ -158,6 +159,8 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
                 throw SqlException.$(tokenPosition, "could not read materialized view definition [table=").put(tableToken)
                         .put(", msg=").put(e)
                         .put(']');
+            } finally {
+                reader.close();
             }
 
             toTop();

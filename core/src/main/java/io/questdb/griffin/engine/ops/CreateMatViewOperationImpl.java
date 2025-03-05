@@ -44,6 +44,7 @@ import org.jetbrains.annotations.Nullable;
 public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final ObjList<String> baseKeyColumnNames = new ObjList<>();
     private final String baseTableName;
+    private final MatViewDefinition matViewDefinition = new MatViewDefinition();
     private final int refreshType;
     private final long samplingInterval;
     private final char samplingIntervalUnit;
@@ -51,7 +52,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final String timeZoneOffset;
     private final String viewSql;
     private CreateTableOperation createTableOperation;
-    private MatViewDefinition matViewDefinition;
 
     public CreateMatViewOperationImpl(
             CreateTableOperation createTableOperation,
@@ -209,7 +209,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
     @Override
     public void init(TableToken matViewToken) {
-        matViewDefinition = new MatViewDefinition(
+        matViewDefinition.init(
                 refreshType,
                 matViewToken,
                 viewSql,

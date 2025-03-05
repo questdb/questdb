@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.TimeZoneRules;
@@ -46,28 +47,125 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
 
-public class MatViewDefinition {
+public class MatViewDefinition implements Mutable {
     // For now, incremental refresh is the only supported refresh type.
     public static final int INCREMENTAL_REFRESH_TYPE = 0;
     public static final String MAT_VIEW_DEFINITION_FILE_NAME = "_mv";
     public static final int MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE = 0;
-    private final String baseTableName;
+    private String baseTableName;
     // is not persisted, parsed from timeZoneOffset
-    private final long fixedOffset;
-    private final String matViewSql;
-    private final TableToken matViewToken;
-    private final int refreshType;
+    private long fixedOffset;
+    private String matViewSql;
+    private TableToken matViewToken;
+    private int refreshType = -1;
     // is not persisted, parsed from timeZone
-    private final @Nullable TimeZoneRules rules;
-    private final long samplingInterval;
-    private final char samplingIntervalUnit;
-    private final @Nullable String timeZone;
-    private final @Nullable String timeZoneOffset;
+    private @Nullable TimeZoneRules rules;
+    private long samplingInterval;
+    private char samplingIntervalUnit;
+    private @Nullable String timeZone;
+    private @Nullable String timeZoneOffset;
     // is not persisted, parsed from samplingInterval and samplingIntervalUnit;
     // access must be synchronized as this object is not thread-safe
-    private final TimestampSampler timestampSampler;
+    private TimestampSampler timestampSampler;
 
-    public MatViewDefinition(
+    public static void append(@NotNull MatViewDefinition matViewDefinition, @NotNull AppendableBlock block) {
+        block.putInt(matViewDefinition.getRefreshType());
+        block.putStr(matViewDefinition.getBaseTableName());
+        block.putLong(matViewDefinition.getSamplingInterval());
+        block.putChar(matViewDefinition.getSamplingIntervalUnit());
+        block.putStr(matViewDefinition.getTimeZone());
+        block.putStr(matViewDefinition.getTimeZoneOffset());
+        block.putStr(matViewDefinition.getMatViewSql());
+    }
+
+    public static void append(@NotNull MatViewDefinition matViewDefinition, @NotNull BlockFileWriter writer) {
+        final AppendableBlock block = writer.append();
+        append(matViewDefinition, block);
+        block.commit(MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE);
+        writer.commit();
+    }
+
+    public static void readFrom(
+            @NotNull MatViewDefinition destDefinition,
+            @NotNull BlockFileReader reader,
+            @NotNull Path path,
+            int rootLen,
+            @NotNull TableToken matViewToken
+    ) {
+        path.trimTo(rootLen).concat(matViewToken.getDirName()).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
+        reader.of(path.$());
+        final BlockFileReader.BlockCursor cursor = reader.getCursor();
+        // Iterate through the block until we find the one we recognize.
+        while (cursor.hasNext()) {
+            if (loadMatViewDefinition(destDefinition, cursor.next(), matViewToken)) {
+                return;
+            }
+        }
+        throw CairoException.critical(0)
+                .put("cannot read materialized view definition, block not found [path=").put(path)
+                .put(']');
+    }
+
+    @Override
+    public void clear() {
+        matViewToken = null;
+        baseTableName = null;
+        matViewSql = null;
+        rules = null;
+        timeZone = null;
+        timeZoneOffset = null;
+        timestampSampler = null;
+        fixedOffset = 0;
+        refreshType = -1;
+        samplingInterval = 0;
+        samplingIntervalUnit = 0;
+    }
+
+    public String getBaseTableName() {
+        return baseTableName;
+    }
+
+    public long getFixedOffset() {
+        return fixedOffset;
+    }
+
+    public String getMatViewSql() {
+        return matViewSql;
+    }
+
+    public TableToken getMatViewToken() {
+        return matViewToken;
+    }
+
+    public int getRefreshType() {
+        return refreshType;
+    }
+
+    public long getSamplingInterval() {
+        return samplingInterval;
+    }
+
+    public char getSamplingIntervalUnit() {
+        return samplingIntervalUnit;
+    }
+
+    public @Nullable String getTimeZone() {
+        return timeZone;
+    }
+
+    public @Nullable String getTimeZoneOffset() {
+        return timeZoneOffset;
+    }
+
+    public TimestampSampler getTimestampSampler() {
+        return timestampSampler;
+    }
+
+    public @Nullable TimeZoneRules getTzRules() {
+        return rules;
+    }
+
+    public void init(
             int refreshType,
             @NotNull TableToken matViewToken,
             @NotNull String matViewSql,
@@ -118,87 +216,10 @@ public class MatViewDefinition {
         }
     }
 
-    public static void append(@NotNull MatViewDefinition matViewDefinition, @NotNull AppendableBlock block) {
-        block.putInt(matViewDefinition.getRefreshType());
-        block.putStr(matViewDefinition.getBaseTableName());
-        block.putLong(matViewDefinition.getSamplingInterval());
-        block.putChar(matViewDefinition.getSamplingIntervalUnit());
-        block.putStr(matViewDefinition.getTimeZone());
-        block.putStr(matViewDefinition.getTimeZoneOffset());
-        block.putStr(matViewDefinition.getMatViewSql());
-    }
-
-    public static void append(@NotNull MatViewDefinition matViewDefinition, @NotNull BlockFileWriter writer) {
-        final AppendableBlock block = writer.append();
-        append(matViewDefinition, block);
-        block.commit(MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE);
-        writer.commit();
-    }
-
-    public static MatViewDefinition readFrom(@NotNull BlockFileReader reader, Path path, int rootLen, final TableToken matViewToken) {
-        path.trimTo(rootLen).concat(matViewToken.getDirName()).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
-        reader.of(path.$());
-        final BlockFileReader.BlockCursor cursor = reader.getCursor();
-        // Iterate through the block until we find the one we recognize.
-        while (cursor.hasNext()) {
-            final MatViewDefinition matViewDefinition = loadMatViewDefinition(cursor.next(), matViewToken);
-            if (matViewDefinition != null) {
-                return matViewDefinition;
-            }
-        }
-        throw CairoException.critical(0)
-                .put("cannot read materialized view definition, block not found [path=").put(path)
-                .put(']');
-    }
-
-    public String getBaseTableName() {
-        return baseTableName;
-    }
-
-    public long getFixedOffset() {
-        return fixedOffset;
-    }
-
-    public String getMatViewSql() {
-        return matViewSql;
-    }
-
-    public TableToken getMatViewToken() {
-        return matViewToken;
-    }
-
-    public int getRefreshType() {
-        return refreshType;
-    }
-
-    public long getSamplingInterval() {
-        return samplingInterval;
-    }
-
-    public char getSamplingIntervalUnit() {
-        return samplingIntervalUnit;
-    }
-
-    public @Nullable String getTimeZone() {
-        return timeZone;
-    }
-
-    public @Nullable String getTimeZoneOffset() {
-        return timeZoneOffset;
-    }
-
-    public TimestampSampler getTimestampSampler() {
-        return timestampSampler;
-    }
-
-    public @Nullable TimeZoneRules getTzRules() {
-        return rules;
-    }
-
-    private static MatViewDefinition loadMatViewDefinition(final ReadableBlock block, final TableToken matViewToken) {
+    private static boolean loadMatViewDefinition(MatViewDefinition destDefinition, ReadableBlock block, TableToken matViewToken) {
         if (block.type() != MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE) {
             // Unknown block.
-            return null;
+            return false;
         }
 
         long offset = 0;
@@ -246,7 +267,7 @@ public class MatViewDefinition {
         }
         final String matViewSqlStr = Chars.toString(matViewSql);
 
-        return new MatViewDefinition(
+        destDefinition.init(
                 refreshType,
                 matViewToken,
                 matViewSqlStr,
@@ -256,5 +277,6 @@ public class MatViewDefinition {
                 timeZoneStr,
                 timeZoneOffsetStr
         );
+        return true;
     }
 }

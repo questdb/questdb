@@ -2565,6 +2565,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void executeCreateMatView(CreateMatViewOperation createMatViewOp, SqlExecutionContext executionContext) throws SqlException {
+        if (createMatViewOp.getRefreshType() != MatViewDefinition.INCREMENTAL_REFRESH_TYPE) {
+            throw SqlException.$(createMatViewOp.getTableNamePosition(), "unexpected refresh type: ").put(createMatViewOp.getRefreshType());
+        }
+
         final long sqlId = queryRegistry.register(createMatViewOp.getSqlText(), executionContext);
         final long beginNanos = configuration.getMicrosecondClock().getTicks();
         QueryProgress.logStart(sqlId, createMatViewOp.getSqlText(), executionContext, false);
