@@ -6848,38 +6848,42 @@ nodejs code:
     public void testLocalCopyFromCancellation() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            try (final PreparedStatement copyStatement = connection.prepareStatement("copy x from '/test-numeric-headers.csv' with header true")) {
+            try (PreparedStatement copyStatement = connection.prepareStatement("copy x from '/test-numeric-headers.csv' with header true")) {
                 String copyID;
-                try (final ResultSet rs = copyStatement.executeQuery()) {
+                try (ResultSet rs = copyStatement.executeQuery()) {
                     Assert.assertTrue(rs.next());
                     copyID = rs.getString("id");
                 }
 
-                try (final PreparedStatement cancelStatement = connection.prepareStatement("copy '" + copyID + "' cancel")) {
-                    try (final ResultSet rs = cancelStatement.executeQuery()) {
-                        Assert.assertTrue(rs.next());
-                        Assert.assertEquals(copyID, rs.getString(1));
-                        String status = rs.getString(2);
-                        Assert.assertTrue("cancelled" .equals(status) || "finished" .equals(status));
-                    }
+                try (
+                        PreparedStatement cancelStatement = connection.prepareStatement("copy '" + copyID + "' cancel");
+                        ResultSet rs = cancelStatement.executeQuery()
+                ) {
+                    Assert.assertTrue(rs.next());
+                    Assert.assertEquals(copyID, rs.getString(1));
+                    String status = rs.getString(2);
+                    Assert.assertNotNull(status);
+                    Assert.assertTrue(status.equals("cancelled") || status.equals("finished"));
                 }
 
-                try (final PreparedStatement incorrectCancelStatement = connection.prepareStatement("copy 'ffffffffffffffff' cancel")) {
-                    try (final ResultSet rs = incorrectCancelStatement.executeQuery()) {
-                        Assert.assertTrue(rs.next());
-                        Assert.assertEquals("unknown", rs.getString(2));
-                    }
+                try (
+                        PreparedStatement incorrectCancelStatement = connection.prepareStatement("copy 'ffffffffffffffff' cancel");
+                        ResultSet rs = incorrectCancelStatement.executeQuery()
+                ) {
+                    Assert.assertTrue(rs.next());
+                    Assert.assertEquals("unknown", rs.getString(2));
                 }
 
                 // Pretend that the copy was cancelled and try to cancel it one more time.
                 engine.getCopyContext().clear();
 
-                try (final PreparedStatement cancelStatement = connection.prepareStatement("copy '" + copyID + "' cancel")) {
-                    try (final ResultSet rs = cancelStatement.executeQuery()) {
-                        Assert.assertTrue(rs.next());
-                        Assert.assertEquals(copyID, rs.getString(1));
-                        Assert.assertNotEquals("cancelled", rs.getString(2));
-                    }
+                try (
+                        PreparedStatement cancelStatement = connection.prepareStatement("copy '" + copyID + "' cancel");
+                        ResultSet rs = cancelStatement.executeQuery()
+                ) {
+                    Assert.assertTrue(rs.next());
+                    Assert.assertEquals(copyID, rs.getString(1));
+                    Assert.assertNotEquals("cancelled", rs.getString(2));
                 }
             } finally {
                 copyRequestJob.drain(0);
@@ -11921,7 +11925,14 @@ create table tab as (
         assertHexScript(NetworkFacadeImpl.INSTANCE, script, getStdPgWireConfigAltCreds());
     }
 
-    private void assertQueryAgainstIndexedSymbol(String[] values, String whereClause, String[] params, Connection connection, String tsOption, ResultProducer expected) throws Exception {
+    private void assertQueryAgainstIndexedSymbol(
+            String[] values,
+            String whereClause,
+            String[] params,
+            Connection connection,
+            String tsOption,
+            ResultProducer expected
+    ) throws Exception {
         StringSink expSink = new StringSink();
         StringSink metaSink = new StringSink();
         String[] paramValues = new String[params.length];
@@ -11976,7 +11987,7 @@ create table tab as (
                 int bindIdx = 1;
                 for (int p = 0; p < paramValues.length; p++) {
                     if (isBindParam[p]) {
-                        ps.setString(bindIdx++, "null" .equals(bindValues[p]) ? null : bindValues[p]);
+                        ps.setString(bindIdx++, bindValues[p] != null && bindValues[p].equals("null") ? null : bindValues[p]);
                     }
                 }
                 try (ResultSet result = ps.executeQuery()) {
