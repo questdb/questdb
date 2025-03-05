@@ -64,19 +64,19 @@ import java.util.concurrent.locks.LockSupport;
 public class TxnScoreboardTest extends AbstractCairoTest {
     private static volatile long txn;
     private static volatile long writerMin;
-    private final ScoreboardFormat version;
+    private final int version;
     private TxnScoreboardPool scoreboardPoolFactory;
     private TableToken tableToken;
 
-    public TxnScoreboardTest(ScoreboardFormat version) {
+    public TxnScoreboardTest(int version) {
         this.version = version;
     }
 
-    @Parameterized.Parameters(name = "{0}")
+    @Parameterized.Parameters(name = "V{0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {ScoreboardFormat.V1},
-                {ScoreboardFormat.V2},
+                {1},
+                {2},
         });
     }
 
@@ -87,7 +87,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         super.setUp();
-        setProperty(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, version == ScoreboardFormat.V1 ? 1 : 2);
+        setProperty(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, version);
         scoreboardPoolFactory = TxnScoreboardPoolFactory.createPool(engine.getConfiguration());
         tableToken = createTable(
                 new TableModel(engine.getConfiguration(), "x", PartitionBy.DAY)
@@ -95,6 +95,22 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                         .col("bid", ColumnType.DOUBLE)
                         .timestamp()
         );
+    }
+
+    @Test
+    public void testCannotLockTwice() throws Exception {
+        Assume.assumeTrue(version == 2);
+        TestUtils.assertMemoryLeak(() -> {
+            try (TxnScoreboard txnScoreboard = newTxnScoreboard()) {
+                Assume.assumeTrue(txnScoreboard.acquireTxn(0, 1));
+                Assume.assumeFalse(txnScoreboard.acquireTxn(0, 1));
+
+                Assume.assumeTrue(txnScoreboard.acquireTxn(1, 1));
+                txnScoreboard.releaseTxn(0, 1);
+                Assume.assumeTrue(txnScoreboard.acquireTxn(0, 1));
+            }
+            scoreboardPoolFactory.clear();
+        });
     }
 
     @Test
@@ -122,7 +138,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
     @Test
     public void testCleanFailsNoResourceLeakRO() throws Exception {
-        Assume.assumeTrue(version == ScoreboardFormat.V1);
+        Assume.assumeTrue(version == 1);
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openCleanRW(LPSZ name, long size) {
@@ -141,7 +157,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
     @Test
     public void testCleanFailsNoResourceLeakRW() throws Exception {
-        Assume.assumeTrue(version == ScoreboardFormat.V1);
+        Assume.assumeTrue(version == 1);
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openCleanRW(LPSZ name, long size) {
@@ -297,7 +313,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
     @Test
     public void testLimits() throws Exception {
-        Assume.assumeTrue(version == ScoreboardFormat.V1);
+        Assume.assumeTrue(version == 1);
         TestUtils.assertMemoryLeak(() -> {
             int expect = 2048;
             setProperty(PropertyKey.CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT, expect);
@@ -362,7 +378,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
     @Test
     public void testMapFailsNoResourceLeakRO() throws Exception {
-        Assume.assumeTrue(version == ScoreboardFormat.V1);
+        Assume.assumeTrue(version == 1);
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
@@ -441,7 +457,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
     @Test
     public void testO3AcquireRejected() throws Exception {
-        Assume.assumeTrue(version == ScoreboardFormat.V1);
+        Assume.assumeTrue(version == 1);
         TestUtils.assertMemoryLeak(() -> {
             int size = 64;
             int start = 134;
@@ -652,19 +668,14 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         }
     }
 
-    public enum ScoreboardFormat {
-        V1,
-        V2
-    }
-
     private static class Reader extends Thread {
 
         private final AtomicInteger anomaly;
         private final CyclicBarrier barrier;
+        private final int id;
         private final int iterations;
         private final CountDownLatch latch;
         private final int readers;
-        private final int id;
         private final TxnScoreboard scoreboard;
 
         private Reader(int id, TxnScoreboard scoreboard, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger anomaly, int iterations, int readers) {
@@ -731,11 +742,11 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         private final AtomicInteger anomaly;
         private final CyclicBarrier barrier;
         private final int iterations;
-        private final ScoreboardFormat version;
         private final CountDownLatch latch;
         private final TxnScoreboard scoreboard;
+        private final int version;
 
-        private Writer(TxnScoreboard scoreboard, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger anomaly, int iterations, ScoreboardFormat version) {
+        private Writer(TxnScoreboard scoreboard, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger anomaly, int iterations, int version) {
             this.scoreboard = scoreboard;
             this.barrier = barrier;
             this.latch = latch;
@@ -754,7 +765,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
                 barrier.await();
                 for (int i = 0; i < iterations; i++) {
-                    if (version == ScoreboardFormat.V1) {
+                    if (version == 1) {
                         for (int sleepCount = 0; sleepCount < 50 && txn - getMin(scoreboard) > publishWaitBarrier; sleepCount++) {
                             // Some readers are slow and haven't released transaction yet. Give them a bit more time
                             LOG.infoW().$("slow reader release, waiting... [txn=")

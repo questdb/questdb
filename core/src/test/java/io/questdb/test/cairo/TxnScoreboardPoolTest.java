@@ -27,11 +27,11 @@ package io.questdb.test.cairo;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TxnScoreboard;
-import io.questdb.griffin.SqlException;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -74,109 +74,137 @@ public class TxnScoreboardPoolTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConcurrentRelease() throws SqlException, InterruptedException {
-        Rnd rnd = generateRandom(LOG);
-        int threadCount = 2 + rnd.nextInt(4);
-        int iterations = 500 + rnd.nextInt(2000);
-        SOCountDownLatch latch = new SOCountDownLatch(threadCount);
-        ObjList<Thread> threads = new ObjList<>();
-        AtomicBoolean stopped = new AtomicBoolean();
+    public void testConcurrentRelease() throws Exception {
+        assertMemoryLeak(() -> {
+            Rnd rnd = generateRandom(LOG);
+            int threadCount = 2 + rnd.nextInt(4);
+            int iterations = 500 + rnd.nextInt(2000);
+            SOCountDownLatch latch = new SOCountDownLatch(threadCount);
+            ObjList<Thread> threads = new ObjList<>();
+            AtomicBoolean stopped = new AtomicBoolean();
 
-        engine.execute("create table x (i int)");
-        TableToken token = engine.verifyTableName("x");
-        AtomicInteger errors = new AtomicInteger();
+            engine.execute("create table x (i int)");
+            TableToken token = engine.verifyTableName("x");
+            AtomicInteger errors = new AtomicInteger();
 
-        for (int i = 0; i < threadCount; i++) {
-            int thread = i;
+            for (int i = 0; i < threadCount; i++) {
+                int thread = i;
+                threads.add(
+                        new Thread(() -> {
+                            latch.countDown();
+
+                            try {
+                                for (int it = 0; it < iterations; it++) {
+                                    try (TxnScoreboard sc1 = engine.getTxnScoreboard(token)) {
+                                        if (sc1.acquireTxn(thread, it)) {
+                                            try (TxnScoreboard sc2 = engine.getTxnScoreboard(token)) {
+                                                if (sc2.isTxnAvailable(it)) {
+                                                    LOG.error().$("=== error: iteration").$(it)
+                                                            .$(" thread=").$(thread)
+                                                            .$(", sc1=").$(System.identityHashCode(sc1))
+                                                            .$(", sc2=").$(System.identityHashCode(sc2))
+                                                            .$();
+                                                    errors.incrementAndGet();
+                                                }
+                                            }
+                                            sc1.releaseTxn(thread, it);
+                                        }
+                                    }
+                                    Os.pause();
+                                }
+                            } finally {
+                                Path.clearThreadLocals();
+                            }
+                        })
+                );
+                threads.getLast().start();
+            }
+
             threads.add(
                     new Thread(() -> {
                         latch.countDown();
-                        for (int it = 0; it < iterations; it++) {
-                            try (TxnScoreboard sc1 = engine.getTxnScoreboard(token)) {
-                                if (sc1.acquireTxn(thread, it)) {
-                                    try (TxnScoreboard sc2 = engine.getTxnScoreboard(token)) {
-                                        if (sc2.isTxnAvailable(it)) {
-                                            LOG.error().$("=== error: iteration").$(it)
-                                                    .$(" thread=").$(thread)
-                                                    .$(", sc1=").$(System.identityHashCode(sc1))
-                                                    .$(", sc2=").$(System.identityHashCode(sc2))
-                                                    .$();
-                                            errors.incrementAndGet();
-                                        }
-                                    }
-                                    sc1.releaseTxn(thread, it);
-                                }
-                            }
-                            Os.pause();
+                        while (!stopped.get()) {
+                            engine.getTxnScoreboardPool().releaseInactive();
                         }
                     })
             );
             threads.getLast().start();
-        }
 
-        threads.add(
-                new Thread(() -> {
-                    latch.countDown();
-                    while (!stopped.get()) {
-                        engine.getTxnScoreboardPool().releaseInactive();
-                    }
-                })
-        );
-        threads.getLast().start();
+            for (int i = 0; i < threadCount; i++) {
+                threads.getQuick(i).join();
+            }
+            stopped.set(true);
+            threads.getLast().join();
 
-        for (int i = 0; i < threadCount; i++) {
-            threads.getQuick(i).join();
-        }
-        stopped.set(true);
-        threads.getLast().join();
-
-        Assert.assertEquals(0, errors.get());
+            Assert.assertEquals(0, errors.get());
+        });
     }
 
     @Test
-    public void testNonWalTableRename() throws SqlException {
-        Assume.assumeFalse(Os.isWindows() || SCOREBOARD_FORMAT != 1);
+    public void testDelayedCloseOnClear() throws Exception {
+        Assume.assumeTrue(SCOREBOARD_FORMAT == 2);
 
-        engine.execute("create table x (i int)");
-        TableToken token = engine.verifyTableName("x");
+        assertMemoryLeak(() -> {
+            engine.execute("create table x (i int)");
+            TableToken token = engine.verifyTableName("x");
+            TxnScoreboard sc1 = engine.getTxnScoreboard(token);
 
-        TxnScoreboard sc1 = engine.getTxnScoreboard(token);
-        Assert.assertTrue(sc1.acquireTxn(0, 10));
+            engine.getTxnScoreboardPool().clear();
 
-        engine.execute("rename table x to x1");
-        engine.execute("create table x (i int)");
-        TableToken token2 = engine.verifyTableName("x");
+            Assert.assertTrue(sc1.acquireTxn(0, 10));
 
-        TxnScoreboard sc2 = engine.getTxnScoreboard(token2);
-        Assert.assertTrue(sc2.isRangeAvailable(0, 100));
-        Assert.assertTrue(sc2.acquireTxn(0, 1));
-
-        sc1.close();
-        sc2.close();
+            sc1.close();
+        });
     }
 
     @Test
-    public void testWalTableRename() throws SqlException {
-        engine.execute("create table x (i int, ts timestamp) timestamp(ts) PARTITION BY DAY WAL");
-        TableToken token = engine.verifyTableName("x");
+    public void testNonWalTableRename() throws Exception {
+        assertMemoryLeak(() -> {
+            Assume.assumeFalse(Os.isWindows() || SCOREBOARD_FORMAT != 1);
 
-        TxnScoreboard sc1 = engine.getTxnScoreboard(token);
-        Assert.assertTrue(sc1.acquireTxn(0, 10));
+            engine.execute("create table x (i int)");
+            TableToken token = engine.verifyTableName("x");
 
-        engine.execute("rename table x to x1");
-        engine.execute("create table x (i int, ts timestamp) timestamp(ts) PARTITION BY DAY WAL");
-        TableToken token2 = engine.verifyTableName("x");
+            TxnScoreboard sc1 = engine.getTxnScoreboard(token);
+            Assert.assertTrue(sc1.acquireTxn(0, 10));
 
-        TxnScoreboard sc2 = engine.getTxnScoreboard(token2);
-        Assert.assertTrue(sc2.isRangeAvailable(0, 100));
-        Assert.assertTrue(sc2.acquireTxn(0, 1));
+            engine.execute("rename table x to x1");
+            engine.execute("create table x (i int)");
+            TableToken token2 = engine.verifyTableName("x");
 
-        Assert.assertFalse(sc1.isRangeAvailable(0, 11));
-        try (TxnScoreboard sc3 = engine.getTxnScoreboard(token)) {
-            Assert.assertFalse(sc3.isRangeAvailable(0, 11));
-        }
+            TxnScoreboard sc2 = engine.getTxnScoreboard(token2);
+            Assert.assertTrue(sc2.isRangeAvailable(0, 100));
+            Assert.assertTrue(sc2.acquireTxn(0, 1));
 
-        sc1.close();
-        sc2.close();
+            sc1.close();
+            sc2.close();
+        });
+    }
+
+    @Test
+    public void testWalTableRename() throws Exception {
+        assertMemoryLeak(() -> {
+            engine.execute("create table x (i int, ts timestamp) timestamp(ts) PARTITION BY DAY WAL");
+            TableToken token = engine.verifyTableName("x");
+
+            TxnScoreboard sc1 = engine.getTxnScoreboard(token);
+            Assert.assertTrue(sc1.acquireTxn(0, 10));
+
+            engine.execute("rename table x to x1");
+            engine.execute("create table x (i int, ts timestamp) timestamp(ts) PARTITION BY DAY WAL");
+            TableToken token2 = engine.verifyTableName("x");
+
+            TxnScoreboard sc2 = engine.getTxnScoreboard(token2);
+            Assert.assertTrue(sc2.isRangeAvailable(0, 100));
+            Assert.assertTrue(sc2.acquireTxn(0, 1));
+
+            Assert.assertFalse(sc1.isRangeAvailable(0, 11));
+            try (TxnScoreboard sc3 = engine.getTxnScoreboard(token)) {
+                Assert.assertFalse(sc3.isRangeAvailable(0, 11));
+            }
+
+            sc1.close();
+            sc2.close();
+        });
     }
 }

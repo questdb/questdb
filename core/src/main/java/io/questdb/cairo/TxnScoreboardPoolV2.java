@@ -27,7 +27,6 @@ package io.questdb.cairo;
 
 import io.questdb.std.ConcurrentHashMap;
 
-import java.util.Iterator;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
 
@@ -52,7 +51,7 @@ public class TxnScoreboardPoolV2 implements TxnScoreboardPool {
         for (CharSequence tableDir : pool.keySet()) {
             final var scoreboard = pool.get(tableDir);
             if (scoreboard != null) {
-                // Don't use iterator.remove()
+                // Don't use iterator.remove(), it can remove new entry
                 pool.remove(tableDir, scoreboard);
                 if (!scoreboard.tryFullClose()) {
                     scoreboard.closePending = true;
@@ -75,7 +74,7 @@ public class TxnScoreboardPoolV2 implements TxnScoreboardPool {
         for (CharSequence tableDir : pool.keySet()) {
             final var scoreboard = pool.get(tableDir);
             if (scoreboard != null && scoreboard.tryFullClose()) {
-                // Don't use iterator.remove()
+                // Don't use iterator.remove(), it can remove new entry
                 pool.remove(tableDir, scoreboard);
                 removed = true;
             }

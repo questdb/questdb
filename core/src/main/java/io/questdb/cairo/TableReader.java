@@ -569,9 +569,8 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void checkSchedulePurgeO3Partitions() {
-        boolean isTxnAvailable = txnScoreboard.isTxnAvailable(txn);
         long partitionTableVersion = txFile.getPartitionTableVersion();
-        if (isTxnAvailable && txFile.unsafeLoadAll() && txFile.getPartitionTableVersion() > partitionTableVersion) {
+        if (txFile.unsafeLoadAll() && txFile.getPartitionTableVersion() > partitionTableVersion && txnScoreboard.isTxnAvailable(txn)) {
             // Last lock for this txn is released and this is not latest txn number
             // Schedule a job to clean up partition versions this reader may hold
             if (TableUtils.schedulePurgeO3Partitions(messageBus, tableToken, partitionBy)) {
