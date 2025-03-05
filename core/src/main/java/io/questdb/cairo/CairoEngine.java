@@ -1210,6 +1210,9 @@ public class CairoEngine implements Closeable, WriterSource {
                 String lockedReason = lockAll(fromTableToken, "renameTable", false);
                 if (lockedReason == null) {
                     try {
+                        // No readers exist for the table, no checkpoint
+                        // it is ok to remove the scoreboard in case it's in memory implementation
+                        scoreboardPool.remove(fromTableToken);
                         toTableToken = rename0(fromPath, fromTableToken, toPath, toTableName);
                         TableUtils.overwriteTableNameFile(
                                 fromPath.of(configuration.getDbRoot()).concat(toTableToken),

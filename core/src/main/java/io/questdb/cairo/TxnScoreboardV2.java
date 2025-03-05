@@ -35,10 +35,10 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     private static final long UNLOCKED = -1;
     private static final int VIRTUAL_ID_COUNT = 1;
     private final long activeReaderCountOffset;
-    private final long entriesMem;
     private final int entryScanCount;
-    private final long maxOffset;
     private final int pow2EntryCount;
+    private long entriesMem;
+    private long maxMem;
     private long mem;
     private TableToken tableToken;
 
@@ -46,7 +46,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         pow2EntryCount = Numbers.ceilPow2(entryCount + RESERVED_ID_COUNT);
         entryScanCount = entryCount + VIRTUAL_ID_COUNT;
         mem = Unsafe.malloc((long) pow2EntryCount * Long.BYTES, MemoryTag.NATIVE_TABLE_READER);
-        maxOffset = mem + Long.BYTES;
+        maxMem = mem + Long.BYTES;
         activeReaderCountOffset = mem;
         entriesMem = mem + (long) (RESERVED_ID_COUNT - VIRTUAL_ID_COUNT) * Long.BYTES;
         Vect.memset(mem, (long) pow2EntryCount * Long.BYTES, -1);
@@ -78,6 +78,8 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     @Override
     public void close() {
         mem = Unsafe.free(mem, (long) pow2EntryCount * Long.BYTES, MemoryTag.NATIVE_TABLE_READER);
+        entriesMem = 0;
+        maxMem = 0;
     }
 
     @TestOnly
@@ -101,7 +103,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     }
 
     public long getMax() {
-        return Unsafe.getUnsafe().getLongVolatile(null, maxOffset);
+        return Unsafe.getUnsafe().getLongVolatile(null, maxMem);
     }
 
     @TestOnly
@@ -123,6 +125,12 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     @Override
     public TableToken getTableToken() {
         return tableToken;
+    }
+
+    public long getTxn(int id) {
+        long internalId = toInternalId(id);
+        assert internalId < entryScanCount;
+        return Unsafe.getUnsafe().getLongVolatile(null, entriesMem + internalId * Long.BYTES);
     }
 
     @Override
@@ -204,12 +212,12 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     private boolean updateMax(long txn) {
         long max;
         do {
-            max = Unsafe.getUnsafe().getLongVolatile(null, maxOffset);
+            max = Unsafe.getUnsafe().getLongVolatile(null, maxMem);
             if (txn < max) {
                 return false;
             }
         }
-        while (txn > max && !Unsafe.getUnsafe().compareAndSwapLong(null, maxOffset, max, txn));
+        while (txn > max && !Unsafe.getUnsafe().compareAndSwapLong(null, maxMem, max, txn));
         return true;
     }
 }

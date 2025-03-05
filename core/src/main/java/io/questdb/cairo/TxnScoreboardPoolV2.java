@@ -49,12 +49,11 @@ public class TxnScoreboardPoolV2 implements TxnScoreboardPool {
 
     @Override
     public void clear() {
-        final Iterator<CharSequence> iterator = pool.keySet().iterator();
-        while (iterator.hasNext()) {
-            final CharSequence tableDir = iterator.next();
+        for (CharSequence tableDir : pool.keySet()) {
             final var scoreboard = pool.get(tableDir);
             if (scoreboard != null) {
-                iterator.remove();
+                // Don't use iterator.remove()
+                pool.remove(tableDir, scoreboard);
                 if (!scoreboard.tryFullClose()) {
                     scoreboard.closePending = true;
                 }
@@ -73,12 +72,11 @@ public class TxnScoreboardPoolV2 implements TxnScoreboardPool {
     public boolean releaseInactive() {
         // Remove all with ref count == 0
         boolean removed = false;
-        final Iterator<CharSequence> iterator = pool.keySet().iterator();
-        while (iterator.hasNext()) {
-            final CharSequence tableDir = iterator.next();
+        for (CharSequence tableDir : pool.keySet()) {
             final var scoreboard = pool.get(tableDir);
             if (scoreboard != null && scoreboard.tryFullClose()) {
-                iterator.remove();
+                // Don't use iterator.remove()
+                pool.remove(tableDir, scoreboard);
                 removed = true;
             }
         }
