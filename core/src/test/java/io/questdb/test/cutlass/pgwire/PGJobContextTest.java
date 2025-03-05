@@ -3085,22 +3085,24 @@ if __name__ == "__main__":
         Assume.assumeTrue(walEnabled);
         Assume.assumeFalse(legacyMode);
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            // Use prepared statement to create mat view multiple times.
-            PreparedStatement createTblStmt = connection.prepareStatement(
-                    "create table base_price (" +
-                            "  sym varchar, price double, ts timestamp" +
-                            ") timestamp(ts) partition by DAY WAL"
-            );
-            createTblStmt.execute();
-
+            // Validate that a prepared create mat view statement validates base table name
+            // at execution stage, not when parsing.
             final String createViewSql = "create materialized view price_1h as (" +
                     "  select sym, last(price) as price, ts from base_price sample by 1h" +
                     ") partition by week";
-            PreparedStatement createViewStmt = connection.prepareStatement(createViewSql);
-            createViewStmt.execute();
+            final PreparedStatement createViewStmt = connection.prepareStatement(createViewSql);
+            try {
+                createViewStmt.execute();
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "table does not exist");
+            }
 
-            connection.prepareStatement("drop materialized view price_1h").execute();
-
+            connection.prepareStatement(
+                    "create table base_price (" +
+                            "  sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            ).execute();
             connection.prepareStatement(
                     "insert into base_price (sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
                             ",('gbpusd', 1.323, '2024-09-10T12:02')" +
