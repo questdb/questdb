@@ -39,6 +39,9 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -107,6 +110,39 @@ public class TxnTest extends AbstractCairoTest {
                 }
             });
         });
+    }
+
+    @Test
+    public void testLoadTxn() throws IOException {
+        try (Path p = new Path()) {
+            String incrementalLoad;
+            try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
+                loadTxnWriter(tw, p, "/txn/sys.acl_entities~1/_txn");
+                loadTxnWriter(tw, p, "/txn/sys.acl_passwords~5/_txn");
+                incrementalLoad = tw.toString();
+            }
+
+            try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
+                loadTxnWriter(tw, p, "/txn/sys.acl_passwords~5/_txn");
+                TestUtils.assertEquals(incrementalLoad, tw.toString());
+            }
+        }
+    }
+
+    private static void loadTxnWriter(TxWriter tw, Path p, String resourceFile) throws IOException {
+        try (final InputStream is = TxnTest.class.getResourceAsStream(resourceFile)) {
+            // Create temp file
+            java.nio.file.Path tempFile = java.nio.file.Files.createTempFile("test-", ".tmp");
+            tempFile.toFile().deleteOnExit(); // Ensure it is deleted on exit
+
+            // Copy resource content to temp file
+            java.nio.file.Files.copy(Objects.requireNonNull(is), tempFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+
+            p.of(tempFile.toString()).$();
+            tw.ofRW(p.$(), PartitionBy.MONTH);
+            tw.unsafeLoadAll();
+        }
+
     }
 
     @Test
