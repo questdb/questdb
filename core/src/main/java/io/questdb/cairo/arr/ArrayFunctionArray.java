@@ -103,9 +103,8 @@ public class ArrayFunctionArray extends MutableArray implements FlatArrayView {
         for (int n = arrayFunctions.size(), i = 1; i < n; i++) {
             ArrayView array = arrayFunctions.getQuick(i).getArray(rec);
             int flatLengthI = array.getFlatViewLength();
-            int argPosI = argPositions.getQuick(i);
             if (flatLengthI != flatLength0) {
-                throw CairoException.nonCritical().position(argPosI)
+                throw CairoException.nonCritical().position(argPositions.getQuick(i))
                         .put("array element counts don't match [count0=").put(flatLength0)
                         .put(", count").put(i).put('=').put(flatLengthI).put(']');
             }
@@ -115,7 +114,7 @@ public class ArrayFunctionArray extends MutableArray implements FlatArrayView {
     }
 
     private void validateIndex(int arrayIndex, int flatIndex) {
-        if (arrayIndex < 0 || arrayIndex > arrays.size()) {
+        if (flatIndex < 0 || arrayIndex > arrays.size()) {
             throw CairoException.nonCritical().put("flatIndex out of range [flatIndex=").put(flatIndex);
         }
     }
