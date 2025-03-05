@@ -6864,8 +6864,7 @@ nodejs code:
                     Assert.assertTrue(rs.next());
                     Assert.assertEquals(copyID, rs.getString(1));
                     String status = rs.getString(2);
-                    Assert.assertNotNull(status);
-                    Assert.assertTrue(status.equals("cancelled") || status.equals("finished"));
+                    Assert.assertTrue("cancelled".equals(status) || "finished".equals(status));
                 }
 
                 try (
@@ -11989,7 +11988,7 @@ create table tab as (
                 int bindIdx = 1;
                 for (int p = 0; p < paramValues.length; p++) {
                     if (isBindParam[p]) {
-                        ps.setString(bindIdx++, bindValues[p] != null && bindValues[p].equals("null") ? null : bindValues[p]);
+                        ps.setString(bindIdx++, "null".equals(bindValues[p]) ? null : bindValues[p]);
                     }
                 }
                 try (ResultSet result = ps.executeQuery()) {

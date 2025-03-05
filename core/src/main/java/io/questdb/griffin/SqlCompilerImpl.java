@@ -111,7 +111,6 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.GenericLexer;
-import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseAsciiCharSequenceObjHashMap;
 import io.questdb.std.MemoryTag;
@@ -188,7 +187,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjectPool<ExpressionNode> sqlNodePool;
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
-    private final IntIntHashMap typeCast = new IntIntHashMap();
     private final VacuumColumnVersions vacuumColumnVersions;
     protected CharSequence sqlText;
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
@@ -248,7 +246,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             parser = new SqlParser(
                     configuration,
-                    optimiser,
                     characterStore,
                     sqlNodePool,
                     queryColumnPool,
@@ -1826,8 +1823,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private ExecutionModel compileExecutionModel(SqlExecutionContext executionContext) throws SqlException {
-        ExecutionModel model = parser.parse(lexer, executionContext, this);
-
+        final ExecutionModel model = parser.parse(lexer, executionContext, this);
         if (model.getModelType() != ExecutionModel.EXPLAIN) {
             return compileExecutionModel0(executionContext, model);
         } else {
@@ -1922,6 +1918,47 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compiledQuery.ofCheckpointRelease();
         } else {
             throw SqlException.position(lexer.lastTokenPosition()).put("'prepare' or 'complete' expected");
+        }
+    }
+
+    private void compileMatViewQuery(
+            @Transient @NotNull SqlExecutionContext executionContext,
+            @NotNull CreateMatViewOperation createMatViewOp
+    ) throws SqlException {
+        final CreateTableOperation createTableOp = createMatViewOp.getCreateTableOperation();
+        lexer.of(createTableOp.getSelectText());
+        clear();
+
+        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+        if (!circuitBreaker.isTimerSet()) {
+            circuitBreaker.resetTimer();
+        }
+        final CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "SELECT query expected");
+        }
+        lexer.unparseLast();
+
+        this.sqlText = createTableOp.getSelectText();
+        compiledQuery.withContext(executionContext);
+
+        final int startPos = lexer.getPosition();
+        final long beginNanos = configuration.getNanosecondClock().getTicks();
+
+        try {
+            final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
+            if (executionModel.getModelType() != ExecutionModel.QUERY) {
+                throw SqlException.$(startPos, "SELECT query expected");
+            }
+            final QueryModel queryModel = optimiser.optimise((QueryModel) executionModel, executionContext, this);
+            createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser, queryModel);
+            queryModel.setIsMatView(true);
+            compiledQuery.ofSelect(
+                    generateSelectWithRetries(queryModel, executionContext, true)
+            );
+        } catch (Throwable th) {
+            QueryProgress.logError(th, -1, sqlText, executionContext, beginNanos);
+            throw th;
         }
     }
 
@@ -2577,7 +2614,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (status == TableUtils.TABLE_EXISTS) {
                 final TableToken tt = executionContext.getTableTokenIfExists(createMatViewOp.getTableName());
                 if (tt != null && !tt.isMatView()) {
-                    throw SqlException.$(createMatViewOp.getTableNamePosition(), "a table already exists with the requested name");
+                    throw SqlException.$(createMatViewOp.getTableNamePosition(), "table with the requested name already exists");
                 }
                 if (createMatViewOp.ignoreIfExists()) {
                     createMatViewOp.updateOperationFutureTableToken(tt);
@@ -2604,28 +2641,29 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                 final CreateTableOperation createTableOp = createMatViewOp.getCreateTableOperation();
                 if (createTableOp.getSelectText() != null) {
-                    // TODO(puzpuzpuz): fix me
-                    RecordCursorFactory factory = null;//createTableOp.getRecordCursorFactory();
+                    RecordCursorFactory newFactory = null;
                     RecordCursor newCursor;
                     for (int retryCount = 0; ; retryCount++) {
                         try {
-                            newCursor = factory.getCursor(executionContext);
+                            compileMatViewQuery(executionContext, createMatViewOp);
+                            Misc.free(newFactory);
+                            newFactory = compiledQuery.getRecordCursorFactory();
+                            newCursor = newFactory.getCursor(executionContext);
                             break;
                         } catch (TableReferenceOutOfDateException e) {
                             if (retryCount == maxRecompileAttempts) {
+                                Misc.free(newFactory);
                                 throw SqlException.$(0, e.getFlyweightMessage());
                             }
-                            lexer.of(createTableOp.getSelectText());
-                            clear();
-                            compileInner(executionContext, createTableOp.getSelectText());
-                            factory.close();
-                            factory = compiledQuery.getRecordCursorFactory();
                             LOG.info().$("retrying plan [q=`").$(createTableOp.getSelectText()).$("`]").$();
+                        } catch (Throwable th) {
+                            Misc.free(newFactory);
+                            throw th;
                         }
                     }
-                    try (RecordCursor cursor = newCursor) {
-                        typeCast.clear();
-                        final RecordMetadata metadata = factory.getMetadata();
+
+                    try {
+                        final RecordMetadata metadata = newFactory.getMetadata();
                         try (TableReader baseReader = engine.getReader(createMatViewOp.getBaseTableName())) {
                             createMatViewOp.validateAndUpdateMetadataFromSelect(metadata, baseReader.getMetadata());
                         }
@@ -2641,8 +2679,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 volumeAlias != null
                         );
                         matViewToken = matViewDefinition.getMatViewToken();
-
-                        cursor.hasNext();
+                    } finally {
+                        Misc.free(newCursor);
+                        Misc.free(newFactory);
                     }
 
                     engine.getMatViewGraph().createView(matViewDefinition);
@@ -2675,7 +2714,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (status == TableUtils.TABLE_EXISTS) {
                 final TableToken tt = executionContext.getTableTokenIfExists(createTableOp.getTableName());
                 if (tt != null && tt.isMatView()) {
-                    throw SqlException.$(createTableOp.getTableNamePosition(), "a materialized view already exists with the requested name");
+                    throw SqlException.$(createTableOp.getTableNamePosition(), "materialized view with the requested name already exists");
                 }
                 if (createTableOp.ignoreIfExists()) {
                     createTableOp.updateOperationFutureTableToken(tt);
@@ -2729,7 +2768,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             RecordCursorFactory factory = newFactory;
                             RecordCursor cursor = newCursor
                     ) {
-                        typeCast.clear();
                         final RecordMetadata metadata = factory.getMetadata();
                         createTableOp.validateAndUpdateMetadataFromSelect(metadata);
                         boolean keepLock = !createTableOp.isWalEnabled();

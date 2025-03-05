@@ -274,10 +274,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
         final int writerBatchSize = 10;
         final String tableName = "test";
 
-        final Rnd[] rnds = new Rnd[readerThreadCount + 1];
-        for (int i = 0; i < readerThreadCount + 1; i++) {
-            rnds[i] = TestUtils.generateRandom(LOG);
-        }
+        final Rnd seedRnd = TestUtils.generateRandom(LOG);
 
         assertWithPool((ReaderPool pool) -> {
             TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
@@ -289,8 +286,8 @@ public class ReaderPoolTest extends AbstractCairoTest {
             final CountDownLatch halt = new CountDownLatch(readerThreadCount + 1);
             final AtomicInteger errors = new AtomicInteger();
 
+            final Rnd writerRnd = new Rnd(seedRnd.nextLong(), seedRnd.nextLong());
             new Thread(() -> {
-                final Rnd rnd = rnds[0];
                 try {
                     barrier.await();
                     try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
@@ -298,7 +295,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         boolean columnTypeChanged = false;
                         boolean columnRenamed = false;
                         for (int i = 0; i < writerIterations; i++) {
-                            final int prob = rnd.nextInt(100);
+                            final int prob = writerRnd.nextInt(100);
                             if (prob >= 95 && columnsAdded) {
                                 writer.removeColumn("sym2");
                                 writer.removeColumn("int2");
@@ -320,7 +317,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
                             } else {
                                 for (int j = 0; j < writerBatchSize; j++) {
                                     TableWriter.Row r = writer.newRow(Timestamps.SECOND_MICROS * i);
-                                    r.putSym(0, rnd.nextString(rnd.nextInt(32)));
+                                    r.putSym(0, writerRnd.nextString(writerRnd.nextInt(32)));
                                     r.append();
                                 }
                                 writer.commit();
@@ -338,17 +335,16 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
             final TableToken tableToken = engine.verifyTableName(tableName);
             for (int t = 0; t < readerThreadCount; t++) {
-                int finalT = t;
+                final Rnd readerRnd = new Rnd(seedRnd.nextLong(), seedRnd.nextLong());
                 new Thread(() -> {
                     final StringSink sink = new StringSink();
-                    final Rnd rnd = rnds[finalT + 1];
                     try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()) {
                         barrier.await();
                         for (int i = 0; i < readerIterations; i++) {
                             TableReader copiedReader = null;
                             TableReader reader = null;
                             try {
-                                if (rnd.nextBoolean()) {
+                                if (readerRnd.nextBoolean()) {
                                     reader = pool.get(tableToken);
                                 } else {
                                     copiedReader = pool.get(tableToken);

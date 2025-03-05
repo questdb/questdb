@@ -181,6 +181,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = false;
     }
 
+    @SuppressWarnings("unused")
     public void ofAlterUser() {
         of(ALTER_USER);
         this.isExecutedAtParseTime = true;
@@ -233,6 +234,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.isExecutedAtParseTime = false;
     }
 
+    @SuppressWarnings("unused")
     public void ofCreateUser() {
         of(CREATE_USER);
         this.isExecutedAtParseTime = true;

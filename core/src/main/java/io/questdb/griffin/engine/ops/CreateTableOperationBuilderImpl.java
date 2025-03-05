@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
@@ -60,6 +61,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private int maxUncommittedRows;
     private long o3MaxLag = -1;
     private ExpressionNode partitionByExpr;
+    // transient field, unoptimized AS SELECT model, used in toSink()
+    private QueryModel selectModel;
     private CharSequence selectText;
     private ExpressionNode tableNameExpr;
     private ExpressionNode timestampExpr;
@@ -77,7 +80,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     }
 
     @Override
-    public CreateTableOperation build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sqlText) throws SqlException {
+    public CreateTableOperationImpl build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sqlText) throws SqlException {
         if (selectText != null) {
             return new CreateTableOperationImpl(
                     Chars.toString(sqlText),
@@ -149,6 +152,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         tableNameExpr = null;
         timestampExpr = null;
         selectText = null;
+        selectModel = null;
         volumeAlias = null;
         ttlHoursOrMonths = 0;
         walEnabled = false;
@@ -172,6 +176,11 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public int getPartitionByFromExpr() {
         return partitionByExpr == null ? PartitionBy.NONE : PartitionBy.fromString(partitionByExpr.token);
+    }
+
+    @Override
+    public QueryModel getQueryModel() {
+        return selectModel;
     }
 
     public CharSequence getSelectText() {
@@ -243,6 +252,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         this.partitionByExpr = partitionByExpr;
     }
 
+    public void setSelectModel(QueryModel selectModel) {
+        this.selectModel = selectModel;
+    }
+
     public void setSelectText(CharSequence selectText) {
         this.selectText = selectText;
     }
@@ -284,9 +297,9 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         }
         sink.putAscii(" table ");
         sink.put(getTableNameExpr().token);
-        if (getQueryModel() != null) {
+        if (selectModel != null) {
             sink.putAscii(" as (");
-            getQueryModel().toSink(sink);
+            selectModel.toSink(sink);
             sink.putAscii(')');
             final ObjList<CharSequence> castColumns = columnModels.keys();
             for (int i = 0, n = castColumns.size(); i < n; i++) {

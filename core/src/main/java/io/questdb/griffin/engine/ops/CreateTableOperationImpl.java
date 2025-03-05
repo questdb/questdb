@@ -78,13 +78,13 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private final String sqlText;
     private final String tableName;
     private final int tableNamePosition;
-    private final String timestampColumnName;
-    private final int timestampColumnNamePosition;
     private final String volumeAlias;
     private int defaultSymbolCapacity = -1;
     private int maxUncommittedRows;
     private long o3MaxLag;
     private int partitionBy;
+    private String timestampColumnName;
+    private int timestampColumnNamePosition;
     private int timestampIndex = -1;
     private int ttlHoursOrMonths;
     private boolean walEnabled;
@@ -232,41 +232,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         // - cast models, provides column types
         // - (symbol) column index data, e.g. index flag and index capacity
         // - (symbol) column cache flag
-        assert columnNames.size() == 0;
-        assert columnBits.size() == 0;
-        final ObjList<CharSequence> colNames = createColumnModelMap.keys();
-        for (int i = 0, n = colNames.size(); i < n; i++) {
-            final CharSequence columnName = colNames.get(i);
-            final CreateTableColumnModel model = createColumnModelMap.get(columnName);
-            final String columnNameStr = Chars.toString(columnName);
-            int symbolCapacity = model.getSymbolCapacity();
-            if (symbolCapacity == -1) {
-                symbolCapacity = defaultSymbolCapacity;
-            }
-            if (model.isDedupKey()) {
-                colNameToDedupClausePos.put(columnName, model.getDedupColumnPos());
-            }
-            if (model.isIndexed()) {
-                colNameToIndexClausePos.put(columnName, model.getIndexColumnPos());
-            }
-            if (model.isCast()) {
-                colNameToCastClausePos.put(columnName, model.getColumnNamePos());
-            }
-            final TableColumnMetadata columnMetadata = new TableColumnMetadata(
-                    columnNameStr,
-                    model.getColumnType(),
-                    model.isIndexed(),
-                    model.getIndexValueBlockSize(),
-                    true,
-                    null,
-                    -1, // writer index is irrelevant here
-                    model.isDedupKey(),
-                    -1, // replacingIndex is irrelevant here
-                    model.getSymbolCacheFlag(),
-                    symbolCapacity
-            );
-            augmentedColumnMetadata.put(columnNameStr, columnMetadata);
-        }
+        initColumnMetadata(createColumnModelMap);
     }
 
     @Override
@@ -279,6 +245,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             compiler.execute(this, sqlExecutionContext);
         }
         return future;
+    }
+
+    public LowerCaseCharSequenceObjHashMap<TableColumnMetadata> getAugmentedColumnMetadata() {
+        return augmentedColumnMetadata;
     }
 
     @Override
@@ -384,6 +354,14 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         return tableNamePosition;
     }
 
+    public String getTimestampColumnName() {
+        return timestampColumnName;
+    }
+
+    public int getTimestampColumnNamePosition() {
+        return timestampColumnNamePosition;
+    }
+
     @Override
     public int getTimestampIndex() {
         return timestampIndex;
@@ -404,6 +382,49 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         return ignoreIfExists;
     }
 
+    public void initColumnMetadata(@Transient LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap) {
+        assert columnNames.size() == 0;
+        assert columnBits.size() == 0;
+
+        colNameToDedupClausePos.clear();
+        colNameToIndexClausePos.clear();
+        colNameToCastClausePos.clear();
+        augmentedColumnMetadata.clear();
+        final ObjList<CharSequence> colNames = createColumnModelMap.keys();
+        for (int i = 0, n = colNames.size(); i < n; i++) {
+            final CharSequence columnName = colNames.get(i);
+            final CreateTableColumnModel model = createColumnModelMap.get(columnName);
+            final String columnNameStr = Chars.toString(columnName);
+            int symbolCapacity = model.getSymbolCapacity();
+            if (symbolCapacity == -1) {
+                symbolCapacity = defaultSymbolCapacity;
+            }
+            if (model.isDedupKey()) {
+                colNameToDedupClausePos.put(columnName, model.getDedupColumnPos());
+            }
+            if (model.isIndexed()) {
+                colNameToIndexClausePos.put(columnName, model.getIndexColumnPos());
+            }
+            if (model.isCast()) {
+                colNameToCastClausePos.put(columnName, model.getColumnNamePos());
+            }
+            final TableColumnMetadata columnMetadata = new TableColumnMetadata(
+                    columnNameStr,
+                    model.getColumnType(),
+                    model.isIndexed(),
+                    model.getIndexValueBlockSize(),
+                    true,
+                    null,
+                    -1, // writer index is irrelevant here
+                    model.isDedupKey(),
+                    -1, // replacingIndex is irrelevant here
+                    model.getSymbolCacheFlag(),
+                    symbolCapacity
+            );
+            augmentedColumnMetadata.put(columnNameStr, columnMetadata);
+        }
+    }
+
     @Override
     public boolean isDedupKey(int index) {
         return (getLowAt(index * 2 + 1) & COLUMN_FLAG_DEDUP_KEY) != 0;
@@ -417,6 +438,14 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     @Override
     public boolean isWalEnabled() {
         return walEnabled;
+    }
+
+    public void setTimestampColumnName(String timestampColumnName) {
+        this.timestampColumnName = timestampColumnName;
+    }
+
+    public void setTimestampColumnNamePosition(int timestampColumnNamePosition) {
+        this.timestampColumnNamePosition = timestampColumnNamePosition;
     }
 
     @Override
@@ -511,6 +540,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                         .put("DEDUP column doesn't exist [column=").put(dedupColName).put(']');
             }
         }
+
         columnNames.clear();
         boolean hasDedup = false;
         boolean isTimestampDeduped = false;

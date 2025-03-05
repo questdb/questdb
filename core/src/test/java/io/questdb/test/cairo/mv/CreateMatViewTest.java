@@ -311,8 +311,9 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertEquals(ExecutionModel.CREATE_MAT_VIEW, model.getModelType());
                 ((Sinkable) model).toSink(sink);
                 TestUtils.assertEquals(
-                        "create materialized view test with base table1 as (" + query +
-                                "), index(k capacity 1024) timestamp(ts) partition by DAY TTL 3 DAYS" +
+                        "create materialized view test as (" +
+                                "select-choose ts, k, avg(v) avg from (table1 sample by 30s align to calendar with offset '00:00')" +
+                                "), index(k capacity 1024) partition by DAY TTL 3 DAYS" +
                                 (Os.isWindows() ? "" : " in volume 'vol1'"),
                         sink
                 );
@@ -396,7 +397,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (select * from " + TABLE1 + " where v % 2 = 0) partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Materialized view query requires a sampling interval");
+                TestUtils.assertContains(e.getFlyweightMessage(), "materialized view query requires a sampling interval");
             }
             assertNull(getMatViewDefinition("test"));
         });
@@ -683,14 +684,14 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view " + TABLE2 + " as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "a table already exists with the requested name");
+                TestUtils.assertContains(e.getFlyweightMessage(), "table with the requested name already exists");
             }
 
             try {
                 execute("create materialized view if not exists " + TABLE2 + " as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "a table already exists with the requested name");
+                TestUtils.assertContains(e.getFlyweightMessage(), "table with the requested name already exists");
             }
 
             final String query = "select ts, avg(v) from " + TABLE2 + " sample by 4h";
@@ -713,7 +714,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create table test(ts timestamp, col varchar) timestamp(ts) partition by day wal");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "a materialized view already exists with the requested name");
+                TestUtils.assertContains(e.getFlyweightMessage(), "materialized view with the requested name already exists");
             }
         });
     }
