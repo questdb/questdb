@@ -35,6 +35,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
@@ -178,8 +179,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                             }
                         }
                     }
-                    state.metadata = state.recordCursorFactory.getMetadata();
                     doResumeSend(context);
+                } catch (DataUnavailableException e) {
+                    context.getChunkedResponse().resetToBookmark();
+                    throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
                 } catch (CairoException e) {
                     state.setQueryCacheable(e.isCacheable());
                     internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e, state);
@@ -239,7 +242,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         try {
             doResumeSend(context);
-        } catch (CairoError | CairoException e) {
+        } catch (CairoError | CairoException | SqlException e) {
             // this is something we didn't expect
             // log the exception and disconnect
             TextQueryProcessorState state = LV.get(context);
@@ -323,7 +326,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private void doResumeSend(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         TextQueryProcessorState state = LV.get(context);
         if (state == null) {
             return;
@@ -340,7 +343,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
 
         final HttpChunkedResponse response = context.getChunkedResponse();
-        final int columnCount = state.metadata.getColumnCount();
+        final RecordMetadata metadata = state.recordCursorFactory.getMetadata();
+        final int columnCount = metadata.getColumnCount();
 
         OUT:
         while (true) {
@@ -348,6 +352,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 SWITCH:
                 switch (state.queryState) {
                     case JsonQueryProcessorState.QUERY_SETUP_FIRST_RECORD:
+                        if (state.cursor == null) {
+                            state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
+                        }
                         state.hasNext = state.cursor.hasNext();
                         header(response, state, 200);
                         state.queryState = JsonQueryProcessorState.QUERY_METADATA;
@@ -360,7 +367,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                                 if (state.columnIndex > 0) {
                                     response.putAscii(state.delimiter);
                                 }
-                                response.putQuote().escapeCsvStr(state.metadata.getColumnName(state.columnIndex)).putQuote();
+                                response.putQuote().escapeCsvStr(metadata.getColumnName(state.columnIndex)).putQuote();
                                 state.columnIndex++;
                                 response.bookmark();
                             }
@@ -406,7 +413,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                             if (state.columnIndex > 0) {
                                 response.putAscii(state.delimiter);
                             }
-                            putValue(response, state.metadata.getColumnType(state.columnIndex), state.record, state.columnIndex);
+                            putValue(response, metadata.getColumnType(state.columnIndex), state.record, state.columnIndex);
                             state.columnIndex++;
                             response.bookmark();
                         }

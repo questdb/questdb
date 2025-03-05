@@ -194,6 +194,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     public void clearFactory() {
+        columnSkewList.clear();
+        columnTypesAndFlags.clear();
         recordCursorFactory = Misc.free(recordCursorFactory);
     }
 
@@ -955,11 +957,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         response.sendChunk(true);
     }
 
-    boolean of(
-            RecordCursorFactory factory,
-            boolean queryCacheable,
-            SqlExecutionContextImpl sqlExecutionContext
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+    boolean of(RecordCursorFactory factory, boolean queryCacheable, SqlExecutionContextImpl sqlExecutionContext)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         this.recordCursorFactory = factory;
         this.queryCacheable = queryCacheable;
         this.queryJitCompiled = factory.usesCompiledFilter();
@@ -1013,7 +1012,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             }
         }
         this.columnCount = columnCount;
-        System.out.println("COUNT UPDATED: " + columnCount);
         return true;
     }
 
