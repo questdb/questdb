@@ -131,7 +131,7 @@ public class FunctionArray extends MutableArray implements FlatArrayView {
 
     @Override
     public double getDouble(int flatIndex) {
-        return functions()[flatIndex].getDouble(record);
+        return functions[flatIndex].getDouble(record);
     }
 
     public Function getFunctionAtFlatIndex(int flatIndex) {
