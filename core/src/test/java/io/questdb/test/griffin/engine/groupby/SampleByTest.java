@@ -13234,19 +13234,19 @@ public class SampleByTest extends AbstractCairoTest {
                                 TestUtils.await(barrier);
 
                                 try {
-                                final RecordCursorFactory factory = factories[finalI];
-                                while (!writerDone.get()) {
-                                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                                        TestUtils.drainCursor(cursor);
-                                    } catch (Throwable e) {
-                                        e.printStackTrace();
-                                        errors.incrementAndGet();
+                                    final RecordCursorFactory factory = factories[finalI];
+                                    while (!writerDone.get()) {
+                                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                            TestUtils.drainCursor(cursor);
+                                        } catch (Throwable e) {
+                                            e.printStackTrace();
+                                            errors.incrementAndGet();
+                                        }
                                     }
+                                    haltLatch.countDown();
+                                } finally {
+                                    Path.clearThreadLocals();
                                 }
-                                haltLatch.countDown();
-                            } finally {
-                                Path.clearThreadLocals();
-                            }
                             }).start();
                         }
 
