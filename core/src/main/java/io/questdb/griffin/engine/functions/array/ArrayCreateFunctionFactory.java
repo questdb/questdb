@@ -79,7 +79,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                 Function argI = args.getQuick(i);
                 array.putFunction(i, argI);
             }
-            return new ArrayFunctionArrayFunction(array, isConstant);
+            return new FunctionArrayFunction(array, isConstant);
         }
 
         commonElemType = decodeArrayElementType(type0);
@@ -116,7 +116,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                 array.putFunction(flatIndex++, arrayI.getFunctionAtFlatIndex(j));
             }
         }
-        return new ArrayFunctionArrayFunction(array, isConstant);
+        return new FunctionArrayFunction(array, isConstant);
     }
 
     @Override
