@@ -1508,6 +1508,7 @@ public class CairoEngine implements Closeable, WriterSource {
             }
             try {
                 String lockedReason = lockAll(tableToken, "createTable", true);
+                boolean locked = true;
                 if (lockedReason == null) {
                     boolean tableCreated = false;
                     try {
@@ -1521,13 +1522,18 @@ public class CairoEngine implements Closeable, WriterSource {
                             tableSequencerAPI.registerTable(tableToken.getTableId(), struct, tableToken);
                         }
 
+                        if (!keepLock) {
+                            unlockTableUnsafe(tableToken, null, tableCreated);
+                            locked = false;
+                            LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
+                        }
                         tableNameRegistry.registerName(tableToken);
                         tableCreated = true;
                     } catch (Throwable e) {
                         keepLock = false;
                         throw e;
                     } finally {
-                        if (!keepLock) {
+                        if (!keepLock && locked) {
                             unlockTableUnsafe(tableToken, null, tableCreated);
                             LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
                         }
