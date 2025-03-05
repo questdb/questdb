@@ -47,6 +47,8 @@ public class ArrayTest extends AbstractCairoTest {
             execute("CREATE TABLE tango (ask DOUBLE[][])");
             execute("INSERT INTO samba VALUES (ARRAY[1.0, 2], ARRAY[1.0, 1])");
             execute("INSERT INTO tango SELECT ARRAY[[ask_price[0], ask_price[1]], [ask_size[0], ask_size[1]]] from samba");
+            execute("INSERT INTO tango SELECT ARRAY[ask_price, ask_size] from samba");
+            assertSql("ask\n[[1.0,2.0],[1.0,1.0]]\n[[1.0,2.0],[1.0,1.0]]\n", "tango");
         });
     }
 
@@ -593,9 +595,9 @@ public class ArrayTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck("SELECT ARRAY[[a, a], [a]] FROM tango",
                     21, "element counts in sub-arrays don't match");
             assertExceptionNoLeakCheck("SELECT ARRAY[[[a], [a]], [a]] FROM tango",
-                    25, "mismatched array shape");
+                    25, "sub-arrays don't match in number of dimensions");
             assertExceptionNoLeakCheck("SELECT ARRAY[[[a], [a]], [a, a]] FROM tango",
-                    25, "mismatched array shape");
+                    25, "sub-arrays don't match in number of dimensions");
         });
     }
 
