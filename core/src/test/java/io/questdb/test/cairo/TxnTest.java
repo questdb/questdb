@@ -115,7 +115,7 @@ public class TxnTest extends AbstractCairoTest {
     @Test
     public void testLoadTxn() throws IOException {
         try (Path p = new Path()) {
-            String incrementalLoad;
+            final String incrementalLoad;
             try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
                 loadTxnWriter(tw, p, "/txn/sys.acl_entities~1/_txn");
                 loadTxnWriter(tw, p, "/txn/sys.acl_passwords~5/_txn");
