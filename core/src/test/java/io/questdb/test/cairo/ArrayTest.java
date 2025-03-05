@@ -41,6 +41,16 @@ import static org.junit.Assert.assertEquals;
 public class ArrayTest extends AbstractCairoTest {
 
     @Test
+    public void test2dArrayFrom1dArrays() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE samba (ask_price DOUBLE[], ask_size DOUBLE[])");
+            execute("CREATE TABLE tango (ask DOUBLE[][])");
+            execute("INSERT INTO samba VALUES (ARRAY[1.0, 2], ARRAY[1.0, 1])");
+            execute("INSERT INTO tango SELECT ARRAY[[ask_price[0], ask_price[1]], [ask_size[0], ask_size[1]]] from samba");
+        });
+    }
+
+    @Test
     public void testAccessArray1d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[1.0, 2, 3] arr FROM long_sequence(1))");
