@@ -913,6 +913,7 @@ public class SqlParser {
             }
 
             // optimize mat view query
+            // TODO(puzpuzpuz): remove me
             queryModel = optimiser.optimise(qm, executionContext, sqlParserCallback);
             queryModel.setIsMatView(true);
 
@@ -931,7 +932,6 @@ public class SqlParser {
                 model.setColumnType(ColumnType.UNDEFINED);
             }
 
-            tableOpBuilder.setQueryModel(queryModel);
             expectTok(lexer, ')');
         } else {
             throw SqlException.position(lexer.getPosition()).put("'as' expected");
@@ -1154,7 +1154,7 @@ public class SqlParser {
             }
         } else if (isAsKeyword(tok)) {
             isDirectCreate = false;
-            parseCreateTableAsSelect(lexer, executionContext, sqlParserCallback);
+            parseCreateTableAsSelect(lexer, sqlParserCallback);
         } else {
             throw errUnexpected(lexer, tok);
         }
@@ -1363,24 +1363,19 @@ public class SqlParser {
         return parseCreateTableExt(lexer, executionContext, sqlParserCallback, tok, builder);
     }
 
-    private void parseCreateTableAsSelect(
-            GenericLexer lexer,
-            SqlExecutionContext executionContext,
-            SqlParserCallback sqlParserCallback
-    ) throws SqlException {
+    private void parseCreateTableAsSelect(GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
         expectTok(lexer, '(');
-        int startOfSelect = lexer.getPosition();
-        QueryModel selectModel = parseDml(lexer, null, startOfSelect, true, sqlParserCallback, null);
-        int endOfSelect = lexer.getPosition() - 1;
+        final int startOfSelect = lexer.getPosition();
+        // Parse SELECT only for the sake of basic SQL validation.
+        // It'll be compiled and optimized later, at the execution phase.
+        parseDml(lexer, null, startOfSelect, true, sqlParserCallback, null);
+        final int endOfSelect = lexer.getPosition() - 1;
         createTableOperationBuilder.setSelectText(lexer.getContent().subSequence(startOfSelect, endOfSelect));
-        QueryModel queryModel = optimiser.optimise(selectModel, executionContext, sqlParserCallback);
-        assert queryModel.getBottomUpColumns().size() > 0 : "parsing resulted in zero columns";
-        createTableOperationBuilder.setQueryModel(queryModel);
         expectTok(lexer, ')');
     }
 
     private void parseCreateTableCastDef(GenericLexer lexer) throws SqlException {
-        if (createTableOperationBuilder.getQueryModel() == null) {
+        if (createTableOperationBuilder.getSelectText() == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "cast is only supported in 'create table as ...' context");
         }
         expectTok(lexer, '(');

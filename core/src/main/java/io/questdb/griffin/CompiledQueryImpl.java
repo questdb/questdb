@@ -228,7 +228,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     }
 
     public void ofCreateTable(CreateTableOperation createTableOp) {
-        of(createTableOp.getRecordCursorFactory() == null ? CREATE_TABLE : CREATE_TABLE_AS_SELECT);
+        of(createTableOp.getSelectText() == null ? CREATE_TABLE : CREATE_TABLE_AS_SELECT);
         this.operation = createTableOp;
         this.isExecutedAtParseTime = false;
     }

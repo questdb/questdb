@@ -2603,8 +2603,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 final TableToken matViewToken;
 
                 final CreateTableOperation createTableOp = createMatViewOp.getCreateTableOperation();
-                if (createTableOp.getRecordCursorFactory() != null) {
-                    RecordCursorFactory factory = createTableOp.getRecordCursorFactory();
+                if (createTableOp.getSelectText() != null) {
+                    // TODO(puzpuzpuz): fix me
+                    RecordCursorFactory factory = null;//createTableOp.getRecordCursorFactory();
                     RecordCursor newCursor;
                     for (int retryCount = 0; ; retryCount++) {
                         try {
@@ -2698,28 +2699,36 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
 
                 final TableToken tableToken;
-                if (createTableOp.getRecordCursorFactory() != null) {
+                if (createTableOp.getSelectText() != null) {
                     this.insertCount = -1;
-                    int position = createTableOp.getTableNamePosition();
-                    RecordCursorFactory factory = createTableOp.getRecordCursorFactory();
+                    final int position = createTableOp.getTableNamePosition();
+                    RecordCursorFactory newFactory = null;
                     RecordCursor newCursor;
                     for (int retryCount = 0; ; retryCount++) {
                         try {
-                            newCursor = factory.getCursor(executionContext);
-                            break;
-                        } catch (TableReferenceOutOfDateException e) {
-                            if (retryCount == maxRecompileAttempts) {
-                                throw SqlException.$(0, e.getFlyweightMessage());
-                            }
                             lexer.of(createTableOp.getSelectText());
                             clearExceptSqlText();
                             compileInner(executionContext, createTableOp.getSelectText());
-                            factory.close();
-                            factory = this.compiledQuery.getRecordCursorFactory();
+                            Misc.free(newFactory);
+                            newFactory = compiledQuery.getRecordCursorFactory();
+                            newCursor = newFactory.getCursor(executionContext);
+                            break;
+                        } catch (TableReferenceOutOfDateException e) {
+                            if (retryCount == maxRecompileAttempts) {
+                                Misc.free(newFactory);
+                                throw SqlException.$(0, e.getFlyweightMessage());
+                            }
                             LOG.info().$("retrying plan [q=`").$(createTableOp.getSelectText()).$("`]").$();
+                        } catch (Throwable th) {
+                            Misc.free(newFactory);
+                            throw th;
                         }
                     }
-                    try (RecordCursor cursor = newCursor) {
+
+                    try (
+                            RecordCursorFactory factory = newFactory;
+                            RecordCursor cursor = newCursor
+                    ) {
                         typeCast.clear();
                         final RecordMetadata metadata = factory.getMetadata();
                         createTableOp.validateAndUpdateMetadataFromSelect(metadata);
