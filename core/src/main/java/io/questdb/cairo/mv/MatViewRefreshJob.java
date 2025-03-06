@@ -418,6 +418,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             if (state != null && !state.isPendingInvalidation() && !state.isInvalid() && !state.isDropped()) {
                 if (!state.tryLock()) {
                     LOG.info().$("skipping materialized view refresh, locked by another refresh run [view=").$(viewToken).I$();
+                    state.markAsPendingInvalidation();
+                    viewGraph.enqueueIncrementalRefresh(viewToken);
                     continue;
                 }
 
@@ -648,6 +650,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         if (!state.tryLock()) {
             LOG.debug().$("skipping materialized view refresh, locked by another refresh run [view=").$(viewToken).I$();
+            state.markAsPendingInvalidation();
+            viewGraph.enqueueIncrementalRefresh(viewToken);
             return false;
         }
 
