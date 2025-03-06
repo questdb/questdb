@@ -153,8 +153,7 @@ public class TableReaderReloadTest extends AbstractCairoTest {
         AbstractCairoTest.create(model);
 
         long timestamp = 0;
-        try (TableWriter writer = newOffPoolWriter(configuration, "all", metrics)) {
-
+        try (TableWriter writer = newOffPoolWriter(configuration, "all")) {
             try (TableReader reader = newOffPoolReader(configuration, "all")) {
                 Assert.assertFalse(reader.reload());
             }
@@ -206,7 +205,7 @@ public class TableReaderReloadTest extends AbstractCairoTest {
         AbstractCairoTest.create(model);
 
         long timestamp = 0;
-        try (TableWriter writer = newOffPoolWriter(configuration, "all", metrics)) {
+        try (TableWriter writer = newOffPoolWriter(configuration, "all")) {
             try (TableReader reader = newOffPoolReader(configuration, "all")) {
                 Assert.assertFalse(reader.reload());
             }

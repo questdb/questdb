@@ -221,7 +221,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             );
 
             engine.releaseInactive();
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
                 TableToken tableToken = engine.getTableTokenIfExists(tableName);
                 path.concat(tableToken.getDirName()).concat("a_symbol").put(".o");
                 FilesFacade ff = configuration.getFilesFacade();
@@ -303,7 +303,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             );
 
             engine.releaseInactive();
-            try (Path path = new Path().of(configuration.getRoot())) {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
                 TableToken tableToken = engine.getTableTokenIfExists(tableName);
                 path.concat(tableToken.getDirName()).concat("a_symbol").put(".o");
                 FilesFacade ff = configuration.getFilesFacade();
@@ -457,7 +457,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     private void assertPartitionOnDisk0(String tableName, boolean exists, String partition) {
-        Path path = Path.getThreadLocal(configuration.getRoot());
+        Path path = Path.getThreadLocal(configuration.getDbRoot());
         path.concat(engine.verifyTableName(tableName));
         path.concat(partition).concat(PARQUET_PARTITION_NAME);
 

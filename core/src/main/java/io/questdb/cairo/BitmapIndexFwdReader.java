@@ -200,7 +200,7 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
                     }
 
                     if (clock.getTicks() > deadline) {
-                        LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).utf8("ms, key=").$(key).$(", offset=").$(offset).$(']').$();
+                        LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms, key=").$(key).$(", offset=").$(offset).$(']').$();
                         throw CairoException.critical(0).put(INDEX_CORRUPT);
                     }
                 }

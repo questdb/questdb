@@ -121,12 +121,12 @@ public class FirstVarcharGroupByFunction extends VarcharFunction implements Grou
     }
 
     @Override
-    public boolean isThreadSafe() {
+    public boolean isScalar() {
         return false;
     }
 
     @Override
-    public boolean isScalar() {
+    public boolean isThreadSafe() {
         return false;
     }
 

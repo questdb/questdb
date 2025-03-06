@@ -89,6 +89,11 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
         public boolean supportsRandomAccess() {
             return false;
         }
@@ -133,6 +138,11 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
             start.init(symbolTableSource, executionContext);
             longIncrement.init(symbolTableSource, executionContext);
             next = 0;
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return true;
         }
 
         @Override

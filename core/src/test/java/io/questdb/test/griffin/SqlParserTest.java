@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -46,6 +47,8 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
+import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -57,6 +60,18 @@ import static io.questdb.test.tools.TestUtils.getSystemTablesCount;
 
 public class SqlParserTest extends AbstractSqlParserTest {
     private static final List<String> frameTypes = Arrays.asList("rows  ", "groups", "range ");
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
+        AbstractCairoTest.setUpStatic();
+    }
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
+    }
 
     @Test
     public void test2Between() throws Exception {
@@ -1665,6 +1680,114 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateMatView0() throws Exception {
+        assertSyntaxError(
+                "create",
+                6,
+                "'atomic' or 'table' or 'batch' or 'materialized' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView1() throws Exception {
+        assertSyntaxError(
+                "create foobar",
+                7,
+                "'atomic' or 'table' or 'batch' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView10() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW 'myview' REFRESH INCREMENTAL refresh",
+                61,
+                "refresh already defined"
+        );
+    }
+
+    @Test
+    public void testCreateMatView11() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' with base 'mytable2'",
+                65,
+                "base table already defined"
+        );
+    }
+
+    @Test
+    public void testCreateMatView2() throws Exception {
+        assertSyntaxError(
+                "create materialized",
+                19,
+                "'view' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView3() throws Exception {
+        assertSyntaxError(
+                "create materialized foobar",
+                20,
+                "'view' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView4() throws Exception {
+        assertSyntaxError(
+                "create materialized view 'myview' foobar",
+                40,
+                "'as' or 'with' or 'refresh' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView5() throws Exception {
+        assertSyntaxError(
+                "create materialized view 'myview' refresh with",
+                42,
+                "'incremental' or 'manual' or 'interval' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView6() throws Exception {
+        assertSyntaxError(
+                "create materialized view 'myview' with refresh",
+                39,
+                "'base' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView7() throws Exception {
+        assertSyntaxError(
+                "create materialized view 'myview' refresh manual",
+                42,
+                "manual refresh is not yet supported"
+        );
+    }
+
+    @Test
+    public void testCreateMatView8() throws Exception {
+        assertSyntaxError(
+                "create materialized view 'myview' refresh interval",
+                42,
+                "interval refresh is not yet supported"
+        );
+    }
+
+    @Test
+    public void testCreateMatView9() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW 'myview' WITH BASE 'mytable' REFRESH INCREMENTAL",
+                73,
+                "'as' or 'with' or 'refresh' expected"
+        );
+    }
+
+    @Test
     public void testCreateNameDot() throws Exception {
         assertSyntaxError(
                 "create table . as ( select a, b, c from tab )",
@@ -2573,7 +2696,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "timestamp(t) " +
                         "partition by EPOCH",
                 128,
-                "'NONE', 'HOUR', 'DAY', 'MONTH' or 'YEAR' expected"
+                "'NONE', 'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected"
         );
     }
 
@@ -3553,11 +3676,65 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDropAll0() throws Exception {
+        assertSyntaxError(
+                "drop foobar",
+                5,
+                "'table' or 'materialized view' or 'all' expected"
+        );
+    }
+
+    @Test
+    public void testDropAll1() throws Exception {
+        assertSyntaxError(
+                "drop all foobar",
+                9,
+                "';' or 'tables' expected"
+        );
+    }
+
+    @Test
+    public void testDropAll2() throws Exception {
+        assertSyntaxError(
+                "drop all tables foobar",
+                16,
+                "';' or 'tables' expected"
+        );
+    }
+
+    @Test
+    public void testDropMatViewIfExistsMissingName() throws Exception {
+        assertSyntaxError(
+                "drop materialized view if exists",
+                32,
+                "view name expected"
+        );
+    }
+
+    @Test
+    public void testDropMatViewMissingName() throws Exception {
+        assertSyntaxError(
+                "drop materialized view",
+                18,
+                "expected IF EXISTS mat-view-name"
+        );
+    }
+
+    @Test
+    public void testDropMatViewMissingView() throws Exception {
+        assertSyntaxError(
+                "drop materialized tab1",
+                18,
+                "expected VIEW"
+        );
+    }
+
+    @Test
     public void testDropTablesMissingComma() throws Exception {
         assertSyntaxError(
                 "drop tables tab1 tab2",
                 5,
-                "'table' or 'all tables' expected",
+                "'table' or 'materialized view' or 'all' expected",
                 modelOf("tab1").col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("tab2").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -3568,7 +3745,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "drop tables tab1, ",
                 5,
-                "'table' or 'all tables' expected",
+                "'table' or 'materialized view' or 'all' expected",
                 modelOf("tab1").col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("tab2").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -7527,6 +7704,90 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testRefreshMatView0() throws Exception {
+        assertSyntaxError(
+                "refresh",
+                7,
+                "'materialized' expected"
+        );
+    }
+
+    @Test
+    public void testRefreshMatView1() throws Exception {
+        assertSyntaxError(
+                "refresh materialized foobar",
+                21,
+                "'view' expected"
+        );
+    }
+
+    @Test
+    public void testRefreshMatView2() throws Exception {
+        assertSyntaxError(
+                "REFRESH MATERIALIZED VIEW",
+                25,
+                "materialized view name expected"
+        );
+        assertSyntaxError(
+                "REFRESH MATERIALIZED VIEW",
+                25,
+                "materialized view name expected"
+        );
+    }
+
+    @Test
+    public void testRefreshMatView3() throws Exception {
+        assertSyntaxError(
+                "REFRESH MATERIALIZED VIEW 'myview'",
+                26,
+                "materialized view does not exist [view=myview]"
+        );
+        assertSyntaxError(
+                "REFRESH MATERIALIZED VIEW 'myview';",
+                26,
+                "materialized view does not exist [view=myview]"
+        );
+    }
+
+    @Test
+    public void testRefreshMatView4() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_table (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            assertException(
+                    "REFRESH MATERIALIZED VIEW base_table",
+                    26,
+                    "materialized view name expected, got table name"
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshMatView5() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertException(
+                    "REFRESH MATERIALIZED VIEW 'x_view' foobar",
+                    35,
+                    "'full' or 'incremental' expected"
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshMatView6() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertException(
+                    "REFRESH MATERIALIZED VIEW 'x_view' INCREMENTAL foobar",
+                    47,
+                    "unexpected token"
+            );
+        });
+    }
+
+    @Test
     public void testRegexOnFunction() throws SqlException {
         assertQuery(
                 "select-choose a from (select-virtual [rnd_str() a] rnd_str() a from (long_sequence(100)) where a ~ '^W')",
@@ -8934,7 +9195,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectSingleTimestampColumn() throws SqlException {
         assertQuery(
-                "select-choose t3 from (select-choose [t3] t, tt, t3 from (select [t3] from x timestamp (t3)) order by t3 desc limit 1)",
+                "select-choose t3 from (select [t3] from x timestamp (t3)) limit -(1)",
                 "select t3 from x limit -1",
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP).timestamp("t3")
         );
@@ -9433,7 +9694,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     for (int i = 0, n = tableModels.length; i < n; i++) {
                         TableModel tableModel = tableModels[i];
                         TableToken tableToken = engine.verifyTableName(tableModel.getName());
-                        path.of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
+                        path.of(tableModel.getConfiguration().getDbRoot()).concat(tableToken).slash$();
                         Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
                     }
                 }
@@ -9475,7 +9736,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         for (int i = 0, n = tableModels.length; i < n; i++) {
                             TableModel tableModel = tableModels[i];
                             TableToken tableToken1 = engine.verifyTableName(tableModel.getName());
-                            path.of(tableModel.getConfiguration().getRoot()).concat(tableToken1).slash$();
+                            path.of(tableModel.getConfiguration().getDbRoot()).concat(tableToken1).slash$();
                             configuration.getFilesFacade().rmdir(path);
                         }
                     }
@@ -9591,7 +9852,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " ts timestamp" +
                         ") timestamp(ts) partition by day",
                 7,
-                "too many arguments"
+                "wrong number of arguments for function `row_number`"
         );
     }
 
@@ -9748,6 +10009,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("a").col("x", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("b").col("y", ColumnType.INT).col("t", ColumnType.TIMESTAMP),
                 modelOf("c").col("z", ColumnType.INT).col("t", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
+    public void testUnionDistinct() throws SqlException {
+        assertQuery(
+                "select-choose [x] x from (select [x] from a) union select-choose [y] y from (select [y] from b) union select-choose [z] z from (select [z] from c)",
+                "select * from a union distinct select * from b union select * from c",
+                modelOf("a").col("x", ColumnType.INT),
+                modelOf("b").col("y", ColumnType.INT),
+                modelOf("c").col("z", ColumnType.INT)
         );
     }
 
@@ -10170,7 +10442,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 for (int i = 0, n = tableModels.length; i < n; i++) {
                     TableModel tableModel = tableModels[i];
                     TableToken tableToken = engine.verifyTableName(tableModel.getName());
-                    path.of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
+                    path.of(tableModel.getConfiguration().getDbRoot()).concat(tableToken).slash$();
                     configuration.getFilesFacade().rmdir(path);
                 }
             }

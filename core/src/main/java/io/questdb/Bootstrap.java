@@ -28,12 +28,12 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogLevel;
 import io.questdb.log.LogRecord;
-import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.Net;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
@@ -90,7 +90,6 @@ public class Bootstrap {
     private final BuildInformation buildInformation;
     private final ServerConfiguration config;
     private final Log log;
-    private final Metrics metrics;
     private final MicrosecondClock microsecondClock;
     private final String rootDirectory;
 
@@ -225,10 +224,7 @@ public class Bootstrap {
             log.errorW().$(e).$();
             throw new BootstrapException(e);
         }
-        if (config.getMetricsConfiguration().isEnabled()) {
-            metrics = Metrics.enabled();
-        } else {
-            metrics = Metrics.disabled();
+        if (!config.getMetricsConfiguration().isEnabled()) {
             log.advisoryW().$("Metrics are disabled, health check endpoint will not consider unhandled errors").$();
         }
         Unsafe.setRssMemLimit(config.getMemoryConfiguration().getResolvedRamUsageLimitBytes());
@@ -270,14 +266,14 @@ public class Bootstrap {
     }
 
     public static void reportCrashFiles(CairoConfiguration cairoConfiguration, Log log) {
-        final CharSequence dbRoot = cairoConfiguration.getRoot();
+        final CharSequence dbRoot = cairoConfiguration.getDbRoot();
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         final int maxFiles = cairoConfiguration.getMaxCrashFiles();
         DirectUtf8StringZ name = new DirectUtf8StringZ();
-        try (
-                Path path = new Path().of(dbRoot).slash();
-                Path other = new Path().of(dbRoot).slash()
-        ) {
+        try (Path path = new Path(); Path other = new Path()) {
+            path.of(dbRoot).slash();
+            other.of(dbRoot).slash();
+
             int plen = path.size();
             AtomicInteger counter = new AtomicInteger(0);
             FilesFacadeImpl.INSTANCE.iterateDir(path.$(), (pUtf8NameZ, type) -> {
@@ -367,10 +363,6 @@ public class Bootstrap {
         return log;
     }
 
-    public Metrics getMetrics() {
-        return metrics;
-    }
-
     public MicrosecondClock getMicrosecondClock() {
         return microsecondClock;
     }
@@ -397,7 +389,7 @@ public class Bootstrap {
     }
 
     public CairoEngine newCairoEngine() {
-        return new CairoEngine(getConfiguration().getCairoConfiguration(), getMetrics());
+        return new CairoEngine(getConfiguration().getCairoConfiguration());
     }
 
     private static void copyInputStream(boolean force, byte[] buffer, File out, InputStream is, Log log) throws IOException {
@@ -476,7 +468,7 @@ public class Bootstrap {
 
     private static void verifyFileOpts(Path path, CairoConfiguration cairoConfiguration) {
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
-        path.of(cairoConfiguration.getRoot()).concat("_verify_").put(cairoConfiguration.getRandom().nextPositiveInt()).put(".d").$();
+        path.of(cairoConfiguration.getDbRoot()).concat("_verify_").put(cairoConfiguration.getRandom().nextPositiveInt()).put(".d").$();
         long fd = ff.openRW(path.$(), cairoConfiguration.getWriterFileOpenOpts());
         try {
             if (fd > -1) {
@@ -569,7 +561,7 @@ public class Bootstrap {
             log.advisoryW().$(" - THIS IS READ ONLY INSTANCE").$();
         }
         try (Path path = new Path()) {
-            verifyFileSystem(path, cairoConfig.getRoot(), "db", true);
+            verifyFileSystem(path, cairoConfig.getDbRoot(), "db", true);
             verifyFileSystem(path, cairoConfig.getBackupRoot(), "backup", true);
             verifyFileSystem(path, cairoConfig.getCheckpointRoot(), TableUtils.CHECKPOINT_DIRECTORY, true);
             verifyFileSystem(path, cairoConfig.getLegacyCheckpointRoot(), TableUtils.LEGACY_CHECKPOINT_DIRECTORY, true);
@@ -681,16 +673,17 @@ public class Bootstrap {
                 sb.append("ILP Client Connection String");
             }
             sb.append("\n\n");
-            final IODispatcherConfiguration httpConf = config.getHttpServerConfiguration();
+            final HttpFullFatServerConfiguration httpConf = config.getHttpServerConfiguration();
             final int bindIP = httpConf.getBindIPv4Address();
             final int bindPort = httpConf.getBindPort();
+            final String contextPathWebConsole = httpConf.getContextPathWebConsole();
             if (bindIP == 0) {
                 try {
                     for (Enumeration<NetworkInterface> ni = NetworkInterface.getNetworkInterfaces(); ni.hasMoreElements(); ) {
                         for (Enumeration<InetAddress> addr = ni.nextElement().getInetAddresses(); addr.hasMoreElements(); ) {
                             InetAddress inetAddress = addr.nextElement();
                             if (inetAddress instanceof Inet4Address) {
-                                String leftCol = schema + "://" + inetAddress.getHostAddress() + ':' + bindPort;
+                                String leftCol = schema + "://" + inetAddress.getHostAddress() + ':' + bindPort + contextPathWebConsole;
                                 sb.append(indent).append(leftCol);
                                 if (ilpEnabled) {
                                     padToNextCol(sb, leftCol.length());

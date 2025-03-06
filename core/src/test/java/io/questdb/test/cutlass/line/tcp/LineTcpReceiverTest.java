@@ -814,39 +814,39 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testShutdownWithDedicatedPoolsCloseIoPoolFirst() throws Exception {
-        long preTestErrors = engine.getMetrics().health().unhandledErrorsCount();
+        long preTestErrors = engine.getMetrics().healthMetrics().unhandledErrorsCount();
 
         assertMemoryLeak(() -> {
             WorkerPool writerPool = new TestWorkerPool("writer", 2, engine.getMetrics());
             WorkerPool ioPool = new TestWorkerPool("io", 2, engine.getMetrics());
             shutdownReceiverWhileSenderIsSendingData(ioPool, writerPool);
 
-            Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount() - preTestErrors);
+            Assert.assertEquals(0, engine.getMetrics().healthMetrics().unhandledErrorsCount() - preTestErrors);
         });
     }
 
     @Test
     public void testShutdownWithDedicatedPoolsCloseWriterPoolFirst() throws Exception {
-        long preTestErrors = engine.getMetrics().health().unhandledErrorsCount();
+        long preTestErrors = engine.getMetrics().healthMetrics().unhandledErrorsCount();
 
         assertMemoryLeak(() -> {
             WorkerPool writerPool = new TestWorkerPool("writer", 2, engine.getMetrics());
             WorkerPool ioPool = new TestWorkerPool("io", 2, engine.getMetrics());
             shutdownReceiverWhileSenderIsSendingData(ioPool, writerPool);
 
-            Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount() - preTestErrors);
+            Assert.assertEquals(0, engine.getMetrics().healthMetrics().unhandledErrorsCount() - preTestErrors);
         });
     }
 
     @Test
     public void testShutdownWithSharedPool() throws Exception {
-        long preTestErrors = engine.getMetrics().health().unhandledErrorsCount();
+        long preTestErrors = engine.getMetrics().healthMetrics().unhandledErrorsCount();
 
         assertMemoryLeak(() -> {
             WorkerPool sharedPool = new TestWorkerPool("shared", 2, engine.getMetrics());
             shutdownReceiverWhileSenderIsSendingData(sharedPool, sharedPool);
 
-            Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount() - preTestErrors);
+            Assert.assertEquals(0, engine.getMetrics().healthMetrics().unhandledErrorsCount() - preTestErrors);
         });
     }
 
@@ -1827,7 +1827,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     private void dropWeatherTable() {
-        engine.dropTable(path, engine.verifyTableName("weather"));
+        engine.dropTableOrMatView(path, engine.verifyTableName("weather"));
     }
 
     private void mayDrainWalQueue() {
@@ -1837,7 +1837,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     private void renameTable(CharSequence from, CharSequence to) {
-        try (MemoryMARW mem = Vm.getMARWInstance(); Path otherPath = new Path()) {
+        try (MemoryMARW mem = Vm.getCMARWInstance(); Path otherPath = new Path()) {
             engine.rename(securityContext, path, mem, from, otherPath, to);
         }
     }
@@ -1907,7 +1907,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                     ioPool.halt();
 
                     long start = System.currentTimeMillis();
-                    while (engine.getMetrics().health().unhandledErrorsCount() == 0) {
+                    while (engine.getMetrics().healthMetrics().unhandledErrorsCount() == 0) {
                         Os.sleep(10);
                         if (System.currentTimeMillis() - start > 1000) {
                             break;

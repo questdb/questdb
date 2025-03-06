@@ -61,7 +61,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     public WalWriterMetadata(FilesFacade ff, boolean readonly) {
         this.ff = ff;
         if (!readonly) {
-            roMetaMem = metaMem = Vm.getMARWInstance();
+            roMetaMem = metaMem = Vm.getCMARWInstance();
         } else {
             metaMem = null;
             roMetaMem = Vm.getCMRInstance();
@@ -169,8 +169,13 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         structureVersion++;
     }
 
-    public void enableDeduplicationWithUpsertKeys() {
+    public boolean enableDeduplicationWithUpsertKeys() {
+        boolean isSubsetOfOldKeys = true;
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            isSubsetOfOldKeys &= isDedupKey(columnIndex);
+        }
         structureVersion++;
+        return isSubsetOfOldKeys;
     }
 
     @Override
@@ -194,7 +199,16 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     @Override
-    public void of(TableToken tableToken, int tableId, int timestampIndex, int compressedTimestampIndex, boolean suspended, long structureVersion, int columnCount, @Transient IntList readColumnOrder) {
+    public void of(
+            TableToken tableToken,
+            int tableId,
+            int timestampIndex,
+            int compressedTimestampIndex,
+            boolean suspended,
+            long structureVersion,
+            int columnCount,
+            @Transient IntList readColumnOrder
+    ) {
         this.tableToken = tableToken;
         this.tableId = tableId;
         this.timestampIndex = timestampIndex;

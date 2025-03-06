@@ -41,6 +41,8 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.ConcurrentCacheConfiguration;
+import io.questdb.std.DefaultConcurrentCacheConfiguration;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjectFactory;
@@ -100,7 +102,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
         this.legacyMode = legacyMode == LegacyMode.LEGACY;
     }
 
-    public static void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
+    public static void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs) throws SQLException {
         assertResultSet(null, expected, sink, rs);
     }
 
@@ -147,7 +149,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
         return createPGWireServer(configuration, cairoEngine, workerPool, false);
     }
 
-    public static long printToSink(StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
+    public static long printToSink(StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException {
         // dump metadata
         ResultSetMetaData metaData = rs.getMetaData();
         final int columnCount = metaData.getColumnCount();
@@ -287,38 +289,42 @@ public abstract class BasePGTest extends AbstractCairoTest {
         Assume.assumeTrue("Test does not support modern mode", legacyMode);
     }
 
-    private static void toSink(InputStream is, Utf16Sink sink) throws IOException {
+    private static void toSink(InputStream is, Utf16Sink sink) {
         // limit what we print
         byte[] bb = new byte[1];
         int i = 0;
-        while (is.read(bb) > 0) {
-            byte b = bb[0];
-            if (i > 0) {
-                if ((i % 16) == 0) {
-                    sink.put('\n');
+        try {
+            while (is.read(bb) > 0) {
+                byte b = bb[0];
+                if (i > 0) {
+                    if ((i % 16) == 0) {
+                        sink.put('\n');
+                        Numbers.appendHexPadded(sink, i);
+                    }
+                } else {
                     Numbers.appendHexPadded(sink, i);
                 }
-            } else {
-                Numbers.appendHexPadded(sink, i);
-            }
-            sink.putAscii(' ');
+                sink.putAscii(' ');
 
-            final int v;
-            if (b < 0) {
-                v = 256 + b;
-            } else {
-                v = b;
-            }
+                final int v;
+                if (b < 0) {
+                    v = 256 + b;
+                } else {
+                    v = b;
+                }
 
-            if (v < 0x10) {
-                sink.putAscii('0');
-                sink.putAscii(hexDigits[b]);
-            } else {
-                sink.putAscii(hexDigits[v / 0x10]);
-                sink.putAscii(hexDigits[v % 0x10]);
-            }
+                if (v < 0x10) {
+                    sink.putAscii('0');
+                    sink.putAscii(hexDigits[b]);
+                } else {
+                    sink.putAscii(hexDigits[v / 0x10]);
+                    sink.putAscii(hexDigits[v % 0x10]);
+                }
 
-            i++;
+                i++;
+            }
+        } catch (IOException e) {
+            throw new RuntimeException(e);
         }
     }
 
@@ -331,7 +337,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
         TestUtils.assertEquals(message, expected, sink);
     }
 
-    protected static void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
+    protected static void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs) throws SQLException {
         sink.clear();
         printToSink(sink, rs, null);
         TestUtils.assertEquals(message, expected, sink);
@@ -456,7 +462,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
         if (configuration.isLegacyModeEnabled() != legacyMode) {
             ((Port0PGWireConfiguration) configuration).isLegacyMode = legacyMode;
         }
-        TestWorkerPool workerPool = new TestWorkerPool(configuration.getWorkerCount(), metrics);
+        TestWorkerPool workerPool = new TestWorkerPool(configuration);
         copyRequestJob = new CopyRequestJob(engine, configuration.getWorkerCount());
 
         workerPool.assign(copyRequestJob);
@@ -493,11 +499,23 @@ public abstract class BasePGTest extends AbstractCairoTest {
             }
         };
 
+        final ConcurrentCacheConfiguration concurrentCacheConfiguration = new DefaultConcurrentCacheConfiguration() {
+            @Override
+            public int getBlocks() {
+                return selectCacheBlockCount == -1 ? super.getBlocks() : selectCacheBlockCount;
+            }
+        };
+
         final PGWireConfiguration conf = new Port0PGWireConfiguration(-1, legacyMode) {
 
             @Override
             public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                 return circuitBreakerConfiguration;
+            }
+
+            @Override
+            public ConcurrentCacheConfiguration getConcurrentCacheConfiguration() {
+                return concurrentCacheConfiguration;
             }
 
             @Override
@@ -513,11 +531,6 @@ public abstract class BasePGTest extends AbstractCairoTest {
             @Override
             public int getRecvBufferSize() {
                 return recvBufferSize;
-            }
-
-            @Override
-            public int getSelectCacheBlockCount() {
-                return selectCacheBlockCount == -1 ? super.getSelectCacheBlockCount() : selectCacheBlockCount;
             }
 
             @Override

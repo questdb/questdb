@@ -82,7 +82,7 @@ tests:
     description: Test inserting and selecting data.
     prepare:
       - action: execute
-        query: "CREATE TABLE ${table_name} (id INT, temperature DOUBLE, timestamp timestamp);"
+        query: "CREATE TABLE ${table_name} (id INT, temperature DOUBLE, b boolean, d date, ch char, timestamp timestamp);"
     steps:
       - loop:
           range:
@@ -91,12 +91,18 @@ tests:
           as: id
           steps:
             - action: execute
-              query: "INSERT INTO ${table_name} (id, temperature, timestamp) VALUES ($[1], $[2], $[3]);"
+              query: "INSERT INTO ${table_name} (id, temperature, b, d, ch, timestamp) VALUES ($[1], $[2], $[3], $[4], $[5], $[6]);"
               parameters:
                 - value: "${id}"
                   type: "INT4"
                 - value: "${id}.5"
                   type: "FLOAT8"
+                - value: "true"
+                  type: "BOOLEAN"
+                - value: "2023-10-01"
+                  type: "DATE"
+                - value: "*"
+                  type: "CHAR"
                 - value: "2023-10-01T10:00:00.000000Z"
                   type: "TIMESTAMP"
               expect:
@@ -109,12 +115,18 @@ tests:
             - [ 1, 10 ]
       - action: execute
         description: Insert a row with a unique timestamp so we can query it later
-        query: "INSERT INTO ${table_name} (id, temperature, timestamp) VALUES ($[1], $[2], $[3]);"
+        query: "INSERT INTO ${table_name} (id, temperature, b, d, ch, timestamp) VALUES ($[1], $[2], $[3], $[4], $[5], $[6]);"
         parameters:
           - value: "11"
             type: "INT4"
           - value: "11.5"
             type: "FLOAT8"
+          - value: "false"
+            type: "BOOLEAN"
+          - value: "2024-10-02"
+            type: "DATE"
+          - value: "-"
+            type: "CHAR"
           - value: "2024-10-01T10:00:00.000000Z"
             type: "TIMESTAMP"
         expect:
@@ -129,7 +141,7 @@ tests:
         # let's use the exact match here since it only returns one row
         expect:
           result:
-            - [ 11, 11.5, "2024-10-01T10:00:00.000000Z" ]
+            - [ 11, 11.5, False, "2024-10-02T00:00:00.000000Z", '-', "2024-10-01T10:00:00.000000Z" ]
       - action: query
         query: "SELECT id, temperature, timestamp FROM ${table_name};"
         expect:
@@ -233,7 +245,7 @@ tests:
             - [ 999, 999.5, '2023-10-01T10:00:00.999000Z', '2023-10-01T10:00:00.999000Z' ]
       - action: execute
         query: "ALTER TABLE ${table_name} DROP COLUMN timestamp;"
-    #        # The action bellow is currently failing with: cached query plan cannot be used because table schema has changed
+    #        # The action below is currently failing with: cached query plan cannot be used because table schema has changed
     #        # The action should be re-enabled once the issue is fixed
     #      - action: query
     #        query: "SELECT * FROM ${table_name} WHERE ts2 = $[1];"
@@ -243,6 +255,39 @@ tests:
     #        expect:
     #          result:
     #            - [ 999, 999.5, '2023-10-01T10:00:00.999000Z' ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS ${table_name};"
+  - name: Select With Limit Test
+    description: Test inserting and selecting data.
+    prepare:
+      - action: execute
+        query: "create table ${table_name} as (select concat('Sym', x%3) col1, x%4 status, timestamp_sequence(20000000, 100000) ts from long_sequence(100)) timestamp(ts) partition by none bypass wal;"
+    steps:
+      - action: query
+        description: Check with first limits
+        query: "SELECT col1, sum(status) as sum, last(ts) as last FROM ${table_name} ORDER BY 2 DESC LIMIT $[1],$[2]"
+        parameters:
+          - value: "1"
+            type: "INT8"
+          - value: "3"
+            type: "INT8"
+        # let's use the exact match here since it only returns one row
+        expect:
+          result:
+            - [ 'Sym2', 50, '1970-01-01T00:00:29.700000Z' ]
+            - [ 'Sym1', 49, '1970-01-01T00:00:29.900000Z' ]
+      - action: query
+        description: Check with second limits
+        query: "SELECT col1, sum(status) as sum, last(ts) as last FROM ${table_name} ORDER BY 2 DESC LIMIT $[1],$[2]"
+        parameters:
+          - value: "1"
+            type: "INT8"
+          - value: "2"
+            type: "INT8"
+        expect:
+          result:
+            - [ 'Sym2', 50, '1970-01-01T00:00:29.700000Z' ]
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS ${table_name};"

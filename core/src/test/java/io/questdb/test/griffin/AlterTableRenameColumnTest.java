@@ -24,9 +24,9 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.AlterTableUtils;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -44,17 +44,17 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
 
     @Test
     public void testExpectActionKeyword() throws Exception {
-        assertFailure("alter table x", 13, AlterTableUtils.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
+        assertFailure("alter table x", 13, SqlCompilerImpl.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
     }
 
     @Test
     public void testExpectTableKeyword() throws Exception {
-        assertFailure("alter x", 6, "'table' expected");
+        assertFailure("alter x", 6, "'table' or 'materialized' expected");
     }
 
     @Test
     public void testExpectTableKeyword2() throws Exception {
-        assertFailure("alter", 5, "'table' expected");
+        assertFailure("alter", 5, "'table' or 'materialized' expected");
     }
 
     @Test

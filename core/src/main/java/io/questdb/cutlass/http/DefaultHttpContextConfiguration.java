@@ -26,6 +26,7 @@ package io.questdb.cutlass.http;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.NanosecondClock;
@@ -79,6 +80,21 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     public String getHttpVersion() {
         // trailing space is important
         return "HTTP/1.1 ";
+    }
+
+    @Override
+    public int getIlpConnectionLimit() {
+        return -1;
+    }
+
+    @Override
+    public int getJsonQueryConnectionLimit() {
+        return -1;
+    }
+
+    @Override
+    public Metrics getMetrics() {
+        return Metrics.ENABLED;
     }
 
     @Override

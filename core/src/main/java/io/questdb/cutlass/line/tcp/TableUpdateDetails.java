@@ -24,16 +24,39 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitFailedException;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.BitSet;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Pool;
+import io.questdb.std.Utf8StringIntHashMap;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.*;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -145,7 +168,7 @@ public class TableUpdateDetails implements Closeable {
                     .$("network IO thread using table [workerId=").$(workerId)
                     .$(", tableName=").$(tableToken)
                     .$(", nNetworkIoWorkers=").$(networkIOOwnerCount)
-                    .$(']').$();
+                    .I$();
         }
     }
 
@@ -476,7 +499,7 @@ public class TableUpdateDetails implements Closeable {
                     return NOT_FOUND_LOOKUP;
                 }
                 final CairoConfiguration cairoConfiguration = engine.getConfiguration();
-                path.of(cairoConfiguration.getRoot()).concat(tableToken);
+                path.of(cairoConfiguration.getDbRoot()).concat(tableToken);
                 SymbolCache symCache = symbolCachePool.pop();
 
                 if (this.clean) {
@@ -613,7 +636,7 @@ public class TableUpdateDetails implements Closeable {
             columnTypeByNameUtf8.clear();
             for (int n = 0, sz = symbolCacheByColumnIndex.size(); n < sz; n++) {
                 SymbolCache symCache = symbolCacheByColumnIndex.getQuick(n);
-                if (null != symCache) {
+                if (symCache != null) {
                     symCache.close();
                     symbolCachePool.push(symCache);
                 }

@@ -87,7 +87,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 for (int i = 0; i < M; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);
                     row.putStr(0, rnd.nextChars(20));
@@ -99,7 +99,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 String value = symbols[N - 10];
                 int columnIndex;
                 int symbolKey;
@@ -131,7 +131,8 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                             false,
                             columnIndexes,
                             columnSizes,
-                            true
+                            true,
+                            false
                     );
                     try (
                             SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine);
@@ -220,7 +221,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
 
             // prepare the data, writing rows in the backward direction
             long timestamp = 0;
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 int iIndex = writer.getColumnIndex("i");
                 int jIndex = -1;
                 int sIndex = -1;
@@ -246,7 +247,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 GenericRecordMetadata metadata;
                 try (TableReader reader = engine.getReader("x")) {
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
@@ -268,7 +269,8 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                             true,
                             columnIndexes,
                             columnSizes,
-                            true
+                            true,
+                            false
                     )) {
 
                         Assert.assertTrue(factory.supportsPageFrameCursor());
@@ -332,7 +334,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
 
             // prepare the data
             long timestamp = 0;
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
                 int iIndex = writer.getColumnIndex("i");
                 int jIndex = -1;
                 int sIndex = -1;
@@ -355,7 +357,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
+            try (CairoEngine engine = new CairoEngine(configuration)) {
                 GenericRecordMetadata metadata;
                 try (TableReader reader = engine.getReader("x")) {
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
@@ -377,7 +379,8 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                             true,
                             columnIndexes,
                             columnSizes,
-                            true
+                            true,
+                            false
                     )) {
 
                         Assert.assertTrue(factory.supportsPageFrameCursor());

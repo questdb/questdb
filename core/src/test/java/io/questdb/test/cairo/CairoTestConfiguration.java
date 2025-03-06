@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.CairoConfiguration;
@@ -44,17 +45,25 @@ import org.jetbrains.annotations.NotNull;
 import java.util.Map;
 
 public class CairoTestConfiguration extends CairoConfigurationWrapper {
+    private final String dbRoot;
+    private final String installRoot;
     private final Overrides overrides;
-    private final String root;
     private final String snapshotRoot;
     private final TelemetryConfiguration telemetryConfiguration;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
 
-    public CairoTestConfiguration(CharSequence root, TelemetryConfiguration telemetryConfiguration, Overrides overrides) {
-        this.root = Chars.toString(root);
-        this.snapshotRoot = Chars.toString(root) + Files.SEPARATOR + TableUtils.CHECKPOINT_DIRECTORY;
+    public CairoTestConfiguration(CharSequence dbRoot, TelemetryConfiguration telemetryConfiguration, Overrides overrides) {
+        super(Metrics.ENABLED);
+        this.dbRoot = Chars.toString(dbRoot);
+        this.installRoot = java.nio.file.Paths.get(this.dbRoot).getParent().toAbsolutePath().toString();
+        this.snapshotRoot = Chars.toString(dbRoot) + Files.SEPARATOR + TableUtils.CHECKPOINT_DIRECTORY;
         this.telemetryConfiguration = telemetryConfiguration;
         this.overrides = overrides;
+    }
+
+    @Override
+    public boolean freeLeakedReaders() {
+        return overrides.freeLeakedReaders();
     }
 
     @Override
@@ -65,6 +74,11 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     @Override
     public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return AbstractCairoTest.staticOverrides.getCircuitBreakerConfiguration() != null ? AbstractCairoTest.staticOverrides.getCircuitBreakerConfiguration() : super.getCircuitBreakerConfiguration();
+    }
+
+    @Override
+    public @NotNull String getDbRoot() {
+        return dbRoot;
     }
 
     @Override
@@ -86,6 +100,11 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     @Override
     public long getInactiveWalWriterTTL() {
         return -10000;
+    }
+
+    @Override
+    public @NotNull String getInstallRoot() {
+        return installRoot;
     }
 
     @Override
@@ -112,11 +131,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     public int getPartitionPurgeListCapacity() {
         // Bump it to high number so that test doesn't fail with memory leak if LongList re-allocates
         return 512;
-    }
-
-    @Override
-    public @NotNull String getRoot() {
-        return root;
     }
 
     @Override
@@ -161,6 +175,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
 
     @Override
     protected CairoConfiguration getDelegate() {
-        return overrides.getConfiguration(root);
+        return overrides.getConfiguration(dbRoot);
     }
 }

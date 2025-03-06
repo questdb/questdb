@@ -25,9 +25,18 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.InsertMethod;
+import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -46,6 +55,7 @@ import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -67,6 +77,12 @@ public class InsertTest extends AbstractCairoTest {
         return Arrays.asList(new Object[][]{{false}, {true}});
     }
 
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
+        AbstractCairoTest.setUpStatic();
+    }
+
     public void assertReaderCheckWal(String expected, CharSequence tableName) {
         if (walEnabled) {
             drainWalQueue();
@@ -78,6 +94,8 @@ public class InsertTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
+        node1.setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
+        engine.getMatViewGraph().clear();
     }
 
     @Test
@@ -109,6 +127,25 @@ public class InsertTest extends AbstractCairoTest {
 
             execute("insert into currencies select 'GBP', max(id) + 1, '2019-03-10T02:00:00.000000Z' from currencies");
             assertSql("ccy\tid\tts\n" + "USD\t1\t2019-03-10T00:00:00.000000Z\n" + "EUR\t2\t2019-03-10T01:00:00.000000Z\n" + "GBP\t3\t2019-03-10T02:00:00.000000Z\n", "currencies");
+        });
+    }
+
+    @Test
+    public void testCannotInsertIntoMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table currencies(ccy symbol, id long, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into currencies values ('USD', 1, '2019-03-10T00:00:00.000000Z')");
+            execute("insert into currencies select 'EUR', max(id) + 1, '2019-03-10T01:00:00.000000Z' from currencies");
+            execute("insert into currencies select 'GBP', max(id) + 1, '2019-03-10T02:00:00.000000Z' from currencies");
+
+            execute("create materialized view curr_view as (select ts, max(id) as id from currencies sample by 1h) partition by day");
+            try {
+                execute("insert into curr_view values ('SEK', 3, '2019-03-10T03:00:00.000000Z')");
+                Assert.fail("INSERT should fail");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot modify materialized view [view=curr_view]");
+                Assert.assertEquals(12, e.getPosition());
+            }
         });
     }
 
@@ -362,7 +399,6 @@ public class InsertTest extends AbstractCairoTest {
         assertInsertTimestamp("seq\tts\n" + "1\t1970-01-01T00:00:00.123456Z\n", "with x as (select 1, '123456'::varchar) insert atomic into tab select * from x", null, false);
     }
 
-
     @Test
     public void testInsertContextSwitch() throws Exception {
         assertMemoryLeak(() -> {
@@ -612,6 +648,19 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertIntoNonExistingTable() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("insert into tab values (1)");
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=tab]");
+                Assert.assertEquals(12, e.getPosition());
+            }
+        });
+    }
+
+    @Test
     public void testInsertInvalidColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
@@ -809,6 +858,19 @@ public class InsertTest extends AbstractCairoTest {
             execute("create table tab (id int, val symbol index)");
             execute("insert into tab values (1, null::varchar)");
             assertSql("id\n1\n", "select id from tab where val = null");
+        });
+    }
+
+    @Test
+    public void testInsertSelectTwoWheres() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table result (r long)");
+
+            assertExceptionNoLeakCheck(
+                    "insert into result select * from long_sequence(1) where true where false;",
+                    61,
+                    "unexpected token [where]"
+            );
         });
     }
 
@@ -1176,19 +1238,6 @@ public class InsertTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testInsertSelectTwoWheres() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table result (r long)");
-
-            assertExceptionNoLeakCheck(
-                    "insert into result select * from long_sequence(1) where true where false;",
-                    61,
-                    "unexpected token [where]"
-            );
-        });
-    }
-
     private void assertInsertTimestamp(String expected, String ddl2, Class<?> exceptionType, boolean commitInsert) throws Exception {
         assertMemoryLeak(() -> {
             if (commitInsert) {
@@ -1245,7 +1294,7 @@ public class InsertTest extends AbstractCairoTest {
                     }
                     assertSql(expected, "tab");
                 } catch (Throwable e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     if (exceptionType == null) throw e;
                     Assert.assertSame(exceptionType, e.getClass());
                     TestUtils.assertContains(e.getMessage(), expected);

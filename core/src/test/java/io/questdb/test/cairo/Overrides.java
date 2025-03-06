@@ -59,6 +59,7 @@ public class Overrides {
     private Map<String, String> env = null;
     private FactoryProvider factoryProvider = null;
     private FilesFacade ff;
+    private boolean freeLeakedReaders = false;
     private boolean isHiddenTelemetryTable = false;
     private boolean mangleTableDirNames = true;
     private CairoConfiguration propsConfig;
@@ -67,6 +68,14 @@ public class Overrides {
 
     public Overrides() {
         resetToDefaultTestProperties(defaultProperties);
+    }
+
+    public void freeLeakedReaders(boolean freeLeakedReaders) {
+        this.freeLeakedReaders = freeLeakedReaders;
+    }
+
+    public boolean freeLeakedReaders() {
+        return freeLeakedReaders;
     }
 
     public CairoConfiguration getConfiguration(String root) {
@@ -133,6 +142,7 @@ public class Overrides {
         properties.clear();
         changed = true;
         spinLockTimeout = AbstractCairoTest.DEFAULT_SPIN_LOCK_TIMEOUT;
+        freeLeakedReaders = false;
     }
 
     public void setCurrentMicros(long currentMicros) {
@@ -179,7 +189,7 @@ public class Overrides {
         this.rostiAllocFacade = rostiAllocFacade;
     }
 
-    private static CairoConfiguration getTestConfiguration(String root, Properties defaultProperties, Properties properties) {
+    private static CairoConfiguration getTestConfiguration(String installRoot, Properties defaultProperties, Properties properties) {
         Properties props = new Properties();
         props.putAll(defaultProperties);
         if (properties != null) {
@@ -189,8 +199,9 @@ public class Overrides {
         PropServerConfiguration propCairoConfiguration;
         try {
             propCairoConfiguration = new PropServerConfiguration(
-                    root,
+                    installRoot,
                     props,
+                    null,
                     new HashMap<>(),
                     LOG,
                     buildInformationHolder,
@@ -228,6 +239,7 @@ public class Overrides {
         properties.setProperty(PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_MAX_CHUNK_SIZE.getPropertyPath(), "1073741824");
         properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY.getPropertyPath(), "32");
         properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD.getPropertyPath(), "1000");
+        properties.setProperty(PropertyKey.CAIRO_ID_GENERATE_STEP.getPropertyPath(), "512");
         properties.setProperty(PropertyKey.CAIRO_IDLE_CHECK_INTERVAL.getPropertyPath(), "100");
         properties.setProperty(PropertyKey.CAIRO_INACTIVE_READER_TTL.getPropertyPath(), "-10000");
         properties.setProperty(PropertyKey.CAIRO_INACTIVE_WRITER_TTL.getPropertyPath(), "-10000");

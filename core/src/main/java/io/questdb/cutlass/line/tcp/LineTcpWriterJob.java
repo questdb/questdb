@@ -72,7 +72,7 @@ class LineTcpWriterJob implements Job, Closeable {
 
     @Override
     public void close() {
-        LOG.info().$("line protocol writer closing [threadId=").$(workerId).$(']').$();
+        LOG.info().$("line protocol writer closing [workerId=").$(workerId).I$();
         // Finish all jobs in the queue before stopping
         for (int n = 0; n < queue.getCycle(); n++) {
             if (!run(workerId, Job.TERMINATING_STATUS)) {
@@ -118,7 +118,7 @@ class LineTcpWriterJob implements Job, Closeable {
                             .$("commit failed [table=").$(assignedTables.getQuick(n).getTableToken())
                             .$(",ex=").$(ex)
                             .I$();
-                    metrics.health().incrementUnhandledErrors();
+                    metrics.healthMetrics().incrementUnhandledErrors();
                 }
             }
             // if no tables, just use the default commit interval
@@ -156,7 +156,7 @@ class LineTcpWriterJob implements Job, Closeable {
                                 nextCommitTime = millisecondClock.getTicks();
                                 LOG.info()
                                         .$("assigned table to writer thread [tableName=").$(tud.getTableToken())
-                                        .$(", threadId=").$(workerId)
+                                        .$(", workerId=").$(workerId)
                                         .I$();
                             }
                             event.append();
@@ -167,7 +167,7 @@ class LineTcpWriterJob implements Job, Closeable {
                                 .$("closing writer because of error [table=").$(tud.getTableToken())
                                 .$(", ex=").$(ex)
                                 .I$();
-                        metrics.health().incrementUnhandledErrors();
+                        metrics.healthMetrics().incrementUnhandledErrors();
                         closeWriter = true;
                         event.createWriterReleaseEvent(tud, false);
                         // This is a critical error, so we treat it as an unhandled one.

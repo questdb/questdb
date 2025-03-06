@@ -227,7 +227,7 @@ public class UnionTest extends AbstractCairoTest {
                         "except " +
                         "select 1  " +
                         "union all " +
-                        "select 3 from long_sequence(1) limit 1", null, null, false, false);
+                        "select 3 from long_sequence(1) limit 1", null, null, false, true);
     }
 
     @Test
@@ -247,7 +247,7 @@ public class UnionTest extends AbstractCairoTest {
                         "intersect " +
                         "select * from (select x from long_sequence(4) order by x limit 2) " +
                         "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, false);
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true);
     }
 
     @Test
@@ -257,7 +257,7 @@ public class UnionTest extends AbstractCairoTest {
                         "intersect " +
                         "select * from (select x from long_sequence(4) order by x limit 2) " +
                         "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, false);
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true);
     }
 
     @Test
@@ -268,7 +268,7 @@ public class UnionTest extends AbstractCairoTest {
                         "intersect " +
                         "select * from (select x from long_sequence(4) order by x*2 limit 2) " +
                         "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, false);
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true);
     }
 
     @Test
@@ -1226,6 +1226,36 @@ public class UnionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionDistinctSymbolAndString() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table table1 as \n" +
+                    "(\n" +
+                    "  select cast(x as symbol) as sym1 \n" +
+                    "  from long_sequence(3)\n" +
+                    ")");
+            execute("create table table3 as \n" +
+                    "(\n" +
+                    "  select cast(x+2 as string) as str3\n" +
+                    "  from long_sequence(3)\n" +
+                    ")");
+
+            assertQueryNoLeakCheck(
+                    "sym1\n" +
+                            "1\n" +
+                            "2\n" +
+                            "3\n" +
+                            "4\n" +
+                            "5\n",
+                    "select sym1 from table1 \n" +
+                            "union distinct\n" +
+                            "select str3 from table3",
+                    null,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testUnionGroupBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x1 as (select rnd_symbol('b', 'c', 'a') s, rnd_double() val from long_sequence(20))", sqlExecutionContext);
@@ -1286,6 +1316,6 @@ public class UnionTest extends AbstractCairoTest {
                         "intersect " +
                         "select * from (select x from long_sequence(4) order by x limit 2) " +
                         "union all " +
-                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, false);
+                        "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true);
     }
 }

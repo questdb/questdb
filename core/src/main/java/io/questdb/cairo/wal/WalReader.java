@@ -76,11 +76,11 @@ public class WalReader implements Closeable {
 
         ff = configuration.getFilesFacade();
         path = new Path();
-        path.of(configuration.getRoot()).concat(tableToken.getDirName()).concat(walName);
+        path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(walName);
         rootLen = path.size();
 
         try {
-            metadata = new SequencerMetadata(ff, true);
+            metadata = new SequencerMetadata(ff, configuration.getCommitMode(), true);
             metadata.open(path.slash().put(segmentId), rootLen, tableToken);
             columnCount = metadata.getColumnCount();
             events = new WalEventReader(ff);

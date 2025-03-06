@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.ptt.IsoDatePartitionFormat;
 import io.questdb.cairo.ptt.IsoWeekPartitionFormat;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseUtf8SequenceIntHashMap;
 import io.questdb.std.NumericException;
@@ -53,8 +54,7 @@ public final class PartitionBy {
     public static final int HOUR = 4;
     public static final int MONTH = 1;
     /**
-     * Data is not partitioned at all,
-     * all data is stored in a single directory
+     * Data is not partitioned at all, all data is stored in a single directory
      */
     public static final int NONE = 3;
     public static final int WEEK = 5;
@@ -97,6 +97,7 @@ public final class PartitionBy {
     private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(FLOOR_YYYY, YEAR_FORMAT);
     private static final LowerCaseCharSequenceIntHashMap nameToIndexMap = new LowerCaseCharSequenceIntHashMap();
     private static final LowerCaseUtf8SequenceIntHashMap nameToIndexMapUtf8 = new LowerCaseUtf8SequenceIntHashMap();
+    private static final LowerCaseCharSequenceIntHashMap ttlUnitToIndexMap = new LowerCaseCharSequenceIntHashMap();
 
     private PartitionBy() {
     }
@@ -233,7 +234,7 @@ public final class PartitionBy {
                 // maybe the user used a timestamp, or a date, string.
                 int localLimit = DAY_PATTERN.length();
                 try {
-                    // trim to lowest precision needed and get the timestamp
+                    // trim to the lowest precision needed and get the timestamp
                     // convert timestamp to first day of the week
                     return Timestamps.floorDOW(DAY_FORMAT.parse(partitionName, 0, localLimit, DateFormatUtils.EN_LOCALE));
                 } catch (NumericException ignore) {
@@ -269,6 +270,41 @@ public final class PartitionBy {
             default:
                 return "UNKNOWN";
         }
+    }
+
+    public static int ttlUnitFromString(CharSequence name, int start, int limit) {
+        return ttlUnitToIndexMap.valueAt(ttlUnitToIndexMap.keyIndex(name, start, limit));
+    }
+
+    public static void validateTtlGranularity(int partitionBy, int ttlHoursOrMonths, int ttlValuePos) throws SqlException {
+        switch (partitionBy) {
+            case NONE:
+                throw SqlException.position(ttlValuePos).put("cannot set TTL on a non-partitioned table");
+            case DAY:
+                if (ttlHoursOrMonths < 0 || ttlHoursOrMonths % 24 == 0) {
+                    return;
+                }
+                break;
+            case WEEK:
+                if (ttlHoursOrMonths < 0 || ttlHoursOrMonths % (24 * 7) == 0) {
+                    return;
+                }
+                break;
+            case MONTH:
+                if (ttlHoursOrMonths < 0) {
+                    return;
+                }
+                break;
+            case YEAR:
+                if (ttlHoursOrMonths < 0 && ttlHoursOrMonths % 12 == 0) {
+                    return;
+                }
+                break;
+            default:
+                return;
+        }
+        throw SqlException.position(ttlValuePos)
+                .put("TTL value must be an integer multiple of partition size");
     }
 
     private static CairoException expectedPartitionDirNameFormatCairoException(CharSequence partitionName, int lo, int hi, int partitionBy) {
@@ -324,5 +360,21 @@ public final class PartitionBy {
         nameToIndexMapUtf8.put(new Utf8String("hour"), HOUR);
         nameToIndexMapUtf8.put(new Utf8String("week"), WEEK);
         nameToIndexMapUtf8.put(new Utf8String("none"), NONE);
+
+        ttlUnitToIndexMap.put("h", HOUR);
+        ttlUnitToIndexMap.put("hour", HOUR);
+        ttlUnitToIndexMap.put("hours", HOUR);
+        ttlUnitToIndexMap.put("d", DAY);
+        ttlUnitToIndexMap.put("day", DAY);
+        ttlUnitToIndexMap.put("days", DAY);
+        ttlUnitToIndexMap.put("w", WEEK);
+        ttlUnitToIndexMap.put("week", WEEK);
+        ttlUnitToIndexMap.put("weeks", WEEK);
+        ttlUnitToIndexMap.put("m", MONTH);
+        ttlUnitToIndexMap.put("month", MONTH);
+        ttlUnitToIndexMap.put("months", MONTH);
+        ttlUnitToIndexMap.put("y", YEAR);
+        ttlUnitToIndexMap.put("year", YEAR);
+        ttlUnitToIndexMap.put("years", YEAR);
     }
 }

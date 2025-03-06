@@ -66,7 +66,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
     @Before
     public void setUp() {
         super.setUp();
-        triggerFilePath.of(engine.getConfiguration().getRoot()).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
+        triggerFilePath.of(engine.getConfiguration().getDbRoot()).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
     }
 
     @Test
@@ -82,6 +82,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 0,
                 0,
                 1,
+                0.5,
                 0.0,
                 0,
                 0,
@@ -122,10 +123,11 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 0,
                 0,
                 0.1,
+                0.5,
                 0.0,
                 0,
                 1,
-                0.5
+                0.0
         );
 
         fuzzer.setFuzzCounts(
@@ -166,8 +168,8 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         CairoConfiguration conf = engine.getConfiguration();
 
         FilesFacade ff = conf.getFilesFacade();
-        Path snapshotPath = Path.getThreadLocal(conf.getRoot()).put(TableUtils.CHECKPOINT_META_FILE_NAME);
-        Path rootPath = Path.getThreadLocal2(conf.getRoot());
+        Path snapshotPath = Path.getThreadLocal(conf.getDbRoot()).put(TableUtils.CHECKPOINT_META_FILE_NAME);
+        Path rootPath = Path.getThreadLocal2(conf.getDbRoot());
 
         ff.mkdirs(snapshotPath, conf.getMkDirMode());
 
@@ -192,8 +194,8 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
 
         CairoConfiguration conf = engine.getConfiguration();
         FilesFacade ff = conf.getFilesFacade();
-        Path snapshotPath = Path.getThreadLocal(conf.getRoot()).put(TableUtils.CHECKPOINT_META_FILE_NAME).slash();
-        Path rootPath = Path.getThreadLocal2(conf.getRoot()).slash();
+        Path snapshotPath = Path.getThreadLocal(conf.getDbRoot()).put(TableUtils.CHECKPOINT_META_FILE_NAME).slash();
+        Path rootPath = Path.getThreadLocal2(conf.getDbRoot()).slash();
 
         ff.rmdir(rootPath);
         ff.rename(snapshotPath.$(), rootPath.$());
@@ -259,9 +261,11 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 rnd.nextDouble(),
+                0.01,
                 0.0,
                 0.1 * rnd.nextDouble(),
-                rnd.nextDouble(), 0.01
+                rnd.nextDouble(),
+                0.0
         );
 
         fuzzer.setFuzzCounts(

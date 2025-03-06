@@ -27,7 +27,11 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -43,7 +47,7 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
     protected final int pageFrameMaxRows;
     protected final int pageFrameMinRows;
     protected final PartitionFrameCursorFactory partitionFrameCursorFactory;
-    protected PageFrameCursor pageFrameCursor;
+    protected TablePageFrameCursor pageFrameCursor;
 
     public AbstractPageFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -88,10 +92,11 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     protected void _close() {
+        Misc.free(pageFrameCursor);
         Misc.free(partitionFrameCursorFactory);
     }
 
-    protected PageFrameCursor initPageFrameCursor(SqlExecutionContext executionContext) throws SqlException {
+    protected TablePageFrameCursor initPageFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         final int order = partitionFrameCursorFactory.getOrder();
         PartitionFrameCursor partitionFrameCursor = partitionFrameCursorFactory.getCursor(executionContext, ORDER_ANY);
         if (pageFrameCursor == null) {

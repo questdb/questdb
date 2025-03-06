@@ -39,6 +39,9 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -68,7 +71,7 @@ public class TxnTest extends AbstractCairoTest {
 
                 try (Path path = new Path()) {
                     TableToken tableToken = engine.verifyTableName(tableName);
-                    path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                    path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                     int testPartitionCount = 3000;
                     try (TxWriter txWriter = new TxWriter(cleanFf, configuration).ofRW(path.$(), PartitionBy.DAY)) {
                         // Add lots of partitions
@@ -110,6 +113,39 @@ public class TxnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLoadTxn() throws IOException {
+        try (Path p = new Path()) {
+            final String incrementalLoad;
+            try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
+                loadTxnWriter(tw, p, "/txn/sys.acl_entities~1/_txn");
+                loadTxnWriter(tw, p, "/txn/sys.acl_passwords~5/_txn");
+                incrementalLoad = tw.toString();
+            }
+
+            try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
+                loadTxnWriter(tw, p, "/txn/sys.acl_passwords~5/_txn");
+                TestUtils.assertEquals(incrementalLoad, tw.toString());
+            }
+        }
+    }
+
+    private static void loadTxnWriter(TxWriter tw, Path p, String resourceFile) throws IOException {
+        try (final InputStream is = TxnTest.class.getResourceAsStream(resourceFile)) {
+            // Create temp file
+            java.nio.file.Path tempFile = java.nio.file.Files.createTempFile("test-", ".tmp");
+            tempFile.toFile().deleteOnExit(); // Ensure it is deleted on exit
+
+            // Copy resource content to temp file
+            java.nio.file.Files.copy(Objects.requireNonNull(is), tempFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+
+            p.of(tempFile.toString()).$();
+            tw.ofRW(p.$(), PartitionBy.MONTH);
+            tw.unsafeLoadAll();
+        }
+
+    }
+
+    @Test
     public void testToString() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade ff = engine.getConfiguration().getFilesFacade();
@@ -122,7 +158,7 @@ public class TxnTest extends AbstractCairoTest {
 
                 try (Path path = new Path()) {
                     TableToken tableToken = engine.verifyTableName(tableName);
-                    path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                    path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                     int testPartitionCount = 2;
                     try (TxWriter txWriter = new TxWriter(ff, configuration).ofRW(path.$(), PartitionBy.DAY)) {
                         for (int i = 0; i < testPartitionCount; i++) {
@@ -183,7 +219,7 @@ public class TxnTest extends AbstractCairoTest {
                             TxReader txReader = new TxReader(ff)
                     ) {
                         TableToken tableToken = engine.verifyTableName(tableName);
-                        path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                        path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                         txReader.ofRO(path.$(), PartitionBy.HOUR);
                         MillisecondClock clock = engine.getConfiguration().getMillisecondClock();
                         long duration = 5_000;
@@ -279,7 +315,7 @@ public class TxnTest extends AbstractCairoTest {
                             TxReader txReader = new TxReader(ff)
                     ) {
                         TableToken tableToken = engine.verifyTableName(tableName);
-                        path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                        path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                         txReader.ofRO(path.$(), PartitionBy.HOUR);
                         MillisecondClock clock = engine.getConfiguration().getMillisecondClock();
                         long duration = 5_000;
@@ -382,7 +418,7 @@ public class TxnTest extends AbstractCairoTest {
                     TxWriter txWriter = new TxWriter(ff, configuration)
             ) {
                 TableToken tableToken = engine.verifyTableName(tableName);
-                path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                path.of(engine.getConfiguration().getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
                 txWriter.ofRW(path.$(), PartitionBy.HOUR);
 
                 start.await();

@@ -45,6 +45,7 @@ public final class Numbers {
     public static final double DOUBLE_TOLERANCE = 0.0000000001;
     public static final int INT_NULL = Integer.MIN_VALUE;
     public static final int IPv4_NULL = 0;
+    public static final long JULIAN_EPOCH_OFFSET_MILLIS = 946684800000L;
     public static final long JULIAN_EPOCH_OFFSET_USEC = 946684800000000L;
     public static final long LONG_NULL = Long.MIN_VALUE;
     public static final int MAX_DOUBLE_SCALE = 19;
@@ -464,6 +465,16 @@ public final class Numbers {
             sink.putAscii(hexDigits[(c = c % 0x100) / 0x10]);
             sink.putAscii(hexDigits[c % 0x10]);
         }
+    }
+
+    public static void appendLong256(Long256 long256, CharSink<?> sink) {
+        appendLong256(
+                long256.getLong0(),
+                long256.getLong1(),
+                long256.getLong2(),
+                long256.getLong3(),
+                sink
+        );
     }
 
     public static void appendLong256(long a, long b, long c, long d, CharSink<?> sink) {
@@ -1414,12 +1425,12 @@ public final class Numbers {
 
     public static long parseLongQuiet(CharSequence sequence) {
         if (sequence == null) {
-            return Long.MIN_VALUE;
+            return LONG_NULL;
         }
         try {
             return parseLong0(sequence, 0, sequence.length());
         } catch (NumericException e) {
-            return Long.MIN_VALUE;
+            return LONG_NULL;
         }
     }
 
@@ -2022,6 +2033,10 @@ public final class Numbers {
         long signMask = valueBits & Numbers.SIGN_BIT_MASK;
         double absValue = Double.longBitsToDouble(valueBits & ~Numbers.SIGN_BIT_MASK);
         return Double.longBitsToDouble(Double.doubleToRawLongBits(roundUp00PosScale(absValue, scale)) | signMask);
+    }
+
+    public static boolean sameSign(long a, long b) {
+        return (a ^ b) >= 0;
     }
 
     public static int sinkSizeIPv4(int value) {

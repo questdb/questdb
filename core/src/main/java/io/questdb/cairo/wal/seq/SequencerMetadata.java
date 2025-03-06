@@ -30,6 +30,9 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.mv.MatViewRefreshState;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -49,6 +52,7 @@ import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class SequencerMetadata extends AbstractRecordMetadata implements TableRecordMetadata, Closeable {
+    private final int commitMode;
     private final FilesFacade ff;
     private final MemoryMARW metaMem;
     private final IntList readColumnOrder = new IntList();
@@ -59,15 +63,16 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     private int tableId;
     private TableToken tableToken;
 
-    public SequencerMetadata(FilesFacade ff) {
-        this(ff, false);
+    public SequencerMetadata(FilesFacade ff, int commitMode) {
+        this(ff, commitMode, false);
     }
 
-    public SequencerMetadata(FilesFacade ff, boolean readonly) {
+    public SequencerMetadata(FilesFacade ff, int commitMode, boolean readonly) {
         this.ff = ff;
+        this.commitMode = commitMode;
         this.readonly = readonly;
         if (!readonly) {
-            roMetaMem = metaMem = Vm.getMARWInstance();
+            roMetaMem = metaMem = Vm.getCMARWInstance();
         } else {
             metaMem = null;
             roMetaMem = Vm.getCMRInstance();
@@ -132,6 +137,18 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         }
         metaMem.sync(false);
         metaMem.close(true, Vm.TRUNCATE_TO_POINTER);
+
+        if (writeInitialMetadata && tableStruct.isMatView()) {
+            assert tableStruct.getMatViewDefinition() != null;
+            try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
+                writer.of(path.trimTo(pathLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                MatViewDefinition.append(tableStruct.getMatViewDefinition(), writer);
+                writer.of(path.trimTo(pathLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                MatViewRefreshState.append(null, writer);
+            }
+            path.trimTo(pathLen);
+        }
+
         switchTo(path, pathLen);
     }
 
@@ -144,8 +161,9 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         syncToMetaFile();
     }
 
-    public void enableDeduplicationWithUpsertKeys() {
+    public boolean enableDeduplicationWithUpsertKeys() {
         structureVersion.incrementAndGet();
+        return false;
     }
 
     @Override

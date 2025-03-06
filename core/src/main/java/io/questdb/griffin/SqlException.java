@@ -35,9 +35,9 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class SqlException extends Exception implements Sinkable, FlyweightMessageContainer {
-
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
-    private static final int EXCEPTION_TABLE_DOES_NOT_EXIST = -102;
+    private static final int EXCEPTION_MAT_VIEW_DOES_NOT_EXIST = -106;
+    private static final int EXCEPTION_TABLE_DOES_NOT_EXIST = -105;
     private static final ThreadLocal<SqlException> tlException = new ThreadLocal<>(SqlException::new);
     private final StringSink message = new StringSink();
     private int error;
@@ -101,6 +101,14 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return position(position).put("Invalid date");
     }
 
+    public static SqlException matViewDoesNotExist(int position, CharSequence tableName) {
+        return position(position).errorCode(EXCEPTION_MAT_VIEW_DOES_NOT_EXIST).put("materialized view does not exist [view=").put(tableName).put(']');
+    }
+
+    public static SqlException nonDeterministicColumn(int position, CharSequence column) {
+        return position(position).put("Non-deterministic column: ").put(column);
+    }
+
     public static SqlException parserErr(int position, @Nullable CharSequence tok, @NotNull CharSequence msg) {
         return tok == null ?
                 SqlException.$(position, msg)
@@ -129,6 +137,10 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
 
     public static SqlException unexpectedToken(int position, CharSequence token) {
         return position(position).put("unexpected token [").put(token).put(']');
+    }
+
+    public static SqlException unexpectedToken(int position, CharSequence token, @NotNull CharSequence extraMessage) {
+        return position(position).put("unexpected token [").put(token).put("] - ").put(extraMessage);
     }
 
     public static SqlException unsupportedCast(int position, CharSequence columnName, int fromType, int toType) {

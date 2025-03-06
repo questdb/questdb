@@ -265,7 +265,9 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public long getPartitionFloor(long timestamp) {
-        return partitionFloorMethod != null ? (timestamp != Long.MIN_VALUE ? partitionFloorMethod.floor(timestamp) : Long.MIN_VALUE) : DEFAULT_PARTITION_TIMESTAMP;
+        return partitionFloorMethod != null
+                ? (timestamp != Long.MIN_VALUE ? partitionFloorMethod.floor(timestamp) : Long.MIN_VALUE)
+                : DEFAULT_PARTITION_TIMESTAMP;
     }
 
     public int getPartitionIndex(long ts) {
@@ -591,17 +593,6 @@ public class TxReader implements Closeable, Mutable {
         return ((maskedSize >>> bitOffset) & 1) == 1;
     }
 
-    private void clearData() {
-        baseOffset = 0;
-        size = 0L;
-        partitionTableVersion = -1L;
-        attachedPartitionsSize = -1;
-        attachedPartitions.clear();
-        version = -1L;
-        txn = -1L;
-        seqTxn = -1L;
-    }
-
     private int getInt(long readOffset) {
         assert readOffset + Integer.BYTES <= size : "offset " + readOffset + ", size " + size + ", txn=" + txn;
         return roTxMemBase.getInt(baseOffset + readOffset);
@@ -686,6 +677,17 @@ public class TxReader implements Closeable, Mutable {
 
     static long getPartitionSizeByRawIndex(LongList attachedPartitions, int index) {
         return attachedPartitions.getQuick(index + PARTITION_MASKED_SIZE_OFFSET) & PARTITION_SIZE_MASK;
+    }
+
+    void clearData() {
+        baseOffset = 0;
+        size = 0L;
+        partitionTableVersion = -1L;
+        attachedPartitionsSize = -1;
+        attachedPartitions.clear();
+        version = -1L;
+        txn = -1L;
+        seqTxn = -1L;
     }
 
     protected int findAttachedPartitionRawIndex(long ts) {

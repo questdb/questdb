@@ -26,8 +26,6 @@ package io.questdb.test;
 
 import io.questdb.FactoryProvider;
 import io.questdb.MessageBus;
-import io.questdb.MessageBusImpl;
-import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -160,7 +158,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static String inputWorkRoot = null;
     protected static IOURingFacade ioURingFacade = IOURingFacadeImpl.INSTANCE;
     protected static MessageBus messageBus;
-    protected static Metrics metrics;
     protected static QuestDBTestNode node1;
     protected static ObjList<QuestDBTestNode> nodes = new ObjList<>();
     protected static SecurityContext securityContext;
@@ -476,7 +473,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1 = newNode(Chars.toString(root), false, 1, staticOverrides, getEngineFactory(), getConfigurationFactory());
         configuration = node1.getConfiguration();
         securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getRootContext();
-        metrics = node1.getMetrics();
         engine = node1.getEngine();
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.clearCache();
@@ -532,8 +528,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
         memoryUsage = -1;
         forEachNode(QuestDBTestNode::setUpGriffin);
         sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
+        sqlExecutionContext.setParallelGroupByEnabled(configuration.isSqlParallelGroupByEnabled());
+        sqlExecutionContext.setParallelReadParquetEnabled(configuration.isSqlParallelReadParquetEnabled());
         // 30% chance to enable paranoia checking FD mode
         Files.PARANOIA_FD_MODE = new Rnd(System.nanoTime(), System.currentTimeMillis()).nextInt(100) > 70;
+        engine.getMetrics().clear();
+        engine.getMatViewGraph().clear();
     }
 
     @After
@@ -595,7 +595,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
                         RecordCursorFactory factory = cq.getRecordCursorFactory();
                         RecordCursor cursor = factory.getCursor(sqlExecutionContext)
                 ) {
-                    cursor.hasNext();
+                    sink.clear();
+                    Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        // ignore the output, we're looking for an error
+                        TestUtils.println(record, factory.getMetadata(), sink);
+                        sink.clear();
+                    }
                 }
             } else if (cq.getOperation() != null) {
                 try (
@@ -1254,6 +1260,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 expectAscendingOrder = tsDesc.substring(position + 3).equalsIgnoreCase("asc");
             }
 
+            if (expectAscendingOrder) {
+                Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_FORWARD, factory.getScanDirection());
+            } else {
+                Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_BACKWARD, factory.getScanDirection());
+            }
+
             int index = factory.getMetadata().getColumnIndexQuiet(expectedTimestamp);
             Assert.assertTrue("Column '" + expectedTimestamp + "' can't be found in metadata", index > -1);
             Assert.assertNotEquals("Expected non-negative value as timestamp index", -1, index);
@@ -1264,6 +1276,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void assertTimestampColumnValues(RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext, boolean isAscending) throws SqlException {
         int index = factory.getMetadata().getTimestampIndex();
+        Assert.assertEquals(ColumnType.TIMESTAMP, factory.getMetadata().getColumnType(index));
         long timestamp = isAscending ? Long.MIN_VALUE : Long.MAX_VALUE;
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             final Record record = cursor.getRecord();
@@ -1439,10 +1452,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static TableReader newOffPoolReader(CairoConfiguration configuration, CharSequence tableName) {
         return new TableReader(configuration, engine.verifyTableName(tableName));
-    }
-
-    protected static TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
-        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), metrics, new MessageBusImpl(configuration), engine);
     }
 
     protected static TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName) {
@@ -1813,7 +1822,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected File assertSegmentExistence(boolean expectExists, @NotNull TableToken tableToken, int walId, int segmentId) {
-        final CharSequence root = engine.getConfiguration().getRoot();
+        final CharSequence root = engine.getConfiguration().getDbRoot();
         try (Path path = new Path()) {
             path.of(root).concat(tableToken).concat("wal").put(walId).slash().put(segmentId);
             Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
@@ -1827,7 +1836,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected void assertSegmentLockEngagement(boolean expectLocked, TableToken tableToken, int walId, int segmentId) {
-        final CharSequence root = engine.getConfiguration().getRoot();
+        final CharSequence root = engine.getConfiguration().getDbRoot();
         try (Path path = new Path()) {
             path.of(root).concat(tableToken).concat("wal").put(walId).slash().put(segmentId).put(".lock").$();
             final boolean could = couldObtainLock(path);
@@ -1836,7 +1845,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected void assertSegmentLockExistence(boolean expectExists, String tableName, @SuppressWarnings("SameParameterValue") int walId, int segmentId) {
-        final CharSequence root = engine.getConfiguration().getRoot();
+        final CharSequence root = engine.getConfiguration().getDbRoot();
         try (Path path = new Path()) {
             path.of(root).concat(engine.verifyTableName(tableName)).concat("wal").put(walId).slash().put(segmentId).put(".lock");
             Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
@@ -1912,7 +1921,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected void assertTableExistence(boolean expectExists, @NotNull TableToken tableToken) {
-        final CharSequence root = engine.getConfiguration().getRoot();
+        final CharSequence root = engine.getConfiguration().getDbRoot();
         try (Path path = new Path()) {
             path.of(root).concat(tableToken);
             Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
@@ -1925,7 +1934,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected void assertWalExistence(boolean expectExists, @NotNull TableToken tableToken, int walId) {
-        final CharSequence root = engine.getConfiguration().getRoot();
+        final CharSequence root = engine.getConfiguration().getDbRoot();
         try (Path path = new Path()) {
             path.of(root).concat(tableToken).concat("wal").put(walId);
             Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
@@ -1938,7 +1947,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected void assertWalLockEngagement(boolean expectLocked, TableToken tableToken, int walId) {
-        final CharSequence root = engine.getConfiguration().getRoot();
+        final CharSequence root = engine.getConfiguration().getDbRoot();
         try (Path path = new Path()) {
             path.of(root).concat(tableToken).concat("wal").put(walId).put(".lock").$();
             final boolean could = couldObtainLock(path);
@@ -1947,7 +1956,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected void assertWalLockExistence(boolean expectExists, String tableName, @SuppressWarnings("SameParameterValue") int walId) {
-        final CharSequence root = engine.getConfiguration().getRoot();
+        final CharSequence root = engine.getConfiguration().getDbRoot();
         try (Path path = new Path()) {
             TableToken tableToken = engine.verifyTableName(tableName);
             path.of(root).concat(tableToken).concat("wal").put(walId).put(".lock");
@@ -1973,7 +1982,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected TableToken createPopulateTable(int tableId, TableModel tableModel, int insertIterations, int totalRowsPerIteration, String startDate, int partitionCount) throws NumericException, SqlException {
         try (
-                MemoryMARW mem = Vm.getMARWInstance();
+                MemoryMARW mem = Vm.getCMARWInstance();
                 Path path = new Path()
         ) {
             TableToken token = TestUtils.createTable(engine, mem, path, tableModel, tableId, tableModel.getTableName());
@@ -2016,8 +2025,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return engine.isWalTable(engine.verifyTableName(tableName));
     }
 
-    protected TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics, MessageBus messageBus) {
-        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), metrics, messageBus, engine);
+    protected TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName, MessageBus messageBus) {
+        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), messageBus, engine);
     }
 
     protected long update(CharSequence updateSql) throws SqlException {

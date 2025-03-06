@@ -43,7 +43,11 @@ import org.junit.Assert;
 import org.postgresql.util.PSQLException;
 
 import java.io.IOException;
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 
 import static org.junit.Assert.*;
 
@@ -118,7 +122,7 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
     }
 
     static Path doesConvertFileExist(CairoEngine engine, TableToken token, boolean doesExist) {
-        final Path path = Path.PATH.get().of(engine.getConfiguration().getRoot()).concat(token).concat(WalUtils.CONVERT_FILE_NAME);
+        final Path path = Path.PATH.get().of(engine.getConfiguration().getDbRoot()).concat(token).concat(WalUtils.CONVERT_FILE_NAME);
         Assert.assertEquals(Utf8s.toString(path), doesExist, Files.exists(path.$()));
         return doesExist ? path : null;
     }

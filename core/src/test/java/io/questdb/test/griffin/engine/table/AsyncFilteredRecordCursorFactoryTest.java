@@ -1028,6 +1028,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     private static abstract class DelegatingSqlExecutionContext implements SqlExecutionContext {
+
         @Override
         public void clearWindowContext() {
             sqlExecutionContext.clearWindowContext();
@@ -1049,7 +1050,9 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                 int rowsHiKindPos,
                 int exclusionKind,
                 int exclusionKindPos,
-                int timestampIndex
+                int timestampIndex,
+                boolean ignoreNulls,
+                int nullsDescPos
         ) {
             sqlExecutionContext.configureWindowContext(
                     partitionByRecord,
@@ -1066,7 +1069,9 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     rowsHiKindPos,
                     exclusionKind,
                     exclusionKindPos,
-                    timestampIndex
+                    timestampIndex,
+                    ignoreNulls,
+                    nullsDescPos
             );
         }
 
@@ -1116,6 +1121,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public void resetFlags() {
+            sqlExecutionContext.resetFlags();
+        }
+
+        @Override
         public long getRequestFd() {
             return sqlExecutionContext.getRequestFd();
         }
@@ -1158,6 +1168,16 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public boolean isParallelFilterEnabled() {
             return sqlExecutionContext.isParallelFilterEnabled();
+        }
+
+        @Override
+        public boolean isParallelGroupByEnabled() {
+            return sqlExecutionContext.isParallelGroupByEnabled();
+        }
+
+        @Override
+        public boolean isParallelReadParquetEnabled() {
+            return sqlExecutionContext.isParallelReadParquetEnabled();
         }
 
         @Override
@@ -1213,6 +1233,16 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void setParallelFilterEnabled(boolean parallelFilterEnabled) {
             sqlExecutionContext.setParallelFilterEnabled(parallelFilterEnabled);
+        }
+
+        @Override
+        public void setParallelGroupByEnabled(boolean parallelGroupByEnabled) {
+            sqlExecutionContext.setParallelGroupByEnabled(parallelGroupByEnabled);
+        }
+
+        @Override
+        public void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled) {
+            sqlExecutionContext.setParallelReadParquetEnabled(parallelReadParquetEnabled);
         }
 
         @Override

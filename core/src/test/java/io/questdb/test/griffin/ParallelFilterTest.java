@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
@@ -36,13 +37,19 @@ import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetVersion;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Files;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -159,6 +166,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, PAGE_FRAME_COUNT);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
         super.setUp();
+        inputRoot = root;
     }
 
     @Test
@@ -226,9 +234,10 @@ public class ParallelFilterTest extends AbstractCairoTest {
     @Test
     public void testEarlyCursorClose() throws Exception {
         // This scenario used to lead to an NPE on `circuitBreaker.cancelledFlag` access in PageFrameReduceJob.
-        WorkerPool pool = new WorkerPool((() -> 4));
+        WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
-                pool, (engine, compiler, sqlExecutionContext) -> {
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE x (" +
                                     "  ts TIMESTAMP," +
@@ -262,9 +271,10 @@ public class ParallelFilterTest extends AbstractCairoTest {
         final int threadCount = 4;
         final int workerCount = 4;
 
-        WorkerPool pool = new WorkerPool((() -> workerCount));
+        WorkerPool pool = new WorkerPool(() -> workerCount);
         TestUtils.execute(
-                pool, (engine, compiler, sqlExecutionContext) -> {
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE 'test1' " +
                                     "(column1 SYMBOL capacity 256 CACHE index capacity 256, timestamp TIMESTAMP) " +
@@ -333,6 +343,70 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 configuration,
                 LOG
         );
+    }
+
+    @Test
+    public void testHammerWorkStealing() throws Exception {
+        Assume.assumeFalse(convertToParquet);
+        // Here we're stress-testing work stealing, so no shared workers and no reduce jobs.
+        final int threadCount = 4;
+        final int iterations = 1000;
+
+        assertMemoryLeak(() -> {
+            engine.execute(
+                    "CREATE TABLE 'x' (ts timestamp, id long) TIMESTAMP(ts) PARTITION BY DAY;",
+                    sqlExecutionContext
+            );
+            // We want tasks from different queries to interleave within the queue,
+            // so generate only `PAGE_FRAME_COUNT / 2` page frames.
+            engine.execute(
+                    "insert into x select x::timestamp, x from long_sequence(" + ((PAGE_FRAME_COUNT / 2) * PAGE_FRAME_MAX_ROWS) + ")",
+                    sqlExecutionContext
+            );
+
+            final String query = "SELECT count() FROM x WHERE id > 42;";
+
+            final RecordCursorFactory[] factories = new RecordCursorFactory[threadCount];
+            for (int i = 0; i < threadCount; i++) {
+                // Each factory should use a dedicated compiler instance, so that they don't
+                // share the same reduce task local pool in the SqlCodeGenerator.
+                factories[i] = engine.select(query, sqlExecutionContext);
+            }
+
+            final AtomicInteger errors = new AtomicInteger();
+            final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+            final SOCountDownLatch haltLatch = new SOCountDownLatch(threadCount);
+            for (int i = 0; i < threadCount; i++) {
+                final int finalI = i;
+                new Thread(() -> {
+                    TestUtils.await(barrier);
+
+                    final RecordCursorFactory factory = factories[finalI];
+                    try (SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine)) {
+                        // Make sure to use atomic CB instead of the default test no-op.
+                        ctx.setUseSimpleCircuitBreaker(true);
+                        for (int j = 0; j < iterations; j++) {
+                            try (RecordCursor cursor = factory.getCursor(ctx)) {
+                                final Record record = cursor.getRecord();
+                                Assert.assertTrue(cursor.hasNext());
+                                Assert.assertEquals(158, record.getLong(0));
+                                Assert.assertFalse(cursor.hasNext());
+                            } catch (Throwable e) {
+                                e.printStackTrace();
+                                errors.incrementAndGet();
+                            }
+                        }
+                    } finally {
+                        haltLatch.countDown();
+                    }
+                }).start();
+            }
+
+            haltLatch.await();
+
+            Misc.free(factories);
+            Assert.assertEquals(0, errors.get());
+        });
     }
 
     @Test
@@ -483,6 +557,55 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 4,
                 1,
                 SqlJitMode.JIT_MODE_DISABLED
+        );
+    }
+
+    @Test
+    public void testReadParquet() throws Exception {
+        Assume.assumeTrue(convertToParquet);
+        WorkerPool pool = new WorkerPool(() -> 4);
+        TestUtils.execute(
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE price (" +
+                                    "  ts TIMESTAMP," +
+                                    "  type SYMBOL," +
+                                    "  value DOUBLE" +
+                                    ") timestamp (ts) PARTITION BY DAY;",
+                            sqlExecutionContext
+                    );
+                    engine.execute("insert into price select x::timestamp, 't' || (x%5), rnd_double() from long_sequence(50000)", sqlExecutionContext);
+
+                    try (
+                            Path path = new Path();
+                            PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                            TableReader reader = engine.getReader("price")
+                    ) {
+                        path.of(root).concat("price.parquet");
+                        PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                        PartitionEncoder.encodeWithOptions(
+                                partitionDescriptor,
+                                path,
+                                ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                                true,
+                                PAGE_FRAME_MAX_ROWS,
+                                0,
+                                ParquetVersion.PARQUET_VERSION_V1
+                        );
+                        Assert.assertTrue(Files.exists(path.$()));
+
+                        TestUtils.assertSql(
+                                engine,
+                                sqlExecutionContext,
+                                "select count() from read_parquet('price.parquet') where value > 0.5",
+                                sink,
+                                "count\n25139\n"
+                        );
+                    }
+                },
+                configuration,
+                LOG
         );
     }
 
@@ -694,9 +817,10 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     private void testAsyncSubQueryWithFilter(String query) throws Exception {
-        WorkerPool pool = new WorkerPool((() -> 4));
+        WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
-                pool, (engine, compiler, sqlExecutionContext) -> {
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE price (" +
                                     "  ts TIMESTAMP," +
@@ -730,7 +854,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     private void testAsyncTimestampSubQueryWithFilter(String query, String expected) throws Exception {
-        WorkerPool pool = new WorkerPool((() -> 4));
+        WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
@@ -760,9 +884,10 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private void testIn(int jitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
-        WorkerPool pool = new WorkerPool((() -> 4));
+        WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
-                pool, (engine, compiler, sqlExecutionContext) -> {
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (\n" +
                                     "  ts TIMESTAMP," +
@@ -799,9 +924,10 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private void testInAndInTimestamp(int jitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
-        WorkerPool pool = new WorkerPool((() -> 4));
+        WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
-                pool, (engine, compiler, sqlExecutionContext) -> {
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (\n" +
                                     "  ts TIMESTAMP," +
@@ -845,9 +971,10 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private void testInTimestamp(int jitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
-        WorkerPool pool = new WorkerPool((() -> 4));
+        WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
-                pool, (engine, compiler, sqlExecutionContext) -> {
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (\n" +
                                     "  ts TIMESTAMP," +
@@ -889,7 +1016,8 @@ public class ParallelFilterTest extends AbstractCairoTest {
 
         WorkerPool pool = new WorkerPool(() -> workerCount);
         TestUtils.execute(
-                pool, (engine, compiler, sqlExecutionContext) -> {
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "create table x ( " +
                                     " v long, " +
@@ -944,7 +1072,8 @@ public class ParallelFilterTest extends AbstractCairoTest {
 
         WorkerPool pool = new WorkerPool(() -> workerCount);
         TestUtils.execute(
-                pool, (engine, compiler, sqlExecutionContext) -> {
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "create table x ( " +
                                     " l long, " +
@@ -996,9 +1125,10 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private void testStrBindVariable(String columnType, int jitMode) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
 
-        WorkerPool pool = new WorkerPool((() -> 4));
+        WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
-                pool, (engine, compiler, sqlExecutionContext) -> {
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE price (\n" +
                                     "  ts TIMESTAMP," +

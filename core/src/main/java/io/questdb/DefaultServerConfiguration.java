@@ -26,9 +26,10 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.mv.DefaultMatViewRefreshWorkerPoolConfiguration;
 import io.questdb.cairo.wal.DefaultWalApplyWorkerPoolConfiguration;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
@@ -49,10 +50,15 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     private final DefaultMetricsConfiguration metricsConfiguration = new DefaultMetricsConfiguration();
     private final DefaultPGWireConfiguration pgWireConfiguration = new DefaultPGWireConfiguration();
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new DefaultPublicPassthroughConfiguration();
+    private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new DefaultMatViewRefreshWorkerPoolConfiguration();
     private final WorkerPoolConfiguration walApplyPoolConfiguration = new DefaultWalApplyWorkerPoolConfiguration();
 
-    public DefaultServerConfiguration(CharSequence root) {
-        this.cairoConfiguration = new DefaultCairoConfiguration(root);
+    public DefaultServerConfiguration(CharSequence dbRoot, CharSequence installRoot) {
+        this.cairoConfiguration = new DefaultCairoConfiguration(dbRoot, installRoot);
+    }
+
+    public DefaultServerConfiguration(CharSequence dbRoot) {
+        this.cairoConfiguration = new DefaultCairoConfiguration(dbRoot);
     }
 
     @Override
@@ -66,12 +72,12 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public HttpMinServerConfiguration getHttpMinServerConfiguration() {
+    public HttpServerConfiguration getHttpMinServerConfiguration() {
         return null;
     }
 
     @Override
-    public HttpServerConfiguration getHttpServerConfiguration() {
+    public HttpFullFatServerConfiguration getHttpServerConfiguration() {
         return httpServerConfiguration;
     }
 
@@ -91,6 +97,11 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
+    public Metrics getMetrics() {
+        return Metrics.ENABLED;
+    }
+
+    @Override
     public MetricsConfiguration getMetricsConfiguration() {
         return metricsConfiguration;
     }
@@ -103,6 +114,11 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     @Override
     public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
         return publicPassthroughConfiguration;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
+        return matViewRefreshPoolConfiguration;
     }
 
     @Override

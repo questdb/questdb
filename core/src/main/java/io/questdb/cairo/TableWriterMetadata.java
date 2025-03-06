@@ -40,6 +40,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     private int symbolMapCount;
     private int tableId;
     private TableToken tableToken;
+    private int ttlHoursOrMonths;
     private boolean walEnabled;
 
     public TableWriterMetadata(TableToken tableToken) {
@@ -111,6 +112,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public int getTtlHoursOrMonths() {
+        return ttlHoursOrMonths;
+    }
+
+    @Override
     public boolean isIndexed(int columnIndex) {
         return getColumnMetadata(columnIndex).isSymbolIndexFlag();
     }
@@ -132,6 +138,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.columnMetadata.clear();
         this.metadataVersion = metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION);
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
+        this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(metaMem);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;
@@ -177,6 +184,10 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
 
     public void setO3MaxLag(long o3MaxLagUs) {
         this.o3MaxLag = o3MaxLagUs;
+    }
+
+    public void setTtlHoursOrMonths(int ttlHoursOrMonths) {
+        this.ttlHoursOrMonths = ttlHoursOrMonths;
     }
 
     public void updateTableToken(TableToken tableToken) {

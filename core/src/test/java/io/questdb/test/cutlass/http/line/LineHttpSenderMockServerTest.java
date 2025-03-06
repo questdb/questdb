@@ -25,7 +25,6 @@
 package io.questdb.test.cutlass.http.line;
 
 import io.questdb.BuildInformationHolder;
-import io.questdb.Metrics;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConstants;
@@ -36,6 +35,7 @@ import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.PlainSocketFactory;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.cutlass.http.HttpServerConfigurationBuilder;
@@ -55,7 +55,6 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     public static final Function<Integer, Sender.LineSenderBuilder> DEFAULT_FACTORY = port -> Sender.builder(Sender.Transport.HTTP).address("localhost:" + port);
 
     private static final CharSequence QUESTDB_VERSION = new BuildInformationHolder().getSwVersion();
-    private static final Metrics metrics = Metrics.enabled();
 
     @Test
     public void testAutoFlushInterval() throws Exception {
@@ -527,11 +526,11 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration();
 
             try (WorkerPool workerPool = new TestWorkerPool(1);
-                 HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, PlainSocketFactory.INSTANCE)) {
+                 HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
-                    public String getUrl() {
-                        return "/write";
+                    public ObjList<String> getUrls() {
+                        return new ObjList<>("/write");
                     }
 
                     @Override

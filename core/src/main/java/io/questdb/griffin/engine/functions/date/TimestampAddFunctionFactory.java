@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -39,8 +40,19 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Timestamps;
+import org.jetbrains.annotations.Nullable;
 
 public class TimestampAddFunctionFactory implements FunctionFactory {
+
+    private static final LongAddIntFunction ADD_DAYS_FUNCTION = Timestamps::addDays;
+    private static final LongAddIntFunction ADD_HOURS_FUNCTION = Timestamps::addHours;
+    private static final LongAddIntFunction ADD_MICROS_FUNCTION = Timestamps::addMicros;
+    private static final LongAddIntFunction ADD_MILLIS_FUNCTION = Timestamps::addMillis;
+    private static final LongAddIntFunction ADD_MINUTES_FUNCTION = Timestamps::addMinutes;
+    private static final LongAddIntFunction ADD_MONTHS_FUNCTION = Timestamps::addMonths;
+    private static final LongAddIntFunction ADD_SECONDS_FUNCTION = Timestamps::addSeconds;
+    private static final LongAddIntFunction ADD_WEEKS_FUNCTION = Timestamps::addWeeks;
+    private static final LongAddIntFunction ADD_YEARS_FUNCTION = Timestamps::addYears;
 
     @Override
     public String getSignature() {
@@ -56,7 +68,11 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
 
         if (periodFunc.isConstant()) {
             char period = periodFunc.getChar(null);
-            LongAddIntFunction periodAddFunc = lookupAddFunction(period, argPositions.getQuick(0));
+            LongAddIntFunction periodAddFunc = lookupAddFunction(period);
+            if (periodAddFunc == null) {
+                throw SqlException.$(argPositions.getQuick(0), "invalid time period [unit=").put(period).put(']');
+            }
+
             if (strideFunc.isConstant()) {
                 if ((stride = strideFunc.getInt(null)) != Numbers.INT_NULL) {
                     return new TimestampAddConstConstVar(period, periodAddFunc, stride, timestampFunc);
@@ -66,36 +82,36 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
             }
             return new TimestampAddConstVarVar(period, periodAddFunc, strideFunc, timestampFunc);
         }
-        return new TimestampAddFunc(periodFunc, strideFunc, timestampFunc);
+        return new TimestampAddFunc(periodFunc, strideFunc, argPositions.getQuick(1), timestampFunc);
     }
 
-    private LongAddIntFunction lookupAddFunction(char period, int periodPos) throws SqlException {
+    static @Nullable LongAddIntFunction lookupAddFunction(char period) {
         switch (period) {
             case 'u':
-                return Timestamps::addMicros;
+                return ADD_MICROS_FUNCTION;
             case 'T':
-                return Timestamps::addMillis;
+                return ADD_MILLIS_FUNCTION;
             case 's':
-                return Timestamps::addSeconds;
+                return ADD_SECONDS_FUNCTION;
             case 'm':
-                return Timestamps::addMinutes;
+                return ADD_MINUTES_FUNCTION;
             case 'h':
-                return Timestamps::addHours;
+                return ADD_HOURS_FUNCTION;
             case 'd':
-                return Timestamps::addDays;
+                return ADD_DAYS_FUNCTION;
             case 'w':
-                return Timestamps::addWeeks;
+                return ADD_WEEKS_FUNCTION;
             case 'M':
-                return Timestamps::addMonths;
+                return ADD_MONTHS_FUNCTION;
             case 'y':
-                return Timestamps::addYears;
+                return ADD_YEARS_FUNCTION;
             default:
-                throw SqlException.$(periodPos, "invalid time period unit '").put(period).put("'");
+                return null;
         }
     }
 
     @FunctionalInterface
-    private interface LongAddIntFunction {
+    interface LongAddIntFunction {
         long add(long a, int b);
     }
 
@@ -174,11 +190,13 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
     private static class TimestampAddFunc extends TimestampFunction implements TernaryFunction {
         private final Function periodFunc;
         private final Function strideFunc;
+        private final int stridePosition;
         private final Function timestampFunc;
 
-        public TimestampAddFunc(Function periodFunc, Function strideFunc, Function timestampFunc) {
+        public TimestampAddFunc(Function periodFunc, Function strideFunc, int stridePosition, Function timestampFunc) {
             this.periodFunc = periodFunc;
             this.strideFunc = strideFunc;
+            this.stridePosition = stridePosition;
             this.timestampFunc = timestampFunc;
         }
 
@@ -207,7 +225,12 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
             final char period = periodFunc.getChar(rec);
             final int stride = strideFunc.getInt(rec);
             final long timestamp = timestampFunc.getTimestamp(rec);
-            if (timestamp == Numbers.LONG_NULL || stride == Numbers.INT_NULL) {
+
+            if (stride == Numbers.INT_NULL) {
+                throw CairoException.nonCritical().position(stridePosition).put("`null` is not a valid stride");
+            }
+
+            if (timestamp == Numbers.LONG_NULL) {
                 return Numbers.LONG_NULL;
             }
             return Timestamps.addPeriod(timestamp, period, stride);

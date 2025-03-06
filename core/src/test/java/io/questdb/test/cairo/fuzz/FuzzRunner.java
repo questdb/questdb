@@ -64,11 +64,13 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 
@@ -104,6 +106,7 @@ public class FuzzRunner {
     private double rollbackProb;
     private long s0;
     private long s1;
+    private double setTtlProb;
     private SqlExecutionContext sqlExecutionContext;
     private int strLen;
     private int symbolCountMax;
@@ -198,7 +201,6 @@ public class FuzzRunner {
                 purgePartitionThread.start();
                 applyThreads.add(purgePartitionThread);
             }
-
         } finally {
             for (int i = 0; i < threads.size(); i++) {
                 int k = i;
@@ -277,7 +279,25 @@ public class FuzzRunner {
                         LOG.info().$("expected IO failure observed: ").$(e).$();
                         writer = Misc.free(writer);
 
-                        writer = TestUtils.getWriter(engine, tableName);
+                        transaction = transactions.getQuick(i);
+
+                        try {
+                            writer = TestUtils.getWriter(engine, tableName);
+                        } catch (CairoException ex) {
+                            if (ex.isTableDoesNotExist() && transaction.operationList.get(0) instanceof FuzzDropCreateTableOperation) {
+                                // Table is dropped, but failed to recreate.
+                                // Create it again.
+                                FuzzDropCreateTableOperation dropCreateTableOperation = (FuzzDropCreateTableOperation) transaction.operationList.get(0);
+                                if (dropCreateTableOperation.recreateTable(engine)) {
+                                    writer = TestUtils.getWriter(engine, tableName);
+                                    // Drop and create cycle now complete, move to next transaction.
+                                    i++;
+                                } else {
+                                    throw ex;
+                                }
+                            }
+                        }
+                        // Retry the last transaction now that the failure is handled.
                         i--;
                     } else {
                         throw e;
@@ -371,6 +391,10 @@ public class FuzzRunner {
         }
     }
 
+    public void checkNoSuspendedTables() {
+        engine.getTableSequencerAPI().forAllWalTables(new ObjHashSet<>(), false, checkNoSuspendedTablesRef);
+    }
+
     @Before
     public void clearSeeds() {
         s0 = 0;
@@ -449,14 +473,15 @@ public class FuzzRunner {
                 colRemoveProb,
                 colRenameProb,
                 colTypeChangeProb,
-                truncateProb,
-                partitionDropProb,
                 dataAddProb,
                 equalTsRowsProb,
+                partitionDropProb,
+                truncateProb,
+                tableDropProb,
+                setTtlProb,
                 strLen,
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
-                (int) sequencerMetadata.getMetadataVersion(),
-                tableDropProb
+                (int) sequencerMetadata.getMetadataVersion()
         );
     }
 
@@ -523,10 +548,11 @@ public class FuzzRunner {
             double colRenameProb,
             double colTypeChangeProb,
             double dataAddProb,
+            double equalTsRowsProb,
             double partitionDropProb,
             double truncateProb,
             double tableDropProb,
-            double equalTsRowsProb
+            double setTtlProb
     ) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
@@ -537,10 +563,11 @@ public class FuzzRunner {
         this.colRenameProb = colRenameProb;
         this.colTypeChangeProb = colTypeChangeProb;
         this.dataAddProb = dataAddProb;
+        this.equalTsRowsProb = equalTsRowsProb;
         this.partitionDropProb = partitionDropProb;
         this.truncateProb = truncateProb;
         this.tableDropProb = tableDropProb;
-        this.equalTsRowsProb = equalTsRowsProb;
+        this.setTtlProb = setTtlProb;
     }
 
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
@@ -558,17 +585,17 @@ public class FuzzRunner {
         }
     }
 
-    private static void reloadReader(Rnd reloadRnd, TableReader rdr1, CharSequence rdrId) {
+    private static void reloadReader(Rnd reloadRnd, @Nullable TableReader reader, CharSequence rdrId) {
         if (reloadRnd.nextBoolean()) {
-            if (rdr1.isActive()) {
-                reloadPartitions(rdr1);
-                LOG.info().$("releasing reader txn [rdr=").$(rdrId).$(", table=").$(rdr1.getTableToken()).$(", txn=").$(rdr1.getTxn()).I$();
-                rdr1.goPassive();
+            if (reader != null && reader.isActive()) {
+                reloadPartitions(reader);
+                LOG.info().$("releasing reader txn [rdr=").$(rdrId).$(", table=").$(reader.getTableToken()).$(", txn=").$(reader.getTxn()).I$();
+                reader.goPassive();
             }
 
-            if (reloadRnd.nextBoolean() && rdr1.isActive()) {
-                rdr1.goActive();
-                LOG.info().$("acquired reader txn [rdr=").$(rdrId).$(", table=").$(rdr1.getTableToken()).$(", txn=").$(rdr1.getTxn()).I$();
+            if (reloadRnd.nextBoolean() && reader != null && reader.isActive()) {
+                reader.goActive();
+                LOG.info().$("acquired reader txn [rdr=").$(rdrId).$(", table=").$(reader.getTableToken()).$(", txn=").$(reader.getTxn()).I$();
             }
         }
     }
@@ -590,7 +617,7 @@ public class FuzzRunner {
         long randomRow = rnd.nextLong(recordCount);
         sink.clear();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            TestUtils.printSql(compiler, sqlExecutionContext, "select \"" + symbolColumnName + "\" as a from " + expectedTableName + " limit " + randomRow + ", 1", sink);
+            TestUtils.printSql(compiler, sqlExecutionContext, "select \"" + symbolColumnName + "\" as a from " + expectedTableName + " limit " + randomRow + ", " + (randomRow + 1), sink);
             String prefix = "a\n";
             String randomValue = sink.length() > prefix.length() + 2 ? sink.subSequence(prefix.length(), sink.length() - 1).toString() : null;
             String indexedWhereClause = " where \"" + symbolColumnName + "\" = " + (randomValue == null ? "null" : "'" + randomValue + "'");
@@ -962,10 +989,11 @@ public class FuzzRunner {
                         rnd.nextDouble(),
                         rnd.nextDouble(),
                         rnd.nextDouble(),
+                        0.01,
                         0.0,
                         0.1 * rnd.nextDouble(),
                         rnd.nextDouble(),
-                        0.01
+                        0.0
                 );
             }
             if (randomiseCounts) {

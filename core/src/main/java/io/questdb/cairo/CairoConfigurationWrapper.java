@@ -28,6 +28,7 @@ import io.questdb.BuildInformation;
 import io.questdb.ConfigPropertyKey;
 import io.questdb.ConfigPropertyValue;
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
@@ -43,17 +44,21 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.LongSupplier;
 
 public class CairoConfigurationWrapper implements CairoConfiguration {
-    private final CairoConfiguration delegate;
+    private final AtomicReference<CairoConfiguration> delegate = new AtomicReference<>();
+    private final Metrics metrics;
 
-    protected CairoConfigurationWrapper() {
-        delegate = null;
+    public CairoConfigurationWrapper(Metrics metrics) {
+        this.metrics = metrics;
+        delegate.set(null);
     }
 
     public CairoConfigurationWrapper(@NotNull CairoConfiguration delegate) {
-        this.delegate = delegate;
+        this.delegate.set(delegate);
+        this.metrics = delegate.getMetrics();
     }
 
     @Override
@@ -237,6 +242,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public @NotNull String getDbRoot() {
+        return getDelegate().getDbRoot();
+    }
+
+    @Override
     public @NotNull DateLocale getDefaultDateLocale() {
         return getDelegate().getDefaultDateLocale();
     }
@@ -332,6 +342,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getIdGenerateBatchStep() {
+        return getDelegate().getIdGenerateBatchStep();
+    }
+
+    @Override
     public long getIdleCheckInterval() {
         return getDelegate().getIdleCheckInterval();
     }
@@ -369,6 +384,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getInsertModelPoolCapacity() {
         return getDelegate().getInsertModelPoolCapacity();
+    }
+
+    @Override
+    public @NotNull String getInstallRoot() {
+        return getDelegate().getInstallRoot();
     }
 
     @Override
@@ -412,6 +432,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getMatViewInsertAsSelectBatchSize() {
+        return getDelegate().getMatViewInsertAsSelectBatchSize();
+    }
+
+    @Override
+    public int getMatViewMaxRecompileAttempts() {
+        return getDelegate().getMatViewMaxRecompileAttempts();
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return getDelegate().getMaxCrashFiles();
     }
@@ -444,6 +474,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getMetadataPoolCapacity() {
         return getDelegate().getMetadataPoolCapacity();
+    }
+
+    @Override
+    public Metrics getMetrics() {
+        return metrics;
     }
 
     @Override
@@ -614,11 +649,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getRndFunctionMemoryPageSize() {
         return getDelegate().getRndFunctionMemoryPageSize();
-    }
-
-    @Override
-    public @NotNull String getRoot() {
-        return getDelegate().getRoot();
     }
 
     @Override
@@ -1142,6 +1172,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewEnabled() {
+        return getDelegate().isMatViewEnabled();
+    }
+
+    @Override
+    public boolean isMatViewParallelSqlEnabled() {
+        return getDelegate().isMatViewParallelSqlEnabled();
+    }
+
+    @Override
     public boolean isMultiKeyDedupEnabled() {
         return getDelegate().isMultiKeyDedupEnabled();
     }
@@ -1164,6 +1204,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isPartitionO3OverwriteControlEnabled() {
         return getDelegate().isPartitionO3OverwriteControlEnabled();
+    }
+
+    @Override
+    public boolean isQueryTracingEnabled() {
+        return getDelegate().isQueryTracingEnabled();
     }
 
     @Override
@@ -1197,13 +1242,28 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelReadParquetEnabled() {
+        return getDelegate().isSqlParallelReadParquetEnabled();
+    }
+
+    @Override
     public boolean isTableTypeConversionEnabled() {
         return getDelegate().isTableTypeConversionEnabled();
     }
 
     @Override
+    public boolean isValidateSampleByFillType() {
+        return getDelegate().isValidateSampleByFillType();
+    }
+
+    @Override
     public boolean isWalApplyEnabled() {
         return getDelegate().isWalApplyEnabled();
+    }
+
+    @Override
+    public boolean isWalApplyParallelSqlEnabled() {
+        return getDelegate().isWalApplyParallelSqlEnabled();
     }
 
     public boolean isWalSupported() {
@@ -1225,12 +1285,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
         getDelegate().populateSettings(settings);
     }
 
+    public void setDelegate(CairoConfiguration delegate) {
+        this.delegate.set(delegate);
+    }
+
     @Override
     public boolean useFastAsOfJoin() {
         return getDelegate().useFastAsOfJoin();
     }
 
     protected CairoConfiguration getDelegate() {
-        return delegate;
+        return delegate.get();
     }
 }

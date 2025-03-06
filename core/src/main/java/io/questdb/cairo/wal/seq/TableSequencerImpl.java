@@ -28,6 +28,7 @@ import io.questdb.cairo.BinaryAlterSerializer;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.IDGeneratorFactory;
 import io.questdb.cairo.IDGenerator;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
@@ -87,13 +88,13 @@ public class TableSequencerImpl implements TableSequencer {
         final FilesFacade ff = configuration.getFilesFacade();
         try {
             path = new Path();
-            path.of(configuration.getRoot());
+            path.of(configuration.getDbRoot());
             path.concat(tableToken.getDirName()).concat(SEQ_DIR);
             rootLen = path.size();
 
-            metadata = new SequencerMetadata(ff);
+            metadata = new SequencerMetadata(ff, configuration.getCommitMode());
             metadataSvc = new SequencerMetadataService(metadata, tableToken);
-            walIdGenerator = new IDGenerator(configuration, WAL_INDEX_FILE_NAME);
+            walIdGenerator = IDGeneratorFactory.newIDGenerator(configuration, WAL_INDEX_FILE_NAME, configuration.getIdGenerateBatchStep() < 0 ? 512 : configuration.getIdGenerateBatchStep());
             tableTransactionLog = new TableTransactionLog(configuration);
             microClock = configuration.getMicrosecondClock();
             if (tableStruct != null) {
@@ -124,8 +125,8 @@ public class TableSequencerImpl implements TableSequencer {
             if (ex.isTableDropped()) {
                 throw ex;
             }
-            if (ex.errnoReadPathDoesNotExist()) {
-                LOG.info().$("could not open sequencer, files deleted, assuming dropped [name=").utf8(tableToken.getDirName())
+            if (ex.errnoReadPathDoesNotExist() && engine.isTableDropped(tableToken)) {
+                LOG.info().$("could not open sequencer, table is dropped [name=").utf8(tableToken.getDirName())
                         .$(", path=").$(path)
                         .$(", error=").$(ex.getMessage())
                         .I$();
@@ -133,6 +134,7 @@ public class TableSequencerImpl implements TableSequencer {
             }
             LOG.critical().$("could not open sequencer [name=").utf8(tableToken.getDirName())
                     .$(", path=").$(path)
+                    .$(", errno=").$(ex.getErrno())
                     .$(", error=").$(ex.getMessage())
                     .I$();
             throw ex;

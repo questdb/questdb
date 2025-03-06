@@ -69,6 +69,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private long now;
     private final MicrosecondClock nowClock = () -> now;
     private boolean parallelFilterEnabled;
+    private boolean parallelGroupByEnabled;
+    private boolean parallelReadParquetEnabled;
     private Rnd random;
     private long requestFd = -1;
     private SecurityContext securityContext;
@@ -86,11 +88,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         securityContext = DenyAllSecurityContext.INSTANCE;
         jitMode = cairoConfiguration.getSqlJitMode();
         parallelFilterEnabled = cairoConfiguration.isSqlParallelFilterEnabled();
+        parallelGroupByEnabled = cairoConfiguration.isSqlParallelGroupByEnabled();
+        parallelReadParquetEnabled = cairoConfiguration.isSqlParallelReadParquetEnabled();
         telemetry = cairoEngine.getTelemetry();
         telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoop;
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
-        this.simpleCircuitBreaker = new AtomicBooleanCircuitBreaker(cairoEngine.getConfiguration().getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
+        this.simpleCircuitBreaker = new AtomicBooleanCircuitBreaker(cairoConfiguration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
     }
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
@@ -118,7 +122,9 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             int rowsHiKindPos,
             int exclusionKind,
             int exclusionKindPos,
-            int timestampIndex
+            int timestampIndex,
+            boolean ignoreNulls,
+            int nullsDescPos
     ) {
         windowContext.of(
                 partitionByRecord,
@@ -135,7 +141,9 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
                 rowsHiKindPos,
                 exclusionKind,
                 exclusionKindPos,
-                timestampIndex
+                timestampIndex,
+                ignoreNulls,
+                nullsDescPos
         );
     }
 
@@ -248,6 +256,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isParallelGroupByEnabled() {
+        return parallelGroupByEnabled;
+    }
+
+    @Override
+    public boolean isParallelReadParquetEnabled() {
+        return parallelReadParquetEnabled;
+    }
+
+    @Override
     public boolean isTimestampRequired() {
         return timestampRequiredStack.notEmpty() && timestampRequiredStack.peek() == 1;
     }
@@ -265,6 +283,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void pushTimestampRequiredFlag(boolean flag) {
         timestampRequiredStack.push(flag ? 1 : 0);
+    }
+
+    @Override
+    public void resetFlags() {
+        this.containsSecret = false;
+        this.useSimpleCircuitBreaker = false;
+        this.cacheHit = false;
     }
 
     @Override
@@ -305,6 +330,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setParallelGroupByEnabled(boolean parallelGroupByEnabled) {
+        this.parallelGroupByEnabled = parallelGroupByEnabled;
+    }
+
+    @Override
+    public void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled) {
+        this.parallelReadParquetEnabled = parallelReadParquetEnabled;
+    }
+
+    @Override
     public void setRandom(Rnd rnd) {
         this.random = rnd;
     }
@@ -323,16 +358,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.securityContext = securityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
-        this.containsSecret = false;
-        this.useSimpleCircuitBreaker = false;
-        this.cacheHit = false;
+        resetFlags();
         return this;
     }
 
     public void with(long requestFd) {
         this.requestFd = requestFd;
-        this.cacheHit = false;
-        this.containsSecret = false;
+        resetFlags();
     }
 
     public void with(BindVariableService bindVariableService) {
@@ -363,9 +395,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.random = rnd;
         this.requestFd = requestFd;
         this.circuitBreaker = circuitBreaker == null ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
-        this.containsSecret = false;
-        this.useSimpleCircuitBreaker = false;
-        this.cacheHit = false;
+        resetFlags();
         return this;
     }
 

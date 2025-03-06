@@ -27,7 +27,14 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.Telemetry;
 import io.questdb.TelemetryOrigin;
 import io.questdb.TelemetrySystemEvent;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitFailedException;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
@@ -38,9 +45,20 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.IODispatcher;
-import io.questdb.std.*;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.SimpleReadWriteLock;
+import io.questdb.std.Utf8StringObjHashMap;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.*;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 
@@ -55,7 +73,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
     private final boolean autoCreateNewTables;
     private final MillisecondClock clock;
     private final LineTcpReceiverConfiguration configuration;
-    private final MemoryMARW ddlMem = Vm.getMARWInstance();
+    private final MemoryMARW ddlMem = Vm.getCMARWInstance();
     private final DefaultColumnTypes defaultColumnTypes;
     private final CairoEngine engine;
     private final LowerCaseCharSequenceObjHashMap<TableUpdateDetails> idleTableUpdateDetailsUtf16;
@@ -422,7 +440,6 @@ public class LineTcpMeasurementScheduler implements Closeable {
                         }
                         engine.createTable(securityContext, ddlMem, path, true, tsa, false);
                     }
-
                     // by the time we get here, the table should exist on disk
                     // check the global idle cache - TUD can be there
                     final int idleTudKeyIndex = idleTableUpdateDetailsUtf16.keyIndex(tableNameUtf16);
@@ -452,6 +469,12 @@ public class LineTcpMeasurementScheduler implements Closeable {
                                         .put(']');
                             }
                             continue; // go for another spin
+                        }
+                        if (tableToken.isMatView()) {
+                            throw CairoException.nonCritical()
+                                    .put("cannot modify materialized view [view=")
+                                    .put(tableToken.getTableName())
+                                    .put(']');
                         }
                         TelemetryTask.store(telemetry, TelemetryOrigin.ILP_TCP, TelemetrySystemEvent.ILP_RESERVE_WRITER);
                         if (engine.isWalTable(tableToken)) {
@@ -486,7 +509,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
     }
 
     private boolean isOpen() {
-        return null != pubSeq;
+        return pubSeq != null;
     }
 
     @NotNull

@@ -3,6 +3,8 @@
 PGPORT=${PGPORT:-8812}
 CLIENTS=${CLIENTS:-'ALL'}
 
+base_dir=`pwd`
+
 if [[ $CLIENTS == 'ALL' || $CLIENTS == *'psycopg2'* ]]; then
     echo "starting psycopg2 tests"
     python3 -m venv venv/psycopg2_stable
@@ -53,7 +55,7 @@ fi
 
 if [[ $CLIENTS == 'ALL' || $CLIENTS == *'rust'* ]]; then
   echo "starting rust tests"
-  cd compat/src/test/rust/scenarios
+  cd compat/src/test/rust/scenarios || exit
   # use well-known versions of dependencies
   cp ./Cargo.unlocked ./Cargo.lock
   cargo build --release
@@ -65,4 +67,61 @@ if [[ $CLIENTS == 'ALL' || $CLIENTS == *'rust'* ]]; then
   echo "rust tests finished"
 else
   echo "skipping rust tests"
+fi
+
+if [[ $CLIENTS == 'ALL' || $CLIENTS == *'csharp'* ]]; then
+  echo "starting csharp tests"
+
+  # check if dotnet is installed
+  if ! command -v dotnet &> /dev/null
+  then
+      echo "dotnet could not be found! Please install .NET 9.0 SDK from https://dotnet.microsoft.com/download/dotnet/9.0"
+      exit 1
+  fi
+
+  echo "$base_dir/compat/src/test/csharp"
+  cd "$base_dir/compat/src/test/csharp" || exit
+
+  # restore dependencies
+  dotnet restore
+
+  # build
+  dotnet build --configuration Release --no-restore
+
+  # run
+  dotnet run --configuration Release --no-build -- ../resources/test_cases.yaml
+  if [ $? -ne 0 ]; then
+      echo "csharp tests failed"
+      exit 1
+  fi
+  echo "csharp tests finished"
+else
+  echo "skipping csharp tests"
+fi
+
+if [[ $CLIENTS == 'ALL' || $CLIENTS == *'php'* ]]; then
+  echo "starting php tests"
+
+  # check if php is installed
+  if ! command -v php &> /dev/null
+  then
+      echo "php could not be found! Please install PHP or exclude PHP tests"
+      exit 1
+  fi
+
+  echo "$base_dir/compat/src/test/php"
+  cd "$base_dir/compat/src/test/php" || exit
+
+  # install deps
+  composer install
+
+  # run
+  php runner.php ../resources/test_cases.yaml
+  if [ $? -ne 0 ]; then
+      echo "php tests failed"
+      exit 1
+  fi
+  echo "php tests finished"
+else
+  echo "skipping php tests"
 fi

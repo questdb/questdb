@@ -83,6 +83,15 @@ public class CopyTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyCancelExtras() throws Exception {
+        assertException(
+                "copy 'foobar' cancel aw beans;",
+                21,
+                "unexpected token [aw]"
+        );
+    }
+
+    @Test
     public void testCopyCancelThrowsExceptionOnNoActiveImport() throws Exception {
         assertMemoryLeak(() -> {
             try {
@@ -92,15 +101,6 @@ public class CopyTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getMessage(), "copy cancel ID format is invalid: 'foobar'");
             }
         });
-    }
-
-    @Test
-    public void testCopyCancelExtras() throws Exception {
-        assertException(
-                "copy 'foobar' cancel aw beans;",
-                21,
-                "unexpected token [aw]"
-        );
     }
 
     @Test
@@ -195,7 +195,7 @@ public class CopyTest extends AbstractCairoTest {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CopyModel model = (CopyModel) compiler.testCompileModel("copy y from 'somefile.csv';", sqlExecutionContext);
 
-                assertEquals("y", model.getTarget().token.toString());
+                assertEquals("y", model.getTableName().toString());
                 assertEquals("'somefile.csv'", model.getFileName().token.toString());
                 assertFalse(model.isHeader());
                 assertEquals(-1, model.getPartitionBy());
@@ -433,7 +433,7 @@ public class CopyTest extends AbstractCairoTest {
     public void testParallelCopyIntoExistingTableWithDefaultWorkDir() throws Exception {
         String inputWorkRootTmp = inputWorkRoot;
         try (Path path = new Path()) {
-            path.of(configuration.getRoot()).concat(PropServerConfiguration.TMP_DIRECTORY).$();
+            path.of(configuration.getDbRoot()).concat(PropServerConfiguration.TMP_DIRECTORY).$();
             inputWorkRoot = path.toString();
         }
 
@@ -506,7 +506,7 @@ public class CopyTest extends AbstractCairoTest {
     public void testParallelCopyIntoNewTableWithDefaultWorkDir() throws Exception {
         String inputWorkRootTmp = inputWorkRoot;
         try (Path path = new Path()) {
-            path.of(configuration.getRoot()).concat(PropServerConfiguration.TMP_DIRECTORY).$();
+            path.of(configuration.getDbRoot()).concat(PropServerConfiguration.TMP_DIRECTORY).$();
             inputWorkRoot = path.toString();
         }
 
@@ -599,7 +599,7 @@ public class CopyTest extends AbstractCairoTest {
                 runAndFetchCopyID("copy dbRoot from 'test-quotes-big.csv' with partition by jiffy;", sqlExecutionContext);
                 Assert.fail();
             } catch (Exception e) {
-                TestUtils.assertContains(e.getMessage(), "'NONE', 'HOUR', 'DAY', 'MONTH' or 'YEAR' expected");
+                TestUtils.assertContains(e.getMessage(), "'NONE', 'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
             }
         });
     }
@@ -1111,7 +1111,7 @@ public class CopyTest extends AbstractCairoTest {
                                     "partition by " + partitionBy[p] + " timestamp 'ts1' format 'yyyy-MM-ddTHH:mm:ss' delimiter ';' on error " + onError[o] + ";'", sqlExecutionContext);
                         }
 
-                        assertEquals("x", model.getTarget().token.toString());
+                        assertEquals("x", model.getTableName().toString());
                         assertEquals("'somefile.csv'", model.getFileName().token.toString());
                         assertTrue(model.isHeader());
                         assertEquals(partitionBy[p + 1], model.getPartitionBy());

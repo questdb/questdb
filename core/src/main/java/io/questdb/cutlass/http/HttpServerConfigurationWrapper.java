@@ -25,20 +25,29 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
+import io.questdb.metrics.Counter;
+import io.questdb.metrics.LongGauge;
 import io.questdb.network.EpollFacade;
 import io.questdb.network.KqueueFacade;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.SelectFacade;
+import io.questdb.std.ConcurrentCacheConfiguration;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
-public class HttpServerConfigurationWrapper implements HttpServerConfiguration {
-    private final HttpServerConfiguration delegate;
+import java.util.concurrent.atomic.AtomicReference;
 
-    protected HttpServerConfigurationWrapper() {
-        delegate = null;
+public class HttpServerConfigurationWrapper implements HttpFullFatServerConfiguration {
+    private final AtomicReference<HttpFullFatServerConfiguration> delegate = new AtomicReference<>();
+    private final Metrics metrics;
+
+    public HttpServerConfigurationWrapper(Metrics metrics) {
+        this.metrics = metrics;
+        delegate.set(null);
     }
 
     @Override
@@ -54,6 +63,61 @@ public class HttpServerConfigurationWrapper implements HttpServerConfiguration {
     @Override
     public MillisecondClock getClock() {
         return getDelegate().getClock();
+    }
+
+    @Override
+    public ConcurrentCacheConfiguration getConcurrentCacheConfiguration() {
+        return getDelegate().getConcurrentCacheConfiguration();
+    }
+
+    @Override
+    public LongGauge getConnectionCountGauge() {
+        return metrics.httpMetrics().connectionCountGauge();
+    }
+
+    @Override
+    public ObjList<String> getContextPathExec() {
+        return getDelegate().getContextPathExec();
+    }
+
+    @Override
+    public ObjList<String> getContextPathExport() {
+        return getDelegate().getContextPathExport();
+    }
+
+    @Override
+    public ObjList<String> getContextPathILP() {
+        return getDelegate().getContextPathILP();
+    }
+
+    @Override
+    public ObjList<String> getContextPathILPPing() {
+        return getDelegate().getContextPathILPPing();
+    }
+
+    @Override
+    public ObjList<String> getContextPathImport() {
+        return getDelegate().getContextPathImport();
+    }
+
+    @Override
+    public ObjList<String> getContextPathSettings() {
+        return getDelegate().getContextPathSettings();
+    }
+
+    @Override
+    public ObjList<String> getContextPathTableStatus() {
+        return getDelegate().getContextPathTableStatus();
+    }
+
+    @Override
+    public ObjList<String> getContextPathWarnings() {
+        return getDelegate().getContextPathWarnings();
+    }
+
+    @Override
+    public String getContextPathWebConsole() {
+        return getDelegate().getContextPathWebConsole();
     }
 
     @Override
@@ -132,6 +196,11 @@ public class HttpServerConfigurationWrapper implements HttpServerConfiguration {
     }
 
     @Override
+    public Metrics getMetrics() {
+        return metrics;
+    }
+
+    @Override
     public long getNapThreshold() {
         return getDelegate().getNapThreshold();
     }
@@ -164,16 +233,6 @@ public class HttpServerConfigurationWrapper implements HttpServerConfiguration {
     @Override
     public String getPoolName() {
         return getDelegate().getPoolName();
-    }
-
-    @Override
-    public int getQueryCacheBlockCount() {
-        return getDelegate().getQueryCacheBlockCount();
-    }
-
-    @Override
-    public int getQueryCacheRowCount() {
-        return getDelegate().getQueryCacheRowCount();
     }
 
     @Override
@@ -277,8 +336,17 @@ public class HttpServerConfigurationWrapper implements HttpServerConfiguration {
     }
 
     @Override
+    public Counter listenerStateChangeCounter() {
+        return getDelegate().listenerStateChangeCounter();
+    }
+
+    @Override
     public boolean preAllocateBuffers() {
         return getDelegate().preAllocateBuffers();
+    }
+
+    public void setDelegate(HttpFullFatServerConfiguration delegate) {
+        this.delegate.set(delegate);
     }
 
     @Override
@@ -286,7 +354,7 @@ public class HttpServerConfigurationWrapper implements HttpServerConfiguration {
         return getDelegate().workerPoolPriority();
     }
 
-    protected HttpServerConfiguration getDelegate() {
-        return delegate;
+    protected HttpFullFatServerConfiguration getDelegate() {
+        return delegate.get();
     }
 }

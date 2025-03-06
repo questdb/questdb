@@ -50,6 +50,10 @@ public class SimpleReadWriteLock implements ReadWriteLock {
     private final ReadLock readLock = new ReadLock();
     private final WriteLock writeLock = new WriteLock();
 
+    public boolean isWriteLocked() {
+        return lock.get();
+    }
+
     @Override
     public @NotNull Lock readLock() {
         return readLock;

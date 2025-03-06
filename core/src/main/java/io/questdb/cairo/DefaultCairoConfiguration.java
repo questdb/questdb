@@ -29,6 +29,7 @@ import io.questdb.BuildInformationHolder;
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.DefaultTelemetryConfiguration;
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.PropServerConfiguration;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
@@ -63,24 +64,30 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     private final CharSequence confRoot;
     private final long databaseIdHi;
     private final long databaseIdLo;
+    private final String dbRoot;
     private final LongSupplier importIDSupplier = () -> getRandom().nextPositiveLong();
+    private final String installRoot;
     private final CharSequence legacyCheckpointRoot;
-    private final String root;
     private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
     private final TextConfiguration textConfiguration;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
     private final boolean writerMixedIOEnabled;
 
-    public DefaultCairoConfiguration(CharSequence root) {
-        this.root = Chars.toString(root);
-        this.confRoot = PropServerConfiguration.rootSubdir(root, PropServerConfiguration.CONFIG_DIRECTORY);
+    public DefaultCairoConfiguration(CharSequence dbRoot) {
+        this(dbRoot, null);
+    }
+
+    public DefaultCairoConfiguration(CharSequence dbRoot, CharSequence installRoot) {
+        this.dbRoot = Chars.toString(dbRoot);
+        this.installRoot = Chars.toString(installRoot);
+        this.confRoot = PropServerConfiguration.rootSubdir(dbRoot, PropServerConfiguration.CONFIG_DIRECTORY);
         this.textConfiguration = new DefaultTextConfiguration(Chars.toString(confRoot));
-        this.checkpointRoot = PropServerConfiguration.rootSubdir(root, TableUtils.CHECKPOINT_DIRECTORY);
-        this.legacyCheckpointRoot = PropServerConfiguration.rootSubdir(root, TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
+        this.checkpointRoot = PropServerConfiguration.rootSubdir(dbRoot, TableUtils.CHECKPOINT_DIRECTORY);
+        this.legacyCheckpointRoot = PropServerConfiguration.rootSubdir(dbRoot, TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
         Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
         this.databaseIdLo = rnd.nextLong();
         this.databaseIdHi = rnd.nextLong();
-        this.writerMixedIOEnabled = getFilesFacade().allowMixedIO(root);
+        this.writerMixedIOEnabled = getFilesFacade().allowMixedIO(dbRoot);
     }
 
     @Override
@@ -91,6 +98,15 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean enableTestFactories() {
         return true;
+    }
+
+    @Override
+    public boolean freeLeakedReaders() {
+        // to override use overrides() system, the idea for the "false" here
+        // is not to hide reader leaks and continue to get errors in tests if
+        // reader is left behind by the cursor. The need to override should be rare,
+        // and only for testing the "supervisor" system itself.
+        return false;
     }
 
     @Override
@@ -259,6 +275,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public @NotNull String getDbRoot() {
+        return dbRoot;
+    }
+
+    @Override
     public @NotNull DateLocale getDefaultDateLocale() {
         return DateFormatUtils.EN_LOCALE;
     }
@@ -354,6 +375,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getIdGenerateBatchStep() {
+        return 512;
+    }
+
+    @Override
     public long getIdleCheckInterval() {
         return 100;
     }
@@ -391,6 +417,14 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getInsertModelPoolCapacity() {
         return 8;
+    }
+
+    @Override
+    public @NotNull String getInstallRoot() {
+        if (installRoot == null) {
+            throw new UnsupportedOperationException("installRoot was required in this test, but not set");
+        }
+        return installRoot;
     }
 
     @Override
@@ -434,6 +468,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getMatViewInsertAsSelectBatchSize() {
+        return 1_000_000;
+    }
+
+    @Override
+    public int getMatViewMaxRecompileAttempts() {
+        return 10;
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return 1;
     }
@@ -466,6 +510,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getMetadataPoolCapacity() {
         return getSqlModelPoolCapacity();
+    }
+
+    @Override
+    public Metrics getMetrics() {
+        return Metrics.ENABLED;
     }
 
     @Override
@@ -627,11 +676,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getRndFunctionMemoryPageSize() {
         return 8192;
-    }
-
-    @Override
-    public @NotNull String getRoot() {
-        return root;
     }
 
     @Override
@@ -1137,7 +1181,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isCheckpointRecoveryEnabled() {
-        return true;
+        return false;
     }
 
     @Override
@@ -1152,6 +1196,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isIOURingEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isMatViewEnabled() {
+        return false;
+    }
+
+    @Override
+    public boolean isMatViewParallelSqlEnabled() {
         return true;
     }
 
@@ -1177,6 +1231,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isPartitionO3OverwriteControlEnabled() {
+        return false;
+    }
+
+    @Override
+    public boolean isQueryTracingEnabled() {
         return false;
     }
 
@@ -1211,12 +1270,22 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelReadParquetEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isTableTypeConversionEnabled() {
         return true;
     }
 
     @Override
     public boolean isWalApplyEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isWalApplyParallelSqlEnabled() {
         return true;
     }
 

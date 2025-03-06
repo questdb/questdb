@@ -24,7 +24,12 @@
 
 package io.questdb.test.cutlass.pgwire;
 
-import io.questdb.*;
+import io.questdb.Bootstrap;
+import io.questdb.FactoryProviderImpl;
+import io.questdb.PropBootstrapConfiguration;
+import io.questdb.PropServerConfiguration;
+import io.questdb.ServerConfiguration;
+import io.questdb.ServerMain;
 import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
 import io.questdb.network.Socket;
@@ -93,7 +98,7 @@ public class PGErrorHandlingTest extends AbstractBootstrapTest {
                                 new FilesFacadeImpl() {
                                     @Override
                                     public long openRW(LPSZ name, long opts) {
-                                        if (counter.incrementAndGet() > 69) {
+                                        if (counter.incrementAndGet() > 76) {
                                             throw new RuntimeException("Test error");
                                         }
                                         return super.openRW(name, opts);

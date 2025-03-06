@@ -71,10 +71,6 @@ public abstract class BaseDoubleWindowFunction extends DoubleFunction implements
     }
 
     @Override
-    public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
-    }
-
-    @Override
     public void reset() {
 
     }
@@ -88,6 +84,9 @@ public abstract class BaseDoubleWindowFunction extends DoubleFunction implements
     public void toPlan(PlanSink sink) {
         sink.val(getName());
         sink.val('(').val(arg).val(')');
+        if (isIgnoreNulls()) {
+            sink.val(" ignore nulls");
+        }
         sink.val(" over ()");
     }
 

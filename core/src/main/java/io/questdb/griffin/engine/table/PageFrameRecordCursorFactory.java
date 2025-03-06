@@ -26,7 +26,14 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -45,6 +52,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     private final boolean followsOrderByAdvice;
     private final boolean framingSupported;
     private final RowCursorFactory rowCursorFactory;
+    private final boolean singleRowFactory;
     private final boolean supportsRandomAccess;
     protected FwdTableReaderPageFrameCursor fwdPageFrameCursor;
     private BwdTableReaderPageFrameCursor bwdPageFrameCursor;
@@ -61,7 +69,8 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             boolean framingSupported,
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts,
-            boolean supportsRandomAccess
+            boolean supportsRandomAccess,
+            boolean singleRowFactory
     ) {
         super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
@@ -78,6 +87,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         this.filter = filter;
         this.framingSupported = framingSupported;
         this.supportsRandomAccess = supportsRandomAccess;
+        this.singleRowFactory = singleRowFactory;
     }
 
     @Override
@@ -99,6 +109,20 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
 
     @Override
     public int getScanDirection() {
+        if (singleRowFactory) {
+            // we only return single row, sometimes we use backward scan to do that
+            // even if we do, we mark single row factory to return data in ascending timestamp order.
+
+            // there is validation in as-of and lt-join generator code, which checks that both left and
+            // right factories are in ascending order. Without this change single row symbol search will fail to
+            // participate in those joins.
+
+            // There is additional consistency issue, single-row flag is to address. The issue arose from
+            // single-symbol filter search. Without this condition factory scan would be "backward", which is
+            // inconsistent with same SQL filtering on two or more symbol values. Where scan order will be
+            // "forward".
+            return SCAN_DIRECTION_FORWARD;
+        }
         switch (partitionFrameCursorFactory.getOrder()) {
             case ORDER_ASC:
                 return SCAN_DIRECTION_FORWARD;
@@ -112,7 +136,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     @Override
     public TimeFrameRecordCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         if (framingSupported) {
-            PageFrameCursor pageFrameCursor = initPageFrameCursor(executionContext);
+            TablePageFrameCursor pageFrameCursor = initPageFrameCursor(executionContext);
             if (timeFrameCursor == null) {
                 timeFrameCursor = new TimeFrameRecordCursorImpl(configuration, getMetadata());
             }

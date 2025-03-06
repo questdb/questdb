@@ -24,7 +24,13 @@
 
 package io.questdb.griffin.engine.ops;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AlterTableContextException;
+import io.questdb.cairo.AttachDetachStatus;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCR;
@@ -63,6 +69,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short CONVERT_PARTITION_TO_PARQUET = CHANGE_COLUMN_TYPE + 1; // 18
     public final static short CONVERT_PARTITION_TO_NATIVE = CONVERT_PARTITION_TO_PARQUET + 1; // 19
     public final static short FORCE_DROP_PARTITION = CONVERT_PARTITION_TO_NATIVE + 1; // 20
+    public final static short SET_TTL_HOURS_OR_MONTHS = FORCE_DROP_PARTITION + 1; // 21
     private static final long BIT_INDEXED = 0x1L;
     private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
@@ -74,6 +81,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     private CharSequenceList activeExtraStrInfo;
     private short command;
     private MemoryFCRImpl deserializeMem;
+    private boolean keepMatViewsValid;
 
     public AlterOperation() {
         this(new LongList(), new ObjList<>());
@@ -124,7 +132,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     // todo: supply bitset to indicate which ops are supported and which arent
     //     "structural changes" doesn't cover is as "add column" is supported
     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-        QueryRegistry queryRegistry = sqlExecutionContext != null ? sqlExecutionContext.getCairoEngine().getQueryRegistry() : null;
+        final QueryRegistry queryRegistry = sqlExecutionContext != null ? sqlExecutionContext.getCairoEngine().getQueryRegistry() : null;
+        keepMatViewsValid = false;
         long queryId = -1;
         try {
             if (queryRegistry != null) {
@@ -182,6 +191,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 case SET_PARAM_COMMIT_LAG:
                     applyParamO3MaxLag(svc);
                     break;
+                case SET_TTL_HOURS_OR_MONTHS:
+                    applyTtlHoursOrMonths(svc);
+                    break;
                 case RENAME_TABLE:
                     applyRenameTable(svc);
                     break;
@@ -189,7 +201,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     squashPartitions(svc);
                     break;
                 case SET_DEDUP_ENABLE:
-                    enableDeduplication(svc);
+                    keepMatViewsValid = enableDeduplication(svc);
                     break;
                 case SET_DEDUP_DISABLE:
                     svc.disableDeduplication();
@@ -234,6 +246,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         directExtraStrInfo.clear();
         activeExtraStrInfo = extraStrInfo;
         extraInfo.clear();
+        keepMatViewsValid = false;
         clearCommandCorrelationId();
     }
 
@@ -310,6 +323,36 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 return true;
             default:
                 return false;
+        }
+    }
+
+    @Override
+    public String matViewInvalidationReason() {
+        // Don't invalidate mat views in case when the operation was "harmless".
+        if (keepMatViewsValid) {
+            return null;
+        }
+        switch (command) {
+            case RENAME_TABLE:
+                return "table rename operation";
+            case DROP_COLUMN:
+                return "drop column operation";
+            case RENAME_COLUMN:
+                return "rename column operation";
+            case CHANGE_COLUMN_TYPE:
+                return "change column type operation";
+            case DROP_PARTITION:
+                return "drop partition operation";
+            case DETACH_PARTITION:
+                return "detach partition operation";
+            case ATTACH_PARTITION:
+                return "attach partition operation";
+            case SET_DEDUP_ENABLE:
+                // We disallow creation of mat views with keys outside the base table's dedup columns.
+                // So, we invalidate mat views when user enables dedup on the base table, not to break this restriction.
+                return "enable deduplication operation";
+            default:
+                return null;
         }
     }
 
@@ -571,6 +614,19 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         );
     }
 
+    private void applyTtlHoursOrMonths(MetadataService svc) {
+        int ttlHoursOrMonths = (int) extraInfo.get(0);
+        try {
+            svc.setMetaTtlHoursOrMonths(ttlHoursOrMonths);
+            if (svc instanceof TableWriter) {
+                ((TableWriter) svc).enforceTtl();
+            }
+        } catch (CairoException e) {
+            e.position(tableNamePosition);
+            throw e;
+        }
+    }
+
     private void changeColumnType(MetadataService svc) {
         if (activeExtraStrInfo.size() != 1) {
             throw CairoException.nonCritical().put("invalid change column type alter statement");
@@ -604,9 +660,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void enableDeduplication(MetadataService svc) {
+    private boolean enableDeduplication(MetadataService svc) {
         assert extraInfo.size() > 0;
-        svc.enableDeduplicationWithUpsertKeys(extraInfo);
+        return svc.enableDeduplicationWithUpsertKeys(extraInfo);
     }
 
     private void squashPartitions(MetadataService svc) {

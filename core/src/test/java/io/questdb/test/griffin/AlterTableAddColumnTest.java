@@ -24,8 +24,14 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -105,7 +111,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                         // make sure we don't release writer until main test finishes
                         Assert.assertTrue(haltLatch.await(5, TimeUnit.SECONDS));
                     } catch (Throwable e) {
-                        e.printStackTrace();
+                        e.printStackTrace(System.out);
                         errorCounter.incrementAndGet();
                     } finally {
                         engine.clear();
@@ -152,6 +158,25 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     );
                 }
         );
+    }
+
+    @Test
+    public void testAddColumnIfNoExistsUnexpectedToken() throws Exception {
+        assertFailure("alter table x add column if not a int", 32,
+                "unexpected token 'a' for if not exists"
+        );
+    }
+
+    @Test
+    public void testAddColumnIfNotExists() throws Exception {
+        createX();
+        execute("alter table x add column if not exists a int");
+        execute("alter table x add column description string");
+    }
+
+    @Test
+    public void testAddColumnIfNotExistsWithMissingNotToken() throws Exception {
+        assertFailure("alter table x add column if exists b int", 28, "'not' expected");
     }
 
     @Test
@@ -332,6 +357,13 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddDuplicateColumnIfNotExists() throws Exception {
+        createX();
+        execute("alter table x add column a int");
+        execute("alter table x add column if not exists a int");
+    }
+
+    @Test
     public void testAddExpectColumnKeyword() throws Exception {
         assertFailure("alter table x add", 17, "'column' or column name");
     }
@@ -366,7 +398,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                         }
                     };
 
-                    try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
+                    try (CairoEngine engine = new CairoEngine(configuration)) {
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
                             execute(compiler, "alter table x add column meh symbol cache");
 
@@ -543,7 +575,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                         }
                     };
 
-                    try (CairoEngine engine = new CairoEngine(configuration, metrics)) {
+                    try (CairoEngine engine = new CairoEngine(configuration)) {
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
                             execute(compiler, "alter table x add column meh symbol", sqlExecutionContext);
                             try (TableReader reader = getReader("x")) {
@@ -648,17 +680,17 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
     @Test
     public void testExpectActionKeyword() throws Exception {
-        assertFailure("alter table x", 13, AlterTableUtils.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
+        assertFailure("alter table x", 13, SqlCompilerImpl.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
     }
 
     @Test
     public void testExpectTableKeyword() throws Exception {
-        assertFailure("alter x", 6, "'table' expected");
+        assertFailure("alter x", 6, "'table' or 'materialized' expected");
     }
 
     @Test
     public void testExpectTableKeyword2() throws Exception {
-        assertFailure("alter", 5, "'table' expected");
+        assertFailure("alter", 5, "'table' or 'materialized' expected");
     }
 
     @Test
@@ -673,7 +705,8 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
             execute("alter table x add column a_varchar varchar");
             execute("insert into x values (4, 'added-1'), (5, 'added-2')");
             assertQuery("a_varchar\n\n\n\nadded-1\nadded-2\n",
-                    "select a_varchar from x", null, null, true, true);
+                    "select a_varchar from x", null, null, true, true
+            );
         });
     }
 

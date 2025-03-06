@@ -41,7 +41,6 @@ import org.jetbrains.annotations.Nullable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SqlExecutionContextStub implements SqlExecutionContext {
-
     private final CairoEngine engine;
 
     public SqlExecutionContextStub(@NotNull CairoEngine engine) {
@@ -53,7 +52,25 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public void configureWindowContext(@Nullable VirtualRecord partitionByRecord, @Nullable RecordSink partitionBySink, @Nullable ColumnTypes keyTypes, boolean isOrdered, int orderByDirection, int orderByPos, boolean baseSupportsRandomAccess, int framingMode, long rowsLo, int rowsLoExprPos, long rowsHi, int rowsHiExprPos, int exclusionKind, int exclusionKindPos, int timestampIndex) {
+    public void configureWindowContext(
+            @Nullable VirtualRecord partitionByRecord,
+            @Nullable RecordSink partitionBySink,
+            @Nullable ColumnTypes keyTypes,
+            boolean isOrdered,
+            int orderByDirection,
+            int orderByPos,
+            boolean baseSupportsRandomAccess,
+            int framingMode,
+            long rowsLo,
+            int rowsLoExprPos,
+            long rowsHi,
+            int rowsHiExprPos,
+            int exclusionKind,
+            int exclusionKindPos,
+            int timestampIndex,
+            boolean ignoreNulls,
+            int nullsDescPos
+    ) {
     }
 
     @Override
@@ -146,6 +163,16 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isParallelGroupByEnabled() {
+        return false;
+    }
+
+    @Override
+    public boolean isParallelReadParquetEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isTimestampRequired() {
         return false;
     }
@@ -161,6 +188,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void pushTimestampRequiredFlag(boolean flag) {
+    }
+
+    @Override
+    public void resetFlags() {
     }
 
     @Override
@@ -192,11 +223,18 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public void setParallelGroupByEnabled(boolean parallelGroupByEnabled) {
+    }
+
+    @Override
+    public void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled) {
+    }
+
+    @Override
     public void setRandom(Rnd rnd) {
     }
 
     @Override
     public void setUseSimpleCircuitBreaker(boolean value) {
-
     }
 }

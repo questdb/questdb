@@ -39,7 +39,7 @@ import java.util.concurrent.atomic.AtomicLongFieldUpdater;
  * enqueues fail and return false. When the queue is empty, dequeues fail and return null.
  * These segments are linked together to form the unbounded "ConcurrentQueue".
  */
-final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
+final class ConcurrentQueueSegment<T extends ValueHolder<T>> {
     // Segment design is inspired by the algorithm outlined at:
     // http://www.1024cores.net/home/lock-free-algorithms/queues/bounded-mpmc-queue
 
@@ -246,13 +246,13 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
     // Padded head and tail indices, to avoid false sharing between producers and consumers.
     private static class PaddedHeadAndTail {
         public volatile long head;
-        public long head1, head2, head3, head4, headp, head6, head7; // 7 long fields to pad to 64 bytes
+        public long head1, head2, head3, head4, head5, head6, head7; // 7 long fields to pad to 64 bytes
         public volatile long tail;
         public long tail1, tail2, tail3, tail4, tail5, tail6, tail7; // 7 long fields to pad to 64 bytes
     }
 
     // Represents a slot in the queue.
-    private static class Slot<T extends QueueValueHolder<T>> {
+    private static class Slot<T extends ValueHolder<T>> {
         // The item.
         public T item;
         public volatile long sequenceNumber;

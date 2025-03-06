@@ -2340,7 +2340,9 @@ public class SampleByTest extends AbstractCairoTest {
                         "x as lat,\n" +
                         "-x as lon\n" +
                         "from long_sequence(17 * 1000L)\n" +
-                        "), index(s) timestamp(k) partition by DAY"
+                        "), index(s) timestamp(k) partition by DAY",
+                false,
+                true
         ));
     }
 
@@ -2850,6 +2852,29 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyedFromTo() throws Exception {
+        assertException(
+                "SELECT" +
+                        "  day(ts) AS day, " +
+                        "  sym2, " +
+                        "  COUNT(*) AS c " +
+                        "FROM x " +
+                        "WHERE sym = 'abc' " +
+                        "SAMPLE BY 1d FROM dateadd('d', -31, now()) to now() FILL(NULL);",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol(5,4,4,1) sym," +
+                        " rnd_symbol(5,4,4,1) sym2," +
+                        " timestamp_sequence(172800000000, 3600000000) ts" +
+                        " from long_sequence(20)" +
+                        ") timestamp(ts) partition by day",
+                0,
+                "FROM-TO intervals are not supported for keyed SAMPLE BY queries"
+        );
+    }
+
+    @Test
     public void testNoSampleByWithDeferredSingleSymbolFilterPageFrameRecordCursorFactory() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table xx (k timestamp, d DOUBLE, s SYMBOL)" +
@@ -2945,6 +2970,55 @@ public class SampleByTest extends AbstractCairoTest {
                             "  )\n" +
                             ");");
         });
+    }
+
+    @Test
+    public void testRedundantGroupByInKeyedFromTo1() throws Exception {
+        assertException(
+                "SELECT" +
+                        "  day(ts) AS day, " +
+                        "  sym2, " +
+                        "  COUNT(*) AS c " +
+                        "FROM x " +
+                        "WHERE sym = 'abc' " +
+                        "SAMPLE BY 1d " +
+                        "GROUP BY day, sym2 ",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol(5,4,4,1) sym," +
+                        " rnd_symbol(5,4,4,1) sym2," +
+                        " timestamp_sequence(172800000000, 3600000000) ts" +
+                        " from long_sequence(20)" +
+                        ") timestamp(ts) partition by day",
+                95,
+                "SELECT query must not contain both GROUP BY and SAMPLE BY"
+        );
+    }
+
+    @Test
+    public void testRedundantGroupByInKeyedFromTo2() throws Exception {
+        assertException(
+                "SELECT" +
+                        "  day(ts) AS day, " +
+                        "  sym2, " +
+                        "  COUNT(*) AS c " +
+                        "FROM x " +
+                        "WHERE sym = 'abc' " +
+                        "SAMPLE BY 1d FROM dateadd('d', -31, now()) to now() FILL(NULL) " +
+                        "GROUP BY day, sym2 " +
+                        "ORDER BY day(ts) DESC, sym2;",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol(5,4,4,1) sym," +
+                        " rnd_symbol(5,4,4,1) sym2," +
+                        " timestamp_sequence(172800000000, 3600000000) ts" +
+                        " from long_sequence(20)" +
+                        ") timestamp(ts) partition by day",
+                145,
+                "SELECT query must not contain both GROUP BY and SAMPLE BY"
+        );
     }
 
     @Test
@@ -3078,9 +3152,11 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByAlignToCalendarWithoutTimezoneNorOffsetAndLimit() throws Exception {
-        assertQuery("k\tcount\n" +
+        assertQuery(
+                "k\tcount\n" +
                         "1970-01-03T00:00:00.000000Z\t6\n",
-                "select k, count() from x sample by 6h ALIGN TO CALENDAR LIMIT 1;", "create table x as " +
+                "select k, count() from x sample by 6h ALIGN TO CALENDAR limit 1;",
+                "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -3088,7 +3164,9 @@ public class SampleByTest extends AbstractCairoTest {
                         " timestamp_sequence(172800000001, 3600000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", "k", true, true
+                        ") timestamp(k) partition by NONE", "k",
+                true,
+                true
         );
     }
 
@@ -3136,9 +3214,11 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByAlignedToCalendarWithTimezoneAndLimit() throws Exception {
-        assertQuery("k\tcount\n" +
+        assertQuery(
+                "k\tcount\n" +
                         "1970-01-03T00:00:00.000000Z\t6\n",
-                "select k, count() from x sample by 6h ALIGN TO CALENDAR TIME ZONE 'UTC' LIMIT 1;", "create table x as " +
+                "select k, count() from x sample by 6h ALIGN TO CALENDAR TIME ZONE 'UTC' LIMIT 1;",
+                "create table x as " +
                         "(" +
                         "select" +
                         " rnd_double(0)*100 a," +
@@ -3576,8 +3656,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "FROM x " +
                         "WHERE ts BETWEEN '2023-05-16T00:00:00.00Z' AND '2023-05-16T00:10:00.00Z' " +
                         "AND s2 = ('foo') " +
-                        "SAMPLE BY 5m ALIGN TO FIRST OBSERVATION " +
-                        "GROUP BY s1;",
+                        "SAMPLE BY 5m ALIGN TO FIRST OBSERVATION;",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -3602,8 +3681,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "FROM x " +
                         "WHERE ts BETWEEN '2023-05-16T00:00:00.00Z' AND '2023-05-16T00:10:00.00Z' " +
                         "AND s2 = ('foo') " +
-                        "SAMPLE BY 5m ALIGN TO CALENDAR " +
-                        "GROUP BY s1;",
+                        "SAMPLE BY 5m ALIGN TO CALENDAR;",
                 null,
                 true,
                 true
@@ -5139,7 +5217,8 @@ public class SampleByTest extends AbstractCairoTest {
                         " from long_sequence(100)" +
                         ") timestamp(cal_timestamp_time) partition by hour",
                 "period_start_time",
-                false
+                false,
+                true
         );
     }
 
@@ -5192,7 +5271,7 @@ public class SampleByTest extends AbstractCairoTest {
                         ") timestamp(created_at) partition by day",
                 "timestamp###DESC",
                 true,
-                false
+                true
         );
 
         assertQuery(
@@ -5222,7 +5301,7 @@ public class SampleByTest extends AbstractCairoTest {
                         ") timestamp(created_at) partition by day",
                 "timestamp###DESC",
                 true,
-                false
+                true
         );
     }
 
@@ -6493,7 +6572,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 10,
-                "Unsupported interpolation type"
+                "support for LINEAR fill is not yet implemented"
         );
     }
 
@@ -13130,70 +13209,71 @@ public class SampleByTest extends AbstractCairoTest {
         final int threadCount = 4;
         final int workerCount = 2;
 
-        WorkerPool pool = new WorkerPool((() -> workerCount));
-        assertMemoryLeak(() -> TestUtils.execute(
-                pool,
-                (engine, compiler, sqlExecutionContext) -> {
-                    engine.execute(
-                            "create table x (d1 double, d2 double, s symbol index, kms long, k timestamp) timestamp(k) partition by day;",
-                            sqlExecutionContext
-                    );
+        try (WorkerPool pool = new WorkerPool(() -> workerCount)) {
+            assertMemoryLeak(() -> TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "create table x (d1 double, d2 double, s symbol index, kms long, k timestamp) timestamp(k) partition by day;",
+                                sqlExecutionContext
+                        );
 
-                    final RecordCursorFactory[] factories = new RecordCursorFactory[threadCount];
-                    for (int i = 0; i < threadCount; i++) {
-                        factories[i] = engine.select(query, sqlExecutionContext);
-                    }
+                        final RecordCursorFactory[] factories = new RecordCursorFactory[threadCount];
+                        for (int i = 0; i < threadCount; i++) {
+                            factories[i] = engine.select(query, sqlExecutionContext);
+                        }
 
-                    final AtomicInteger errors = new AtomicInteger();
-                    final CyclicBarrier barrier = new CyclicBarrier(threadCount);
-                    final SOCountDownLatch haltLatch = new SOCountDownLatch(threadCount);
-                    final AtomicBoolean writerDone = new AtomicBoolean();
-                    for (int i = 0; i < threadCount; i++) {
-                        final int finalI = i;
-                        new Thread(() -> {
-                            TestUtils.await(barrier);
+                        final AtomicInteger errors = new AtomicInteger();
+                        final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+                        final SOCountDownLatch haltLatch = new SOCountDownLatch(threadCount);
+                        final AtomicBoolean writerDone = new AtomicBoolean();
+                        for (int i = 0; i < threadCount; i++) {
+                            final int finalI = i;
+                            new Thread(() -> {
+                                TestUtils.await(barrier);
 
-                            final RecordCursorFactory factory = factories[finalI];
-                            while (!writerDone.get()) {
-                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                                    TestUtils.drainCursor(cursor);
-                                } catch (Throwable e) {
-                                    e.printStackTrace();
-                                    errors.incrementAndGet();
+                                final RecordCursorFactory factory = factories[finalI];
+                                while (!writerDone.get()) {
+                                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                        TestUtils.drainCursor(cursor);
+                                    } catch (Throwable e) {
+                                        e.printStackTrace();
+                                        errors.incrementAndGet();
+                                    }
+                                }
+                                haltLatch.countDown();
+                            }).start();
+                        }
+
+                        final int rows = 10000;
+                        final int batchSize = 10;
+                        long ts = 0;
+                        try (TableWriter writer = TestUtils.getWriter(engine, "x")) {
+                            for (int i = 0; i < rows; i++) {
+                                TableWriter.Row row = writer.newRow(ts);
+                                row.putDouble(0, 42);
+                                row.putDouble(1, 42);
+                                row.putSym(2, (char) ('a' + i % 3));
+                                ts += Timestamps.SECOND_MICROS;
+                                row.putLong(3, ts / Timestamps.MILLI_MICROS);
+                                row.append();
+                                if ((i % batchSize) == 0) {
+                                    writer.commit();
                                 }
                             }
-                            haltLatch.countDown();
-                        }).start();
-                    }
-
-                    final int rows = 10000;
-                    final int batchSize = 10;
-                    long ts = 0;
-                    try (TableWriter writer = TestUtils.getWriter(engine, "x")) {
-                        for (int i = 0; i < rows; i++) {
-                            TableWriter.Row row = writer.newRow(ts);
-                            row.putDouble(0, 42);
-                            row.putDouble(1, 42);
-                            row.putSym(2, (char) ('a' + i % 3));
-                            ts += Timestamps.SECOND_MICROS;
-                            row.putLong(3, ts / Timestamps.MILLI_MICROS);
-                            row.append();
-                            if ((i % batchSize) == 0) {
-                                writer.commit();
-                            }
+                            writer.commit();
                         }
-                        writer.commit();
-                    }
 
-                    writerDone.set(true);
-                    haltLatch.await();
+                        writerDone.set(true);
+                        haltLatch.await();
 
-                    Misc.free(factories);
-                    Assert.assertEquals(0, errors.get());
-                },
-                configuration,
-                LOG
-        ));
+                        Misc.free(factories);
+                        Assert.assertEquals(0, errors.get());
+                    },
+                    configuration,
+                    LOG
+            ));
+        }
     }
 
     private void testSampleByPeriodFails(String query, int errorPosition, String errorContains) throws Exception {

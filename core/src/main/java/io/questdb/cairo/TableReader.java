@@ -117,7 +117,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.messageBus = messageBus;
         try {
             this.path = new Path();
-            this.path.of(configuration.getRoot());
+            this.path.of(configuration.getDbRoot());
             this.dbRootSize = path.size();
             path.concat(tableToken.getDirName());
             this.rootLen = path.size();
@@ -126,7 +126,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             metadata = openMetaFile();
             partitionBy = metadata.getPartitionBy();
             columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
-            txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
+            txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount());
+            txnScoreboard.ofRW(path.trimTo(rootLen));
             LOG.debug()
                     .$("open [id=").$(metadata.getTableId())
                     .$(", table=").utf8(tableToken.getTableName())
@@ -350,6 +351,10 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public int getPartitionedBy() {
         return metadata.getPartitionBy();
+    }
+
+    public long getSeqTxn() {
+        return txFile.getSeqTxn();
     }
 
     public SymbolMapReader getSymbolMapReader(int columnIndex) {
@@ -600,6 +605,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         int columnSlotSize = getColumnBase(1);
         columnTops.removeIndexBlock(colTopStart, columnSlotSize / 2);
 
+        Misc.free(parquetPartitions.get(partitionIndex));
         parquetPartitions.remove(partitionIndex);
         openPartitionInfo.removeIndexBlock(offset, PARTITIONS_SLOT_SIZE);
         LOG.info().$("closed deleted partition [table=").$(tableToken)
@@ -779,6 +785,11 @@ public class TableReader implements Closeable, SymbolTableSource {
                         }
                     }
                 }
+            } catch (Throwable th) {
+                closePartitionColumns(fromBase);
+                openPartitionInfo.setQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE, -1);
+                Misc.freeObjListIfCloseable(toColumns);
+                throw th;
             } finally {
                 path.trimTo(rootLen);
             }
@@ -1003,17 +1014,23 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void openPartitionColumns(int partitionIndex, Path path, int columnBase, long partitionRowCount) {
-        for (int i = 0; i < columnCount; i++) {
-            reloadColumnAt(
-                    partitionIndex,
-                    path,
-                    columns,
-                    columnTops,
-                    bitmapIndexes,
-                    columnBase,
-                    i,
-                    partitionRowCount
-            );
+        try {
+            for (int i = 0; i < columnCount; i++) {
+                reloadColumnAt(
+                        partitionIndex,
+                        path,
+                        columns,
+                        columnTops,
+                        bitmapIndexes,
+                        columnBase,
+                        i,
+                        partitionRowCount
+                );
+            }
+        } catch (Throwable th) {
+            closePartitionColumns(columnBase);
+            openPartitionInfo.setQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE, -1);
+            throw th;
         }
     }
 

@@ -24,15 +24,15 @@
 
 package io.questdb.griffin.engine.functions;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
-import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
@@ -70,7 +70,8 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
 
     @Override
     public char getChar(Record rec) {
-        throw new UnsupportedOperationException();
+        CharSequence value = getSymbol(rec);
+        return value == null ? 0 : value.charAt(0);
     }
 
     @Override
@@ -176,14 +177,7 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     @Override
     public final long getTimestamp(Record rec) {
         final CharSequence value = getSymbol(rec);
-        if (value != null) {
-            try {
-                return IntervalUtils.parseFloorPartialTimestamp(value);
-            } catch (NumericException e) {
-                throw CairoException.nonCritical().put("invalid timestamp: [").put(value).put(']');
-            }
-        }
-        return Numbers.LONG_NULL;
+        return SqlUtil.implicitCastSymbolAsTimestamp(value);
     }
 
     @Override

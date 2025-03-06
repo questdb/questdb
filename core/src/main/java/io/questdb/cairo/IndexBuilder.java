@@ -45,7 +45,7 @@ public class IndexBuilder extends RebuildColumnBase {
 
     public IndexBuilder(CairoConfiguration configuration) {
         super(configuration);
-        ddlMem = Vm.getMARInstance(configuration);
+        ddlMem = Vm.getPMARInstance(configuration);
         indexer = new SymbolColumnIndexer(configuration);
         unsupportedColumnMessage = "Column is not indexed";
     }

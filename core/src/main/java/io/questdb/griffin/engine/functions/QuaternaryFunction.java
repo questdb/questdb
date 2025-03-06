@@ -81,11 +81,11 @@ public interface QuaternaryFunction extends Function {
     }
 
     @Override
-    default boolean isThreadSafe() {
-        return getFunc0().isThreadSafe()
-                && getFunc1().isThreadSafe()
-                && getFunc2().isThreadSafe()
-                && getFunc3().isThreadSafe();
+    default boolean isNonDeterministic() {
+        return getFunc0().isNonDeterministic()
+                || getFunc1().isNonDeterministic()
+                || getFunc2().isNonDeterministic()
+                || getFunc3().isNonDeterministic();
     }
 
     @Override
@@ -101,6 +101,14 @@ public interface QuaternaryFunction extends Function {
         final boolean dc = getFunc3().isConstant();
 
         return (ac || arc) && (bc || brc) && (cc || crc) && (dc || drc) && (arc || brc || crc || drc);
+    }
+
+    @Override
+    default boolean isThreadSafe() {
+        return getFunc0().isThreadSafe()
+                && getFunc1().isThreadSafe()
+                && getFunc2().isThreadSafe()
+                && getFunc3().isThreadSafe();
     }
 
     @Override

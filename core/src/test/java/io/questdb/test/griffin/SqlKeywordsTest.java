@@ -35,12 +35,15 @@ import java.lang.reflect.Modifier;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 import static io.questdb.griffin.SqlKeywords.*;
 
 public class SqlKeywordsTest {
-
+    // kept protected for ent tests
+    protected static final Set<String> excludedCases = new HashSet<>();
     protected static final Map<String, String> specialCases = new HashMap<>();
 
     @Test
@@ -164,6 +167,15 @@ public class SqlKeywordsTest {
     }
 
     @Test
+    public void testIsPublicKeyword() {
+        Assert.assertTrue(isPublicKeyword("public", 6));
+        Assert.assertFalse(isPublicKeyword("private", 6));
+        Assert.assertFalse(isPublicKeyword("foo", 3));
+        Assert.assertTrue(isPublicKeyword("public.foobar", 6));
+        Assert.assertFalse(isPublicKeyword("private.foobar", 6));
+    }
+
+    @Test
     public void testLinear() {
         Assert.assertFalse(isLinearKeyword("12345"));
         Assert.assertFalse(isLinearKeyword("123456"));
@@ -190,7 +202,7 @@ public class SqlKeywordsTest {
         for (Method method : methods) {
             String name;
             int m = method.getModifiers() & Modifier.methodModifiers();
-            if (Modifier.isPublic(m) && Modifier.isStatic(m) && (name = method.getName()).startsWith("is")) {
+            if (Modifier.isPublic(m) && Modifier.isStatic(m) && (name = method.getName()).startsWith("is") && !excludedCases.contains(name)) {
                 String methodParam = specialCases.get(name);
                 if (methodParam == null) {
                     if (!name.endsWith("Keyword")) {
@@ -228,5 +240,10 @@ public class SqlKeywordsTest {
         specialCases.put("isUTC", "'UTC'");
         specialCases.put("isZeroOffset", "'00:00'");
         specialCases.put("isJsonExtract", "json_extract");
+        specialCases.put("isRespectWord", "respect");
+        specialCases.put("isIgnoreWord", "ignore");
+        specialCases.put("isNullsWord", "nulls");
+
+        excludedCases.add("isPublicKeyword");
     }
 }

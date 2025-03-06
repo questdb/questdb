@@ -27,7 +27,7 @@ package io.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
+import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpMinServerConfigurationWrapper;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfigurationWrapper;
@@ -39,9 +39,9 @@ import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfigurationWrapper;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -65,11 +65,7 @@ import java.util.function.Function;
 
 public class DynamicPropServerConfiguration implements ServerConfiguration, ConfigReloader {
     private static final Log LOG = LogFactory.getLog(DynamicPropServerConfiguration.class);
-    private static final Function<String, ? extends ConfigPropertyKey> keyResolver = (k) -> {
-        Optional<PropertyKey> prop = PropertyKey.getByString(k);
-        return prop.orElse(null);
-    };
-    private static final Set<PropertyKey> reloadableProps = new HashSet<>(Arrays.asList(
+    private static final Set<? extends ConfigPropertyKey> dynamicProps = new HashSet<>(Arrays.asList(
             PropertyKey.PG_USER,
             PropertyKey.PG_PASSWORD,
             PropertyKey.PG_RO_USER_ENABLED,
@@ -84,32 +80,37 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.HTTP_RECV_BUFFER_SIZE,
             PropertyKey.HTTP_SEND_BUFFER_SIZE,
             PropertyKey.HTTP_NET_CONNECTION_LIMIT,
-            PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT
+            PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT,
+            PropertyKey.QUERY_TRACING_ENABLED
     ));
+    private static final Function<String, ? extends ConfigPropertyKey> keyResolver = (k) -> {
+        Optional<PropertyKey> prop = PropertyKey.getByString(k);
+        return prop.orElse(null);
+    };
     private final BuildInformation buildInformation;
-    private final CairoConfigurationImpl cairoConfig;
+    private final CairoConfigurationWrapper cairoConfig;
     private final java.nio.file.Path confPath;
     private final boolean configReloadEnabled;
     private final @Nullable Map<String, String> env;
     private final FilesFacade filesFacade;
     private final FactoryProviderFactory fpf;
-    private final HttpServerConfigurationImpl httpServerConfig;
-    private final LineTcpReceiverConfigurationImpl lineTcpConfig;
+    private final HttpServerConfigurationWrapper httpServerConfig;
+    private final String installRoot;
+    private final LineTcpReceiverConfigurationWrapper lineTcpConfig;
     private final boolean loadAdditionalConfigurations;
     private final Log log;
-    private final MemoryConfigurationImpl memoryConfig;
+    private final MemoryConfigurationWrapper memoryConfig;
+    private final Metrics metrics;
     private final MicrosecondClock microsecondClock;
-    private final HttpMinServerConfigurationImpl minHttpServerConfig;
-    private final PGWireConfigurationImpl pgWireConfig;
+    private final HttpMinServerConfigurationWrapper minHttpServerConfig;
+    private final PGWireConfigurationWrapper pgWireConfig;
     private final Properties properties;
     private final Object reloadLock = new Object();
-    private final String root;
     private final AtomicReference<PropServerConfiguration> serverConfig;
-    private long lastModified;
     private long version;
 
     public DynamicPropServerConfiguration(
-            String root,
+            String installRoot,
             Properties properties,
             @Nullable Map<String, String> env,
             Log log,
@@ -119,7 +120,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             FactoryProviderFactory fpf,
             boolean loadAdditionalConfigurations
     ) throws ServerConfigurationException, JsonException {
-        this.root = root;
+        this.installRoot = installRoot;
         this.properties = properties;
         this.env = env;
         this.log = log;
@@ -128,9 +129,10 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         this.microsecondClock = microsecondClock;
         this.fpf = fpf;
         this.loadAdditionalConfigurations = loadAdditionalConfigurations;
-        PropServerConfiguration serverConfig = new PropServerConfiguration(
-                root,
+        final PropServerConfiguration serverConfig = new PropServerConfiguration(
+                installRoot,
                 properties,
+                dynamicProps,
                 env,
                 log,
                 buildInformation,
@@ -139,28 +141,22 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
                 fpf,
                 loadAdditionalConfigurations
         );
+        this.metrics = serverConfig.getMetrics();
         this.serverConfig = new AtomicReference<>(serverConfig);
-        this.cairoConfig = new CairoConfigurationImpl();
-        this.minHttpServerConfig = new HttpMinServerConfigurationImpl();
-        this.httpServerConfig = new HttpServerConfigurationImpl();
-        this.lineTcpConfig = new LineTcpReceiverConfigurationImpl();
-        this.memoryConfig = new MemoryConfigurationImpl();
-        this.pgWireConfig = new PGWireConfigurationImpl();
+        this.cairoConfig = new CairoConfigurationWrapper(this.metrics);
+        this.minHttpServerConfig = new HttpMinServerConfigurationWrapper(this.metrics);
+        this.httpServerConfig = new HttpServerConfigurationWrapper(this.metrics);
+        this.lineTcpConfig = new LineTcpReceiverConfigurationWrapper(this.metrics);
+        this.memoryConfig = new MemoryConfigurationWrapper();
+        this.pgWireConfig = new PGWireConfigurationWrapper(this.metrics);
         reloadNestedConfigurations(serverConfig);
         this.version = 0;
         this.confPath = Paths.get(getCairoConfiguration().getConfRoot().toString(), Bootstrap.CONFIG_FILE);
         this.configReloadEnabled = serverConfig.isConfigReloadEnabled();
-        try (Path p = new Path()) {
-            // we assume the config file does exist, otherwise we should not
-            // get to this code. This constructor is passed properties object,
-            // loaded from the same file. We are not expecting races here either.
-            p.of(confPath.toString());
-            lastModified = Files.getLastModified(p.$());
-        }
     }
 
     public DynamicPropServerConfiguration(
-            String root,
+            String installRoot,
             Properties properties,
             @Nullable Map<String, String> env,
             Log log,
@@ -170,7 +166,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             FactoryProviderFactory fpf
     ) throws ServerConfigurationException, JsonException {
         this(
-                root,
+                installRoot,
                 properties,
                 env,
                 log,
@@ -183,14 +179,14 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     }
 
     public DynamicPropServerConfiguration(
-            String root,
+            String installRoot,
             Properties properties,
             @Nullable Map<String, String> env,
             Log log,
             BuildInformation buildInformation
     ) throws ServerConfigurationException, JsonException {
         this(
-                root,
+                installRoot,
                 properties,
                 env,
                 log,
@@ -217,20 +213,24 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         boolean changed = false;
         // Compare the new and existing properties
         for (Map.Entry<Object, Object> entry : newProperties.entrySet()) {
-            String key = (String) entry.getKey();
-            String oldVal = oldProperties.getProperty(key);
+            final String key = (String) entry.getKey();
+            final String oldVal = oldProperties.getProperty(key);
             if (oldVal == null || !oldVal.equals(entry.getValue())) {
-                ConfigPropertyKey config = keyResolver.apply(key);
-                if (config == null) {
-                    return false;
+                final ConfigPropertyKey propKey = keyResolver.apply(key);
+                if (propKey == null) {
+                    log.error().$("unknown property, ignoring [update, key=").$(key).I$();
+                    continue;
                 }
 
-                if (reloadableProps.contains(config)) {
-                    log.info()
-                            .$("reloaded config option [update, key=").$(key)
-                            .$(", old=").$(oldVal)
-                            .$(", new=").$((String) entry.getValue())
-                            .I$();
+                if (reloadableProps.contains(propKey)) {
+                    final LogRecord rec = log.info().$("reloaded config option [update, key=").$(key);
+                    if (!propKey.isSensitive()) {
+                        rec
+                                .$(", oldValue=").$(oldVal)
+                                .$(", newValue=").$((String) entry.getValue());
+                    }
+                    rec.I$();
+
                     oldProperties.setProperty(key, (String) entry.getValue());
                     changed = true;
                 } else {
@@ -242,17 +242,21 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         // Check for any old reloadable properties that have been removed in the new config
         Iterator<Object> oldPropsIter = oldProperties.keySet().iterator();
         while (oldPropsIter.hasNext()) {
-            Object key = oldPropsIter.next();
+            final Object key = oldPropsIter.next();
             if (!newProperties.containsKey(key)) {
-                ConfigPropertyKey prop = keyResolver.apply((String) key);
-                if (prop == null) {
+                final ConfigPropertyKey propKey = keyResolver.apply((String) key);
+                if (propKey == null) {
+                    log.error().$("unknown property, ignoring [remove, key=").$(key).I$();
                     continue;
                 }
-                if (reloadableProps.contains(prop)) {
-                    log.info()
-                            .$("reloaded config option [remove, key=").$(key)
-                            .$(", value=").$(oldProperties.getProperty((String) key))
-                            .$();
+
+                if (reloadableProps.contains(propKey)) {
+                    final LogRecord rec = log.info().$("reloaded config option [remove, key=").$(key);
+                    if (!propKey.isSensitive()) {
+                        rec.$(", value=").$(oldProperties.getProperty((String) key));
+                    }
+                    rec.I$();
+
                     oldPropsIter.remove();
                     changed = true;
                 } else {
@@ -274,12 +278,12 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     }
 
     @Override
-    public HttpMinServerConfiguration getHttpMinServerConfiguration() {
+    public HttpServerConfiguration getHttpMinServerConfiguration() {
         return minHttpServerConfig;
     }
 
     @Override
-    public HttpServerConfiguration getHttpServerConfiguration() {
+    public HttpFullFatServerConfiguration getHttpServerConfiguration() {
         return httpServerConfig;
     }
 
@@ -297,6 +301,11 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     @Override
     public MemoryConfiguration getMemoryConfiguration() {
         return memoryConfig;
+    }
+
+    @Override
+    public Metrics getMetrics() {
+        return metrics;
     }
 
     @Override
@@ -319,6 +328,12 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     @Override
     public long getVersion() {
         return version;
+    }
+
+    @Override
+    public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
+        // nested object is kept non-reloadable
+        return serverConfig.get().getMatViewRefreshPoolConfiguration();
     }
 
     @Override
@@ -348,29 +363,22 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
 
             synchronized (reloadLock) {
                 // Check that the file has been modified since the last trigger
-                long newLastModified = Files.getLastModified(p.$());
-                if (newLastModified > lastModified) {
-                    // If it has, update the cached value
-                    lastModified = newLastModified;
+                // Then load the config properties
 
-                    // Then load the config properties
-                    Properties newProperties = new Properties();
-                    try (InputStream is = java.nio.file.Files.newInputStream(confPath)) {
-                        newProperties.load(is);
-                    } catch (IOException exc) {
-                        LOG.error().$(exc).$();
-                        return false;
-                    }
-
-                    if (updateSupportedProperties(properties, newProperties, reloadableProps, keyResolver, LOG)) {
-                        reload0();
-                        LOG.info().$("reloaded, [file=").$(confPath).$(", modifiedAt=").$ts(newLastModified * 1000).I$();
-                        return true;
-                    }
-                    LOG.info().$("nothing to reload [file=").$(confPath).$(", modifiedAt=").$ts(newLastModified * 1000).I$();
-                } else if (newLastModified == -1) {
-                    LOG.critical().$("Server configuration file is inaccessible! This is dangerous as server will likely not boot on restart. Make sure the current user can access the configuration file [path=").$(confPath).I$();
+                Properties newProperties = new Properties();
+                try (InputStream is = java.nio.file.Files.newInputStream(confPath)) {
+                    newProperties.load(is);
+                } catch (IOException exc) {
+                    LOG.error().$(exc).$();
+                    return false;
                 }
+
+                if (updateSupportedProperties(properties, newProperties, dynamicProps, keyResolver, LOG)) {
+                    reload0();
+                    LOG.info().$("reloaded, [file=").$(confPath).I$();
+                    return true;
+                }
+                LOG.info().$("nothing to reload [file=").$(confPath).I$();
             }
         }
         return false;
@@ -380,8 +388,9 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         PropServerConfiguration newConfig;
         try {
             newConfig = new PropServerConfiguration(
-                    root,
+                    installRoot,
                     properties,
+                    dynamicProps,
                     env,
                     log,
                     buildInformation,
@@ -410,83 +419,5 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         lineTcpConfig.setDelegate(serverConfig.getLineTcpReceiverConfiguration());
         memoryConfig.setDelegate(serverConfig.getMemoryConfiguration());
         pgWireConfig.setDelegate(serverConfig.getPGWireConfiguration());
-    }
-
-    private static class CairoConfigurationImpl extends CairoConfigurationWrapper {
-        private final AtomicReference<CairoConfiguration> delegate = new AtomicReference<>();
-
-        @Override
-        public CairoConfiguration getDelegate() {
-            return delegate.get();
-        }
-
-        public void setDelegate(CairoConfiguration delegate) {
-            this.delegate.set(delegate);
-        }
-    }
-
-    private static class HttpMinServerConfigurationImpl extends HttpMinServerConfigurationWrapper {
-        private final AtomicReference<HttpMinServerConfiguration> delegate = new AtomicReference<>();
-
-        @Override
-        public HttpMinServerConfiguration getDelegate() {
-            return delegate.get();
-        }
-
-        public void setDelegate(HttpMinServerConfiguration delegate) {
-            this.delegate.set(delegate);
-        }
-    }
-
-    private static class HttpServerConfigurationImpl extends HttpServerConfigurationWrapper {
-        private final AtomicReference<HttpServerConfiguration> delegate = new AtomicReference<>();
-
-        @Override
-        public HttpServerConfiguration getDelegate() {
-            return delegate.get();
-        }
-
-        public void setDelegate(HttpServerConfiguration delegate) {
-            this.delegate.set(delegate);
-        }
-    }
-
-    private static class LineTcpReceiverConfigurationImpl extends LineTcpReceiverConfigurationWrapper {
-        private final AtomicReference<LineTcpReceiverConfiguration> delegate = new AtomicReference<>();
-
-        @Override
-        public LineTcpReceiverConfiguration getDelegate() {
-            return delegate.get();
-        }
-
-        public void setDelegate(LineTcpReceiverConfiguration delegate) {
-            this.delegate.set(delegate);
-        }
-    }
-
-    private static class MemoryConfigurationImpl extends MemoryConfigurationWrapper {
-        private final AtomicReference<MemoryConfiguration> delegate = new AtomicReference<>();
-
-        @Override
-        public MemoryConfiguration getDelegate() {
-            return delegate.get();
-        }
-
-        public void setDelegate(MemoryConfiguration delegate) {
-            this.delegate.set(delegate);
-        }
-    }
-
-    private static class PGWireConfigurationImpl extends PGWireConfigurationWrapper {
-        private final AtomicReference<PGWireConfiguration> delegate = new AtomicReference<>();
-
-        @Override
-        public PGWireConfiguration getDelegate() {
-            return delegate.get();
-        }
-
-        public void setDelegate(PGWireConfiguration delegate) {
-            this.delegate.set(delegate);
-        }
     }
 }

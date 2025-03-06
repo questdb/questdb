@@ -76,6 +76,12 @@ public interface SecurityContext extends Mutable {
 
     void authorizeLineTcp();
 
+    void authorizeMatViewCreate();
+
+    void authorizeMatViewDrop(TableToken tableToken);
+
+    void authorizeMatViewRefresh(TableToken tableToken);
+
     void authorizePGWire();
 
     void authorizeResumeWal(TableToken tableToken);
@@ -152,4 +158,6 @@ public interface SecurityContext extends Mutable {
     default boolean isQueryCancellationAllowed() {
         return true;
     }
+
+    boolean isSystemAdmin();
 }

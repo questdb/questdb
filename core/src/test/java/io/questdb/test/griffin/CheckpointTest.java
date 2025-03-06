@@ -35,6 +35,8 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.mv.MatViewRefreshState;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -84,6 +86,7 @@ public class CheckpointTest extends AbstractCairoTest {
         path = new Path();
         triggerFilePath = new Path();
         ff = testFilesFacade;
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         AbstractCairoTest.setUpStatic();
     }
 
@@ -100,9 +103,10 @@ public class CheckpointTest extends AbstractCairoTest {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
 
         super.setUp();
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         ff = testFilesFacade;
         path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).slash();
-        triggerFilePath.of(configuration.getRoot()).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME).$();
+        triggerFilePath.of(configuration.getDbRoot()).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME).$();
         rootLen = path.size();
         testFilesFacade.reset();
 
@@ -174,7 +178,7 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointCreateEmptyFolder() throws Exception {
         final String tableName = "test";
-        path.of(configuration.getRoot()).concat("empty_folder").slash$();
+        path.of(configuration.getDbRoot()).concat("empty_folder").slash$();
         TestFilesFacadeImpl.INSTANCE.mkdirs(path, configuration.getMkDirMode());
 
         assertMemoryLeak(() -> {
@@ -208,6 +212,24 @@ public class CheckpointTest extends AbstractCairoTest {
 
             execute("checkpoint create");
             execute("checkpoint release");
+        });
+    }
+
+    @Test
+    public void testCheckpointPrepareCheckMatViewMetaFiles() throws Exception {
+        assertMemoryLeak(() -> {
+            testCheckpointCreateCheckTableMetadataFiles(
+                    "create table base_price (sym varchar, price double, ts timestamp) timestamp(ts) partition by DAY WAL",
+                    null,
+                    "base_price"
+            );
+            String viewSql = "select sym, last(price) as price, ts from base_price sample by 1h";
+            String sql = "create materialized view price_1h as (" + viewSql + ") partition by DAY";
+            testCheckpointCreateCheckTableMetadataFiles(
+                    sql,
+                    null,
+                    "price_1h"
+            );
         });
     }
 
@@ -1021,7 +1043,7 @@ public class CheckpointTest extends AbstractCairoTest {
                 latch1.countDown();
                 t.join();
                 Assert.assertFalse(lock.isLocked());
-                Assert.assertTrue(ex.getMessage().startsWith("[-1] timeout, query aborted [fd=-1]"));
+                TestUtils.assertContains(ex.getFlyweightMessage(), "timeout, query aborted [fd=-1");
             } finally {
                 execute("checkpoint release");
                 Assert.assertFalse(lock.isLocked());
@@ -1033,7 +1055,7 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testSnapshotPrepareSavesToSnapshotFolder() throws Exception {
         final String tableName = "test";
-        path.of(configuration.getRoot()).concat("empty_folder").slash$();
+        path.of(configuration.getDbRoot()).concat("empty_folder").slash$();
         TestFilesFacadeImpl.INSTANCE.mkdirs(path, configuration.getMkDirMode());
 
         assertMemoryLeak(() -> {
@@ -1048,7 +1070,7 @@ public class CheckpointTest extends AbstractCairoTest {
                 }
 
 
-                path.of(configuration.getRoot());
+                path.of(configuration.getDbRoot());
                 copyPath.of(configuration.getLegacyCheckpointRoot()).concat(configuration.getDbDirectory());
 
                 execute("create table " + tableName + " (a symbol index capacity 128, b double, c long)");
@@ -1330,7 +1352,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
     private void testCheckpointCreateCheckTableMetadataFiles(String ddl, String ddl2, String tableName) throws Exception {
         try (Path path = new Path(); Path copyPath = new Path()) {
-            path.of(configuration.getRoot());
+            path.of(configuration.getDbRoot());
             copyPath.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
 
             execute(ddl);
@@ -1359,6 +1381,15 @@ public class CheckpointTest extends AbstractCairoTest {
             copyPath.trimTo(copyTableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
             TestUtils.assertFileContentsEquals(path, copyPath);
 
+            if (tableToken.isMatView()) {
+                path.trimTo(tableNameLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$();
+                copyPath.trimTo(copyTableNameLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$();
+                TestUtils.assertFileContentsEquals(path, copyPath);
+
+                path.trimTo(tableNameLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$();
+                copyPath.trimTo(copyTableNameLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$();
+                TestUtils.assertFileContentsEquals(path, copyPath);
+            }
             execute("checkpoint release");
         }
     }
@@ -1515,15 +1546,15 @@ public class CheckpointTest extends AbstractCairoTest {
                         Path p1 = new Path();
                         Path p2 = new Path()
                 ) {
-                    p1.of(configuration.getRoot()).concat(TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
-                    p2.of(configuration.getRoot()).concat(TableUtils.CHECKPOINT_DIRECTORY);
+                    p1.of(configuration.getDbRoot()).concat(TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
+                    p2.of(configuration.getDbRoot()).concat(TableUtils.CHECKPOINT_DIRECTORY);
                     Assert.assertEquals(0, ff.rename(p2.$(), p1.$()));
                     path.of(p1).concat(configuration.getDbDirectory());
                     rootLen = path.size();
                 }
             } else {
                 execute("snapshot prepare");
-                path.of(configuration.getRoot()).concat(TableUtils.LEGACY_CHECKPOINT_DIRECTORY).concat(configuration.getDbDirectory());
+                path.of(configuration.getDbRoot()).concat(TableUtils.LEGACY_CHECKPOINT_DIRECTORY).concat(configuration.getDbDirectory());
                 rootLen = path.size();
             }
 

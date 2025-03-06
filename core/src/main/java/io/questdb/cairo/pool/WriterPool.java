@@ -24,7 +24,16 @@
 
 package io.questdb.cairo.pool;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.DefaultLifecycleManager;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.LifecycleManager;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.cairo.sql.AsyncWriterCommand;
@@ -89,7 +98,7 @@ public class WriterPool extends AbstractPool {
         super(configuration, configuration.getInactiveWriterTTL());
         this.configuration = configuration;
         this.clock = configuration.getMicrosecondClock();
-        this.root = configuration.getRoot();
+        this.root = configuration.getDbRoot();
         this.engine = engine;
         notifyListener(Thread.currentThread().getId(), null, PoolListener.EV_POOL_OPEN);
     }
@@ -380,7 +389,6 @@ public class WriterPool extends AbstractPool {
                     root,
                     engine.getDdlListener(tableToken),
                     engine.getCheckpointStatus(),
-                    engine.getMetrics(),
                     engine
             );
             e.ownershipReason = lockReason;

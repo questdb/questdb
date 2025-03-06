@@ -53,7 +53,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     public final static int MAX_WAL_APPLY_O3_SPLIT_PARTITION_CEIL = 20000;
     public final static int MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN = 200;
     protected final FuzzRunner fuzzer = new FuzzRunner();
-    protected final WorkerPool sharedWorkerPool = new TestWorkerPool(4, metrics);
+    protected final WorkerPool sharedWorkerPool = new TestWorkerPool(4, node1.getMetrics());
 
     public static int getRndO3PartitionSplit(Rnd rnd) {
         return MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN + rnd.nextInt(MAX_WAL_APPLY_O3_SPLIT_PARTITION_CEIL - MAX_WAL_APPLY_O3_SPLIT_PARTITION_MIN);
@@ -120,10 +120,11 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 rnd.nextDouble(),
+                0.01,
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
                 rnd.nextDouble(),
-                0.01
+                rnd.nextDouble()
         );
 
         fuzzer.setFuzzCounts(
@@ -243,11 +244,13 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             double equalTsRowsProb,
             double partitionDropProb,
             double truncateProb,
-            double tableDropProb
+            double tableDropProb,
+            double setTtlProb
     ) {
         fuzzer.setFuzzProbabilities(cancelRowsProb, notSetProb, nullSetProb, rollbackProb,
                 colAddProb, colRemoveProb, colRenameProb, colTypeChangeProb, dataAddProb,
-                partitionDropProb, truncateProb, tableDropProb, equalTsRowsProb);
+                equalTsRowsProb, partitionDropProb, truncateProb, tableDropProb, setTtlProb
+        );
     }
 
     protected void setFuzzProperties(long maxApplyTimePerTable, long splitPartitionThreshold, int o3PartitionSplitMaxCount) {
@@ -281,9 +284,9 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         long walChunk = Math.max(0, rnd.nextInt((int) (3.5 * txnCount)) - txnCount);
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, walChunk);
 
-        // Make call to move random even if will not be used
-        // To avoid zfs runs being very different to the non-zfs
-        // with the same seeds
+        // Make call to move random even if it will not be used.
+        // To avoid ZFS runs being very different to the non-ZFS
+        // with the same seeds.
         boolean allowMixedIO = rnd.nextBoolean();
         if (configuration.getFilesFacade().allowMixedIO(root)) {
             node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, allowMixedIO);

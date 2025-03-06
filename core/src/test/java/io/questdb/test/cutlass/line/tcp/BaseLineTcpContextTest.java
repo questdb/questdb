@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.Metrics;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
@@ -114,8 +115,13 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         noNetworkIOJob = new NoNetworkIOJob(lineTcpConfiguration);
     }
 
-    private static WorkerPool createWorkerPool(final int workerCount, final boolean haltOnError) {
+    private static WorkerPool createWorkerPool(final int workerCount, final boolean haltOnError, Metrics metrics) {
         return new WorkerPool(new WorkerPoolConfiguration() {
+            @Override
+            public Metrics getMetrics() {
+                return metrics;
+            }
+
             @Override
             public long getSleepTimeout() {
                 return 1;
@@ -130,7 +136,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             public boolean haltOnError() {
                 return haltOnError;
             }
-        }, metrics);
+        });
     }
 
     protected void assertTable(CharSequence expected, String tableName) {
@@ -302,9 +308,9 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         scheduler = new LineTcpMeasurementScheduler(
                 lineTcpConfiguration,
                 engine,
-                createWorkerPool(1, true),
+                createWorkerPool(1, true, lineTcpConfiguration.getMetrics()),
                 null,
-                workerPool = createWorkerPool(nWriterThreads, false)
+                workerPool = createWorkerPool(nWriterThreads, false, lineTcpConfiguration.getMetrics())
         ) {
 
             @Override
@@ -314,7 +320,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                     LineTcpConnectionContext context,
                     LineTcpParser parser
             ) throws Exception {
-                if (null != onCommitNewEvent) {
+                if (onCommitNewEvent != null) {
                     onCommitNewEvent.run();
                 }
                 return super.scheduleEvent(securityContext, netIoJob, context, parser);
@@ -327,7 +333,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
         };
         noNetworkIOJob.setScheduler(scheduler);
-        context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler, metrics);
+        context = new LineTcpConnectionContext(lineTcpConfiguration, scheduler);
         context.of(FD, new IODispatcher<>() {
             @Override
             public void close() {

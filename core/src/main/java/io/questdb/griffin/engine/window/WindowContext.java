@@ -62,4 +62,8 @@ public interface WindowContext {
     boolean isOrdered();
 
     boolean isOrderedByDesignatedTimestamp();
+
+    boolean isIgnoreNulls();
+
+    int getNullsDescPos();
 }

@@ -127,7 +127,16 @@ public interface MetadataService {
 
     void dropIndex(@NotNull CharSequence columnName);
 
-    void enableDeduplicationWithUpsertKeys(LongList columnsIndexes);
+    /**
+     * Enables deduplication with the given upsert keys.
+     *
+     * @return returns true when dedup was already enabled on the table and the new upsert keys
+     * are a subset of the previous upsert keys. Implementations that don't have access
+     * to the table metadata always return false.
+     */
+    boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes);
+
+    void forceRemovePartitions(LongList partitionTimestamps);
 
     int getMetaMaxUncommittedRows();
 
@@ -138,8 +147,6 @@ public interface MetadataService {
     TableToken getTableToken();
 
     UpdateOperator getUpdateOperator();
-
-    void forceRemovePartitions(LongList partitionTimestamps);
 
     void removeColumn(@NotNull CharSequence columnName);
 
@@ -156,6 +163,13 @@ public interface MetadataService {
     void setMetaMaxUncommittedRows(int maxUncommittedRows);
 
     void setMetaO3MaxLag(long o3MaxLagUs);
+
+    /**
+     * Sets the time-to-live (TTL) of the data in this table: if positive,
+     * it's in hours; if negative, it's in months (and the actual value is positive).
+     * Zero means "no TTL".
+     */
+    void setMetaTtlHoursOrMonths(int metaTtlHoursOrMonths);
 
     void squashPartitions();
 

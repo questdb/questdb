@@ -314,7 +314,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             final boolean enabledUpdateCache = configuration.isUpdateCacheEnabled();
             final int updateBlockCount = enabledUpdateCache ? configuration.getUpdateCacheBlockCount() : 1;
             final int updateRowCount = enabledUpdateCache ? configuration.getUpdateCacheRowCount() : 1;
-            this.typesAndUpdateCache = new SimpleAssociativeCache<>(updateBlockCount, updateRowCount, metrics.pgWire().cachedUpdatesGauge());
+            this.typesAndUpdateCache = new SimpleAssociativeCache<>(updateBlockCount, updateRowCount, metrics.pgWireMetrics().cachedUpdatesGauge());
             this.typesAndUpdatePool = new WeakSelfReturningObjectPool<>(parent -> new TypesAndUpdate(parent, engine), updateBlockCount * updateRowCount);
 
             final boolean enableInsertCache = configuration.isInsertCacheEnabled();
@@ -518,7 +518,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // BAU, not error metric
             throw e;
         } catch (Throwable th) {
-            metrics.pgWire().getErrorCounter().inc();
+            metrics.pgWireMetrics().getErrorCounter().inc();
             throw th;
         }
 
@@ -921,7 +921,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             responseUtf8Sink.setNullValue();
         } else {
             final long a = responseUtf8Sink.skip();
-            Numbers.appendLong256(long256Value.getLong0(), long256Value.getLong1(), long256Value.getLong2(), long256Value.getLong3(), responseUtf8Sink);
+            Numbers.appendLong256(long256Value, responseUtf8Sink);
             responseUtf8Sink.putLenEx(a);
         }
     }
@@ -1825,7 +1825,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void handleException(int position, CharSequence message, boolean critical, int errno, boolean interruption) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        metrics.pgWire().getErrorCounter().inc();
+        metrics.pgWireMetrics().getErrorCounter().inc();
         clearCursorAndFactory();
         if (interruption) {
             prepareErrorResponse(position, message);
@@ -2384,6 +2384,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 queryContainsSecret = sqlExecutionContext.containsSecret();
                 break;
             case CompiledQuery.CREATE_TABLE:
+            case CompiledQuery.CREATE_MAT_VIEW:
             case CompiledQuery.DROP:
                 try (
                         Operation op = cq.getOperation();

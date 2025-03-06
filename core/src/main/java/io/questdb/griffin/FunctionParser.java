@@ -24,27 +24,98 @@
 
 package io.questdb.griffin;
 
+import java.util.ArrayDeque;
+
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
-import io.questdb.griffin.engine.functions.cast.*;
-import io.questdb.griffin.engine.functions.columns.*;
-import io.questdb.griffin.engine.functions.constants.*;
+import io.questdb.griffin.engine.functions.cast.CastCharToSymbolFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastIntervalToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastStrToUuidFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastUuidToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastUuidToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastVarcharToGeoHashFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastVarcharToTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastVarcharToUuidFunctionFactory;
+import io.questdb.griffin.engine.functions.columns.BinColumn;
+import io.questdb.griffin.engine.functions.columns.BooleanColumn;
+import io.questdb.griffin.engine.functions.columns.ByteColumn;
+import io.questdb.griffin.engine.functions.columns.CharColumn;
+import io.questdb.griffin.engine.functions.columns.DateColumn;
+import io.questdb.griffin.engine.functions.columns.DoubleColumn;
+import io.questdb.griffin.engine.functions.columns.FloatColumn;
+import io.questdb.griffin.engine.functions.columns.GeoByteColumn;
+import io.questdb.griffin.engine.functions.columns.GeoIntColumn;
+import io.questdb.griffin.engine.functions.columns.GeoLongColumn;
+import io.questdb.griffin.engine.functions.columns.GeoShortColumn;
+import io.questdb.griffin.engine.functions.columns.IPv4Column;
+import io.questdb.griffin.engine.functions.columns.IntColumn;
+import io.questdb.griffin.engine.functions.columns.IntervalColumn;
+import io.questdb.griffin.engine.functions.columns.Long128Column;
+import io.questdb.griffin.engine.functions.columns.Long256Column;
+import io.questdb.griffin.engine.functions.columns.LongColumn;
+import io.questdb.griffin.engine.functions.columns.RecordColumn;
+import io.questdb.griffin.engine.functions.columns.ShortColumn;
+import io.questdb.griffin.engine.functions.columns.StrColumn;
+import io.questdb.griffin.engine.functions.columns.SymbolColumn;
+import io.questdb.griffin.engine.functions.columns.TimestampColumn;
+import io.questdb.griffin.engine.functions.columns.UuidColumn;
+import io.questdb.griffin.engine.functions.columns.VarcharColumn;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.constants.ByteConstant;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
+import io.questdb.griffin.engine.functions.constants.CharTypeConstant;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.Constants;
+import io.questdb.griffin.engine.functions.constants.DateConstant;
+import io.questdb.griffin.engine.functions.constants.DoubleConstant;
+import io.questdb.griffin.engine.functions.constants.FloatConstant;
+import io.questdb.griffin.engine.functions.constants.GeoByteConstant;
+import io.questdb.griffin.engine.functions.constants.GeoHashTypeConstant;
+import io.questdb.griffin.engine.functions.constants.GeoIntConstant;
+import io.questdb.griffin.engine.functions.constants.GeoLongConstant;
+import io.questdb.griffin.engine.functions.constants.GeoShortConstant;
+import io.questdb.griffin.engine.functions.constants.IPv4Constant;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.griffin.engine.functions.constants.Long256Constant;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.constants.SymbolConstant;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.griffin.engine.functions.constants.UuidConstant;
+import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.IntStack;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-
-import java.util.ArrayDeque;
 
 import static io.questdb.griffin.SqlKeywords.*;
 
@@ -428,7 +499,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         if (args != null && args.size() == 2) {
             // binary operator not found
             // function, not an operator,  is  not found
-            ex.put("there is no matching operator`").put(node.token).put("` with the argument types: ");
+            ex.put("there is no matching operator `").put(node.token).put("` with the argument types: ");
             putArgType(args, 0, ex);
             ex.put(' ');
             ex.put(node.token);
@@ -635,6 +706,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             throw invalidFunction(node, args);
         }
 
+
         final int argCount = args == null ? 0 : args.size();
         FunctionFactory candidate = null;
         FunctionFactoryDescriptor candidateDescriptor = null;
@@ -645,38 +717,47 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         int bestMatch = MATCH_NO_MATCH;
         boolean isWindowContext = !sqlExecutionContext.getWindowContext().isEmpty();
 
-        // If a bind variable of unknown type appears inside a cast expression, we should
-        // assign a default type to it. Otherwise, since casting is a heavily overloaded
-        // operation (can cast lots of things to a string/number), we'll end up picking
-        // whatever happens to be the first cast function in the traversal order, and force
-        // the bind variable to that type. This will then fail when an actual value is bound
-        // to the variable, and it's most likely not that arbitrary type.
-        if (SqlKeywords.isCastKeyword(node.token)
-                && argCount == 2
-                && args.getQuick(0).isUndefined()
-                && args.getQuick(1).isConstant()
-        ) skipAssigningType:{
-            final Function undefinedArg = args.getQuick(0);
-            final int castToType = args.getQuick(1).getType();
-            final int assignType;
-            switch (castToType) {
-                case ColumnType.VARCHAR:
-                case ColumnType.STRING:
-                case ColumnType.CHAR:
-                    assignType = ColumnType.STRING;
-                    break;
-                case ColumnType.BYTE:
-                case ColumnType.SHORT:
-                case ColumnType.INT:
-                case ColumnType.LONG:
-                case ColumnType.FLOAT:
-                case ColumnType.DOUBLE:
-                    assignType = ColumnType.DOUBLE;
-                    break;
-                default:
-                    break skipAssigningType;
+
+        if (SqlKeywords.isCastKeyword(node.token) && argCount == 2
+                && args.getQuick(1).isConstant()) skipAssigningType:{
+            // If this the cast into same type, return the first argument
+            if (args.getQuick(0).getType() == args.getQuick(1).getType()) {
+                return args.getQuick(0);
             }
-            undefinedArg.assignType(assignType, sqlExecutionContext.getBindVariableService());
+
+            // If a bind variable of unknown type appears inside a cast expression, we should
+            // assign a default type to it. Otherwise, since casting is a heavily overloaded
+            // operation (can cast lots of things to a string/number), we'll end up picking
+            // whatever happens to be the first cast function in the traversal order, and force
+            // the bind variable to that type. This will then fail when an actual value is bound
+            // to the variable, and it's most likely not that arbitrary type.
+            if (args.getQuick(0).isUndefined()) {
+                final Function undefinedArg = args.getQuick(0);
+                final int castToType = args.getQuick(1).getType();
+                final int assignType;
+                switch (castToType) {
+                    case ColumnType.VARCHAR:
+                    case ColumnType.STRING:
+                    case ColumnType.CHAR:
+                        assignType = ColumnType.STRING;
+                        break;
+                    case ColumnType.BYTE:
+                    case ColumnType.SHORT:
+                    case ColumnType.INT:
+                    case ColumnType.LONG:
+                    case ColumnType.FLOAT:
+                    case ColumnType.DOUBLE:
+                        assignType = ColumnType.DOUBLE;
+                        break;
+                    default:
+                        break skipAssigningType;
+                }
+                undefinedArg.assignType(assignType, sqlExecutionContext.getBindVariableService());
+                if (assignType == castToType) {
+                    // Now that that type is assigned, we can return the first argument, no additional cast needed
+                    return undefinedArg;
+                }
+            }
         }
 
         undefinedVariables.clear();

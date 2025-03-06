@@ -25,7 +25,12 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
@@ -434,7 +439,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
             assertPartitionResult("count\n44\n", "2020-01-01");
 
             TableToken tableToken = engine.verifyTableName(tableName);
-            try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(tableToken)) {
+            try (Path path = new Path().of(engine.getConfiguration().getDbRoot()).concat(tableToken)) {
                 path.concat("2020-01-01.1").concat("timestamp.d").$();
                 Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.exists(path.$()));
                 engine.releaseAllReaders();

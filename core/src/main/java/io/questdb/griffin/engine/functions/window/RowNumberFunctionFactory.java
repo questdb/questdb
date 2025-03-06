@@ -55,8 +55,9 @@ import io.questdb.std.Unsafe;
 
 public class RowNumberFunctionFactory implements FunctionFactory {
 
+    public static final String NAME = "row_number";
     private static final SingleColumnType LONG_COLUMN_TYPE = new SingleColumnType(ColumnType.LONG);
-    private static final String SIGNATURE = "row_number()";
+    private static final String SIGNATURE = NAME + "()";
 
     @Override
     public String getSignature() {
@@ -144,13 +145,15 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
-        }
-
-        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), rowNumber);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext);
         }
 
         @Override
@@ -207,10 +210,6 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             toTop();
-        }
-
-        @Override
-        public void initRecordComparator(RecordComparatorCompiler recordComparatorCompiler, ArrayColumnTypes chainTypes, IntList order) {
         }
 
         @Override

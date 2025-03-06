@@ -161,8 +161,7 @@ public class WalWriter implements TableWriterAPI {
             TableToken tableToken,
             TableSequencerAPI tableSequencerAPI,
             DdlListener ddlListener,
-            WalDirectoryPolicy walDirectoryPolicy,
-            Metrics metrics
+            WalDirectoryPolicy walDirectoryPolicy
     ) {
         LOG.info().$("open '").utf8(tableToken.getDirName()).$('\'').$();
         this.sequencer = tableSequencerAPI;
@@ -175,13 +174,14 @@ public class WalWriter implements TableWriterAPI {
         final int walId = tableSequencerAPI.getNextWalId(tableToken);
         this.walName = WAL_NAME_BASE + walId;
         this.walId = walId;
-        this.path = new Path().of(configuration.getRoot());
+        this.path = new Path();
+        path.of(configuration.getDbRoot());
         this.pathRootSize = path.size();
         this.path.concat(tableToken).concat(walName);
         this.pathSize = path.size();
-        this.metrics = metrics;
+        this.metrics = configuration.getMetrics();
         this.open = true;
-        this.symbolMapMem = Vm.getMARInstance(configuration);
+        this.symbolMapMem = Vm.getPMARInstance(configuration);
 
         try {
             lockWal();
@@ -301,9 +301,8 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    // Returns sequencer transaction number
     @Override
-    public long commit() {
+    public void commit() {
         checkDistressed();
         try {
             if (inTransaction()) {
@@ -320,8 +319,7 @@ public class WalWriter implements TableWriterAPI {
                         .$(", minTs=").$ts(txnMinTimestamp).$(", maxTs=").$ts(txnMaxTimestamp).I$();
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
-                metrics.wal().addRowsWritten(rowsToCommit);
-                return seqTxn;
+                metrics.walMetrics().addRowsWritten(rowsToCommit);
             }
         } catch (CairoException ex) {
             distressed = true;
@@ -335,7 +333,6 @@ public class WalWriter implements TableWriterAPI {
         } finally {
             isCommittingData = false;
         }
-        return NO_TXN;
     }
 
     public void doClose(boolean truncate) {
@@ -934,7 +931,7 @@ public class WalWriter implements TableWriterAPI {
     private void configureColumn(int columnIndex, int columnType) {
         final int dataColumnOffset = getDataColumnOffset(columnIndex);
         if (columnType > 0) {
-            final MemoryMA dataMem = Vm.getMAInstance(configuration);
+            final MemoryMA dataMem = Vm.getPMARInstance(configuration);
             final MemoryMA auxMem = createAuxColumnMem(columnType);
             columns.extendAndSet(dataColumnOffset, dataMem);
             columns.extendAndSet(dataColumnOffset + 1, auxMem);
@@ -977,7 +974,7 @@ public class WalWriter implements TableWriterAPI {
         // Copy or hard link symbol map files.
         FilesFacade ff = configuration.getFilesFacade();
         Path tempPath = Path.PATH.get();
-        tempPath.of(configuration.getRoot()).concat(tableToken);
+        tempPath.of(configuration.getDbRoot()).concat(tableToken);
         int tempPathTripLen = tempPath.size();
 
         path.trimTo(pathSize);
@@ -1081,12 +1078,12 @@ public class WalWriter implements TableWriterAPI {
 
                         // todo: use own path
                         Path path = Path.PATH2.get();
-                        path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME);
+                        path.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME);
 
                         // Does not matter which PartitionBy, as long as it is partitioned
                         // WAL tables must be partitioned
                         txReader.ofRO(path.$(), PartitionBy.DAY);
-                        path.of(configuration.getRoot()).concat(tableToken).concat(COLUMN_VERSION_FILE_NAME);
+                        path.of(configuration.getDbRoot()).concat(tableToken).concat(COLUMN_VERSION_FILE_NAME);
                         columnVersionReader.ofRO(ff, path.$());
 
                         initialized = true;
@@ -1127,7 +1124,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private MemoryMA createAuxColumnMem(int columnType) {
-        return ColumnType.isVarSize(columnType) ? Vm.getMAInstance(configuration) : null;
+        return ColumnType.isVarSize(columnType) ? Vm.getPMARInstance(configuration) : null;
     }
 
     private SegmentColumnRollSink createSegmentColumnRollSink() {
@@ -1804,15 +1801,18 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+        public boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+            boolean isSubsetOfOldKeys = true;
             for (int i = 0, n = columnsIndexes.size(); i < n; i++) {
                 int columnIndex = (int) columnsIndexes.get(i);
                 int columnType = metadata.getColumnType(columnIndex);
                 if (columnType < 0) {
                     throw CairoException.nonCritical().put("cannot use dropped column for deduplication [column=").put(metadata.getColumnName(columnIndex)).put(']');
                 }
+                isSubsetOfOldKeys &= metadata.isDedupKey(columnIndex);
             }
             structureVersion++;
+            return isSubsetOfOldKeys;
         }
 
         @Override
@@ -1963,7 +1963,7 @@ public class WalWriter implements TableWriterAPI {
 
         @Override
         public void changeColumnType(
-                CharSequence columnName,
+                CharSequence columnNameSeq,
                 int newType,
                 int symbolCapacity,
                 boolean symbolCacheFlag,
@@ -1972,8 +1972,9 @@ public class WalWriter implements TableWriterAPI {
                 boolean isSequential,
                 SecurityContext securityContext
         ) {
-            final int existingColumnIndex = metadata.getColumnIndexQuiet(columnName);
+            final int existingColumnIndex = metadata.getColumnIndexQuiet(columnNameSeq);
             if (existingColumnIndex > -1) {
+                String columnName = metadata.getColumnName(existingColumnIndex);
                 int existingColumnType = metadata.getColumnType(existingColumnIndex);
                 if (existingColumnType > 0) {
                     if (existingColumnType != newType) {
@@ -2035,7 +2036,7 @@ public class WalWriter implements TableWriterAPI {
                     }
                 }
             } else {
-                throw CairoException.nonCritical().put("column '").put(columnName).put("' does not exists");
+                throw CairoException.nonCritical().put("column '").put(columnNameSeq).put("' does not exists");
             }
         }
 
@@ -2045,8 +2046,8 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
-            metadata.enableDeduplicationWithUpsertKeys();
+        public boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+            return metadata.enableDeduplicationWithUpsertKeys();
         }
 
         @Override
@@ -2060,9 +2061,10 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void removeColumn(@NotNull CharSequence columnName) {
-            final int columnIndex = metadata.getColumnIndexQuiet(columnName);
+        public void removeColumn(@NotNull CharSequence columnNameSeq) {
+            final int columnIndex = metadata.getColumnIndexQuiet(columnNameSeq);
             if (columnIndex > -1) {
+                String columnName = metadata.getColumnName(columnIndex);
                 int type = metadata.getColumnType(columnIndex);
                 if (type > 0) {
                     if (currentTxnStartRowNum > 0) {
@@ -2096,18 +2098,19 @@ public class WalWriter implements TableWriterAPI {
                     }
                 }
             } else {
-                throw CairoException.nonCritical().put("column '").put(columnName).put("' does not exists");
+                throw CairoException.nonCritical().put("column '").put(columnNameSeq).put("' does not exists");
             }
         }
 
         @Override
         public void renameColumn(
-                @NotNull CharSequence columnName,
+                @NotNull CharSequence columnNameSeq,
                 @NotNull CharSequence newColumnName,
                 SecurityContext securityContext
         ) {
-            final int columnIndex = metadata.getColumnIndexQuiet(columnName);
+            final int columnIndex = metadata.getColumnIndexQuiet(columnNameSeq);
             if (columnIndex > -1) {
+                String columnName = metadata.getColumnName(columnIndex);
                 int columnType = metadata.getColumnType(columnIndex);
                 if (columnType > 0) {
                     if (currentTxnStartRowNum > 0) {
@@ -2149,7 +2152,7 @@ public class WalWriter implements TableWriterAPI {
                     }
                 }
             } else {
-                throw CairoException.nonCritical().put("column '").put(columnName).put("' does not exists");
+                throw CairoException.nonCritical().put("column '").put(columnNameSeq).put("' does not exists");
             }
         }
 

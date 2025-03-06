@@ -114,6 +114,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap columnAliasIndexes = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> columnNameToAliasMap = new LowerCaseCharSequenceObjHashMap<>();
+    private final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = new LowerCaseCharSequenceObjHashMap<>();
     private final IntHashSet dependencies = new IntHashSet();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
     private final ObjList<ExpressionNode> groupBy = new ObjList<>();
@@ -162,9 +163,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode fillStride;
     private ExpressionNode fillTo;
     private ObjList<ExpressionNode> fillValues;
+    private boolean forceBackwardScan;
     //simple flag to mark when limit x,y in current model (part of query) is already taken care of by existing factories e.g. LimitedSizeSortedLightRecordCursorFactory
     //and doesn't need to be enforced by LimitRecordCursor. We need it to detect whether current factory implements limit from this or inner query .
     private boolean isLimitImplemented;
+    private boolean isMatViewModel;
     // A flag to mark intermediate SELECT translation models. Such models do not contain the full list of selected
     // columns (e.g. they lack virtual columns), so they should be skipped when rewriting positional ORDER BY.
     private boolean isSelectTranslation = false;
@@ -187,6 +190,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
     // position of the order by clause token
     private int orderByPosition;
+    private boolean orderDescendingByDesignatedTimestampOnly;
     private IntList orderedJoinModels = orderedJoinModels2;
     // Expression clause that is actually part of left/outer join but not in join model.
     // Inner join expressions
@@ -447,7 +451,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         topDownColumns.clear();
         topDownNameSet.clear();
         aliasToColumnMap.clear();
+        // TODO: replace booleans with an enum-like type: UPDATE/MAT_VIEW/INSERT_AS_SELECT/SELECT
+        //  default is SELECT
         isUpdateModel = false;
+        isMatViewModel = false;
         modelType = ExecutionModel.QUERY;
         updateSetColumns.clear();
         updateTableColumnTypes.clear();
@@ -467,6 +474,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         fillValues = null;
         skipped = false;
         allowPropagationOfOrderByAdvice = true;
+        decls.clear();
+        orderDescendingByDesignatedTimestampOnly = false;
+        forceBackwardScan = false;
     }
 
     public void clearColumnMapStructs() {
@@ -536,13 +546,23 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                         qc.isIncludeIntoWildcard()
                 );
             }
-            this.aliasToColumnMap.put(alias, qc);
+            aliasToColumnMap.put(alias, qc);
         }
         ObjList<CharSequence> columnNames = other.bottomUpColumnAliases;
         this.bottomUpColumnAliases.addAll(columnNames);
         for (int i = 0, n = columnNames.size(); i < n; i++) {
             final CharSequence name = columnNames.getQuick(i);
             this.aliasToColumnNameMap.put(name, name);
+        }
+    }
+
+    public void copyDeclsFrom(QueryModel model) {
+        copyDeclsFrom(model.getDecls());
+    }
+
+    public void copyDeclsFrom(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) {
+        if (decls != null && decls.size() > 0) {
+            this.decls.putAll(decls);
         }
     }
 
@@ -607,8 +627,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && orderByAdviceMnemonic == that.orderByAdviceMnemonic
                 && tableId == that.tableId
                 && isUpdateModel == that.isUpdateModel
+                && isMatViewModel == that.isMatViewModel
                 && modelType == that.modelType
                 && artificialStar == that.artificialStar
+                && skipped == that.skipped
+                && allowPropagationOfOrderByAdvice == that.allowPropagationOfOrderByAdvice
                 && Objects.equals(bottomUpColumns, that.bottomUpColumns)
                 && Objects.equals(topDownNameSet, that.topDownNameSet)
                 && Objects.equals(topDownColumns, that.topDownColumns)
@@ -666,8 +689,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(unionModel, that.unionModel)
                 && Objects.equals(updateTableModel, that.updateTableModel)
                 && Objects.equals(updateTableToken, that.updateTableToken)
-                && skipped == that.skipped
-                && allowPropagationOfOrderByAdvice == that.allowPropagationOfOrderByAdvice;
+                && Objects.equals(decls, that.decls);
     }
 
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
@@ -722,6 +744,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public JoinContext getContext() {
         return context;
+    }
+
+    public LowerCaseCharSequenceObjHashMap<ExpressionNode> getDecls() {
+        return decls;
     }
 
     public IntHashSet getDependencies() {
@@ -938,6 +964,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return tableId;
     }
 
+    @Override
     public CharSequence getTableName() {
         return tableNameExpr != null ? tableNameExpr.token : null;
     }
@@ -1025,8 +1052,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 isSelectTranslation, selectModelType, nestedModelIsSubQuery,
                 distinct, unionModel, setOperationType,
                 modelPosition, orderByAdviceMnemonic, tableId,
-                isUpdateModel, modelType, updateTableModel,
-                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues
+                isUpdateModel, isMatViewModel, modelType, updateTableModel,
+                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues, decls
         );
     }
 
@@ -1042,8 +1069,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return explicitTimestamp;
     }
 
+    public boolean isForceBackwardScan() {
+        return forceBackwardScan;
+    }
+
     public boolean isLimitImplemented() {
         return isLimitImplemented;
+    }
+
+    public boolean isMatView() {
+        return isMatViewModel;
     }
 
     public boolean isNestedModelIsSubQuery() {
@@ -1064,6 +1099,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         } catch (NumericException e) {
             return false;
         }
+    }
+
+    public boolean isOrderDescendingByDesignatedTimestampOnly() {
+        return orderDescendingByDesignatedTimestampOnly;
     }
 
     public boolean isSelectTranslation() {
@@ -1285,6 +1324,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.fillValues = fillValues;
     }
 
+    public void setForceBackwardScan(boolean forceBackwardScan) {
+        this.forceBackwardScan = forceBackwardScan;
+    }
+
+    public void setIsMatView(boolean isMatView) {
+        this.isMatViewModel = isMatView;
+    }
+
     public void setIsUpdate(boolean isUpdate) {
         this.isUpdateModel = isUpdate;
     }
@@ -1349,6 +1396,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setOrderByPosition(int orderByPosition) {
         this.orderByPosition = orderByPosition;
+    }
+
+    public void setOrderDescendingByDesignatedTimestampOnly(boolean orderDescendingByDesignatedTimestampOnly) {
+        this.orderDescendingByDesignatedTimestampOnly = orderDescendingByDesignatedTimestampOnly;
     }
 
     public void setOrderedJoinModels(IntList that) {
@@ -1462,6 +1513,19 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
             columnAliasIndexes.put(bottomUpColumnAliases.getQuick(i), i);
         }
+    }
+
+    public boolean windowStopPropagate() {
+        if (selectModelType != SELECT_MODEL_WINDOW) {
+            return false;
+        }
+        for (int i = 0, size = getColumns().size(); i < size; i++) {
+            QueryColumn column = getColumns().getQuick(i);
+            if (column.isWindowColumn() && ((WindowColumn) column).stopOrderByPropagate(getOrderBy(), getOrderByDirection())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void aliasToSink(CharSequence alias, CharSink<?> sink) {

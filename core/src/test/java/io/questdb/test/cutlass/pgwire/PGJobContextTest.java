@@ -95,7 +95,6 @@ import org.postgresql.jdbc.PgResultSet;
 import org.postgresql.util.PGTimestamp;
 import org.postgresql.util.PSQLException;
 
-import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.sql.CallableStatement;
@@ -1424,6 +1423,30 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testCreateDropCreateTable() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            try (Statement stmt = connection.createStatement()) {
+                stmt.execute("create table x as (select x::timestamp as ts from long_sequence(100)) timestamp (ts)");
+                try (ResultSet rs = stmt.executeQuery("tables();")) {
+                    assertResultSet("id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],isMatView[BIT]\n" +
+                                    "2,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false\n",
+                            sink, rs);
+                }
+
+                stmt.execute("drop table x");
+                drainWalQueue();
+                stmt.execute("create table x as (select x::timestamp as ts from long_sequence(100)) timestamp (ts)");
+
+                try (ResultSet rs = stmt.executeQuery("tables();")) {
+                    assertResultSet("id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],isMatView[BIT]\n" +
+                                    "3,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false\n",
+                            sink, rs);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testBasicFetch() throws Exception {
         skipOnWalRun(); // Non-partitioned
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -2620,6 +2643,30 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testByteBindingVariable() throws Exception {
+        skipOnWalRun();
+        skipInLegacyMode();
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            final PreparedStatement statement = connection.prepareStatement("create table x (a byte)");
+            statement.execute();
+
+            try (final PreparedStatement insert = connection.prepareStatement("insert into x values (?)")) {
+                // the parameter must be null so client does not know the type and parse message won't have types specified
+                // this makes the compiler to derive the type from the column type as BYTE
+                insert.setObject(1, null);
+                insert.execute();
+            }
+
+            try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                sink.clear();
+                assertResultSet("a[SMALLINT]\n" +
+                        "0\n", sink, resultSet);
+            }
+        });
+    }
+
+    @Test
     public void testCairoException() throws Exception {
         skipOnWalRun(); // non-partitioned
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -2748,6 +2795,8 @@ if __name__ == "__main__":
 
     @Test
     public void testCancelRunningQuery() throws Exception {
+        // legacy code is liable to "resume" cursor after "cursor.close()", which would lead to undefined behaviour
+        Assume.assumeFalse(legacyMode);
         String[] queries = {
                 "create table new_tab as (select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000))",
                 "select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000)",
@@ -3253,16 +3302,15 @@ if __name__ == "__main__":
         String[][] sqlExpectedErrMsg = {
                 {"drop table doesnt", "ERROR: table does not exist [table=doesnt]"},
                 {"drop table", "ERROR: expected IF EXISTS table-name"},
-                {"drop doesnt", "ERROR: 'table' or 'all tables' expected"},
-                {"drop", "ERROR: 'table' or 'all tables' expected"},
+                {"drop doesnt", "ERROR: 'table' or 'materialized view' or 'all' expected"},
+                {"drop", "ERROR: 'table' or 'materialized view' or 'all' expected"},
                 {"drop table if doesnt", "ERROR: expected EXISTS"},
                 {"drop table exists doesnt", "ERROR: table and column names that are SQL keywords have to be enclosed in double quotes, such as \"exists\""},
-                {"drop table if exists", "ERROR: table-name expected"},
-                {"drop table if exists;", "ERROR: table-name expected"},
-                {"drop all table if exists;", "ERROR: 'tables' expected"},
-                {"drop all tables if exists;", "ERROR: expected [;]"},
-                {"drop all ;", "ERROR: 'tables' expected"},
-                {"drop database ;", "ERROR: 'table' or 'all tables' expected"}
+                {"drop table if exists", "ERROR: table name expected"},
+                {"drop table if exists;", "ERROR: table name expected"},
+                {"drop all table if exists;", "ERROR: ';' or 'tables' expected"},
+                {"drop all tables if exists;", "ERROR: ';' or 'tables' expected"},
+                {"drop database ;", "ERROR: 'table' or 'materialized view' or 'all' expected"}
         };
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             for (int i = 0, n = sqlExpectedErrMsg.length; i < n; i++) {
@@ -3665,7 +3713,7 @@ if __name__ == "__main__":
                 try (ResultSet rs = statement.getResultSet()) {
                     assertResultSet(
                             "QUERY PLAN[VARCHAR]\n" +
-                                    "Limit lo: 10\n" +
+                                    "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
                                     "    PageFrame\n" +
                                     "        Row forward scan\n" +
                                     "        Frame forward scan on: xx\n",
@@ -6079,6 +6127,22 @@ nodejs code:
     }
 
     @Test
+    public void testJdbcIsValid() throws Exception {
+        skipOnWalRun(); // non-wal specific
+        AtomicReference<Connection> connectionRef = new AtomicReference<>();
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            Assert.assertTrue(connection.isValid(5));
+            final Connection connection2 = getConnection(mode, port, binary, 1);
+            connectionRef.set(connection2);
+            Assert.assertTrue(connection.isValid(5));
+            Assert.assertTrue(connection2.isValid(5));
+        });
+
+        Assert.assertFalse(connectionRef.get().isValid(5));
+        connectionRef.get().close();
+    }
+
+    @Test
     public void testJsonExtractBindVariable() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
@@ -6715,7 +6779,7 @@ nodejs code:
                                 + "ABC,xy,a,brown fox jumped over the fence,10\n"
                                 + "CDE,bb,b,sentence 1\n"
                                 + "sentence 2,12\n", sink, rs);
-                    } catch (IOException | SQLException e) {
+                    } catch (SQLException e) {
                         throw new AssertionError(e);
                     }
                 });
@@ -7271,7 +7335,7 @@ nodejs code:
             ) {
                 assertResultSet(
                         "nspname[VARCHAR],relname[VARCHAR],attname[VARCHAR],atttypid[INTEGER],attnotnull[BIT],atttypmod[INTEGER],attlen[SMALLINT],typtypmod[INTEGER],attnum[BIGINT],attidentity[VARCHAR],attgenerated[VARCHAR],adsrc[VARCHAR],description[VARCHAR],typbasetype[INTEGER],typtype[CHAR]\n" +
-                                "public,test,x,20,false,0,8,0,1,null,null,null,null,0,b\n",
+                                "public,test,x,20,false,-1,8,0,1,null,null,null,null,0,b\n",
                         sink,
                         rs
                 );
@@ -7370,7 +7434,7 @@ nodejs code:
                 ps1.executeQuery();
                 Assert.fail("PSQLException should be thrown");
             } catch (PSQLException e) {
-                assertContains(e.getMessage(), "there is no matching operator`!=` with the argument types: BOOLEAN != STRING");
+                assertContains(e.getMessage(), "there is no matching operator `!=` with the argument types: BOOLEAN != STRING");
             }
 
             try (PreparedStatement s = connection.prepareStatement("select 2 a,2 b from long_sequence(1) where x > 0 and x < 10")) {
@@ -7396,7 +7460,7 @@ nodejs code:
                 ps1.executeQuery();
                 Assert.fail("PSQLException should be thrown");
             } catch (PSQLException e) {
-                assertContains(e.getMessage(), "there is no matching operator`!=` with the argument types: BOOLEAN != STRING");
+                assertContains(e.getMessage(), "there is no matching operator `!=` with the argument types: BOOLEAN != STRING");
             }
 
             try (PreparedStatement s = connection.prepareStatement("select 2 a,2 b from long_sequence(1) where x > 0 and x < 10")) {
@@ -7816,7 +7880,7 @@ nodejs code:
                 }
             };
 
-            final WorkerPool workerPool = new TestWorkerPool(4, metrics);
+            final WorkerPool workerPool = new TestWorkerPool(4, conf.getMetrics());
             try (final IPGWireServer server = createPGWireServer(
                     conf,
                     engine,
@@ -8442,26 +8506,26 @@ nodejs code:
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             execute("create table x as (select x id from long_sequence(10))");
             // table
-            metrics.pgWire().resetQueryCounters();
+            configuration.getMetrics().pgWireMetrics().resetQueryCounters();
             try (
                     PreparedStatement stmt = connection.prepareStatement("select count() from x;");
                     ResultSet rs = stmt.executeQuery()
             ) {
                 rs.next();
                 Assert.assertEquals(10, rs.getLong(1));
-                Assert.assertEquals(1, metrics.pgWire().startedQueriesCount());
-                Assert.assertEquals(1, metrics.pgWire().completedQueriesCount());
+                Assert.assertEquals(1, configuration.getMetrics().pgWireMetrics().startedQueriesCount());
+                Assert.assertEquals(1, configuration.getMetrics().pgWireMetrics().completedQueriesCount());
             }
             // virtual
-            metrics.pgWire().resetQueryCounters();
+            configuration.getMetrics().pgWireMetrics().resetQueryCounters();
             try (
                     PreparedStatement stmt = connection.prepareStatement("select 1;");
                     ResultSet rs = stmt.executeQuery()
             ) {
                 rs.next();
                 Assert.assertEquals(1, rs.getLong(1));
-                Assert.assertEquals(1, metrics.pgWire().startedQueriesCount());
-                Assert.assertEquals(1, metrics.pgWire().completedQueriesCount());
+                Assert.assertEquals(1, configuration.getMetrics().pgWireMetrics().startedQueriesCount());
+                Assert.assertEquals(1, configuration.getMetrics().pgWireMetrics().completedQueriesCount());
             }
         });
     }
@@ -9314,6 +9378,7 @@ create table tab as (
      */
     public void testSelectAllTypesFromAsyncPG() throws Exception {
         skipOnWalRun(); // non-partitioned table
+        skipInLegacyMode(); // legacy impl does not send the right type modifier for CHAR columns
         execute("create table tab as (\n" +
                 "    select\n" +
                 "        rnd_byte() b,\n" +
@@ -9338,104 +9403,15 @@ create table tab as (
 
         final String script = ">0000000804d2162f\n" +
                 "<4e\n" +
-                ">0000003c00030000636c69656e745f656e636f64696e6700277574662d382700757365720078797a00646174616261736500706f737467\n" +
-                ">726573\n" +
-                ">00\n" +
-                ">00\n" +
+                ">0000003c00030000636c69656e745f656e636f64696e6700277574662d382700757365720078797a00646174616261736500706f7374677265730000\n" +
                 "<520000000800000003\n" +
-                ">70000000\n" +
-                ">07\n" +
-                ">6f68\n" +
-                ">00\n" +
+                ">70000000076f6800\n" +
                 "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
-                ">50\n" +
-                ">00\n" +
-                ">0000595f\n" +
-                ">5f\n" +
-                ">61\n" +
-                ">7379\n" +
-                ">6e\n" +
-                ">6370675f73746d745f31\n" +
-                ">5f\n" +
-                ">5f\n" +
-                ">000a\n" +
-                ">20\n" +
-                ">2020\n" +
-                ">20\n" +
-                ">2020\n" +
-                ">20\n" +
-                ">20\n" +
-                ">2020\n" +
-                ">20\n" +
-                ">20\n" +
-                ">7365\n" +
-                ">6c\n" +
-                ">6563\n" +
-                ">74\n" +
-                ">20\n" +
-                ">2a20\n" +
-                ">66\n" +
-                ">726f\n" +
-                ">6d\n" +
-                ">2027\n" +
-                ">7461\n" +
-                ">6227\n" +
-                ">0a\n" +
-                ">2020\n" +
-                ">20\n" +
-                ">20\n" +
-                ">2020\n" +
-                ">20\n" +
-                ">20\n" +
-                ">2020\n" +
-                ">20\n" +
-                ">204c\n" +
-                ">49\n" +
-                ">4d49\n" +
-                ">54\n" +
-                ">20\n" +
-                ">3130\n" +
-                ">30\n" +
-                ">0a20\n" +
-                ">20\n" +
-                ">20\n" +
-                ">2020\n" +
-                ">20\n" +
-                ">2020\n" +
-                ">00\n" +
-                ">00\n" +
-                ">0044\n" +
-                ">00000018535f5f6173796e6370675f73746d745f315f5f004800000004\n" +
-                "<310000000474000000060000540000012a000e6200000000000001000000150001ffffffff0000736800000000000002000000150002ffffffff00006900000000000003000000170004ffffffff00006c00000000000004000000140008ffffffff00006600000000000005000002bc0004ffffffff00006400000000000006000002bd0008ffffffff0000730000000000000700000413ffffffffffff000073796d0000000000000800000413ffffffffffff0000626f6f6c00000000000009000000100001ffffffff000064740000000000000a0000045a0008ffffffff00006c740000000000000b00000413ffffffffffff000063680000000000000c000000120002ffffffff000074730000000000000d0000045a0008ffffffff000062696e0000000000000e00000011ffffffffffff0001\n" +
-                ">4200\n" +
-                ">00\n" +
-                ">0022\n" +
-                ">00\n" +
-                ">5f5f\n" +
-                ">61\n" +
-                ">7379\n" +
-                ">6e\n" +
-                ">6370675f\n" +
-                ">7374\n" +
-                ">6d\n" +
-                ">745f\n" +
-                ">315f\n" +
-                ">5f\n" +
-                ">0000\n" +
-                ">01\n" +
-                ">000100\n" +
-                ">00\n" +
-                ">0001\n" +
-                ">0001\n" +
-                ">450000000900\n" +
-                ">00\n" +
-                ">0000\n" +
-                ">00\n" +
-                ">5300000004\n" +
+                ">50000000515f5f6173796e6370675f73746d745f315f5f000a202020202020202073656c656374202a2066726f6d2027746162270a20202020202020204c494d4954203130300a20202020202020200000004400000018535f5f6173796e6370675f73746d745f315f5f004800000004\n" +
+                "<310000000474000000060000540000012a000e6200000000000001000000150002ffffffff0000736800000000000002000000150002ffffffff00006900000000000003000000170004ffffffff00006c00000000000004000000140008ffffffff00006600000000000005000002bc0004ffffffff00006400000000000006000002bd0008ffffffff0000730000000000000700000413ffffffffffff000073796d0000000000000800000413ffffffffffff0000626f6f6c00000000000009000000100001ffffffff000064740000000000000a0000045a0008ffffffff00006c740000000000000b00000413ffffffffffff000063680000000000000c00000412ffff00000005000074730000000000000d0000045a0008ffffffff000062696e0000000000000e00000011ffffffffffff0001\n" +
+                ">4200000022005f5f6173796e6370675f73746d745f315f5f0000010001000000010001450000000900000000005300000004\n" +
                 "<320000000444000000d6000e00000002004c0000000260ee000000045c50d341000000089f9b2131d49fcd1d000000043dadd020000000083fd23631d4c984f000000005595258504500000003636465000000010100000008fffca2ff9b5cae6000000042307836653630613031613562336561306462346230663539356631343365356437323266316138323636653739323165336237313664653364323564636332643931000000015800000008fffca2fec4c821d600000020c788dea0793c7715686126af19c49594365349b4597e3b08a11e388d1b9ef4c844000000d6000e00000002003900000002fb09000000040fbffdfe000000086afe61bd7c4ae0d8000000043f675fe3000000083feeffefe8f64b8500000005445251515500000003636465000000010100000008fffca2fee4ad31d000000042307836353566383761336132316435373566363130663639656665303633666537393333366463343334373930656433333132626266636636366261623933326663000000014a00000008fffca2fec4c8227400000020934d1a8e78b5b91153d0fb64bb1ad4f02d40e24bb13ee3f1f11eca9c1d06ac3744000000da000e0000000200700000000217cd000000046fdde48200000008997918f622d62989000000043f3916a1000000083fdd38eacf6e41fa000000094f545345445959435400000003616263000000010000000008fffca3000aa21be800000042307837656261663663613939336638666339386231333039636633326436386262386161376463346563636236383134366662333766316563383237353263376437000000014300000008fffca2fec4c8227a000000208447dcd2857fa5b87b4a9d467c8ddd93e6d0b32b0798cc7648a3bb64d2ad491c44000000d8000e00000002005600000002cc3c0000000424a116ed000000086ea837f54a415439000000043e9beabe000000083f9b7b1f63e262c0000000074a4f4a4950485a00000003616263000000010100000008fffca300ec9bd72800000042307862623536616237376366666530613839346165643131633732323536613830633762356464326238353133623331653762323065313930306361666638313961000000014f00000008fffca2fec4c8229d00000020b7c29f298e295e69c6ebeac3c9739346fec2d368798b431d573404238dd8579144000000d7000e00000002004c000000023a2800000004c43377a500000008fdb12ef0d2c74218000000043e8ad49a000000083fe4a8ba7fe3d5cd000000064a4f58504b5200000003616263000000010100000008fffca301160fd32000000042307838643563346265643834333264653938363261326631316538353130613365393963623866633634363730323865623061303739333462326131356465386530000000014f00000008fffca2fec4c820f8000000202860b0ec0b92587d24bc2e606a1c0b20a2868937112c140c2d208452d96f04ab44000000db000e00000002007d000000027e470000000455572a8f000000089c0a1370d099b723000000043f2c45d5000000083fdd63a4d105648a0000000a4e4f4d56454c4c4b4b4800000003636465000000010000000008fffca2ffe0fb34c800000042307834633037316431636136353830356133303565373337303063626562653565623366386363346663343736636163633937393834323036623434363761323830000000014c00000008fffca2fec4c823290000002079e435e43adc5c65ff276777125452d02926c5aada18ce5fb28b5c549025c22044000000db000e000000020039000000020d7000000004f85e333a000000087d85ee2916b209c7000000043e8c4988000000083fd61b4700e1e4460000000a544a434b464d514e544f00000003636465000000010100000008fffca2ffe5c7e3c000000042307833346130353839393038383036393862376362303535633534373235623935323761313931363464383037636565363133343537306132626565343436373335000000014d00000008fffca2fec4c821840000002057a5dba1761c1c26fb2e42faf56e8f80e354b807b13257ff9aef88cb4ba1cfcf44000000d5000e00000002007500000002947d000000048a4592a60000000886be020b55a15fd1000000043f4f90cc000000083fe28cacbc129a84000000044849554700000003616263000000010000000008fffca2ff170d01f000000042307837333762316461636436626535393731393233383461616264383838656362333461363533323836623031303931326237326631643638363735643836376366000000014300000008fffca2fec4c823d60000002011963708dd98ef54882aa2ade7d462e14ed6b2575be3713d20e237f26443845544000000d8000e0000000200240000000240dd00000004c493cf44000000089aadb86434093111000000043d5244c0000000083fef5a79f2bd966500000007575a4e464b504500000003636465000000010000000008fffca300421f7e0800000042307862663839323565316139336666613637396638376439316330366466383733353766623537626331366335313265623862353264336265616664376536306537000000014700000008fffca2fec4c8227e000000208e28b6a917ec0e01c4eb9f138fbb2a4baf8f89df358fdafe3398808520533b5144000000d9000e00000002006900000002655d000000044d4f2528000000083cc96390430d88ac000000043e5c247c000000083fe2723a9f780843000000085151454d58444b5800000003636465000000010100000008fffca2fef62d1d3000000042307837656635393366303066623438313863363466363836303336343261373136643734356430373932643038666466616638303530376365316434323238383630000000015900000008fffca2fec4c822af00000020463b473ce1723b9defc44ac9cffb9d63ca94006bdd18fe7176bc4524cd13007c430000000e53454c454354203130005a0000000549\n" +
-                ">580000\n" +
-                ">00\n" +
-                ">04\n";
+                ">5800000004";
         assertHexScript(
                 getFragmentedSendFacade(),
                 script,
@@ -10685,6 +10661,23 @@ create table tab as (
         });
     }
 
+    @Test
+    public void testTableReferenceOutOfDate() throws Exception {
+        Assume.assumeFalse(walEnabled);
+        Assume.assumeFalse(legacyMode);
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            final String query = "select * from test_table_reference_out_of_date();";
+            try (
+                    PreparedStatement stmt = connection.prepareStatement(query);
+                    ResultSet ignore = stmt.executeQuery()
+            ) {
+                Assert.fail();
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "cached query plan cannot be used because table schema has changed");
+            }
+        });
+    }
+
     // TODO(puzpuzpuz): fix schema changes handling in PGWire for extended protocol
     //                  https://github.com/questdb/questdb/issues/4971
     @Ignore
@@ -11897,7 +11890,7 @@ create table tab as (
         }
     }
 
-    private void assertResultTenTimes(Connection connection, String sql, String expected, int maxRows) throws SQLException, IOException {
+    private void assertResultTenTimes(Connection connection, String sql, String expected, int maxRows) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setMaxRows(maxRows);
 
@@ -11909,7 +11902,7 @@ create table tab as (
         }
     }
 
-    private void assertSql(Connection conn, String sql, String expectedResult) throws SQLException, IOException {
+    private void assertSql(Connection conn, String sql, String expectedResult) throws SQLException {
         final StringSink sink = Misc.getThreadLocalSink();
         sink.clear();
 
@@ -11930,7 +11923,7 @@ create table tab as (
             }
         };
 
-        WorkerPool workerPool = new TestWorkerPool(2, metrics);
+        WorkerPool workerPool = new TestWorkerPool(2, conf.getMetrics());
         DefaultCircuitBreakerRegistry registry = new DefaultCircuitBreakerRegistry(conf, engine.getConfiguration());
         try {
             return createPGWireServer(
@@ -11994,7 +11987,7 @@ create table tab as (
         }
     }
 
-    private void queryTimestampsInRange(Connection connection) throws SQLException, IOException {
+    private void queryTimestampsInRange(Connection connection) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement(
                 "select ts FROM xts WHERE ts <= dateadd('d', -1, ?) and ts >= dateadd('d', -2, ?)")
         ) {
@@ -12006,7 +11999,6 @@ create table tab as (
                 ts.setNanos((int) ((micros % 1_000_000) * 1000));
                 statement.setTimestamp(1, ts);
                 statement.setTimestamp(2, ts);
-                statement.executeQuery();
                 rs = statement.executeQuery();
 
                 long finalMicros = micros;
@@ -12040,7 +12032,7 @@ create table tab as (
 
         try (
                 DefaultCircuitBreakerRegistry registry = new DefaultCircuitBreakerRegistry(conf, engine.getConfiguration());
-                WorkerPool pool = new WorkerPool(conf, metrics)
+                WorkerPool pool = new WorkerPool(conf)
         ) {
             pool.assign(engine.getEngineMaintenanceJob());
             try (
@@ -12447,7 +12439,7 @@ create table tab as (
         });
     }
 
-    private void testExecuteWithDifferentBindVariables(Connection connection, String query) throws SQLException, IOException {
+    private void testExecuteWithDifferentBindVariables(Connection connection, String query) throws SQLException {
         try (PreparedStatement stmt = connection.prepareStatement(query)) {
             stmt.setString(1, "S1");
             sink.clear();

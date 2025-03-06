@@ -34,8 +34,20 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.Chars;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Acceptor;
+import io.questdb.std.Long256FromCharSequenceDecoder;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.*;
+import io.questdb.std.Uuid;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
@@ -440,7 +452,7 @@ public class SqlUtil {
         if (Long256Impl.isNull(long256)) {
             return false;
         }
-        Numbers.appendLong256(long256.getLong0(), long256.getLong1(), long256.getLong2(), long256.getLong3(), sink);
+        Numbers.appendLong256(long256, sink);
         return true;
     }
 
@@ -636,6 +648,10 @@ public class SqlUtil {
         }
     }
 
+    public static long implicitCastSymbolAsTimestamp(CharSequence value) {
+        return implicitCastStrVarcharAsTimestamp0(value, ColumnType.SYMBOL);
+    }
+
     public static boolean implicitCastUuidAsStr(long lo, long hi, CharSink<?> sink) {
         if (Uuid.isNull(lo, hi)) {
             return false;
@@ -759,6 +775,10 @@ public class SqlUtil {
         return true;
     }
 
+    public static ExpressionNode nextExpr(ObjectPool<ExpressionNode> pool, int exprNodeType, CharSequence token, int position) {
+        return pool.next().of(exprNodeType, token, 0, position);
+    }
+
     /**
      * Parses partial representation of timestamp with time zone.
      *
@@ -798,7 +818,7 @@ public class SqlUtil {
     }
 
     private static long implicitCastStrVarcharAsTimestamp0(CharSequence value, int columnType) {
-        assert columnType == ColumnType.STRING || columnType == ColumnType.VARCHAR;
+        assert columnType == ColumnType.STRING || columnType == ColumnType.VARCHAR || columnType == ColumnType.SYMBOL;
 
         if (value != null) {
             try {
@@ -824,10 +844,6 @@ public class SqlUtil {
             throw ImplicitCastException.inconvertibleValue(value, columnType, ColumnType.TIMESTAMP);
         }
         return Numbers.LONG_NULL;
-    }
-
-    private static ExpressionNode nextExpr(ObjectPool<ExpressionNode> pool, int exprNodeType, CharSequence token, int position) {
-        return pool.next().of(exprNodeType, token, 0, position);
     }
 
     static CharSequence createColumnAlias(

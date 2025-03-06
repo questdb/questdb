@@ -26,7 +26,7 @@ package io.questdb;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.metrics.Scrapable;
+import io.questdb.metrics.Target;
 import io.questdb.mp.Worker;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -37,7 +37,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public abstract class WorkerPoolManager implements Scrapable {
+public abstract class WorkerPoolManager implements Target {
 
     private static final Log LOG = LogFactory.getLog(WorkerPoolManager.class);
     protected final WorkerPool sharedPool;
@@ -45,13 +45,13 @@ public abstract class WorkerPoolManager implements Scrapable {
     private final CharSequenceObjHashMap<WorkerPool> dedicatedPools = new CharSequenceObjHashMap<>(4);
     private final AtomicBoolean running = new AtomicBoolean();
 
-    public WorkerPoolManager(ServerConfiguration config, Metrics metrics) {
-        sharedPool = new WorkerPool(config.getWorkerPoolConfiguration(), metrics);
+    public WorkerPoolManager(ServerConfiguration config) {
+        sharedPool = new WorkerPool(config.getWorkerPoolConfiguration());
         configureSharedPool(sharedPool); // abstract method giving callers the chance to assign jobs
-        metrics.addScrapable(this);
+        config.getMetrics().addScrapable(this);
     }
 
-    public WorkerPool getInstance(@NotNull WorkerPoolConfiguration config, @NotNull Metrics metrics, @NotNull Requester requester) {
+    public WorkerPool getInstance(@NotNull WorkerPoolConfiguration config, @NotNull Requester requester) {
         if (running.get() || closed.get()) {
             throw new IllegalStateException("can only get instance before start");
         }
@@ -66,7 +66,7 @@ public abstract class WorkerPoolManager implements Scrapable {
         String poolName = config.getPoolName();
         WorkerPool pool = dedicatedPools.get(poolName);
         if (pool == null) {
-            pool = new WorkerPool(config, metrics);
+            pool = new WorkerPool(config);
             dedicatedPools.put(poolName, pool);
         }
         LOG.info().$("new DEDICATED pool [name=").$(poolName)
@@ -149,7 +149,8 @@ public abstract class WorkerPoolManager implements Scrapable {
         LINE_TCP_IO("line-tcp-io"),
         LINE_TCP_WRITER("line-tcp-writer"),
         OTHER("other"),
-        WAL_APPLY("wal-apply");
+        WAL_APPLY("wal-apply"),
+        MAT_VIEW_REFRESH("mat-view-refresh");
 
         private final String requester;
 

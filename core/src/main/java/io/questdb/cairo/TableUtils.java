@@ -25,9 +25,12 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.mv.MatViewRefreshState;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -99,7 +102,7 @@ public final class TableUtils {
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
-    public static final short META_MINOR_VERSION_LATEST = 1;
+    public static final short META_FORMAT_MINOR_VERSION_LATEST = 1;
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long META_OFFSET_COUNT = 0;
     public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // INT
@@ -113,6 +116,7 @@ public final class TableUtils {
     public static final long META_OFFSET_VERSION = 12;
     public static final long META_OFFSET_WAL_ENABLED = 40; // BOOLEAN
     public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT
+    public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT
     public static final String META_PREV_FILE_NAME = "_meta.prev";
     /**
      * TXN file structure
@@ -133,6 +137,8 @@ public final class TableUtils {
 
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
+    // 24-byte header left empty for possible future use
+    // in case we decide to support ALTER MAT VIEW, and modify mat view metadata
     public static final int NULL_LEN = -1;
     public static final String PARQUET_PARTITION_NAME = "data.parquet";
     public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
@@ -142,6 +148,7 @@ public final class TableUtils {
     public static final int TABLE_EXISTS = 0;
     public static final String TABLE_NAME_FILE = "_name";
     public static final int TABLE_RESERVED = 2;
+    public static final int TABLE_TYPE_MAT = 2;
     public static final int TABLE_TYPE_NON_WAL = 0;
     public static final int TABLE_TYPE_WAL = 1;
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
@@ -223,14 +230,16 @@ public final class TableUtils {
         allocateDiskSpace(ff, fd, size);
     }
 
-    public static int calculateMetadataMinorFormatVersion(int metadataVersion) {
-        // Metadata Minor Version is 2 shorts
-        // Low short is metadataVersion + column count and it is effectively a signature that changes with every update to _meta.
-        // If Low short mismatches it means we cannot rely on High short value.
-        // High short is TableUtils.META_MINOR_VERSION_LATEST.
-        // Metadata minor version mismatch still allows to read the table, the table storage is forward and backward compatible.
-        // However it indicates some minor flags may be stored incorrectly and have to be re-calculated.
-        return Numbers.encodeLowHighShorts(Numbers.decodeLowShort(metadataVersion), META_MINOR_VERSION_LATEST);
+    public static int calculateMetaFormatMinorVersionField(long metadataVersion, int columnCount) {
+        // Metadata Format Minor Version field is 2 shorts:
+        // - Low short is a checksum that changes with every update to _meta
+        // - High short is TableUtils.META_FORMAT_MINOR_VERSION_LATEST
+        // When reading the Metadata Format Minor Version field from the metadata record, use the checksum
+        // to decide whether to trust the version stored in this field.
+        return Numbers.encodeLowHighShorts(
+                checksumForMetaFormatMinorVersionField(metadataVersion, columnCount),
+                META_FORMAT_MINOR_VERSION_LATEST
+        );
     }
 
     public static int calculateTxRecordSize(int bytesSymbols, int bytesPartitions) {
@@ -298,6 +307,16 @@ public final class TableUtils {
             throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(minSize);
         }
         return memSize;
+    }
+
+    public static short checksumForMetaFormatMinorVersionField(long metadataVersion, int columnCount) {
+        int metaVersionInt = Numbers.decodeLowInt(metadataVersion) ^ Numbers.decodeHighInt(metadataVersion);
+        int checksumInt = 13 * metaVersionInt + 37 * columnCount;
+        short checksum = (short) (Numbers.decodeLowShort(checksumInt) ^ Numbers.decodeHighShort(checksumInt));
+        if (checksum == 0) {
+            checksum = -1337;
+        }
+        return checksum;
     }
 
     public static int compressColumnCount(RecordMetadata metadata) {
@@ -368,7 +387,7 @@ public final class TableUtils {
             CharSequence dirName
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
-        final CharSequence root = configuration.getRoot();
+        final CharSequence root = configuration.getDbRoot();
         final int mkDirMode = configuration.getMkDirMode();
         createTable(ff, root, mkDirMode, memory, path, structure, tableVersion, tableId, dirName);
     }
@@ -398,7 +417,7 @@ public final class TableUtils {
     ) {
         try (
                 Path path = new Path();
-                MemoryMARW mem = Vm.getMARWInstance()
+                MemoryMARW mem = Vm.getCMARWInstance()
         ) {
             createTable(ff, root, mkDirMode, mem, path, dirName, structure, tableVersion, tableId);
         }
@@ -415,25 +434,55 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
+        createTableOrMatView(ff, root, mkDirMode, memory, null, path, tableDir, structure, tableVersion, tableId);
+    }
+
+    public static void createTableNameFile(MemoryMAR mem, CharSequence charSequence) {
+        mem.putStr(charSequence);
+        mem.putByte((byte) 0);
+        mem.sync(false);
+        mem.close(true, Vm.TRUNCATE_TO_POINTER);
+    }
+
+    public static void createTableOrMatView(
+            FilesFacade ff,
+            CharSequence root,
+            int mkDirMode,
+            MemoryMARW memory,
+            @Nullable BlockFileWriter blockFileWriter,
+            Path path,
+            CharSequence tableDir,
+            TableStructure structure,
+            int tableVersion,
+            int tableId
+    ) {
         LOG.debug().$("create table [name=").utf8(tableDir).I$();
         path.of(root).concat(tableDir).$();
         if (ff.isDirOrSoftLinkDir(path.$())) {
             throw CairoException.critical(ff.errno()).put("table directory already exists [path=").put(path).put(']');
         }
         int rootLen = path.size();
+        boolean dirCreated = false;
         try {
             if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
                 throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path.trimTo(rootLen).$()).put(']');
             }
-            createTableFiles(ff, memory, path, rootLen, tableDir, structure, tableVersion, tableId);
+            dirCreated = true;
+            createTableOrMatViewFiles(ff, memory, blockFileWriter, path, rootLen, tableDir, structure, tableVersion, tableId);
+        } catch (Throwable e) {
+            if (dirCreated) {
+                ff.rmdir(path.trimTo(rootLen).slash());
+            }
+            throw e;
         } finally {
             path.trimTo(rootLen);
         }
     }
 
-    public static void createTableFiles(
+    public static void createTableOrMatViewFiles(
             FilesFacade ff,
             MemoryMARW memory,
+            @Nullable BlockFileWriter blockFileWriter,
             Path path,
             int rootLen,
             CharSequence tableDir,
@@ -441,12 +490,13 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
-        createTableFiles(ff, memory, path, rootLen, tableDir, structure, tableVersion, tableId, TXN_FILE_NAME);
+        createTableOrMatViewFiles(ff, memory, blockFileWriter, path, rootLen, tableDir, structure, tableVersion, tableId, TXN_FILE_NAME);
     }
 
-    public static void createTableFiles(
+    public static void createTableOrMatViewFiles(
             FilesFacade ff,
             MemoryMARW memory,
+            @Nullable BlockFileWriter blockFileWriter,
             Path path,
             int rootLen,
             CharSequence tableDir,
@@ -492,6 +542,16 @@ public final class TableUtils {
             mem.smallFile(ff, path.trimTo(rootLen).concat(TABLE_NAME_FILE).$(), MemoryTag.MMAP_DEFAULT);
             createTableNameFile(mem, getTableNameFromDirName(tableDir));
 
+            if (structure.isMatView()) {
+                assert blockFileWriter != null;
+                try (BlockFileWriter writer = blockFileWriter) {
+                    writer.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                    MatViewDefinition.append(structure.getMatViewDefinition(), writer);
+                    writer.of(path.trimTo(rootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                    MatViewRefreshState.append(null, writer);
+                }
+            }
+
             // Create TXN file last, it's used to determine if table exists
             mem.smallFile(ff, path.trimTo(rootLen).concat(txnFileName).$(), MemoryTag.MMAP_DEFAULT);
             createTxn(mem, symbolMapCount, 0L, 0L, INITIAL_TXN, 0L, 0L, 0L, 0L);
@@ -503,11 +563,26 @@ public final class TableUtils {
         }
     }
 
-    public static void createTableInVolume(
+    public static void createTableOrMatViewInVolume(
             FilesFacade ff,
             CharSequence root,
             int mkDirMode,
             MemoryMARW memory,
+            Path path,
+            CharSequence tableDir,
+            TableStructure structure,
+            int tableVersion,
+            int tableId
+    ) {
+        createTableOrMatViewInVolume(ff, root, mkDirMode, memory, null, path, tableDir, structure, tableVersion, tableId);
+    }
+
+    public static void createTableOrMatViewInVolume(
+            FilesFacade ff,
+            CharSequence root,
+            int mkDirMode,
+            MemoryMARW memory,
+            @Nullable BlockFileWriter blockFileWriter,
             Path path,
             CharSequence tableDir,
             TableStructure structure,
@@ -536,17 +611,10 @@ public final class TableUtils {
                 }
                 throw CairoException.critical(ff.errno()).put("could not create soft link [src=").put(path.trimTo(rootLen).$()).put(", tableDir=").put(tableDir).put(']');
             }
-            createTableFiles(ff, memory, path, rootLen, tableDir, structure, tableVersion, tableId);
+            createTableOrMatViewFiles(ff, memory, blockFileWriter, path, rootLen, tableDir, structure, tableVersion, tableId);
         } finally {
             path.trimTo(rootLen);
         }
-    }
-
-    public static void createTableNameFile(MemoryMAR mem, CharSequence charSequence) {
-        mem.putStr(charSequence);
-        mem.putByte((byte) 0);
-        mem.sync(false);
-        mem.close(true, Vm.TRUNCATE_TO_POINTER);
     }
 
     public static void createTxn(
@@ -588,21 +656,6 @@ public final class TableUtils {
 
     public static LPSZ dFile(Path path, CharSequence columnName) {
         return dFile(path, columnName, COLUMN_NAME_TXN_NONE);
-    }
-
-    public static boolean equalColumnNamesAndTypes(RecordMetadata metadataA, RecordMetadata metadataB) {
-        if (metadataA.getColumnCount() != metadataB.getColumnCount()) {
-            return false;
-        }
-        for (int i = 0, n = metadataA.getColumnCount(); i < n; i++) {
-            if (metadataA.getColumnType(i) != metadataB.getColumnType(i)) {
-                return false;
-            }
-            if (!Chars.equals(metadataA.getColumnName(i), metadataB.getColumnName(i))) {
-                return false;
-            }
-        }
-        return true;
     }
 
     public static long estimateAvgRecordSize(RecordMetadata metadata) {
@@ -849,6 +902,43 @@ public final class TableUtils {
      */
     public static boolean isFinalTableName(String tableName, CharSequence tempTablePrefix) {
         return !Chars.startsWith(tableName, tempTablePrefix);
+    }
+
+    public static boolean isMatViewDefinitionFileExists(CairoConfiguration configuration, Path path, CharSequence dirName) {
+        FilesFacade ff = configuration.getFilesFacade();
+        path.of(configuration.getDbRoot()).concat(dirName).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME);
+        return ff.exists(path.$());
+    }
+
+    public static boolean isMatViewStateFileExists(CairoConfiguration configuration, Path path, CharSequence dirName) {
+        FilesFacade ff = configuration.getFilesFacade();
+        path.of(configuration.getDbRoot()).concat(dirName).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
+        return ff.exists(path.$());
+    }
+
+    /*
+     * Checks that the minor version of the metadata format is up to date, i.e., at least the value
+     * of the TableUtils.META_FORMAT_MINOR_VERSION_LATEST constant.
+     *
+     * Metadata Format Minor Version field encodes 2 shorts:
+     * - Low short is a checksum that changes with every update to the metadata record
+     * - High short is set to TableUtils.META_FORMAT_MINOR_VERSION_LATEST
+     *
+     * The Metadata Format Minor Version field was not present in the initial version of the metadata format. This is
+     * why we need the checksum: when it doesn't match, we can't trust the version stored in it, and should assume
+     * the QuestDB version that wrote the metadata predates its introduction.
+     *
+     * Table storage itself is forward- and backward-compatible, so it's safe to read regardless of this version.
+     */
+    public static boolean isMetaFormatUpToDate(MemoryR metaMem) {
+        int metaFormatMinorVersionField = metaMem.getInt(META_OFFSET_META_FORMAT_MINOR_VERSION);
+        short savedChecksum = Numbers.decodeLowShort(metaFormatMinorVersionField);
+        short actualChecksum = checksumForMetaFormatMinorVersionField(
+                metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION),
+                metaMem.getInt(TableUtils.META_OFFSET_COUNT)
+        );
+        short savedMetaFormatMinorVersion = Numbers.decodeHighShort(metaFormatMinorVersionField);
+        return savedChecksum == actualChecksum && savedMetaFormatMinorVersion >= META_FORMAT_MINOR_VERSION_LATEST;
     }
 
     public static boolean isSymbolCached(MemoryMR metaMem, int columnIndex) {
@@ -1754,9 +1844,10 @@ public final class TableUtils {
         mem.putInt(tableId);
         mem.putInt(tableStruct.getMaxUncommittedRows());
         mem.putLong(tableStruct.getO3MaxLag());
-        mem.putLong(0); // Structure version.
+        mem.putLong(0); // Metadata version.
         mem.putBool(tableStruct.isWalEnabled());
-        mem.putInt(TableUtils.calculateMetadataMinorFormatVersion(count));
+        mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(0, count));
+        mem.putInt(tableStruct.getTtlHoursOrMonths());
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
         assert count > 0;
@@ -1880,6 +1971,10 @@ public final class TableUtils {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8);
     }
 
+    static int getTtlHoursOrMonths(MemoryR metaMem) {
+        return isMetaFormatUpToDate(metaMem) ? metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS) : 0;
+    }
+
     static boolean isColumnDedupKey(MemoryMR metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_DEDUP_KEY) != 0;
     }
@@ -1929,7 +2024,6 @@ public final class TableUtils {
     }
 
     static {
-        //noinspection ConstantValue
         assert TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8 <= TX_OFFSET_MAP_WRITER_COUNT_32;
     }
 }
