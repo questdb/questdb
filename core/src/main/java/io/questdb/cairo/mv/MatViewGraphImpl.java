@@ -237,12 +237,12 @@ public class MatViewGraphImpl implements MatViewGraph {
                             .$(", reason=").$(task.invalidationReason)
                             .I$();
                 } else {
-                    LOG.debug().$("refresh job notified [baseTable=").$(task.baseTableToken)
+                    LOG.info().$("refresh job notified [baseTable=").$(task.baseTableToken)
                             .$(", op=").$(task.operation)
                             .I$();
                 }
             } else {
-                LOG.debug().$("no need to notify to refresh job [baseTable=").$(task.baseTableToken).I$();
+                LOG.info().$("no need to notify to refresh job [baseTable=").$(task.baseTableToken).I$();
             }
         }
     }
