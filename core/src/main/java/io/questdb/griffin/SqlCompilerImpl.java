@@ -296,13 +296,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @NotNull
-    public CompiledQuery compile(@NotNull CharSequence sqlText, @Transient @NotNull SqlExecutionContext executionContext) throws SqlException {
+    public CompiledQuery compile(@NotNull CharSequence sqlText, @NotNull SqlExecutionContext executionContext) throws SqlException {
         clear();
         // these are quick executions that do not require building of a model
         lexer.of(sqlText);
         isSingleQueryMode = true;
 
-        compileInner(executionContext, sqlText);
+        compileInner(executionContext, sqlText, true);
         return compiledQuery;
     }
 
@@ -362,7 +362,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                     // re-position lexer pointer to where sqlText just began
                     lexer.backTo(position, null);
-                    compileInner(executionContext, sqlText);
+                    compileInner(executionContext, sqlText, true);
 
                     // consume residual text, such as semicolon
                     goToQueryEnd();
@@ -1860,8 +1860,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void compileInner(@Transient @NotNull SqlExecutionContext executionContext, CharSequence sqlText) throws SqlException {
-        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+    private void compileInner(
+            @NotNull SqlExecutionContext executionContext,
+            CharSequence sqlText,
+            boolean generateProgressLogger
+    ) throws SqlException {
+        final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         if (!circuitBreaker.isTimerSet()) {
             circuitBreaker.resetTimer();
         }
@@ -1897,7 +1901,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         // executor is allowed to give up on the execution and fall back to standard behaviour
         if (executor == null || compiledQuery.getType() == CompiledQuery.NONE) {
-            compileUsingModel(executionContext, beginNanos);
+            compileUsingModel(executionContext, beginNanos, generateProgressLogger);
         }
         final short type = compiledQuery.getType();
         if ((type == CompiledQuery.ALTER || type == CompiledQuery.UPDATE) && !executionContext.isWalApplication()) {
@@ -1954,7 +1958,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser, queryModel);
             queryModel.setIsMatView(true);
             compiledQuery.ofSelect(
-                    generateSelectWithRetries(queryModel, executionContext, true)
+                    generateSelectWithRetries(queryModel, executionContext, false)
             );
         } catch (Throwable th) {
             QueryProgress.logError(th, -1, sqlText, executionContext, beginNanos);
@@ -2197,7 +2201,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofTruncate();
     }
 
-    private void compileUsingModel(SqlExecutionContext executionContext, long beginNanos) throws SqlException {
+    private void compileUsingModel(SqlExecutionContext executionContext, long beginNanos, boolean generateProgressLogger) throws SqlException {
         // This method will not populate sql cache directly; factories are assumed to be non-reentrant, and once
         // factory is out of this method, the caller assumes full ownership over it. However, the caller may
         // choose to return the factory back to this or any other instance of compiler for safekeeping
@@ -2216,7 +2220,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             generateSelectWithRetries(
                                     (QueryModel) executionModel,
                                     executionContext,
-                                    true
+                                    generateProgressLogger
                             )
                     );
                     break;
@@ -2747,7 +2751,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         try {
                             lexer.of(createTableOp.getSelectText());
                             clearExceptSqlText();
-                            compileInner(executionContext, createTableOp.getSelectText());
+                            compileInner(executionContext, createTableOp.getSelectText(), false);
                             Misc.free(newFactory);
                             newFactory = compiledQuery.getRecordCursorFactory();
                             newCursor = newFactory.getCursor(executionContext);
