@@ -60,7 +60,7 @@ steps:
       destinationFolder: '$(build.sourcesdirectory)/maven'
     condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'))
 
-  - script: python3 .github/prepare_rust_env.py --nightly --export-cargo-install-env
+  - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
     displayName: "Ensure Rust is installed"
     # Note, the `prepare_rust_env.py` script exports a number of variables.
 
