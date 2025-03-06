@@ -108,7 +108,7 @@ fn tag_of(col_type: i32) -> u8 {
 }
 
 #[repr(transparent)]
-#[derive(Copy, Clone, PartialEq, Serialize)]
+#[derive(Copy, Clone, PartialEq, Serialize, Ord, PartialOrd, Eq)]
 #[serde(transparent)]
 pub struct ColumnType {
     // Optimization so `Option<ColumnType>` is the same size as `ColumnType`.
