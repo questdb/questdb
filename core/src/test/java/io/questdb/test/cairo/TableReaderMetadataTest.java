@@ -476,7 +476,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     }
 
     private void runWithManipulators(String expected, ColumnManipulator... manipulators) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             String tableName = "all";
             int tableId;
             try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, engine.verifyTableName(tableName))) {

@@ -333,6 +333,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             DatabaseCheckpointStatus checkpointStatus,
             CairoEngine cairoEngine
     ) {
+        this(
+                configuration,
+                tableToken,
+                messageBus,
+                ownMessageBus,
+                lock,
+                lifecycleManager,
+                root,
+                ddlListener,
+                checkpointStatus,
+                cairoEngine,
+                cairoEngine.getTxnScoreboardPool()
+        );
+    }
+
+    public TableWriter(
+            CairoConfiguration configuration,
+            TableToken tableToken,
+            MessageBus messageBus,
+            MessageBus ownMessageBus,
+            boolean lock,
+            LifecycleManager lifecycleManager,
+            CharSequence root,
+            DdlListener ddlListener,
+            DatabaseCheckpointStatus checkpointStatus,
+            CairoEngine cairoEngine,
+            TxnScoreboardPool txnScoreboardPool
+    ) {
         LOG.info().$("open '").utf8(tableToken.getTableName()).$('\'').$();
         this.configuration = configuration;
         this.ddlListener = ddlListener;
@@ -374,7 +402,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             openMetaFile(ff, path, pathSize, ddlMem, metadata);
             this.partitionBy = metadata.getPartitionBy();
             this.txWriter = new TxWriter(ff, configuration).ofRW(path.concat(TXN_FILE_NAME).$(), partitionBy);
-            this.txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(pathSize));
+            this.txnScoreboard = txnScoreboardPool.getTxnScoreboard(tableToken);
             path.trimTo(pathSize);
             this.columnVersionWriter = openColumnVersionFile(configuration, path, pathSize, partitionBy != PartitionBy.NONE);
             this.o3ColumnOverrides = metadata.isWalEnabled() ? new ObjList<>() : null;
@@ -1044,26 +1072,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
-        if (checkpointStatus.isInProgress()) {
+        if (checkpointStatus.partitionsLocked()) {
             // do not alter scoreboard while checkpoint is in progress
             return true;
         }
-        long lastCommittedTxn = txWriter.getTxn();
-        try {
-            if (txnScoreboard.acquireTxn(lastCommittedTxn)) {
-                txnScoreboard.releaseTxn(lastCommittedTxn);
-            }
-        } catch (CairoException ex) {
-            // Scoreboard can be over allocated, don't stall writing because of that.
-            // Schedule async purge and continue
-            LOG.critical().$("cannot lock last txn in scoreboard, partition purge will be scheduled [table=")
-                    .utf8(tableToken.getTableName())
-                    .$(", txn=").$(lastCommittedTxn)
-                    .$(", error=").$(ex.getFlyweightMessage())
-                    .$(", errno=").$(ex.getErrno()).I$();
-        }
-
-        return txnScoreboard.getMin() != lastCommittedTxn;
+        return txnScoreboard.hasEarlierTxnLocks(txWriter.getTxn());
     }
 
     @Override
@@ -8150,7 +8163,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
 
-        if (checkpointStatus.isInProgress()) {
+        if (checkpointStatus.partitionsLocked()) {
             LOG.info().$("cannot squash partition [table=").$(tableToken.getTableName()).$("], checkpoint in progress").$();
             return;
         }

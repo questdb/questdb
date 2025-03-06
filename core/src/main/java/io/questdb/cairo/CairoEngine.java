@@ -158,6 +158,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final WriterPool writerPool;
     private @NotNull ConfigReloader configReloader = () -> false; // no-op
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
+    private final TxnScoreboardPool scoreboardPool;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
 
@@ -179,7 +180,8 @@ public class CairoEngine implements Closeable, WriterSource {
             this.metrics = configuration.getMetrics();
             // Message bus and metrics must be initialized before the pools.
             this.writerPool = new WriterPool(configuration, this);
-            this.readerPool = new ReaderPool(configuration, messageBus, partitionOverwriteControl);
+            this.scoreboardPool = TxnScoreboardPoolFactory.createPool(configuration);
+            this.readerPool = new ReaderPool(configuration, scoreboardPool, messageBus, partitionOverwriteControl);
             this.sequencerMetadataPool = new SequencerMetadataPool(configuration, this);
             this.tableMetadataPool = new TableMetadataPool(configuration);
             this.walWriterPool = new WalWriterPool(configuration, this);
@@ -374,6 +376,7 @@ public class CairoEngine implements Closeable, WriterSource {
         boolean b4 = sequencerMetadataPool.releaseAll();
         boolean b5 = walWriterPool.releaseAll();
         boolean b6 = tableMetadataPool.releaseAll();
+        scoreboardPool.clear();
         partitionOverwriteControl.clear();
         return b1 & b2 & b3 & b4 & b5 & b6;
     }
@@ -393,6 +396,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(tableNameRegistry);
         Misc.free(checkpointAgent);
         Misc.free(metadataCache);
+        Misc.free(scoreboardPool);
     }
 
     @TestOnly
@@ -463,6 +467,7 @@ public class CairoEngine implements Closeable, WriterSource {
             }
         } else {
             CharSequence lockedReason = lockAll(tableToken, "removeTable", false);
+            scoreboardPool.remove(tableToken);
             if (lockedReason == null) {
                 try {
                     path.of(configuration.getDbRoot()).concat(tableToken).$();
@@ -844,6 +849,14 @@ public class CairoEngine implements Closeable, WriterSource {
         return telemetryWal;
     }
 
+    public TxnScoreboard getTxnScoreboard(TableToken tableToken) {
+        return scoreboardPool.getTxnScoreboard(tableToken);
+    }
+
+    public TxnScoreboardPool getTxnScoreboardPool() {
+        return scoreboardPool;
+    }
+
     public long getUnpublishedWalTxnCount() {
         return unpublishedWalTxnCount.get();
     }
@@ -1095,6 +1108,7 @@ public class CairoEngine implements Closeable, WriterSource {
         useful |= sequencerMetadataPool.releaseInactive();
         useful |= tableMetadataPool.releaseInactive();
         useful |= walWriterPool.releaseInactive();
+        useful |= scoreboardPool.releaseInactive();
         return useful;
     }
 
@@ -1196,6 +1210,9 @@ public class CairoEngine implements Closeable, WriterSource {
                 String lockedReason = lockAll(fromTableToken, "renameTable", false);
                 if (lockedReason == null) {
                     try {
+                        // No readers exist for the table, no checkpoint
+                        // it is ok to remove the scoreboard in case it's in memory implementation
+                        scoreboardPool.remove(fromTableToken);
                         toTableToken = rename0(fromPath, fromTableToken, toPath, toTableName);
                         TableUtils.overwriteTableNameFile(
                                 fromPath.of(configuration.getDbRoot()).concat(toTableToken),
@@ -1657,14 +1674,14 @@ public class CairoEngine implements Closeable, WriterSource {
         return token;
     }
 
-    protected Iterable<FunctionFactory> getFunctionFactories() {
-        return new FunctionFactoryCacheBuilder().scan(LOG).build();
-    }
-
     protected @NotNull <T extends AbstractTelemetryTask> Telemetry<T> createTelemetry(
             Telemetry.TelemetryTypeBuilder<T> builder, CairoConfiguration configuration
     ) {
         return new Telemetry<>(builder, configuration);
+    }
+
+    protected Iterable<FunctionFactory> getFunctionFactories() {
+        return new FunctionFactoryCacheBuilder().scan(LOG).build();
     }
 
     protected TableFlagResolver newTableFlagResolver(CairoConfiguration configuration) {

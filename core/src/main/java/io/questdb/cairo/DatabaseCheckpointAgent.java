@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
@@ -44,6 +45,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -77,7 +79,9 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final FilesFacade ff;
+    private final boolean lightweightCheckpointSupported;
     private final ReentrantLock lock = new ReentrantLock();
+    private final MessageBus messageBus;
     private final WalWriterMetadata metadata; // protected with #lock
     private final MicrosecondClock microClock;
     private final StringSink nameSink = new StringSink(); // protected with #lock
@@ -90,18 +94,22 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private Path partitionCleanPath;  // To be used exclusively as parameter for `removePartitionDirsNotAttached`.
     private DateFormat partitionDirFmt;
     private int pathTableLen;
+    private final LongList scoreboardTxns = new LongList();
     private TableReaderMetadata tableMetadata = null;
     private TxWriter txWriter = null;
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private SimpleWaitingLock walPurgeJobRunLock = null; // used as a suspend/resume handler for the WalPurgeJob
+    private final ObjList<TxnScoreboard> scoreboards = new ObjList<>();
 
     DatabaseCheckpointAgent(CairoEngine engine) {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
+        this.messageBus = engine.getMessageBus();
         this.microClock = configuration.getMicrosecondClock();
         this.ff = configuration.getFilesFacade();
         this.metadata = new WalWriterMetadata(ff);
         this.tableNameRegistryStore = new GrowOnlyTableNameRegistryStore(ff);
+        this.lightweightCheckpointSupported = configuration.getScoreboardFormat() > 1;
     }
 
     @TestOnly
@@ -124,6 +132,12 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         } finally {
             lock.unlock();
         }
+    }
+
+    @Override
+    public boolean partitionsLocked() {
+        // With new version of scoreboard there is no need to pause partition clean jobs
+        return !lightweightCheckpointSupported && isInProgress();
     }
 
     public void setWalPurgeJobRunLock(@Nullable SimpleWaitingLock walPurgeJobRunLock) {
@@ -285,6 +299,17 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     reader.getColumnVersionReader().dumpTo(mem);
                                     mem.close(false);
 
+                                    if (lightweightCheckpointSupported) {
+                                        long txn = reader.getTxn();
+                                        TxnScoreboard scoreboard = engine.getTxnScoreboard(tableToken);
+                                        if (!scoreboard.acquireTxn(TxnScoreboard.CHECKPOINT_ID, txn)) {
+                                            throw CairoException.nonCritical().put("cannot lock table for checkpoint [table=").put(tableToken).put(']');
+                                        }
+                                        scoreboardTxns.add(txn);
+                                        scoreboardTxns.add(reader.getMetadata().getPartitionBy());
+                                        scoreboards.add(scoreboard);
+                                    }
+
                                     if (isWalTable) {
                                         // Add entry to table name registry copy.
                                         tableNameRegistryStore.logAddTable(tableToken);
@@ -333,11 +358,28 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 }
             } catch (Throwable e) {
                 startedAtTimestamp.set(Numbers.LONG_NULL);
+                releaseScoreboardTxns(false);
                 throw e;
             }
         } finally {
             lock.unlock();
         }
+    }
+
+    private void releaseScoreboardTxns(boolean schedulePartitionPurge) {
+        for (int i = 0, n = scoreboards.size(); i < n; i++) {
+            long txn = scoreboardTxns.get(2 * i);
+            TxnScoreboard scoreboard = scoreboards.getQuick(i);
+            scoreboard.releaseTxn(TxnScoreboard.CHECKPOINT_ID, txn);
+
+            if (schedulePartitionPurge && !scoreboard.isMax(txn)) {
+                int partitionBy = (int) scoreboardTxns.getQuick(2 * i + 1);
+                TableUtils.schedulePurgeO3Partitions(messageBus, scoreboard.getTableToken(), partitionBy);
+            }
+        }
+        scoreboardTxns.clear();
+        Misc.freeObjList(scoreboards);
+        scoreboards.clear();
     }
 
     private void rebuildSymbolFiles(Path tablePath, AtomicInteger recoveredSymbolFiles, int pathTableLen) {
@@ -488,6 +530,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             throw SqlException.position(0).put("Another checkpoint command is in progress");
         }
         try {
+            releaseScoreboardTxns(true);
+
             // Delete checkpoint's "db" directory.
             path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).$();
             ff.rmdir(path); // it's fine to ignore errors here
