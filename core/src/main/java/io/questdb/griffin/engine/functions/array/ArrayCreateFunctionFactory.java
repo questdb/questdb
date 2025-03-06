@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.ArrayFunctionArray;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.FunctionArray;
 import io.questdb.cairo.sql.ArrayFunction;
@@ -82,41 +83,60 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
             return new FunctionArrayFunction(array, isConstant);
         }
 
-        commonElemType = decodeArrayElementType(type0);
-        FunctionArray array0 = (FunctionArray) arg0.getArray(null);
-        final int nestedNDims = array0.getDimCount();
-        final int nestedElemCount = array0.getFlatViewLength();
+        // First argument is an array, validate that all of them arrays. Mixed array and
+        // non-array arguments aren't allowed, because they must all come together to form
+        // a new array with one more dimension.
+        commonElemType = ColumnType.decodeArrayElementType(type0);
+        final int nestedNDims = ColumnType.decodeArrayDimensionality(arg0.getType());
         for (int n = args.size(), i = 1; i < n; i++) {
             Function argI = args.getQuick(i);
             int typeI = argI.getType();
-            int argPos = argPositions.getQuick(i);
+            int argPosI = argPositions.getQuick(i);
             if (!ColumnType.isArray(typeI)) {
-                throw SqlException.$(argPos, "mixed array and non-array elements");
+                throw SqlException.$(argPosI, "mixed array and non-array elements");
+            }
+            if (ColumnType.decodeArrayDimensionality(typeI) != nestedNDims) {
+                throw SqlException.$(argPosI, "sub-arrays don't match in number of dimensions");
             }
             commonElemType = commonWideningType(commonElemType, decodeArrayElementType(typeI));
             isConstant &= argI.isConstant();
-            ArrayView arrayI = argI.getArray(null);
-            if (arrayI.getDimCount() != nestedNDims) {
-                throw SqlException.$(argPos, "mismatched array shape");
-            }
-            if (arrayI.getFlatViewLength() != nestedElemCount) {
-                throw SqlException.$(argPos, "element counts in sub-arrays don't match");
-            }
         }
-        FunctionArray array = new FunctionArray(commonElemType, nestedNDims + 1);
-        array.setDimLen(0, outerDimLen);
-        for (int i = 0; i < nestedNDims; i++) {
-            array.setDimLen(i + 1, array0.getDimLen(i));
-        }
-        array.applyShape(configuration, arg0Pos);
-        int flatIndex = 0;
-        for (int i = 0; i < outerDimLen; i++) {
-            FunctionArray arrayI = (FunctionArray) args.getQuick(i).getArray(null);
-            for (int j = 0; j < nestedElemCount; j++) {
-                array.putFunction(flatIndex++, arrayI.getFunctionAtFlatIndex(j));
+
+        FUNCTION_ARRAY:
+        if (arg0 instanceof FunctionArrayFunction) {
+            for (int i = 1; i < outerDimLen; i++) {
+                if (!(args.getQuick(i) instanceof FunctionArrayFunction)) {
+                    break FUNCTION_ARRAY;
+                }
             }
+            // All arguments are of type FunctionArrayFunction, we can gather all their
+            // functions into a new single FunctionArrayFunction
+            FunctionArray array0 = (FunctionArray) arg0.getArray(null);
+            final int nestedElemCount = array0.getFlatViewLength();
+            for (int n = args.size(), i = 1; i < n; i++) {
+                if (args.getQuick(i).getArray(null).getFlatViewLength() != nestedElemCount) {
+                    throw SqlException.$(argPositions.getQuick(i), "element counts in sub-arrays don't match");
+                }
+            }
+            FunctionArray array = new FunctionArray(commonElemType, nestedNDims + 1);
+            array.setDimLen(0, outerDimLen);
+            for (int i = 0; i < nestedNDims; i++) {
+                array.setDimLen(i + 1, array0.getDimLen(i));
+            }
+            array.applyShape(configuration, arg0Pos);
+            int flatIndex = 0;
+            for (int i = 0; i < outerDimLen; i++) {
+                FunctionArray arrayI = (FunctionArray) args.getQuick(i).getArray(null);
+                for (int j = 0; j < nestedElemCount; j++) {
+                    array.putFunction(flatIndex++, arrayI.getFunctionAtFlatIndex(j));
+                }
+            }
+            return new FunctionArrayFunction(array, isConstant);
         }
-        return new FunctionArrayFunction(array, isConstant);
+
+        // Arguments aren't all FunctionArrayFunctions, treat them generically as some
+        // kind of array functions.
+        return new ArrayFunctionArrayFunction(new ObjList<>(args), argPositions, commonElemType, nestedNDims, isConstant);
     }
 
     @Override
@@ -126,12 +146,18 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
 
     private static class ArrayFunctionArrayFunction extends ArrayFunction {
         private final boolean isConstant;
-        private FunctionArray arrayFunctionArray;
+        private ArrayFunctionArray arrayFunctionArray;
 
-        public ArrayFunctionArrayFunction(FunctionArray arrayFunctionArray, boolean isConstant) {
-            this.arrayFunctionArray = arrayFunctionArray;
+        public ArrayFunctionArrayFunction(
+                ObjList<Function> args,
+                IntList argPositions,
+                short commonElemType,
+                int nestedNDims,
+                boolean isConstant
+        ) {
             this.isConstant = isConstant;
-            this.type = arrayFunctionArray.getType();
+            this.type = ColumnType.encodeArrayType(commonElemType, nestedNDims + 1);
+            this.arrayFunctionArray = new ArrayFunctionArray(args, argPositions, this.type);
         }
 
         @Override

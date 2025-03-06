@@ -218,7 +218,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             f.getArray(null);
             fail();
         } catch (SqlException e) {
-            assertEquals("[11] mismatched array shape", e.getMessage());
+            assertEquals("[11] sub-arrays don't match in number of dimensions", e.getMessage());
         }
     }
 
