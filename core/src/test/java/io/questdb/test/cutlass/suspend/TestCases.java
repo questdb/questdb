@@ -69,6 +69,11 @@ public class TestCases {
         addTestCase("select * from x where isym in (select s from y limit 3) and i != 42");
         addTestCase("select * from x where isym in (select s from y limit 3) and i != 42 limit -10");
 
+        // EqTimestampCursorFunctionFactory
+        addTestCase("select * from x where ts = (select ts from y limit 3) and i != 41 limit -10");
+//        addTestCase("select * from x where ts = (select ts::string from y limit 3) and i != 40 limit -7");
+//        addTestCase("select * from x where ts = (select 0::varchar from y limit 1)");
+
         // FilterOnExcludedValuesRecordCursorFactory
         addTestCase("select * from x where isym not in ('a','b') and i != 42");
 

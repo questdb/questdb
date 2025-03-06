@@ -562,6 +562,7 @@ public final class WhereClauseParser implements Mutable {
                 Misc.free(func);
                 throw th;
             }
+            Misc.free(func);
         }
         return false;
     }
