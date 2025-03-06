@@ -137,9 +137,9 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     public static void appendValue(
             @NotNull MemoryA auxMem,
             @NotNull MemoryA dataMem,
-            @Nullable ArrayView array
+            @NotNull ArrayView array
     ) {
-        if (array == null) {
+        if (array.isNull()) {
             appendNullImpl(auxMem, dataMem);
             return;
         }

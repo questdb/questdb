@@ -121,13 +121,13 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     public ArrayView getArray(int columnIndex, int columnType) {
+        final MmappedArray array = ensureMmappedArray(arrayBuffers, columnIndex);
         final long auxPageAddress = auxPageAddresses.getQuick(columnIndex);
         if (auxPageAddress != 0) {
             final long auxPageLim = auxPageAddress + auxPageSizes.getQuick(columnIndex);
             final long dataPageAddress = pageAddresses.getQuick(columnIndex);
             final long dataPageLim = dataPageAddress + pageSizes.getQuick(columnIndex);
-            final MmappedArray array = ensureMmappedArray(arrayBuffers, columnIndex);
-            return array.of(
+            array.of(
                     columnType,
                     auxPageAddress,
                     auxPageLim,
@@ -135,8 +135,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
                     dataPageLim,
                     rowIndex
             );
+        } else {
+            array.ofNull();
         }
-        return null;
+        return array;
     }
 
     @Override

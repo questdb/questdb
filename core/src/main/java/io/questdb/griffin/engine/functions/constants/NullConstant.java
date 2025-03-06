@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -43,6 +44,7 @@ import org.jetbrains.annotations.NotNull;
 public final class NullConstant implements ConstantFunction, FunctionExtension {
 
     public static final NullConstant NULL = new NullConstant();
+    private static final DirectArray NULL_ARRAY = new DirectArray();
 
     private final int type;
 
@@ -57,7 +59,7 @@ public final class NullConstant implements ConstantFunction, FunctionExtension {
 
     @Override
     public ArrayView getArray(Record rec) {
-        return null;
+        return NULL_ARRAY;
     }
 
     @Override
@@ -258,5 +260,9 @@ public final class NullConstant implements ConstantFunction, FunctionExtension {
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("null");
+    }
+
+    static {
+        NULL_ARRAY.ofNull();
     }
 }
