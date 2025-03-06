@@ -155,6 +155,25 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCompareTimestampWithVarcharFromTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x as (" +
+                            "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(100000)" +
+                            ") timestamp(ts) partition by day"
+            );
+
+            assertQueryNoLeakCheck(
+                    "a\tts\n" +
+                            "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z\n",
+                    "select * from x where ts = (select ts::varchar from x limit 2)",
+                    "ts",
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testCompareTimestampWithVarcharNegated() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (" +
