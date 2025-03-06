@@ -25,13 +25,15 @@
 package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.arr.ArrayFunctionArray;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.FunctionArray;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -39,6 +41,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.ColumnType.commonWideningType;
 import static io.questdb.cairo.ColumnType.decodeArrayElementType;
@@ -136,7 +139,14 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
 
         // Arguments aren't all FunctionArrayFunctions, treat them generically as some
         // kind of array functions.
-        return new ArrayFunctionArrayFunction(new ObjList<>(args), argPositions, commonElemType, nestedNDims, isConstant);
+        return new ArrayFunctionArrayFunction(
+                configuration,
+                new ObjList<>(args),
+                argPositions,
+                commonElemType,
+                nestedNDims,
+                isConstant
+        );
     }
 
     @Override
@@ -145,30 +155,57 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
     }
 
     private static class ArrayFunctionArrayFunction extends ArrayFunction {
+        private final @NotNull IntList argPositions;
+        private final @NotNull ObjList<Function> args;
         private final boolean isConstant;
-        private ArrayFunctionArray arrayFunctionArray;
+        private DirectArray arrayOut;
 
         public ArrayFunctionArrayFunction(
-                ObjList<Function> args,
-                IntList argPositions,
+                @NotNull CairoConfiguration configuration,
+                @NotNull ObjList<Function> args,
+                @NotNull IntList argPositions,
                 short commonElemType,
                 int nestedNDims,
                 boolean isConstant
         ) {
-            this.isConstant = isConstant;
             this.type = ColumnType.encodeArrayType(commonElemType, nestedNDims + 1);
-            this.arrayFunctionArray = new ArrayFunctionArray(args, argPositions, this.type);
+            this.isConstant = isConstant;
+            this.args = args;
+            this.argPositions = argPositions;
+            this.arrayOut = new DirectArray(configuration);
+            arrayOut.setType(type);
         }
 
         @Override
         public void close() {
-            this.arrayFunctionArray = Misc.free(this.arrayFunctionArray);
+            this.arrayOut = Misc.free(this.arrayOut);
+            Misc.freeObjList(args);
         }
 
         @Override
         public ArrayView getArray(Record rec) {
-            arrayFunctionArray.setRecord(rec);
-            return arrayFunctionArray;
+            ArrayView array0 = args.getQuick(0).getArray(rec);
+            int nDims = array0.getDimCount();
+            arrayOut.clear();
+            arrayOut.setDimLen(0, args.size());
+            for (int dim = 0; dim < nDims; dim++) {
+                arrayOut.setDimLen(dim + 1, array0.getDimLen(dim));
+            }
+            arrayOut.applyShape(argPositions.getQuick(0));
+            MemoryA memA = arrayOut.startAppendMemory();
+            array0.appendToMem(memA);
+            for (int n = args.size(), i = 1; i < n; i++) {
+                ArrayView arrayI = args.getQuick(i).getArray(rec);
+                int argPosI = argPositions.getQuick(i);
+                for (int dim = 0; dim < nDims; dim++) {
+                    if (arrayI.getDimLen(dim) != arrayOut.getDimLen(dim + 1)) {
+                        throw CairoException.nonCritical().position(argPosI)
+                                .put("array shapes don't match");
+                    }
+                }
+                arrayI.appendToMem(memA);
+            }
+            return arrayOut;
         }
 
         @Override

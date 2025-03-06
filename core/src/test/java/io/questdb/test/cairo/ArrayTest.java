@@ -45,10 +45,15 @@ public class ArrayTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE samba (ask_price DOUBLE[], ask_size DOUBLE[])");
             execute("CREATE TABLE tango (ask DOUBLE[][])");
-            execute("INSERT INTO samba VALUES (ARRAY[1.0, 2], ARRAY[1.0, 1])");
+            execute("INSERT INTO samba VALUES (ARRAY[1.0, 2, 3], ARRAY[4.0, 5, 6])");
             execute("INSERT INTO tango SELECT ARRAY[[ask_price[0], ask_price[1]], [ask_size[0], ask_size[1]]] from samba");
             execute("INSERT INTO tango SELECT ARRAY[ask_price, ask_size] from samba");
-            assertSql("ask\n[[1.0,2.0],[1.0,1.0]]\n[[1.0,2.0],[1.0,1.0]]\n", "tango");
+            execute("INSERT INTO tango SELECT ARRAY[ask_price[0:2], ask_size[1:3]] from samba");
+            assertSql("ask\n" +
+                            "[[1.0,2.0],[4.0,5.0]]\n" +
+                            "[[1.0,2.0,3.0],[4.0,5.0,6.0]]\n" +
+                            "[[1.0,2.0],[5.0,6.0]]\n",
+                    "tango");
         });
     }
 
