@@ -1,5 +1,5 @@
 use crate::allocator::{AcVec, QdbAllocator};
-use crate::parquet::col_type::ColumnType;
+use qdb_core::col_type::ColumnType;
 use crate::parquet::qdb_metadata::QdbMeta;
 use parquet2::metadata::FileMetaData;
 use std::io::{Read, Seek};

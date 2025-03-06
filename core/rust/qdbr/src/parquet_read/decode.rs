@@ -1,5 +1,5 @@
 use crate::allocator::{AcVec, QdbAllocator};
-use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
+use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
 use crate::parquet_read::column_sink::fixed::{

@@ -23,7 +23,7 @@
  ******************************************************************************/
 #![allow(dead_code)]
 
-use crate::parquet::col_type::ColumnType;
+use qdb_core::col_type::ColumnType;
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorCause, ParquetResult};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;

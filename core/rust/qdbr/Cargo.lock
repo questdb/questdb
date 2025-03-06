@@ -1105,6 +1105,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "qdb-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "qdbr"
 version = "0.1.0"
 dependencies = [
@@ -1120,6 +1127,7 @@ dependencies = [
  "once_cell",
  "parquet",
  "parquet2",
+ "qdb-core",
  "rand",
  "rayon",
  "serde",

@@ -21,10 +21,22 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt::{Debug, Display, Formatter};
 use std::num::NonZeroI32;
+
+#[derive(Clone, Debug)]
+pub struct InvalidColumnType {
+    pub msg: String,
+}
+
+impl Display for InvalidColumnType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.msg)
+    }
+}
+
+pub type ColumnTypeResult<T> = Result<T, InvalidColumnType>;
 
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -53,18 +65,8 @@ pub enum ColumnTypeTag {
     Varchar = 26,
 }
 
-impl ColumnTypeTag {
-    // Don't expose this in the general API, as it heightens the risk
-    // of constructing an invalid `ColumnType`, e.g. one without the appropriate
-    // extra type info for Geo types.
-    #[cfg(test)]
-    pub fn into_type(self) -> ColumnType {
-        ColumnType::new(self, 0)
-    }
-}
-
 impl TryFrom<u8> for ColumnTypeTag {
-    type Error = ParquetError;
+    type Error = InvalidColumnType;
 
     fn try_from(col_tag_num: u8) -> Result<Self, Self::Error> {
         match col_tag_num {
@@ -91,11 +93,9 @@ impl TryFrom<u8> for ColumnTypeTag {
             24 => Ok(ColumnTypeTag::Long128),
             25 => Ok(ColumnTypeTag::IPv4),
             26 => Ok(ColumnTypeTag::Varchar),
-            _ => Err(fmt_err!(
-                Invalid,
-                "unknown QuestDB column tag code: {}",
-                col_tag_num
-            )),
+            _ => Err(InvalidColumnType {
+                msg: format!("unknown QuestDB column tag code: {}", col_tag_num),
+            }),
         }
     }
 }
@@ -145,18 +145,37 @@ impl Debug for ColumnType {
     }
 }
 
+fn with_context<F>(
+    res: ColumnTypeResult<ColumnTypeTag>,
+    context_fn: F,
+) -> ColumnTypeResult<ColumnTypeTag>
+where
+    F: FnOnce() -> String,
+{
+    match res {
+        Ok(col) => Ok(col),
+        Err(InvalidColumnType { msg }) => {
+            let context = context_fn();
+            let msg = format!("{context}: {msg}");
+            Err(InvalidColumnType { msg })
+        }
+    }
+}
+
 impl TryFrom<i32> for ColumnType {
-    type Error = ParquetError;
+    type Error = InvalidColumnType;
 
     fn try_from(v: i32) -> Result<Self, Self::Error> {
         if v <= 0 {
-            return Err(fmt_err!(Invalid, "invalid column type code <= 0: {}", v));
+            return Err(InvalidColumnType {
+                msg: format!("invalid column type code <= 0: {}", v),
+            });
         }
         // Start with removing geohash size bits. See ColumnType#tagOf().
         let col_tag_num = tag_of(v);
-        let _tag: ColumnTypeTag = col_tag_num
-            .try_into()
-            .with_context(|_| format!("could not parse {v} to a valid ColumnType"))?;
+        let _tag: ColumnTypeTag = with_context(col_tag_num.try_into(), || {
+            format!("could not parse {v} to a valid ColumnType")
+        })?;
         let code = NonZeroI32::new(v).expect("column type code should never be zero");
         Ok(Self { code })
     }
@@ -175,21 +194,24 @@ impl<'de> Deserialize<'de> for ColumnType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parquet::error::{ParquetErrorCause, ParquetResult};
-    use std::sync::Arc;
 
     #[test]
     fn test_invalid_value_deserialization() {
         let scenarios = [
             (0i32, "invalid column type code <= 0: 0"),
             (-20, "invalid column type code <= 0: -20"),
-            (244, "could not parse 244 to a valid ColumnType: unknown QuestDB column tag code: 244"),
-            (100073, "could not parse 100073 to a valid ColumnType: unknown QuestDB column tag code: 233"),
+            (
+                244,
+                "could not parse 244 to a valid ColumnType: unknown QuestDB column tag code: 244",
+            ),
+            (
+                100073,
+                "could not parse 100073 to a valid ColumnType: unknown QuestDB column tag code: 233",
+            ),
         ];
         for &(code, exp_err_msg) in &scenarios {
-            let deserialized: ParquetResult<ColumnType> =
-                serde_json::from_value(serde_json::json!(code))
-                    .map_err(|e| ParquetErrorCause::QdbMeta(Arc::new(e)).into_err());
+            let encoded = serde_json::json!(code);
+            let deserialized: Result<ColumnType, _> = serde_json::from_value(encoded);
             assert!(deserialized.is_err());
 
             // Stringify error without backtrace.

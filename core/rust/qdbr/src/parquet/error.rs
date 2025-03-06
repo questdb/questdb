@@ -227,6 +227,12 @@ impl From<std::io::Error> for ParquetError {
     }
 }
 
+impl From<qdb_core::col_type::InvalidColumnType> for ParquetError {
+    fn from(e: qdb_core::col_type::InvalidColumnType) -> Self {
+        Self::with_descr(ParquetErrorCause::Invalid, e.msg)
+    }
+}
+
 #[cfg(test)]
 impl From<arrow::error::ArrowError> for ParquetError {
     fn from(e: arrow::error::ArrowError) -> Self {
