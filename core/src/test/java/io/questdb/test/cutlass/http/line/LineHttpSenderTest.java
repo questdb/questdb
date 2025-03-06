@@ -76,6 +76,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         }
     }
 
+    @Override
     @Before
     public void setUp() {
         super.setUp();
@@ -336,7 +337,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     public void testInsertNdDoubleArray() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "8192"
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512"
             )) {
                 String tableName = "ndarr_double_test";
                 serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, y SYMBOL, l1 LONG, a1 DOUBLE[], " +

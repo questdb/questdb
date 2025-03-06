@@ -80,6 +80,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.HTTP_RECV_BUFFER_SIZE,
             PropertyKey.HTTP_SEND_BUFFER_SIZE,
             PropertyKey.HTTP_NET_CONNECTION_LIMIT,
+            PropertyKey.LINE_HTTP_MAX_RECV_BUFFER_SIZE,
             PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT,
             PropertyKey.QUERY_TRACING_ENABLED
     ));
@@ -299,6 +300,12 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     }
 
     @Override
+    public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
+        // nested object is kept non-reloadable
+        return serverConfig.get().getMatViewRefreshPoolConfiguration();
+    }
+
+    @Override
     public MemoryConfiguration getMemoryConfiguration() {
         return memoryConfig;
     }
@@ -328,12 +335,6 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     @Override
     public long getVersion() {
         return version;
-    }
-
-    @Override
-    public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
-        // nested object is kept non-reloadable
-        return serverConfig.get().getMatViewRefreshPoolConfiguration();
     }
 
     @Override

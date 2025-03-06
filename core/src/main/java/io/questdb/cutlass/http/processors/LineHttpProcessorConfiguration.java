@@ -44,6 +44,8 @@ public interface LineHttpProcessorConfiguration {
 
     CharSequence getInfluxPingVersion();
 
+    long getMaxRecvBufferSize();
+
     MicrosecondClock getMicrosecondClock();
 
     long getSymbolCacheWaitUsBeforeReload();
