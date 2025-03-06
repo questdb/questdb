@@ -346,8 +346,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     private boolean processNotifications() {
         boolean refreshed = false;
-        LOG.info().$("process notifications enter").$();
         while (viewGraph.tryDequeueRefreshTask(refreshTask)) {
+            LOG.info().$("process notifications enter").$();
             final int operation = refreshTask.operation;
             final TableToken baseTableToken = refreshTask.baseTableToken;
             final TableToken matViewToken = refreshTask.matViewToken;
@@ -393,8 +393,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 default:
                     throw new RuntimeException("unexpected operation: " + operation);
             }
+
+            LOG.info().$("process notifications exit [refreshed=").$(refreshed).I$();
         }
-        LOG.info().$("process notifications exit [refreshed=").$(refreshed).I$();
         return refreshed;
     }
 
