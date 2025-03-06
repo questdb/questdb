@@ -115,7 +115,7 @@ public final class DirectArray extends MutableArray implements Mutable {
         Unsafe.getUnsafe().putLong(ptr + offset, value);
     }
 
-    public MemoryA startAppendMemory() {
+    public MemoryA startMemoryA() {
         flatViewMemory.appendOffset = 0;
         return flatViewMemory;
     }
