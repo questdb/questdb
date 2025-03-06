@@ -27,9 +27,16 @@ package io.questdb.cairo.arr;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Mutable array that owns its backing native memory.
@@ -39,6 +46,7 @@ public final class DirectArray extends MutableArray implements Mutable {
     private static final long LONG_BYTES = 8;
     private static final int MEM_TAG = MemoryTag.NATIVE_ND_ARRAY;
     private final CairoConfiguration configuration;
+    private final FlatViewMemory flatViewMemory = new FlatViewMemory();
     private long capacity;
     private long ptr = 0;
 
@@ -107,6 +115,11 @@ public final class DirectArray extends MutableArray implements Mutable {
         Unsafe.getUnsafe().putLong(ptr + offset, value);
     }
 
+    public MemoryA startAppendMemory() {
+        flatViewMemory.appendOffset = 0;
+        return flatViewMemory;
+    }
+
     private void ensureCapacity(long requiredCapacity) {
         if (ptr == 0) {
             ptr = Unsafe.malloc(requiredCapacity, MEM_TAG);
@@ -121,6 +134,170 @@ public final class DirectArray extends MutableArray implements Mutable {
             }
             ptr = Unsafe.realloc(ptr, capacity, newCapacity, MEM_TAG);
             capacity = newCapacity;
+        }
+    }
+
+    private class FlatViewMemory implements MemoryA {
+        long appendOffset;
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public long getAppendOffset() {
+            return appendOffset;
+        }
+
+        @Override
+        public long getExtendSegmentSize() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void jumpTo(long offset) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long putBin(BinarySequence value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long putBin(long from, long len) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putBlockOfBytes(long from, long len) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putBool(boolean value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putByte(byte value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putChar(char value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putDouble(double value) {
+            assert ptr != 0 : "ptr == 0";
+            assert appendOffset <= capacity - Double.BYTES : "appending beyond limit";
+            Unsafe.getUnsafe().putDouble(ptr + appendOffset, value);
+            appendOffset += Double.BYTES;
+        }
+
+        @Override
+        public void putFloat(float value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putInt(int value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putLong(long value) {
+            assert ptr != 0 : "ptr == 0";
+            assert appendOffset <= capacity - Long.BYTES : "appending beyond limit";
+            Unsafe.getUnsafe().putLong(ptr + appendOffset, value);
+            appendOffset += Long.BYTES;
+        }
+
+        @Override
+        public void putLong128(long lo, long hi) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putLong256(long l0, long l1, long l2, long l3) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putLong256(Long256 value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putLong256(@Nullable CharSequence hexString) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putLong256(@NotNull CharSequence hexString, int start, int end) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putLong256Utf8(@Nullable Utf8Sequence hexString) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long putNullBin() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long putNullStr() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putShort(short value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long putStr(CharSequence value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long putStr(char value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long putStr(CharSequence value, int pos, int len) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long putStrUtf8(DirectUtf8Sequence value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long putVarchar(@NotNull Utf8Sequence value, int lo, int hi) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void skip(long bytes) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void truncate() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void zeroMem(int length) {
+            throw new UnsupportedOperationException();
         }
     }
 }
