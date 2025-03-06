@@ -192,7 +192,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                 arrayOut.setDimLen(dim + 1, array0.getDimLen(dim));
             }
             arrayOut.applyShape(argPositions.getQuick(0));
-            MemoryA memA = arrayOut.startAppendMemory();
+            MemoryA memA = arrayOut.startMemoryA();
             array0.appendToMem(memA);
             for (int n = args.size(), i = 1; i < n; i++) {
                 ArrayView arrayI = args.getQuick(i).getArray(rec);
