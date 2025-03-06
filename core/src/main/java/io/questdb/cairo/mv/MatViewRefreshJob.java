@@ -353,6 +353,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             final long refreshTriggeredTimestamp = refreshTask.refreshTriggeredTimestamp;
             final String invalidationReason = refreshTask.invalidationReason;
 
+            LOG.info().$("process notifications [baseTable=")
+                    .utf8(baseTableToken != null ? baseTableToken.getTableName() : "")
+                    .$(", matView=").utf8(matViewToken != null ? matViewToken.getTableName() : "").I$();
+
             if (matViewToken == null) {
                 try {
                     engine.verifyTableToken(baseTableToken);
