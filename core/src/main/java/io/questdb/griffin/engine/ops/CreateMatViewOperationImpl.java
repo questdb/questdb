@@ -52,6 +52,22 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+/**
+ * Create mat view operation relies on implicit create table as select operation.
+ * <p>
+ * The supported clauses are the following:
+ * - index
+ * - timestamp
+ * - partition by
+ * - ttl
+ * - in volume
+ * <p>
+ * Other than that, at the execution phase the query is compiled and optimized
+ * and validated. All columns are added to the create table operation
+ * and key SAMPLE BY columns and timestamp are marked as dedup keys. Sampling interval
+ * and unit are also parsed at this stage as we want to support GROUP BY timestamp_floor(ts)
+ * queries.
+ */
 public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final CharSequenceHashSet baseKeyColumnNames = new CharSequenceHashSet();
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();

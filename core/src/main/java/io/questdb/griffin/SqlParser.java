@@ -851,7 +851,7 @@ public class SqlParser {
 
             final String matViewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);
             tableOpBuilder.setSelectText(matViewSql);
-            tableOpBuilder.setSelectModel(queryModel);
+            tableOpBuilder.setSelectModel(queryModel); // transient model, for toSink() purposes only
 
             expectTok(lexer, ')');
         } else {
@@ -905,7 +905,7 @@ public class SqlParser {
             tok = optTok(lexer);
         }
 
-        // mat view is always WAL enabled
+        // Mat view is always WAL enabled.
         tableOpBuilder.setWalEnabled(true);
 
         return parseCreateMatViewExt(lexer, executionContext, sqlParserCallback, tok, mvOpBuilder);
@@ -1205,7 +1205,7 @@ public class SqlParser {
         final QueryModel selectModel = parseDml(lexer, null, startOfSelect, true, sqlParserCallback, null);
         final int endOfSelect = lexer.getPosition() - 1;
         createTableOperationBuilder.setSelectText(lexer.getContent().subSequence(startOfSelect, endOfSelect));
-        createTableOperationBuilder.setSelectModel(selectModel);
+        createTableOperationBuilder.setSelectModel(selectModel); // transient model, for toSink() purposes only
         expectTok(lexer, ')');
     }
 
