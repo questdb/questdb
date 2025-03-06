@@ -41,6 +41,7 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
@@ -127,6 +128,12 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
     public void toPlan(PlanSink sink) {
         sink.type("show_create_table");
         sink.meta("of").val(tableToken.getTableName());
+    }
+
+    @Override
+    protected void _close() {
+        super._close();
+        Misc.free(cursor);
     }
 
     public static class ShowCreateTableCursor implements NoRandomAccessRecordCursor {
