@@ -73,7 +73,7 @@ public class PGCommitFailureTest extends BasePGTest {
                     connection.commit();
                     Assert.fail();
                 } catch (SQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "could not append WAL invent index value");
+                    TestUtils.assertContains(e.getMessage(), "could not append WAL event index value");
                 }
             } finally {
                 ff = ffTmp;
@@ -107,7 +107,7 @@ public class PGCommitFailureTest extends BasePGTest {
                     connection.prepareStatement("insert into x values (1, '2021-01-01T00:00:00.000Z')").execute();
                     Assert.fail();
                 } catch (SQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "could not append WAL invent index value");
+                    TestUtils.assertContains(e.getMessage(), "could not append WAL event index value");
                 }
             } finally {
                 ff = ffTmp;
@@ -147,7 +147,7 @@ public class PGCommitFailureTest extends BasePGTest {
                     );
                     Assert.fail();
                 } catch (SQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "could not append WAL invent index value");
+                    TestUtils.assertContains(e.getMessage(), "could not append WAL event index value");
                 }
             } finally {
                 ff = ffTmp;

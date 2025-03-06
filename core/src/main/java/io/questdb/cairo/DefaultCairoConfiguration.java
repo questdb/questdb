@@ -1308,4 +1308,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public boolean useFastAsOfJoin() {
         return true;
     }
+
+    @Override
+    public int getWriteBackOffTimeoutOnMemPressureMs() {
+        return 4000;
+    }
 }

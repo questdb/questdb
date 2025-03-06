@@ -51,7 +51,6 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
-import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.cairo.vm.api.NullMemory;
 import io.questdb.cairo.wal.seq.MetadataServiceStub;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
@@ -124,7 +123,6 @@ public class WalWriter implements TableWriterAPI {
     private final RowImpl row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
     private final TableSequencerAPI sequencer;
-    private final MemoryMAR symbolMapMem;
     private final BoolList symbolMapNullFlags = new BoolList();
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final ObjList<CharSequenceIntHashMap> symbolMaps = new ObjList<>();
@@ -181,7 +179,6 @@ public class WalWriter implements TableWriterAPI {
         this.pathSize = path.size();
         this.metrics = configuration.getMetrics();
         this.open = true;
-        this.symbolMapMem = Vm.getPMARInstance(configuration);
 
         try {
             lockWal();
@@ -312,7 +309,7 @@ public class WalWriter implements TableWriterAPI {
                 // flush disk before getting next txn
                 syncIfRequired();
                 final long seqTxn = getSequencerTxn();
-                LOG.info().$("committed data block [wal=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
+                LOG.debug().$("committed data block [wal=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
                         .$(", segmentTxn=").$(lastSegmentTxn)
                         .$(", seqTxn=").$(seqTxn)
                         .$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount)
@@ -345,10 +342,6 @@ public class WalWriter implements TableWriterAPI {
                 events.close(truncate, Vm.TRUNCATE_TO_POINTER);
             }
             freeSymbolMapReaders();
-            if (symbolMapMem != null) {
-                symbolMapMem.close(truncate, Vm.TRUNCATE_TO_POINTER);
-            }
-
             freeColumns(truncate);
 
             releaseSegmentLock(segmentId, segmentLockFd, segmentRowCount);
