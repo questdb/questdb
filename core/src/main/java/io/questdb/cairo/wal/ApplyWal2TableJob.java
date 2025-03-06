@@ -524,8 +524,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         final byte walTxnType = txnDetails.getWalTxnType(seqTxn);
         switch (walTxnType) {
             case DATA:
-                WalTxnDetails walTnxDetails = writer.getWalTnxDetails();
-                if (walTnxDetails.hasRecord(seqTxn)) {
+                if (txnDetails.hasRecord(seqTxn)) {
                     final long start = microClock.getTicks();
                     walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);
                     writer.commitWalInsertTransactions(

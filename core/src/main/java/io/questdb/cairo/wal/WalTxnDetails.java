@@ -853,19 +853,19 @@ public class WalTxnDetails implements QuietCloseable {
     public class WalTxnDetailsSlice {
 
         public long getMaxTimestamp(int txn) {
-            return WalTxnDetails.this.getMaxTimestamp(txnOrder.get(2L * txn + 1));
+            return WalTxnDetails.this.getMaxTimestamp(getSeqTxn(txn));
         }
 
         public long getMinTimestamp(int txn) {
-            return WalTxnDetails.this.getMinTimestamp(txnOrder.get(2L * txn + 1));
+            return WalTxnDetails.this.getMinTimestamp(getSeqTxn(txn));
         }
 
         public long getRoHi(int txn) {
-            return WalTxnDetails.this.getSegmentRowHi(txnOrder.get(2L * txn + 1));
+            return WalTxnDetails.this.getSegmentRowHi(getSeqTxn(txn));
         }
 
         public long getRoLo(int txn) {
-            return WalTxnDetails.this.getSegmentRowLo(txnOrder.get(2L * txn + 1));
+            return WalTxnDetails.this.getSegmentRowLo(getSeqTxn(txn));
         }
 
         public int getSegmentId(int txn) {
@@ -881,11 +881,11 @@ public class WalTxnDetails implements QuietCloseable {
         }
 
         public boolean isLastSegmentUse(int txn) {
-            return WalTxnDetails.this.isLastSegmentUsage(txnOrder.get(2L * txn + 1));
+            return WalTxnDetails.this.isLastSegmentUsage(getSeqTxn(txn));
         }
 
         public boolean isTxnDataInOrder(int txn) {
-            return WalTxnDetails.this.getTxnInOrder(txnOrder.get(2L * txn + 1));
+            return WalTxnDetails.this.getTxnInOrder(getSeqTxn(txn));
         }
 
         public WalTxnDetailsSlice of(long lo, int count) {

@@ -5344,12 +5344,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private DirectLongList getTempDirectMemoryList(long capacity) {
         if (tempDirectMemList == null) {
             tempDirectMemList = new DirectLongList(capacity, MemoryTag.NATIVE_TABLE_WRITER);
-            tempDirectMemList.zero(0, capacity);
+            tempDirectMemList.zero();
             return tempDirectMemList;
         }
         tempDirectMemList.clear();
         tempDirectMemList.setCapacity(capacity);
-        tempDirectMemList.zero(0, capacity);
+        tempDirectMemList.zero();
         return tempDirectMemList;
     }
 
