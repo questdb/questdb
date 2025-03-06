@@ -408,6 +408,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         boolean refreshed = false;
         childViewSink.clear();
         viewGraph.getDependentMatViews(baseTableToken, childViewSink);
+        LOG.info().$("refreshing materialized views dependent on [table=").$(baseTableToken).$(", list_size=").$(childViewSink.size()).I$();
         final SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseTableToken);
         final long minRefreshToTxn = baseSeqTracker.getWriterTxn();
 
@@ -416,13 +417,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             final MatViewRefreshState state = viewGraph.getViewRefreshState(viewToken);
             if (state != null && !state.isPendingInvalidation() && !state.isInvalid() && !state.isDropped()) {
                 if (!state.tryLock()) {
-                    LOG.debug().$("skipping materialized view refresh, locked by another refresh run [view=").$(viewToken).I$();
+                    LOG.info().$("skipping materialized view refresh, locked by another refresh run [view=").$(viewToken).I$();
                     continue;
                 }
 
                 try {
                     refreshed = refreshIncremental(state, baseTableToken, viewToken, refreshTriggeredTimestamp);
                 } catch (Throwable th) {
+                    LOG.error().$("refresh failed: [view=").$(viewToken).$(", error=").$(th).I$();
                     refreshFailState(state, microsecondClock.getTicks(), th.getMessage());
                 } finally {
                     state.unlock();
@@ -570,6 +572,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final long fromBaseTxn = state.getLastRefreshBaseTxn();
         if (fromBaseTxn >= 0 && fromBaseTxn >= toBaseTxn) {
             // Already refreshed
+            LOG.info().$("refresh incremental, already refreshed [view=").$(viewToken)
+                    .$(", base=").$(baseTableToken)
+                    .$(", fromTxn=").$(fromBaseTxn)
+                    .$(", toTxn=").$(toBaseTxn)
+                    .I$();
             return false;
         }
 
@@ -603,6 +610,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         if (changed) {
                             writeLastRefreshBaseTableTxn(state, toBaseTxn);
                         }
+                        LOG.info().$("refreshed materialized view [view=").$(viewToken)
+                                .$(", base=").$(baseTableToken)
+                                .$(", fromTxn=").$(fromBaseTxn)
+                                .$(", toTxn=").$(toBaseTxn)
+                                .$(", changed=").$(changed)
+                                .I$();
                         return changed;
                     } catch (CairoException ex) {
                         if (ex.isTableDropped() || ex.tableDoesNotExist()) {
@@ -623,6 +636,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     .I$();
             refreshFailState(state, microsecondClock.getTicks(), e.getMessage());
         }
+        LOG.info().$("skipping materialized view refresh [view=").$(viewToken).I$();
         return false;
     }
 
