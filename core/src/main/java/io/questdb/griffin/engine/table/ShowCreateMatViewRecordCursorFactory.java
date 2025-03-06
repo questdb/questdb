@@ -80,6 +80,12 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
         sink.meta("of").val(tableToken.getTableName());
     }
 
+    @Override
+    protected void _close() {
+        super._close();
+        Misc.free(cursor);
+    }
+
     public static class ShowCreateMatViewCursor implements NoRandomAccessRecordCursor {
         protected final MatViewDefinition matViewDefinition = new MatViewDefinition();
         protected final Utf8StringSink sink = new Utf8StringSink();
