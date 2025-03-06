@@ -312,65 +312,65 @@ int64_t dedup_sorted_timestamp_index_many_addresses(
             int diff;
             switch (col_key->value_size_bytes) {
                 case 1: {
-                    auto comparer{
-                            *reinterpret_cast<const SortColumnComparerManyAddresses<int8_t, SegmentBits, TIdx> *>(col_key)};
+                    const auto &comparer =
+                            *reinterpret_cast<const SortColumnComparerManyAddresses<int8_t, SegmentBits, TIdx> *>(col_key);
                     diff = comparer(l, r);
                     break;
                 }
                 case 2: {
-                    auto comparer{
-                            *reinterpret_cast<const SortColumnComparerManyAddresses<int16_t, SegmentBits, TIdx> *>(col_key)};
+                    const auto &comparer =
+                            *reinterpret_cast<const SortColumnComparerManyAddresses<int16_t, SegmentBits, TIdx> *>(col_key);
                     diff = comparer(l, r);
                     break;
                 }
                 case 4: {
-                    auto comparer{
-                            *reinterpret_cast<const SortColumnComparerManyAddresses<int32_t, SegmentBits, TIdx> *>(col_key)};
+                    const auto &comparer =
+                            *reinterpret_cast<const SortColumnComparerManyAddresses<int32_t, SegmentBits, TIdx> *>(col_key);
                     diff = comparer(l, r);
                     break;
                 }
                 case 8: {
-                    auto comparer{
-                            *reinterpret_cast<const SortColumnComparerManyAddresses<int64_t, SegmentBits, TIdx> *>(col_key)};
+                    const auto &comparer =
+                            *reinterpret_cast<const SortColumnComparerManyAddresses<int64_t, SegmentBits, TIdx> *>(col_key);
                     diff = comparer(l, r);
                     break;
                 }
                 case 16: {
-                    auto comparer{
-                            *reinterpret_cast<const SortColumnComparerManyAddresses<__int128, SegmentBits, TIdx> *>(col_key)};
+                    const auto &comparer =
+                            *reinterpret_cast<const SortColumnComparerManyAddresses<__int128, SegmentBits, TIdx> *>(col_key);
                     diff = comparer(l, r);
                     break;
                 }
                 case 32: {
-                    auto comparer{
-                            *reinterpret_cast<const SortColumnComparerManyAddresses<int256, SegmentBits, TIdx> *>(col_key)};
+                    const auto &comparer =
+                            *reinterpret_cast<const SortColumnComparerManyAddresses<int256, SegmentBits, TIdx> *>(col_key);
                     diff = comparer(l, r);
                     break;
                 }
                 case -1: {
                     switch ((ColumnType) (col_key->column_type)) {
                         case ColumnType::VARCHAR: {
-                            auto comparer{
-                                    *reinterpret_cast<const SortVarcharColumnComparerManyAddresses<SegmentBits, TIdx> *>(col_key)};
+                            const auto &comparer =
+                                    *reinterpret_cast<const SortVarcharColumnComparerManyAddresses<SegmentBits, TIdx> *>(col_key);
                             diff = comparer(l, r);
                             break;
                         }
                         case ColumnType::STRING: {
-                            auto comparer{
-                                    *reinterpret_cast<const SortStrBinColumnComparerManyAddresses<int32_t, 2, SegmentBits, TIdx> *>(col_key)};
+                            const auto &comparer =
+                                    *reinterpret_cast<const SortStrBinColumnComparerManyAddresses<int32_t, 2, SegmentBits, TIdx> *>(col_key);
                             diff = comparer(l, r);
                             break;
                         }
                         case ColumnType::BINARY: {
-                            auto comparer{
-                                    *reinterpret_cast<const SortStrBinColumnComparerManyAddresses<int64_t, 1, SegmentBits, TIdx> *>(col_key)};
+                            const auto &comparer =
+                                    *reinterpret_cast<const SortStrBinColumnComparerManyAddresses<int64_t, 1, SegmentBits, TIdx> *>(col_key);
                             diff = comparer(l, r);
                             break;
                         }
                         case ColumnType::SYMBOL: {
                             // Very special case, it's the symbol that is re-mapped into a single buffer
                             // e.g. the values do not come from multiple segments but from a single buffer
-                            auto comparer{*reinterpret_cast<const SortRemappedSymbolComparer<TIdx> *>(col_key)};
+                            const auto &comparer = *reinterpret_cast<const SortRemappedSymbolComparer<TIdx> *>(col_key);
                             diff = comparer(l, r);
                             break;
                         }
@@ -727,49 +727,49 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
             int diff;
             switch (col_key->value_size_bytes) {
                 case 1: {
-                    auto comparer{*reinterpret_cast<const MergeColumnComparer<int8_t> *>(col_key)};
+                    const auto &comparer = *reinterpret_cast<const MergeColumnComparer<int8_t> *>(col_key);
                     diff = comparer(l, r);
                     break;
                 }
                 case 2: {
-                    auto comparer{*reinterpret_cast<const MergeColumnComparer<int16_t> *>(col_key)};
+                    const auto &comparer = *reinterpret_cast<const MergeColumnComparer<int16_t> *>(col_key);
                     diff = comparer(l, r);
                     break;
                 }
                 case 4: {
-                    auto comparer{*reinterpret_cast<const MergeColumnComparer<int32_t> *>(col_key)};
+                    const auto &comparer = *reinterpret_cast<const MergeColumnComparer<int32_t> *>(col_key);
                     diff = comparer(l, r);
                     break;
                 }
                 case 8: {
-                    auto comparer{*reinterpret_cast<const MergeColumnComparer<int64_t> *>(col_key)};
+                    const auto &comparer = *reinterpret_cast<const MergeColumnComparer<int64_t> *>(col_key);
                     diff = comparer(l, r);
                     break;
                 }
                 case 16: {
-                    auto comparer{*reinterpret_cast<const MergeColumnComparer<__int128> *>(col_key)};
+                    const auto &comparer = *reinterpret_cast<const MergeColumnComparer<__int128> *>(col_key);
                     diff = comparer(l, r);
                     break;
                 }
                 case 32: {
-                    auto comparer{*reinterpret_cast<const MergeColumnComparer<int256> *>(col_key)};
+                    const auto &comparer = *reinterpret_cast<const MergeColumnComparer<int256> *>(col_key);
                     diff = comparer(l, r);
                     break;
                 }
                 case -1: {
                     switch ((ColumnType) (col_key->column_type)) {
                         case ColumnType::VARCHAR: {
-                            auto comparer{*reinterpret_cast<const MergeVarcharColumnComparer *>(col_key)};
+                            const auto &comparer = *reinterpret_cast<const MergeVarcharColumnComparer *>(col_key);
                             diff = comparer(l, r);
                             break;
                         }
                         case ColumnType::STRING: {
-                            auto comparer{*reinterpret_cast<const MergeStrBinColumnComparer<int32_t, 2> *>(col_key)};
+                            const auto &comparer = *reinterpret_cast<const MergeStrBinColumnComparer<int32_t, 2> *>(col_key);
                             diff = comparer(l, r);
                             break;
                         }
                         case ColumnType::BINARY: {
-                            auto comparer{*reinterpret_cast<const MergeStrBinColumnComparer<int64_t, 1> *>(col_key)};
+                            const auto &comparer = *reinterpret_cast<const MergeStrBinColumnComparer<int64_t, 1> *>(col_key);
                             diff = comparer(l, r);
                             break;
                         }
@@ -881,49 +881,49 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                 int diff;
                 switch (col_key->value_size_bytes) {
                     case 1: {
-                        auto comparer{*reinterpret_cast<const SortColumnComparer<int8_t> *>(col_key)};
+                        const auto &comparer = *reinterpret_cast<const SortColumnComparer<int8_t> *>(col_key);
                         diff = comparer(l, r);
                         break;
                     }
                     case 2: {
-                        auto comparer{*reinterpret_cast<const SortColumnComparer<int16_t> *>(col_key)};
+                        const auto &comparer = *reinterpret_cast<const SortColumnComparer<int16_t> *>(col_key);
                         diff = comparer(l, r);
                         break;
                     }
                     case 4: {
-                        auto comparer{*reinterpret_cast<const SortColumnComparer<int32_t> *>(col_key)};
+                        const auto &comparer = *reinterpret_cast<const SortColumnComparer<int32_t> *>(col_key);
                         diff = comparer(l, r);
                         break;
                     }
                     case 8: {
-                        auto comparer{*reinterpret_cast<const SortColumnComparer<int64_t> *>(col_key)};
+                        const auto &comparer = *reinterpret_cast<const SortColumnComparer<int64_t> *>(col_key);
                         diff = comparer(l, r);
                         break;
                     }
                     case 16: {
-                        auto comparer{*reinterpret_cast<const SortColumnComparer<__int128> *>(col_key)};
+                        const auto &comparer = *reinterpret_cast<const SortColumnComparer<__int128> *>(col_key);
                         diff = comparer(l, r);
                         break;
                     }
                     case 32: {
-                        auto comparer{*reinterpret_cast<const SortColumnComparer<int256> *>(col_key)};
+                        const auto &comparer = *reinterpret_cast<const SortColumnComparer<int256> *>(col_key);
                         diff = comparer(l, r);
                         break;
                     }
                     case -1: {
                         switch ((ColumnType) (col_key->column_type)) {
                             case ColumnType::VARCHAR: {
-                                auto comparer{*reinterpret_cast<const SortVarcharColumnComparer *>(col_key)};
+                                const auto &comparer = *reinterpret_cast<const SortVarcharColumnComparer *>(col_key);
                                 diff = comparer(l, r);
                                 break;
                             }
                             case ColumnType::STRING: {
-                                auto comparer{*reinterpret_cast<const SortStrBinColumnComparer<int32_t, 2> *>(col_key)};
+                                const auto &comparer = *reinterpret_cast<const SortStrBinColumnComparer<int32_t, 2> *>(col_key);
                                 diff = comparer(l, r);
                                 break;
                             }
                             case ColumnType::BINARY: {
-                                auto comparer{*reinterpret_cast<const SortStrBinColumnComparer<int64_t, 1> *>(col_key)};
+                                const auto &comparer = *reinterpret_cast<const SortStrBinColumnComparer<int64_t, 1> *>(col_key);
                                 diff = comparer(l, r);
                                 break;
                             }
