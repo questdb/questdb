@@ -1,5 +1,4 @@
 use crate::allocator::{AcVec, QdbAllocator};
-use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
 use crate::parquet_read::column_sink::fixed::{
@@ -32,6 +31,7 @@ use parquet2::schema::types::{
     PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
 };
 use parquet2::write::Version;
+use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use std::cmp;
 use std::cmp::min;
 use std::collections::VecDeque;

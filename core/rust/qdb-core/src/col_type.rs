@@ -22,6 +22,7 @@
  *
  ******************************************************************************/
 use serde::{Deserialize, Deserializer, Serialize};
+use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::num::NonZeroI32;
 
@@ -29,6 +30,8 @@ use std::num::NonZeroI32;
 pub struct InvalidColumnType {
     pub msg: String,
 }
+
+impl Error for InvalidColumnType {}
 
 impl Display for InvalidColumnType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {

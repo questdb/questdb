@@ -1,7 +1,7 @@
 use crate::allocator::{AcVec, QdbAllocator};
-use qdb_core::col_type::ColumnType;
 use crate::parquet::qdb_metadata::QdbMeta;
 use parquet2::metadata::FileMetaData;
+use qdb_core::col_type::ColumnType;
 use std::io::{Read, Seek};
 
 mod column_sink;

@@ -2,7 +2,6 @@ use std::io::Cursor;
 use std::slice;
 
 use crate::allocator::QdbAllocator;
-use qdb_core::col_type::{ColumnType, ColumnTypeResult};
 use crate::parquet::error::{ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::ParquetFieldId;
 use crate::parquet_read::decode::ParquetColumnIndex;
@@ -12,6 +11,7 @@ use crate::parquet_read::{
 };
 use jni::objects::JClass;
 use jni::JNIEnv;
+use qdb_core::col_type::{ColumnType, ColumnTypeResult};
 use std::mem::{offset_of, size_of};
 
 #[no_mangle]
