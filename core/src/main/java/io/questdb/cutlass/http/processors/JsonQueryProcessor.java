@@ -688,7 +688,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         } catch (DataUnavailableException e) {
             throw e;
         } catch (Throwable th) {
-            // clear factory in the state because we set already set it
+            // clear factory in the state because we already set it
             state.clearFactory();
             throw th;
         }

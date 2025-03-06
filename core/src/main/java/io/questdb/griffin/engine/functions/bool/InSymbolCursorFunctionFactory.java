@@ -176,14 +176,13 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isThreadSafe() {
-            return true;
+            return valueArg.isThreadSafe();
         }
 
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(valueArg).val(" in ").val(cursorArg);
         }
-
     }
 
     private static class StrInNullCursorFunc extends BooleanFunction implements UnaryFunction {

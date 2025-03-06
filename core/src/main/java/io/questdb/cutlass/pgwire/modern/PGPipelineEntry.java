@@ -755,8 +755,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             outError(utf8Sink, pendingWriters);
         } else if (this.dataUnavailable != null) {
             // We hit cursor level data unavailable exception earlier,
-            // park the connection. On restart, we will find that "cursor" is still null
-            // have to create it from the factory.
+            // park the connection. On restart, we will find that "cursor" is still null,
+            // so we have to obtain it from the factory.
             SuspendEvent e = dataUnavailable;
             this.dataUnavailable = null;
             utf8Sink.resetToBookmark();

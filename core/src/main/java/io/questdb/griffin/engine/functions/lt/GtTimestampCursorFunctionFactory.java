@@ -147,7 +147,7 @@ public class GtTimestampCursorFunctionFactory implements FunctionFactory {
             // the function is thread safe because its state is epoch, which does not mutate
             // between frame executions. For non-thread-safe function, which operates a cursor,
             // the cursor will be re-executed as many times as there are threads. Which is suboptimal.
-            return true;
+            return leftFunc.isThreadSafe();
         }
 
         @Override

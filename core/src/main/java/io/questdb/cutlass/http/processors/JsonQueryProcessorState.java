@@ -974,6 +974,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         int columnCount;
         columnSkewList.clear();
         this.columnNames.clear();
+        this.columnTypesAndFlags.clear();
         if (columnNames != null) {
             columnsQueryParameter.clear();
             if (!Utf8s.utf8ToUtf16(columnNames.lo(), columnNames.hi(), columnsQueryParameter)) {

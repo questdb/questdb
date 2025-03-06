@@ -71,8 +71,17 @@ public class TestCases {
 
         // EqTimestampCursorFunctionFactory
         addTestCase("select * from x where ts = (select ts from y limit 3) and i != 41 limit -10");
-//        addTestCase("select * from x where ts = (select ts::string from y limit 3) and i != 40 limit -7");
-//        addTestCase("select * from x where ts = (select 0::varchar from y limit 1)");
+        addTestCase("select * from x where ts = (select ts::string from y limit 3) and i != 40 limit -7");
+        addTestCase("select * from x where ts = (select ts::varchar from y limit 1)");
+
+        addTestCase("select * from x where ts > (select ts from y limit 1)");
+        addTestCase("select * from x where ts > (select ts::string from y limit 1)");
+        addTestCase("select * from x where ts > (select ts::varchar from y limit 1)");
+
+
+        addTestCase("select * from x where ts < (select ts from y limit -2)");
+        addTestCase("select * from x where ts < (select ts::string from y limit -2)");
+        addTestCase("select * from x where ts < (select ts::varchar from y limit -2)");
 
         // FilterOnExcludedValuesRecordCursorFactory
         addTestCase("select * from x where isym not in ('a','b') and i != 42");
