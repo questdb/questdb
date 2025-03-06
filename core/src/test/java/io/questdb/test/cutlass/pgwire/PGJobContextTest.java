@@ -12595,41 +12595,44 @@ create table tab as (
 
     private void testFetchDisconnectReleasesReader(String query) throws Exception {
         skipOnWalRun(); // non-partitioned table
-        forceRecvFragmentationChunkSize = recvBufferSize;
         // Circuit breaker does not work with fragmented buffer
         // TODO: find a solution, Net.peek() always return a byte when the incoming buffer not read fully
         // when executing 'E' (execute) postgres protocol command
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            connection.setAutoCommit(false);
+        assertWithPgServer(
+                CONN_AWARE_ALL,
+                (connection, binary, mode, port) -> {
+                    connection.setAutoCommit(false);
 
-            PreparedStatement tbl = connection.prepareStatement("create table xx as (" +
-                    "select x," +
-                    " timestamp_sequence(0, 1000) ts" +
-                    " from long_sequence(1000000)) timestamp (ts)");
-            tbl.execute();
+                    PreparedStatement tbl = connection.prepareStatement("create table xx as (" +
+                            "select x," +
+                            " timestamp_sequence(0, 1000) ts" +
+                            " from long_sequence(1000000)) timestamp (ts)");
+                    tbl.execute();
 
-            PreparedStatement stmt = connection.prepareStatement(query);
-            connection.setNetworkTimeout(Runnable::run, 1);
-            int testSize = 1000;
-            stmt.setFetchSize(testSize);
-            assertEquals(testSize, stmt.getFetchSize());
+                    PreparedStatement stmt = connection.prepareStatement(query);
+                    connection.setNetworkTimeout(Runnable::run, 1);
+                    int testSize = 1000;
+                    stmt.setFetchSize(testSize);
+                    assertEquals(testSize, stmt.getFetchSize());
 
-            try {
-                // wait for disconnect timer to trigger
-                while (connection.isValid(10)) {
-                    // in theory, we do not need to execute the query here, but if the line is removed
-                    // connection.isValid() does not always detect that the connection is closed (or it takes a very long time)
-                    stmt.executeQuery();
-                    Os.sleep(250);
-                }
-                stmt.executeQuery();
-                Assert.fail("Exception is not thrown");
-            } catch (PSQLException ex) {
-                ex.printStackTrace();
-                // expected
-                Assert.assertNotNull(ex);
-            }
-        });
+                    try {
+                        // wait for disconnect timer to trigger
+                        while (connection.isValid(10)) {
+                            // in theory, we do not need to execute the query here, but if the line is removed
+                            // connection.isValid() does not always detect that the connection is closed (or it takes a very long time)
+                            stmt.executeQuery();
+                            Os.sleep(250);
+                        }
+                        stmt.executeQuery();
+                        Assert.fail("Exception is not thrown");
+                    } catch (PSQLException ex) {
+                        ex.printStackTrace();
+                        // expected
+                        Assert.assertNotNull(ex);
+                    }
+                },
+                () -> forceRecvFragmentationChunkSize = recvBufferSize
+        );
     }
 
     private void testQuery(String s, String s2) throws Exception {
