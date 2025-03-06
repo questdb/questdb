@@ -715,11 +715,13 @@ public final class WhereClauseParser implements Mutable {
                     ExpressionNode inListItem = in.args.getQuick(i);
                     if (inListItem.type != ExpressionNode.CONSTANT) {
                         if (inListItem.type != ExpressionNode.FUNCTION) {
+                            Misc.free(timestampFunc);
                             return false;
                         }
                         final Function func = functionParser.parseFunction(inListItem, metadata, executionContext);
                         if (!func.isConstant() || !checkFunctionCanBeStrInterval(executionContext, func)) {
                             Misc.free(func);
+                            Misc.free(timestampFunc);
                             return false;
                         }
                         if (timestampFunc != null) {
@@ -729,6 +731,12 @@ public final class WhereClauseParser implements Mutable {
                             timestampFunc = func;
                         }
                     }
+                }
+
+                // If there is more than one ts function, we parse them once again,
+                // so timestampFunc won't be used.
+                if (moreThanOneTimestampFunc) {
+                    timestampFunc = Misc.free(timestampFunc);
                 }
 
                 for (int i = 0; i < n; i++) {
@@ -759,9 +767,7 @@ public final class WhereClauseParser implements Mutable {
                     }
                 }
                 in.intrinsicValue = IntrinsicModel.TRUE;
-                if (!moreThanOneTimestampFunc) {
-                    Misc.free(timestampFunc);
-                }
+                Misc.free(timestampFunc);
                 return true;
             }
         }
