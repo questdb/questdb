@@ -6550,7 +6550,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table y as (" +
                         "select * from (select rnd_byte(2,50) a from long_sequence(20))" +
                         "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                94,
+                89,
                 "unsupported cast"
         );
     }
@@ -6580,7 +6580,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table y as (" +
                         "select * from (select rnd_double(2) a from long_sequence(20))" +
                         "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                93,
+                88,
                 "unsupported cast"
         );
     }
@@ -6600,7 +6600,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table y as (" +
                         "select * from (select rnd_float(2) a from long_sequence(20))" +
                         "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                92,
+                87,
                 "unsupported cast"
         );
     }
@@ -6624,7 +6624,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table y as (" +
                         "select * from (select rnd_int(0, 30, 2) a from long_sequence(20))" +
                         "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                97,
+                92,
                 "unsupported cast"
         );
     }
@@ -6648,7 +6648,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table y as (" +
                         "select * from (select rnd_long(0, 30, 2) a from long_sequence(20))" +
                         "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                98,
+                93,
                 "unsupported cast"
         );
     }
@@ -6671,7 +6671,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table y as (" +
                         "select * from (select rnd_short(2,10) a from long_sequence(20))" +
                         "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                95,
+                90,
                 "unsupported cast"
         );
     }
@@ -6681,7 +6681,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table y as (" +
                         "select * from (select rnd_str(5,10,2) a from long_sequence(20))" +
                         "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                95,
+                90,
                 "unsupported cast"
         );
     }
@@ -6691,7 +6691,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table y as (" +
                         "select rnd_symbol(4,6,10,2) a from long_sequence(20)" +
                         "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                84,
+                79,
                 "unsupported cast"
         );
     }
