@@ -414,9 +414,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         int entryCount = Math.max(Numbers.ceilPow2(readers) * 8, Numbers.ceilPow2(iterations));
         setProperty(PropertyKey.CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT, entryCount);
 
-        try (
-                final TxnScoreboard scoreboard = newTxnScoreboard()
-        ) {
+        try (final TxnScoreboard scoreboard = newTxnScoreboard()) {
             final CyclicBarrier barrier = new CyclicBarrier(readers);
             final CountDownLatch latch = new CountDownLatch(readers);
             final AtomicInteger anomaly = new AtomicInteger();
@@ -505,8 +503,13 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                             scoreboard.releaseTxn(id, txn);
                             long min = getMin(scoreboard);
                             if (!scoreboard.isTxnAvailable(min - 1)) {
-                                // This one also fails, but those could be readers that didn't roll back yet
-                                anomaly.incrementAndGet();
+                                // V2 scoreboard can add a phantom min entry temporarily and then check
+                                // that this is not valid min and remove it, returning lock as unsuccessful (false)
+                                // It's only problem with V1 scoreboard
+                                if (version == 1) {
+                                    // This one also fails, but those could be readers that didn't roll back yet
+                                    anomaly.incrementAndGet();
+                                }
                             }
                             Os.pause();
                         }
@@ -614,6 +617,8 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         });
     }
 
+    // This method is implemented in scoreboards for testing only and
+    // is not part of the public API
     private static long getActiveReaderCount(TxnScoreboard scoreboard, long txn) {
         if (scoreboard instanceof TxnScoreboardV2) {
             return ((TxnScoreboardV2) scoreboard).getActiveReaderCount(txn);
@@ -622,6 +627,8 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         }
     }
 
+    // This method is implemented in scoreboards for testing only and
+    // is not part of the public API
     private static long getMin(TxnScoreboard scoreboard) {
         if (scoreboard instanceof TxnScoreboardV2) {
             return ((TxnScoreboardV2) scoreboard).getMin();
