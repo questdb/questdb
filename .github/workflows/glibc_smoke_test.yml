@@ -74,20 +74,22 @@ jobs:
       image: almalinux:8
     steps:
       - name: Install dependencies
-        run: dnf install -y curl zip unzip git
+        run: dnf install -y curl zip unzip git bash
       - name: Print GLIBC version
         run: ldd --version
+      - name: SDKMan - AlmaLinux 8 has too old version of Maven
+        run: |
+          curl -s "https://get.sdkman.io" | bash
+      - name: Install Maven
+        run: |
+          source "$HOME/.sdkman/bin/sdkman-init.sh"
+          sdk install maven
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '11'
           cache: 'maven'
-      - name: Install Maven from SDKMan - AlmaLinux 8 has too old version of Maven
-        run: |
-          curl -s "https://get.sdkman.io" | bash
-          source "/github/home/.sdkman/bin/sdkman-init.sh"
-          sdk install maven 3.9.9
       - name: Build distribution
         run: mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl '!benchmarks'
       - name: Unpack distribution
