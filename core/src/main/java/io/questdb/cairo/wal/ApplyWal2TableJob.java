@@ -434,9 +434,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
 
                 if (initialSeqTxn < writer.getSeqTxn()) {
-                    LOG.info().$("notify mat view base commit [table=")
-                            .utf8(writer.getTableToken().getDirName())
-                            .$(", seqTxn=").$(writer.getSeqTxn()).I$();
                     engine.notifyMatViewBaseCommit(mvRefreshTask, writer.getSeqTxn());
                 }
             } catch (Throwable th) {
