@@ -628,17 +628,6 @@ public class TxReader implements Closeable, Mutable {
         return ((maskedSize >>> bitOffset) & 1) == 1;
     }
 
-    private void clearData() {
-        baseOffset = 0;
-        size = 0;
-        partitionTableVersion = -1;
-        attachedPartitionsSize = -1;
-        attachedPartitions.clear();
-        version = -1;
-        txn = -1;
-        seqTxn = -1;
-    }
-
     private int getInt(long readOffset) {
         assert readOffset + Integer.BYTES <= size : "offset " + readOffset + ", size " + size + ", txn=" + txn;
         return roTxMemBase.getInt(baseOffset + readOffset);
@@ -723,6 +712,17 @@ public class TxReader implements Closeable, Mutable {
 
     static long getPartitionSizeByRawIndex(LongList attachedPartitions, int index) {
         return attachedPartitions.getQuick(index + PARTITION_MASKED_SIZE_OFFSET) & PARTITION_SIZE_MASK;
+    }
+
+    void clearData() {
+        baseOffset = 0;
+        size = 0;
+        partitionTableVersion = -1;
+        attachedPartitionsSize = -1;
+        attachedPartitions.clear();
+        version = -1;
+        txn = -1;
+        seqTxn = -1;
     }
 
     protected int findAttachedPartitionRawIndex(long ts) {

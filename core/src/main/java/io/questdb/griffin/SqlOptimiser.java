@@ -4630,7 +4630,16 @@ public class SqlOptimiser implements Mutable {
                 try {
                     final int position = Numbers.parseInt(column);
                     if (position < 1 || position > columnCount) {
-                        throw SqlException.$(orderBy.position, "order column position is out of range [max=").put(columnCount).put(']');
+                        // it could be out of range, or it could be intended as a column name. let's check for a
+                        // matching column.
+                        if (baseParent.getAliasToColumnMap().get(column) != null) {
+                            continue;
+                        } else {
+                            throw SqlException.$(orderBy.position,
+                                            "order column position is out of range [max=")
+                                    .put(columnCount)
+                                    .put(']');
+                        }
                     }
                     orderByNodes.setQuick(
                             i,
