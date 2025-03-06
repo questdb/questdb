@@ -359,6 +359,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     .$(", matView=").utf8(matViewToken != null ? matViewToken.getTableName() : "").I$();
 
             if (matViewToken == null) {
+                assert baseTableToken != null;
                 try {
                     engine.verifyTableToken(baseTableToken);
                 } catch (CairoException | TableReferenceOutOfDateException e) {
