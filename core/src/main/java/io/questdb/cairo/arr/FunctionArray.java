@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.PlanSink;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 
@@ -157,6 +158,17 @@ public class FunctionArray extends MutableArray implements FlatArrayView {
 
     public void setRecord(Record rec) {
         this.record = rec;
+    }
+
+    public void toPlan(PlanSink sink) {
+        sink.val('[');
+        String comma = "";
+        for (int n = functions.length, i = 0; i < n; i++) {
+            sink.val(comma);
+            sink.val(functions[i]);
+            comma = ",";
+        }
+        sink.val(']');
     }
 
     private Function[] functions() {
