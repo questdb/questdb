@@ -84,7 +84,7 @@ jobs:
           java-version: '11'
           cache: 'maven'
       - name: Install Maven from SDKMan - AlmaLinux 8 has too old version of Maven
-        run:
+        run: |
           curl -s "https://get.sdkman.io" | bash
           source "$HOME/.sdkman/bin/sdkman-init.sh"
           sdk install maven 3.9.9
