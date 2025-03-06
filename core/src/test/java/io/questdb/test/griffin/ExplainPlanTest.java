@@ -382,6 +382,35 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr1 DOUBLE[], arr2 DOUBLE[][], arr3 DOUBLE[][][], a DOUBLE)");
+            String commonPart1 = "VirtualRecord\n  functions: [";
+            String commonPart2 = "]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: tango\n";
+            assertPlanNoLeakCheck("SELECT arr1[0] FROM tango",
+                    commonPart1 + "arr1[0]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT arr1[0:0] FROM tango",
+                    commonPart1 + "arr1[0:0]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT arr3[0:0, 1:2, 2:] FROM tango",
+                    commonPart1 + "arr3[0:0,1:2,2:]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT ARRAY[1.0, 2] FROM tango",
+                    commonPart1 + "ARRAY[1.0,2.0]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT ARRAY[[1.0, 2], [3, 4]] FROM tango",
+                    commonPart1 + "ARRAY[[1.0,2.0],[3.0,4.0]]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT ARRAY[a, a] FROM tango",
+                    commonPart1 + "ARRAY[a,a]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT ARRAY[arr1, arr1] FROM tango",
+                    commonPart1 + "ARRAY[arr1,arr1]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT ARRAY[arr1[1:2], arr2[0]] FROM tango",
+                    commonPart1 + "ARRAY[arr1[1:2],arr2[0]]" + commonPart2);
+            assertPlanNoLeakCheck("SELECT t(arr2) FROM tango",
+                    commonPart1 + "t(arr2)" + commonPart2);
+            assertPlanNoLeakCheck("SELECT arr2 * t(arr2) FROM tango",
+                    commonPart1 + "arr2*t(arr2)" + commonPart2);
+        });
+    }
+
+    @Test
     public void testAsOfJoin0() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table a ( i int, ts timestamp) timestamp(ts)");

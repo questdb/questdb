@@ -137,8 +137,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
             return new FunctionArrayFunction(array, isConstant);
         }
 
-        // Arguments aren't all FunctionArrayFunctions, treat them generically as some
-        // kind of array functions.
+        // Arguments aren't all FunctionArrayFunctions, treat them generically as some kind of array functions.
         return new ArrayFunctionArrayFunction(
                 configuration,
                 new ObjList<>(args),
@@ -215,7 +214,14 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("ARRAY[]");
+            sink.val("ARRAY[");
+            String comma = "";
+            for (int n = args.size(), i = 0; i < n; i++) {
+                sink.val(comma);
+                sink.val(args.getQuick(i));
+                comma = ",";
+            }
+            sink.val(']');
         }
     }
 
@@ -247,7 +253,8 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("ARRAY[]");
+            sink.val("ARRAY");
+            array.toPlan(sink);
         }
     }
 }
