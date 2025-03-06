@@ -530,8 +530,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     public RecordCursorFactory generateExplain(@Transient ExplainModel model, @Transient SqlExecutionContext executionContext) throws SqlException {
-        ExecutionModel innerModel = model.getInnerExecutionModel();
-        QueryModel queryModel = innerModel.getQueryModel();
+        final ExecutionModel innerModel = model.getInnerExecutionModel();
+        final QueryModel queryModel = innerModel.getQueryModel();
         RecordCursorFactory factory;
         if (queryModel != null) {
             factory = generate(queryModel, executionContext);

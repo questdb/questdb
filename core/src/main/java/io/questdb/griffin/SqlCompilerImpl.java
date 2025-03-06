@@ -1827,8 +1827,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (model.getModelType() != ExecutionModel.EXPLAIN) {
             return compileExecutionModel0(executionContext, model);
         } else {
-            ExplainModel explainModel = (ExplainModel) model;
-            explainModel.setModel(compileExecutionModel0(executionContext, explainModel.getInnerExecutionModel()));
+            final ExplainModel explainModel = (ExplainModel) model;
+            final ExecutionModel innerModel = compileExplainExecutionModel0(executionContext, explainModel.getInnerExecutionModel());
+            explainModel.setModel(innerModel);
             return explainModel;
         }
     }
@@ -1838,7 +1839,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             case ExecutionModel.QUERY:
                 return optimiser.optimise((QueryModel) model, executionContext, this);
             case ExecutionModel.INSERT: {
-                InsertModel insertModel = (InsertModel) model;
+                final InsertModel insertModel = (InsertModel) model;
                 if (insertModel.getQueryModel() != null) {
                     validateAndOptimiseInsertAsSelect(executionContext, insertModel);
                 } else {
@@ -1858,6 +1859,29 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             default:
                 return model;
         }
+    }
+
+    private ExecutionModel compileExplainExecutionModel0(SqlExecutionContext executionContext, ExecutionModel model) throws SqlException {
+        // CREATE TABLE AS SELECT and CREATE MATERIALIZED VIEW have an unoptimized SELECT model after the parsing.
+        // We optimize and validate the model during the execution, but in case of EXPLAIN the model is
+        // directly compiled into a factory, so we need to optimize it before proceeding.
+        switch (model.getModelType()) {
+            case ExecutionModel.CREATE_TABLE:
+                final CreateTableOperationBuilder createTableBuilder = (CreateTableOperationBuilder) model;
+                if (createTableBuilder.getQueryModel() != null) {
+                    final QueryModel selectModel = optimiser.optimise(createTableBuilder.getQueryModel(), executionContext, this);
+                    createTableBuilder.setSelectModel(selectModel);
+                }
+                return model;
+            case ExecutionModel.CREATE_MAT_VIEW:
+                final CreateMatViewOperationBuilder createMatViewBuilder = (CreateMatViewOperationBuilder) model;
+                if (createMatViewBuilder.getQueryModel() != null) {
+                    final QueryModel selectModel = optimiser.optimise(createMatViewBuilder.getQueryModel(), executionContext, this);
+                    createMatViewBuilder.setSelectModel(selectModel);
+                }
+                return model;
+        }
+        return compileExecutionModel0(executionContext, model);
     }
 
     private void compileInner(
@@ -3083,7 +3107,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     updateQueryModel,
                     executionContext
             );
-
             return codeGenerator.generateExplain(updateQueryModel, recordCursorFactory, model.getFormat());
         } else {
             return codeGenerator.generateExplain(model, executionContext);

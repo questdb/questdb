@@ -252,6 +252,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         this.partitionByExpr = partitionByExpr;
     }
 
+    @Override
     public void setSelectModel(QueryModel selectModel) {
         this.selectModel = selectModel;
     }

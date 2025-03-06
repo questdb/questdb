@@ -95,6 +95,11 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         this.refreshType = refreshType;
     }
 
+    @Override
+    public void setSelectModel(QueryModel selectModel) {
+        createTableOperationBuilder.setSelectModel(selectModel);
+    }
+
     public void setTimeZone(String timeZone) {
         this.timeZone = timeZone;
     }
