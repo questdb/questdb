@@ -6452,41 +6452,46 @@ nodejs code:
     public void testLargeBatchInsertMethod() throws Exception {
         skipOnWalRun(); // non-partitioned table
 
-        // Small fragmentation chunk makes this test very slow. Set the fragmentation to be near the send buffer size.
-        forceSendFragmentationChunkSize = Math.max(1024, forceSendFragmentationChunkSize);
-        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
-            try (Statement statement = connection.createStatement()) {
-                statement.executeUpdate("create table test_large_batch(id long,val int)");
-            }
-            connection.setAutoCommit(false);
-            try (PreparedStatement batchInsert = connection.prepareStatement("insert into test_large_batch(id,val) values(?,?)")) {
-                for (int i = 0; i < 10_000; i++) {
-                    batchInsert.clearParameters();
-                    batchInsert.setLong(1, 0L);
-                    batchInsert.setInt(2, 1);
-                    batchInsert.addBatch();
+        assertWithPgServer(
+                CONN_AWARE_EXTENDED,
+                (connection, binary, mode, port) -> {
+                    try (Statement statement = connection.createStatement()) {
+                        statement.executeUpdate("create table test_large_batch(id long,val int)");
+                    }
+                    connection.setAutoCommit(false);
+                    try (PreparedStatement batchInsert = connection.prepareStatement("insert into test_large_batch(id,val) values(?,?)")) {
+                        for (int i = 0; i < 10_000; i++) {
+                            batchInsert.clearParameters();
+                            batchInsert.setLong(1, 0L);
+                            batchInsert.setInt(2, 1);
+                            batchInsert.addBatch();
 
-                    batchInsert.clearParameters();
-                    batchInsert.setLong(1, 1L);
-                    batchInsert.setInt(2, 2);
-                    batchInsert.addBatch();
+                            batchInsert.clearParameters();
+                            batchInsert.setLong(1, 1L);
+                            batchInsert.setInt(2, 2);
+                            batchInsert.addBatch();
 
-                    batchInsert.clearParameters();
-                    batchInsert.setLong(1, 2L);
-                    batchInsert.setInt(2, 3);
-                    batchInsert.addBatch();
+                            batchInsert.clearParameters();
+                            batchInsert.setLong(1, 2L);
+                            batchInsert.setInt(2, 3);
+                            batchInsert.addBatch();
+                        }
+                        batchInsert.executeBatch();
+                        connection.commit();
+                    }
+
+                    StringSink sink = new StringSink();
+                    String expected = "count[BIGINT]\n" +
+                            "30000\n";
+                    Statement statement = connection.createStatement();
+                    ResultSet rs = statement.executeQuery("select count(*) from test_large_batch");
+                    assertResultSet(expected, sink, rs);
+                },
+                () -> {
+                    // Small fragmentation chunk makes this test very slow. Set the fragmentation to be near the send buffer size.
+                    forceSendFragmentationChunkSize = Math.max(1024, forceSendFragmentationChunkSize);
                 }
-                batchInsert.executeBatch();
-                connection.commit();
-            }
-
-            StringSink sink = new StringSink();
-            String expected = "count[BIGINT]\n" +
-                    "30000\n";
-            Statement statement = connection.createStatement();
-            ResultSet rs = statement.executeQuery("select count(*) from test_large_batch");
-            assertResultSet(expected, sink, rs);
-        });
+        );
     }
 
     @Test
@@ -6544,21 +6549,24 @@ nodejs code:
                 "1,2,3\n" +
                 "1,2,3\n";
 
-        sendBufferSize = 512;
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            PreparedStatement statement = connection.prepareStatement("select 1,2,3 from long_sequence(50)");
-            Statement statement1 = connection.createStatement();
+        assertWithPgServer(
+                CONN_AWARE_ALL,
+                (connection, binary, mode, port) -> {
+                    PreparedStatement statement = connection.prepareStatement("select 1,2,3 from long_sequence(50)");
+                    Statement statement1 = connection.createStatement();
 
-            StringSink sink = new StringSink();
-            for (int i = 0; i < 10; i++) {
-                sink.clear();
-                ResultSet rs = statement.executeQuery();
+                    StringSink sink = new StringSink();
+                    for (int i = 0; i < 10; i++) {
+                        sink.clear();
+                        ResultSet rs = statement.executeQuery();
 
-                statement1.executeQuery("select 1 from long_sequence(2)");
-                assertResultSet(expected, sink, rs);
-                rs.close();
-            }
-        });
+                        statement1.executeQuery("select 1 from long_sequence(2)");
+                        assertResultSet(expected, sink, rs);
+                        rs.close();
+                    }
+                },
+                () -> sendBufferSize = 512
+        );
     }
 
     @Test
@@ -8097,89 +8105,94 @@ nodejs code:
     @Test
     public void testPreparedStatementTextParams() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        sendBufferSize = 1024;
-        recvBufferSize = 1024;
         // there is a bug in legacy mode somewhere
         Assume.assumeFalse(legacyMode);
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            PreparedStatement statement = connection.prepareStatement("select x, ? as \"$1\",? as \"$2\",? as \"$3\",? as \"$4\"," +
-                    "? as \"$5\",? as \"$6\",? as \"$7\",? as \"$8\",? as \"$9\",? as \"$10\",? as \"$11\",? as \"$12\",? as \"$13\"," +
-                    "? as \"$14\",? as \"$15\",? as \"$16\",? as \"$17\",? as \"$18\",? as \"$19\",? as \"$20\",? as \"$21\" from long_sequence(5)");
-            statement.setInt(1, 4);
-            statement.setLong(2, 123L);
-            statement.setFloat(3, 5.43f);
-            statement.setDouble(4, 0.56789);
-            statement.setByte(5, (byte) 91);
-            statement.setBoolean(6, true);
-            statement.setString(7, "hello");
-            // this is to test UTF8 behaviour
-            statement.setString(8, "группа туристов");
-            statement.setDate(9, new Date(100L));
-            statement.setTimestamp(10, new Timestamp(20000000033L));
+        assertWithPgServer(
+                CONN_AWARE_ALL,
+                (connection, binary, mode, port) -> {
+                    PreparedStatement statement = connection.prepareStatement("select x, ? as \"$1\",? as \"$2\",? as \"$3\",? as \"$4\"," +
+                            "? as \"$5\",? as \"$6\",? as \"$7\",? as \"$8\",? as \"$9\",? as \"$10\",? as \"$11\",? as \"$12\",? as \"$13\"," +
+                            "? as \"$14\",? as \"$15\",? as \"$16\",? as \"$17\",? as \"$18\",? as \"$19\",? as \"$20\",? as \"$21\" from long_sequence(5)");
+                    statement.setInt(1, 4);
+                    statement.setLong(2, 123L);
+                    statement.setFloat(3, 5.43f);
+                    statement.setDouble(4, 0.56789);
+                    statement.setByte(5, (byte) 91);
+                    statement.setBoolean(6, true);
+                    statement.setString(7, "hello");
+                    // this is to test UTF8 behaviour
+                    statement.setString(8, "группа туристов");
+                    statement.setDate(9, new Date(100L));
+                    statement.setTimestamp(10, new Timestamp(20000000033L));
 
-            // nulls
-            statement.setNull(11, Types.INTEGER);
-            statement.setNull(12, Types.BIGINT);
-            statement.setNull(13, Types.REAL);
-            statement.setNull(14, Types.DOUBLE);
-            statement.setNull(15, Types.SMALLINT);
-            statement.setNull(16, Types.BOOLEAN);
-            statement.setNull(17, Types.VARCHAR);
-            statement.setString(18, null);
-            statement.setNull(19, Types.DATE);
-//                statement.setNull(20, Types.TIMESTAMP);
+                    // nulls
+                    statement.setNull(11, Types.INTEGER);
+                    statement.setNull(12, Types.BIGINT);
+                    statement.setNull(13, Types.REAL);
+                    statement.setNull(14, Types.DOUBLE);
+                    statement.setNull(15, Types.SMALLINT);
+                    statement.setNull(16, Types.BOOLEAN);
+                    statement.setNull(17, Types.VARCHAR);
+                    statement.setString(18, null);
+                    statement.setNull(19, Types.DATE);
+                    // statement.setNull(20, Types.TIMESTAMP);
 
-            // when someone uses PostgreSQL's type extensions, which alter driver behaviour
-            // we should handle this gracefully
+                    // when someone uses PostgreSQL's type extensions, which alter driver behaviour
+                    // we should handle this gracefully
 
-            statement.setTimestamp(20, new PGTimestamp(300011));
-            statement.setTimestamp(21, new PGTimestamp(500023, new GregorianCalendar()));
+                    statement.setTimestamp(20, new PGTimestamp(300011));
+                    statement.setTimestamp(21, new PGTimestamp(500023, new GregorianCalendar()));
 
-            final String expected;
-            // JDBC driver is being evil: even though we defined parameter #3 explicitly as "float",
-            // the driver will correctly send OID 700 on the binary protocol for this paramter, but
-            // in "text" mode, it will send OID 701 making server believe it is "double". This is
-            // one of many JDBC driver bugs, that is liable to change in the future driver versions
-            if (binary) {
-                if (mode == Mode.SIMPLE) {
-                    // simple mode
-                    expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[REAL],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[VARCHAR],$12[VARCHAR],$13[VARCHAR],$14[VARCHAR],$15[VARCHAR],$16[VARCHAR],$17[VARCHAR],$18[VARCHAR],$19[VARCHAR],$20[TIMESTAMP],$21[TIMESTAMP]\n" +
-                            "1,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                            "2,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                            "3,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                            "4,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                            "5,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
-                } else {
-                    expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[REAL],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[INTEGER],$12[BIGINT],$13[REAL],$14[DOUBLE],$15[SMALLINT],$16[BIT],$17[VARCHAR],$18[VARCHAR],$19[TIMESTAMP],$20[TIMESTAMP],$21[TIMESTAMP]\n" +
-                            "1,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                            "2,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                            "3,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                            "4,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                            "5,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
+                    final String expected;
+                    // JDBC driver is being evil: even though we defined parameter #3 explicitly as "float",
+                    // the driver will correctly send OID 700 on the binary protocol for this paramter, but
+                    // in "text" mode, it will send OID 701 making server believe it is "double". This is
+                    // one of many JDBC driver bugs, that is liable to change in the future driver versions
+                    if (binary) {
+                        if (mode == Mode.SIMPLE) {
+                            // simple mode
+                            expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[REAL],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[VARCHAR],$12[VARCHAR],$13[VARCHAR],$14[VARCHAR],$15[VARCHAR],$16[VARCHAR],$17[VARCHAR],$18[VARCHAR],$19[VARCHAR],$20[TIMESTAMP],$21[TIMESTAMP]\n" +
+                                    "1,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                    "2,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                    "3,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                    "4,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                    "5,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
+                        } else {
+                            expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[REAL],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[INTEGER],$12[BIGINT],$13[REAL],$14[DOUBLE],$15[SMALLINT],$16[BIT],$17[VARCHAR],$18[VARCHAR],$19[TIMESTAMP],$20[TIMESTAMP],$21[TIMESTAMP]\n" +
+                                    "1,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                    "2,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                    "3,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                    "4,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                    "5,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
+                        }
+                    } else {
+                        if (mode == Mode.SIMPLE) {
+                            expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[DOUBLE],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[VARCHAR],$12[VARCHAR],$13[VARCHAR],$14[VARCHAR],$15[VARCHAR],$16[VARCHAR],$17[VARCHAR],$18[VARCHAR],$19[VARCHAR],$20[TIMESTAMP],$21[TIMESTAMP]\n" +
+                                    "1,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                    "2,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                    "3,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                    "4,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                    "5,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
+                        } else {
+                            expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[DOUBLE],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[INTEGER],$12[BIGINT],$13[REAL],$14[DOUBLE],$15[SMALLINT],$16[BIT],$17[VARCHAR],$18[VARCHAR],$19[TIMESTAMP],$20[TIMESTAMP],$21[TIMESTAMP]\n" +
+                                    "1,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                    "2,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                    "3,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                    "4,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                    "5,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
+                        }
+                    }
+
+                    sink.clear();
+                    try (ResultSet rs = statement.executeQuery()) {
+                        assertResultSet(expected, sink, rs);
+                    }
+                },
+                () -> {
+                    sendBufferSize = 1024;
+                    recvBufferSize = 1024;
                 }
-            } else {
-                if (mode == Mode.SIMPLE) {
-                    expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[DOUBLE],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[VARCHAR],$12[VARCHAR],$13[VARCHAR],$14[VARCHAR],$15[VARCHAR],$16[VARCHAR],$17[VARCHAR],$18[VARCHAR],$19[VARCHAR],$20[TIMESTAMP],$21[TIMESTAMP]\n" +
-                            "1,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                            "2,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                            "3,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                            "4,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                            "5,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
-                } else {
-                    expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[DOUBLE],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[INTEGER],$12[BIGINT],$13[REAL],$14[DOUBLE],$15[SMALLINT],$16[BIT],$17[VARCHAR],$18[VARCHAR],$19[TIMESTAMP],$20[TIMESTAMP],$21[TIMESTAMP]\n" +
-                            "1,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                            "2,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                            "3,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                            "4,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                            "5,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
-                }
-            }
-
-            sink.clear();
-            try (ResultSet rs = statement.executeQuery()) {
-                assertResultSet(expected, sink, rs);
-            }
-        });
+        );
     }
 
     @Test
@@ -9661,34 +9674,37 @@ create table tab as (
     @Test
     public void testSendBufferFull() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        sendBufferSize = 512;
-        forceSendFragmentationChunkSize = 10;
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(
+                CONN_AWARE_ALL,
+                (connection, binary, mode, port) -> {
+                    connection.setAutoCommit(false);
+                    try (PreparedStatement pstmt = connection.prepareStatement("create table t as " +
+                            "(select cast(x + 1 as long) a, cast(x as timestamp) b from long_sequence(10))")) {
+                        pstmt.execute();
+                    }
 
-            connection.setAutoCommit(false);
-            try (PreparedStatement pstmt = connection.prepareStatement("create table t as " +
-                    "(select cast(x + 1 as long) a, cast(x as timestamp) b from long_sequence(10))")) {
-                pstmt.execute();
-            }
+                    for (int i = 20; i < 100; i++) {
+                        try (PreparedStatement select = connection.prepareStatement(
+                                "select x from long_sequence(" + i + ")")) {
 
+                            try (ResultSet resultSet = select.executeQuery()) {
+                                int r = 1;
+                                while (resultSet.next()) {
+                                    Assert.assertEquals(r++, resultSet.getLong(1));
+                                }
+                            }
+                        }
 
-            for (int i = 20; i < 100; i++) {
-                try (PreparedStatement select = connection.prepareStatement(
-                        "select x from long_sequence(" + i + ")")) {
-
-                    try (ResultSet resultSet = select.executeQuery()) {
-                        int r = 1;
-                        while (resultSet.next()) {
-                            Assert.assertEquals(r++, resultSet.getLong(1));
+                        try (PreparedStatement pstmt = connection.prepareStatement("insert into t values (1, " + i + ")")) {
+                            pstmt.execute();
                         }
                     }
+                },
+                () -> {
+                    sendBufferSize = 512;
+                    forceSendFragmentationChunkSize = 10;
                 }
-
-                try (PreparedStatement pstmt = connection.prepareStatement("insert into t values (1, " + i + ")")) {
-                    pstmt.execute();
-                }
-            }
-        });
+        );
     }
 
     @Test
@@ -9814,7 +9830,7 @@ create table tab as (
         //    it consulted the query cache and found a stale query plan. This triggered a retry, but subsequent retries
         //    also failed because they consulted the cache and found other stale plans.
 
-        selectCacheBlockCount = 100; // large cache, must me larger than 'cairo.sql.max.recompile.attempts'
+        selectCacheBlockCount = 100; // large cache, must be larger than 'cairo.sql.max.recompile.attempts'
         assertMemoryLeak(() -> {
             try (
                     final IPGWireServer server = createPGServer(2);
