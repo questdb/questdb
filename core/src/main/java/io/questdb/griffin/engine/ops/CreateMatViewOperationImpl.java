@@ -108,7 +108,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         try (SqlCompiler compiler = sqlExecutionContext.getCairoEngine().getSqlCompiler()) {
             compiler.execute(this, sqlExecutionContext);
         }
-        return createTableOperation.getOperationFuture();
+        return getOperationFuture();
     }
 
     @Override
