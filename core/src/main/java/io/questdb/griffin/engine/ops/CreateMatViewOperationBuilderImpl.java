@@ -69,10 +69,6 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         timeZoneOffset = null;
     }
 
-    public String getBaseTableName() {
-        return baseTableName;
-    }
-
     public CreateTableOperationBuilderImpl getCreateTableOperationBuilder() {
         return createTableOperationBuilder;
     }
