@@ -524,7 +524,29 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CharSequence tok;
         tok = expectToken(lexer, "column type");
 
-        int columnType = SqlUtil.toPersistedTypeTag(tok, lexer.lastTokenPosition());
+        short typeTag = SqlUtil.toPersistedTypeTag(tok, lexer.lastTokenPosition());
+        int typePosition = lexer.lastTokenPosition();
+
+        int dim = SqlUtil.parseArrayDimensions(lexer);
+        int columnType;
+        if (dim > 0) {
+            if (!ColumnType.isSupportedArrayElementType(typeTag)) {
+                throw SqlException.position(typePosition).put(ColumnType.nameOf(typeTag))
+                        .put(" is not supported as an array element type");
+            }
+            columnType = ColumnType.encodeArrayType(typeTag, dim);
+        } else {
+            columnType = typeTag;
+        }
+
+        tok = SqlUtil.fetchNext(lexer);
+
+        // check for an unmatched bracket
+        if (tok != null && Chars.equals(tok, ']')) {
+            throw SqlException.position(typePosition).put(columnName).put(" has an unmatched `]` - were you trying to define an array?");
+        } else {
+            lexer.unparseLast();
+        }
 
         if (columnType == ColumnType.GEOHASH) {
             tok = SqlUtil.fetchNext(lexer);
@@ -3234,7 +3256,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 }
 
-
                 VirtualRecord record = new VirtualRecord(valueFunctions);
                 RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(asm, record, metadata, listColumnFilter);
                 insertOperation.addInsertRow(new InsertRowImpl(record, copier, timestampFunction, tupleIndex));
@@ -3425,7 +3446,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             BindVariableService bindVariableService
     ) throws SqlException {
         final int columnType = metadata.getColumnType(metadataColumnIndex);
-        if (function.isUndefined()) {
+        if (function.isUndefined() || ColumnType.isArrayUnknown(function.getType())) {
             function.assignType(columnType, bindVariableService);
         }
 

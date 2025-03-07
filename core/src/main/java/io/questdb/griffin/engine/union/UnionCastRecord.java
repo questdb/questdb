@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.union;
 
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Interval;
@@ -39,6 +40,14 @@ public class UnionCastRecord extends AbstractUnionRecord {
     public UnionCastRecord(ObjList<Function> castFunctionsA, ObjList<Function> castFunctionsB) {
         this.castFunctionsA = castFunctionsA;
         this.castFunctionsB = castFunctionsB;
+    }
+
+    @Override
+    public ArrayView getArray(int col, int columnType) {
+        if (useA) {
+            return castFunctionsA.getQuick(col).getArray(recordA);
+        }
+        return castFunctionsB.getQuick(col).getArray(recordB);
     }
 
     @Override

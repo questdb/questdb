@@ -24,17 +24,22 @@
 
 package io.questdb.cutlass.line.tcp;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.arr.DirectArray;
+import io.questdb.cutlass.line.tcp.ArrayParser.ParseException;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 
-public class LineTcpParser {
+public class LineTcpParser implements QuietCloseable {
 
     public static final byte ENTITY_TYPE_BOOLEAN = 6;
     public static final byte ENTITY_TYPE_BYTE = 17;
@@ -50,6 +55,7 @@ public class LineTcpParser {
     public static final byte ENTITY_TYPE_INTEGER = 3;
     public static final byte ENTITY_TYPE_LONG = 14;
     public static final byte ENTITY_TYPE_LONG256 = 7;
+    public static final byte ENTITY_TYPE_ND_ARRAY = 22;
     public static final byte ENTITY_TYPE_NONE = (byte) 0xff; // visible for testing
     public static final byte ENTITY_TYPE_NULL = 0;
     public static final byte ENTITY_TYPE_SHORT = 16;
@@ -68,7 +74,7 @@ public class LineTcpParser {
     public static final byte ENTITY_UNIT_HOUR = ENTITY_UNIT_MINUTE + 1;
     public static final long NULL_TIMESTAMP = Numbers.LONG_NULL;
     public static final int N_ENTITY_TYPES = ENTITY_TYPE_TIMESTAMP + 1;
-    public static final int N_MAPPED_ENTITY_TYPES = ENTITY_TYPE_VARCHAR + 1;
+    public static final int N_MAPPED_ENTITY_TYPES = ENTITY_TYPE_ND_ARRAY + 1;
     private static final byte ENTITY_HANDLER_NAME = 1;
     private static final byte ENTITY_HANDLER_NEW_LINE = 4;
     private static final byte ENTITY_HANDLER_TABLE = 0;
@@ -78,6 +84,7 @@ public class LineTcpParser {
     private static final Log LOG = LogFactory.getLog(LineTcpParser.class);
 
     private static final boolean[] controlBytes;
+    private final CairoConfiguration cairoConfiguration;
     private final DirectUtf8String charSeq = new DirectUtf8String();
     private final ObjList<ProtoEntity> entityCache = new ObjList<>();
     private final DirectUtf8String measurementName = new DirectUtf8String();
@@ -97,7 +104,13 @@ public class LineTcpParser {
     private long timestamp;
     private byte timestampUnit;
 
-    public LineTcpParser() {
+    public LineTcpParser(CairoConfiguration configuration) {
+        this.cairoConfiguration = configuration;
+    }
+
+    @Override
+    public void close() {
+        Misc.freeObjList(entityCache);
     }
 
     public long getBufferAddress() {
@@ -179,6 +192,7 @@ public class LineTcpParser {
         }
 
         // Main parsing loop
+        int bracketCount = 0;
         while (bufAt < bufHi) {
             byte b = Unsafe.getUnsafe().getByte(bufAt);
 
@@ -193,14 +207,19 @@ public class LineTcpParser {
             asciiSegment &= b >= 0;
             boolean endOfLine = false;
             boolean appendByte = false;
-            // Important note: don't forget to update controlChars array when changing the following switch.
+
+            // Important note: don't forget to update controlBytes array when changing the following switch.
             switch (b) {
                 case '\n':
                 case '\r':
                     endOfLine = true;
                     b = '\n';
-                case '=':
                 case ',':
+                    if (bracketCount > 0) {
+                        appendByte = true;
+                        break;
+                    }
+                case '=':
                 case ' ':
                     isQuotedFieldValue = false;
                     if (!completeEntity(b, bufHi)) {
@@ -274,6 +293,20 @@ public class LineTcpParser {
                         return getError(bufHi);
                     }
 
+                case '[':
+                    if (tagsComplete && entityHandler == ENTITY_HANDLER_VALUE) {
+                        ++bracketCount;
+                        appendByte = true;
+                        break;
+                    }
+
+                case ']':
+                    if (tagsComplete && entityHandler == ENTITY_HANDLER_VALUE) {
+                        --bracketCount;
+                        appendByte = true;
+                        break;
+                    }
+
                 default:
                     appendByte = true;
                     nextValueCanBeOpenQuote = false;
@@ -282,6 +315,7 @@ public class LineTcpParser {
                 case '\0':
                     LOG.info().$("could not parse [byte=\\0]").$();
                     return getError(bufHi);
+
                 case '/':
                     if (entityHandler != ENTITY_HANDLER_VALUE) {
                         LOG.info().$("could not parse [byte=/]").$();
@@ -538,7 +572,7 @@ public class LineTcpParser {
     private ProtoEntity popEntity() {
         ProtoEntity currentEntity;
         if (entityCache.size() <= nEntities) {
-            currentEntity = new ProtoEntity();
+            currentEntity = new ProtoEntity(cairoConfiguration);
             entityCache.add(currentEntity);
         } else {
             currentEntity = entityCache.get(nEntities);
@@ -611,6 +645,27 @@ public class LineTcpParser {
         INVALID_COLUMN_NAME,
         MISSING_FIELD_VALUE,
         MISSING_TAG_VALUE,
+
+        /**
+         * Unexpected early end of input
+         */
+        ND_ARR_PREMATURE_END,
+
+        /**
+         * Unexpected token found
+         */
+        ND_ARR_UNEXPECTED_TOKEN,
+
+        /**
+         * Array literal specifies an irregular (jagged) array shape. E.g. {{1, 2}, {1, 2, 3}}
+         */
+        ND_ARR_IRREGULAR_SHAPE,
+
+        /**
+         * Parsing of the array datatype failed.
+         */
+        ND_ARR_INVALID_TYPE,
+
         NONE
     }
 
@@ -618,7 +673,8 @@ public class LineTcpParser {
         MEASUREMENT_COMPLETE, BUFFER_UNDERFLOW, ERROR
     }
 
-    public class ProtoEntity {
+    public class ProtoEntity implements QuietCloseable {
+        private final ArrayParser arrayParser;
         private final DirectUtf8String name = new DirectUtf8String();
         private final DirectUtf8String value = new DirectUtf8String();
         private boolean booleanValue;
@@ -626,6 +682,19 @@ public class LineTcpParser {
         private long longValue;
         private byte type = ENTITY_TYPE_NONE;
         private byte unit = ENTITY_UNIT_NONE;
+
+        public ProtoEntity(CairoConfiguration configuration) {
+            arrayParser = new ArrayParser(configuration);
+        }
+
+        @Override
+        public void close() {
+            Misc.free(arrayParser);
+        }
+
+        public DirectArray getArray() {
+            return arrayParser.getArray();
+        }
 
         public boolean getBooleanValue() {
             return booleanValue;
@@ -666,6 +735,7 @@ public class LineTcpParser {
         }
 
         private boolean parse(byte last, int valueLen) {
+            // System.err.println("LineTcpParser.ProtoEntity.parse :: " + ((char) last) + ", valueLen: " + valueLen);
             switch (last) {
                 case 'i':
                     if (valueLen > 1 && value.byteAt(1) != 'x') {
@@ -741,6 +811,17 @@ public class LineTcpParser {
                     type = ENTITY_TYPE_SYMBOL;
                     return false;
                 }
+                case ']': {
+                    try {
+                        arrayParser.parse(value);
+                        type = ENTITY_TYPE_ND_ARRAY;
+                        errorCode = ErrorCode.NONE;
+                        return true;
+                    } catch (ParseException e) {
+                        errorCode = e.errorCode();
+                        return false;
+                    }
+                }
                 // fall through
                 default:
                     try {
@@ -798,7 +879,7 @@ public class LineTcpParser {
     }
 
     static {
-        char[] chars = new char[]{'\n', '\r', '=', ',', ' ', '\\', '"', '\0', '/'};
+        char[] chars = new char[]{'\n', '\r', '=', ',', ' ', '\\', '"', '\0', '/', '[', ']'};
         controlBytes = new boolean[256];
         for (char ch : chars) {
             controlBytes[ch] = true;

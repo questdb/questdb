@@ -94,7 +94,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             this.scheduler = scheduler;
             this.metrics = configuration.getMetrics();
             this.milliClock = configuration.getMillisecondClock();
-            parser = new LineTcpParser();
+            parser = new LineTcpParser(configuration.getCairoConfiguration());
             this.authenticator = configuration.getFactoryProvider().getLineAuthenticatorFactory().getLineTCPAuthenticator();
             clear();
             this.checkIdleInterval = configuration.getMaintenanceInterval();
@@ -141,6 +141,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     public void close() {
         clear();
         Misc.free(authenticator);
+        Misc.free(parser);
     }
 
     public long commitWalTables(long wallClockMillis) {

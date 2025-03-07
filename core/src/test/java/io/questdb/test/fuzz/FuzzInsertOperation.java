@@ -24,17 +24,24 @@
 
 package io.questdb.test.fuzz;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.Rnd;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.*;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.cairo.TestRecord;
 
-public class FuzzInsertOperation implements FuzzTransactionOperation {
+public class FuzzInsertOperation implements FuzzTransactionOperation, QuietCloseable {
     public final static int[] SUPPORTED_COLUMN_TYPES = new int[]{
             ColumnType.INT,
             ColumnType.LONG,
@@ -56,11 +63,13 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
             ColumnType.GEOLONG,
             ColumnType.BOOLEAN,
             ColumnType.UUID,
-            ColumnType.IPv4
+            ColumnType.IPv4,
+            ColumnType.ARRAY
     };
     private static final ThreadLocal<TestRecord.ArrayBinarySequence> tlBinSeq = new ThreadLocal<>(TestRecord.ArrayBinarySequence::new);
     private static final ThreadLocal<IntList> tlIntList = new ThreadLocal<>(IntList::new);
     private static final ThreadLocal<Utf8StringSink> tlUtf8 = new ThreadLocal<>(Utf8StringSink::new);
+    private final DirectArray array;
     private final double cancelRows;
     private final double notSet;
     private final double nullSet;
@@ -71,6 +80,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
     private final long timestamp;
 
     public FuzzInsertOperation(
+            CairoConfiguration cairoConfiguration,
             long seed1,
             long seed2,
             long timestamp,
@@ -88,6 +98,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
         this.timestamp = timestamp;
         this.notSet = notSet;
         this.nullSet = nullSet;
+        this.array = new DirectArray(cairoConfiguration);
     }
 
     @Override
@@ -224,6 +235,15 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
                             case ColumnType.UUID:
                                 row.putLong128(index, rnd.nextLong(), rnd.nextLong());
                                 break;
+                            case ColumnType.ARRAY:
+                                if (rnd.nextPositiveInt() % 4 == 0) {
+                                    array.ofNull();
+                                    row.putArray(index, array);
+                                } else {
+                                    rnd.nextDoubleArray(ColumnType.decodeArrayDimensionality(type), array, 1, 8, 0);
+                                    row.putArray(index, array);
+                                }
+                                break;
                             default:
                                 throw new UnsupportedOperationException();
                         }
@@ -238,6 +258,11 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
             row.append();
         }
         return false;
+    }
+
+    @Override
+    public void close() {
+        Misc.free(array);
     }
 
     public int getStrLen() {

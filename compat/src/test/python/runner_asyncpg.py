@@ -28,6 +28,7 @@ import asyncpg
 import re
 import sys
 from asyncpg import Connection
+
 from common import *
 
 
@@ -107,6 +108,25 @@ async def run_test(test, global_variables):
         password='quest',
         database='qdb'
     )
+
+    # hard-code an array type for float8. this is a workaround for asyncpg using
+    # introspection to determine array types. the introspection query uses recursive CTEs which are not supported
+    # by QuestDB :-(
+    # See: https://github.com/MagicStack/asyncpg/discussions/1015
+    array = {
+        'oid': 1022,
+        'elemtype': 701,
+        'kind': 'b',
+        'name': '_float8',
+        'elemtype_name': 'float8',
+        'ns': 'pg_catalog',
+        'elemdelim': ',',
+        'depth': 0,
+        'range_subtype': None,
+        'attrtypoids': None,
+        'basetype': None
+    }
+    connection._protocol.get_settings().register_data_types([array])
 
     test_failed = False
     try:

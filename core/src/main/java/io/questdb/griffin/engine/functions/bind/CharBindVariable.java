@@ -25,12 +25,11 @@
 package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.std.Mutable;
 
-class CharBindVariable extends CharFunction implements ScalarFunction, Mutable {
+class CharBindVariable extends CharFunction implements Mutable {
     char value;
 
     @Override

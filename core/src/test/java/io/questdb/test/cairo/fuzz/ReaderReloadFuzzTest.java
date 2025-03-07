@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -106,18 +107,22 @@ public class ReaderReloadFuzzTest extends AbstractFuzzTest {
                 reader.openPartition(0);
                 reader.goPassive();
 
-                ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableName, rnd);
-                fuzzer.applyToWal(transactions, tableName, 1 + rnd.nextInt(2), rnd);
-                drainWalQueue();
+                ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(configuration, tableName, rnd);
+                try {
+                    fuzzer.applyToWal(transactions, tableName, 1 + rnd.nextInt(2), rnd);
+                    drainWalQueue();
 
-                Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
-                long openFiles = openFileCount.get();
+                    Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+                    long openFiles = openFileCount.get();
 
-                reader.goActive();
-                reader.openPartition(0);
-                Assert.assertEquals(
-                        "unaffected partition should not be reloaded, file open count should stay the same",
-                        openFiles, openFileCount.get());
+                    reader.goActive();
+                    reader.openPartition(0);
+                    Assert.assertEquals(
+                            "unaffected partition should not be reloaded, file open count should stay the same",
+                            openFiles, openFileCount.get());
+                } finally {
+                    Misc.freeObjListAndClear(transactions);
+                }
             }
         });
     }
