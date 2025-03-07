@@ -42,8 +42,8 @@ public abstract class ArrayView implements QuietCloseable {
      */
     public static final int DIM_MAX_LEN = (1 << 28) - 1;
 
-    protected final IntList shape = new IntList();
-    protected final IntList strides = new IntList();
+    protected final IntList shape = new IntList(1);
+    protected final IntList strides = new IntList(1);
     protected FlatArrayView flatView;
     protected int flatViewLength;
     protected int flatViewOffset;
