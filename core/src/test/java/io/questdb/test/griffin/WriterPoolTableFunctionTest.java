@@ -25,8 +25,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -34,16 +32,14 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.table.WriterPoolFunctionFactory;
-import io.questdb.griffin.engine.table.ReaderPoolRecordCursorFactory;
 import io.questdb.griffin.engine.table.WriterPoolRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.cairo.TableModel;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static org.junit.Assert.assertTrue;
+import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
 
 public class WriterPoolTableFunctionTest extends AbstractCairoTest {
 
@@ -70,7 +66,11 @@ public class WriterPoolTableFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testEmptyPool() throws Exception {
-        assertQuery("table_name\towner_thread_id\tlast_access_timestamp\townership_reason\n", "select * from writer_pool()", null);
+        assertQuery(
+                "table_name\towner_thread_id\tlast_access_timestamp\townership_reason\n",
+                "select * from writer_pool()",
+                null
+        );
     }
 
     @Test
@@ -104,11 +104,11 @@ public class WriterPoolTableFunctionTest extends AbstractCairoTest {
     public void testRandomAccessUnsupported() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    RecordCursorFactory readerPoolFactory = new WriterPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
-                    RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)
+                    RecordCursorFactory writerPoolFactory = new WriterPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
+                    RecordCursor writerPoolCursor = writerPoolFactory.getCursor(sqlExecutionContext)
             ) {
-                Record record = readerPoolCursor.getRecord();
-                readerPoolCursor.recordAt(record, 0);
+                Record record = writerPoolCursor.getRecord();
+                writerPoolCursor.recordAt(record, 0);
                 Assert.fail("Random access is not expected to be implemented");
             } catch (UnsupportedOperationException ignored) {
             }
@@ -119,10 +119,10 @@ public class WriterPoolTableFunctionTest extends AbstractCairoTest {
     public void testRecordBNotImplemented() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    RecordCursorFactory readerPoolFactory = new WriterPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
-                    RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)
+                    RecordCursorFactory writerPoolFactory = new WriterPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
+                    RecordCursor writerPoolCursor = writerPoolFactory.getCursor(sqlExecutionContext)
             ) {
-                readerPoolCursor.getRecordB();
+                writerPoolCursor.getRecordB();
                 Assert.fail("RecordB is not expected to be implemented");
             } catch (UnsupportedOperationException ignored) {
             }
@@ -130,29 +130,19 @@ public class WriterPoolTableFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testToTop() throws Exception {
-        assertMemoryLeak(() -> {
-            TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE);
-            tm.timestamp("ts").col("ID", ColumnType.INT);
-            createPopulateTable(tm, 20, "2020-01-01", 1);
-
-            try (TableReader ignored = getReader("tab1");
-                 RecordCursorFactory readerPoolFactory = new ReaderPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
-                 RecordCursor readerPoolCursor = readerPoolFactory.getCursor(sqlExecutionContext)) {
-                // scroll cursor ignoring its contents
-                //noinspection StatementWithEmptyBody
-                while (readerPoolCursor.hasNext()) {
-                }
-                readerPoolCursor.toTop();
-                assertTrue(readerPoolCursor.hasNext());
-            }
-        });
-    }
-
-    @Test
     public void testWriterList() throws Exception {
+        currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
         assertMemoryLeak(() -> {
             execute("create table a as (select 1 as u)");
+
+            assertQueryNoLeakCheck(
+                    "table_name\towner_thread_id\tlast_access_timestamp\townership_reason\n" +
+                            "a\tnull\t2024-10-24T17:22:09.842574Z\t\n",
+                    "writer_pool",
+                    null,
+                    false
+            );
+
             execute("create table b as (select 1 as u)");
             execute("create table c as (select 1 as u)");
             execute("create table d as (select 1 as u)");

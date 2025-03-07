@@ -24,9 +24,15 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.std.Os;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
+
+import java.io.File;
 
 public class ShowCreateTableTest extends AbstractCairoTest {
 
@@ -98,6 +104,27 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, s symbol ) timestamp(ts) partition by year bypass wal;");
             assertPlanNoLeakCheck("show create table foo", "show_create_table of: foo\n");
+        });
+    }
+
+    @Test
+    public void testInVolumeNotFound() throws Exception {
+        Assert.assertFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            final File volume = temp.newFolder("other_path");
+            final String volumeAlias = "foobar";
+            final String volumePath = volume.getAbsolutePath();
+            try (Path path = new Path()) {
+                configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root);
+            }
+            execute("create table foo (ts timestamp) timestamp(ts) partition by day wal in volume foobar");
+
+            configuration.getVolumeDefinitions().clear();
+            try {
+                assertExceptionNoLeakCheck("show create table foo");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not find volume alias for table");
+            }
         });
     }
 

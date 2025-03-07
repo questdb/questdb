@@ -457,14 +457,14 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                     if (dotIndex > -1) {
                         if (Chars.equalsIgnoreCase(model.getName(), node.token, 0, dotIndex)) {
                             if (!Chars.equalsIgnoreCase(model.getTableName(), baseTableName)) {
-                                throw SqlException.$(node.position, "only base table columns can be used as keys").put(node.token);
+                                throw SqlException.$(node.position, "only base table columns can be used as keys: ").put(node.token);
                             }
                             target.add(Chars.toString(node.token, dotIndex + 1, node.token.length()));
                             return;
                         }
                     } else {
                         if (!Chars.equalsIgnoreCase(model.getTableName(), baseTableName)) {
-                            throw SqlException.$(node.position, "only base table columns can be used as keys").put(node.token);
+                            throw SqlException.$(node.position, "only base table columns can be used as keys: ").put(node.token);
                         }
                         target.add(node.token);
                         return;

@@ -27,8 +27,6 @@ package io.questdb.cairo.mv;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnFilter;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -38,8 +36,6 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.CompiledQuery;
@@ -63,15 +59,14 @@ import org.jetbrains.annotations.TestOnly;
 
 public class MatViewRefreshJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MatViewRefreshJob.class);
-    private final long batchSize;
     private final BlockFileWriter blockFileWriter;
     private final ObjList<TableToken> childViewSink = new ObjList<>();
     private final ObjList<TableToken> childViewSink2 = new ObjList<>();
     private final EntityColumnFilter columnFilter = new EntityColumnFilter();
+    private final CairoConfiguration configuration;
     private final Path dbRoot;
     private final int dbRootLen;
     private final CairoEngine engine;
-    private final int maxRecompileAttempts;
     private final MicrosecondClock microsecondClock;
     private final MatViewRefreshExecutionContext refreshExecutionContext;
     private final MatViewRefreshTask refreshTask = new MatViewRefreshTask();
@@ -85,11 +80,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             this.engine = engine;
             this.refreshExecutionContext = new MatViewRefreshExecutionContext(engine, workerCount, sharedWorkerCount);
             this.viewGraph = engine.getMatViewGraph();
-            final CairoConfiguration configuration = engine.getConfiguration();
+            this.configuration = engine.getConfiguration();
             this.txnRangeLoader = new WalTxnRangeLoader(configuration.getFilesFacade());
-            this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
-            this.maxRecompileAttempts = engine.getConfiguration().getMatViewMaxRecompileAttempts();
-            this.batchSize = engine.getConfiguration().getMatViewInsertAsSelectBatchSize();
+            this.microsecondClock = configuration.getMicrosecondClock();
             this.blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
             this.dbRoot = new Path();
             dbRoot.of(engine.getConfiguration().getDbRoot());
@@ -182,35 +175,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return false;
     }
 
-    private ColumnFilter generatedColumnFilter(RecordMetadata cursorMetadata, TableRecordMetadata writerMetadata) throws SqlException {
-        for (int i = 0, n = cursorMetadata.getColumnCount(); i < n; i++) {
-            int columnType = cursorMetadata.getColumnType(i);
-            assert columnType > 0;
-            if (columnType != writerMetadata.getColumnType(i)) {
-                throw SqlException.$(0, "materialized view column type mismatch. Query column: ")
-                        .put(cursorMetadata.getColumnName(i))
-                        .put(" type: ")
-                        .put(ColumnType.nameOf(columnType))
-                        .put(", view column: ")
-                        .put(writerMetadata.getColumnName(i))
-                        .put(" type: ")
-                        .put(ColumnType.nameOf(writerMetadata.getColumnType(i)));
-            }
-        }
-        columnFilter.of(cursorMetadata.getColumnCount());
-        return columnFilter;
-    }
-
     private RecordToRowCopier getRecordToRowCopier(TableWriterAPI tableWriter, RecordCursorFactory factory, SqlCompiler compiler) throws SqlException {
-        final ColumnFilter entityColumnFilter = generatedColumnFilter(
-                factory.getMetadata(),
-                tableWriter.getMetadata()
-        );
+        columnFilter.of(factory.getMetadata().getColumnCount());
         return RecordToRowCopierUtils.generateCopier(
                 compiler.getAsm(),
                 factory.getMetadata(),
                 tableWriter.getMetadata(),
-                entityColumnFilter
+                columnFilter
         );
     }
 
@@ -222,6 +193,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             long refreshTriggeredTimestamp
     ) throws SqlException {
         assert state.isLocked();
+
+        final int maxRecompileAttempts = configuration.getMatViewMaxRecompileAttempts();
+        final long batchSize = configuration.getMatViewInsertAsSelectBatchSize();
 
         RecordCursorFactory factory = null;
         RecordToRowCopier copier;
@@ -236,10 +210,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     if (factory == null) {
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
                             LOG.info().$("compiling materialized view [view=").$(viewDef.getMatViewToken()).$(", attempt=").$(i).I$();
-                            CompiledQuery compiledQuery = compiler.compile(viewDef.getMatViewSql(), refreshExecutionContext);
-                            if (compiledQuery.getType() != CompiledQuery.SELECT) {
-                                throw SqlException.$(0, "materialized view query must be a SELECT statement");
-                            }
+                            final CompiledQuery compiledQuery = compiler.compile(viewDef.getMatViewSql(), refreshExecutionContext);
+                            assert compiledQuery.getType() == CompiledQuery.SELECT;
                             factory = compiledQuery.getRecordCursorFactory();
 
                             if (copier == null || tableWriter.getMetadata().getMetadataVersion() != state.getRecordRowCopierMetadataVersion()) {
@@ -260,12 +232,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                     final CharSequence timestampName = tableWriter.getMetadata().getColumnName(tableWriter.getMetadata().getTimestampIndex());
                     final int cursorTimestampIndex = factory.getMetadata().getColumnIndex(timestampName);
-
-                    if (cursorTimestampIndex < 0) {
-                        throw SqlException.invalidColumn(0, "timestamp column '")
-                                .put(tableWriter.getMetadata().getColumnName(tableWriter.getMetadata().getTimestampIndex()))
-                                .put("' not found in view select query");
-                    }
+                    assert cursorTimestampIndex > -1;
 
                     try (RecordCursor cursor = factory.getCursor(refreshExecutionContext)) {
                         final Record record = cursor.getRecord();
@@ -515,7 +482,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // - update applied to txn in MatViewGraph
         try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
             // Operate SQL on a fixed reader that has known max transaction visible. The reader
-            // is used to initialize base table readers returned from the mvRefreshExecutionContext.getReader()
+            // is used to initialize base table readers returned from the refreshExecutionContext.getReader()
             // call, so that all of them are at the same txn.
             engine.detachReader(baseTableReader);
             refreshExecutionContext.of(baseTableReader);
@@ -624,7 +591,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
             // Operate SQL on a fixed reader that has known max transaction visible. The reader
-            // is used to initialize base table readers returned from the mvRefreshExecutionContext.getReader()
+            // is used to initialize base table readers returned from the refreshExecutionContext.getReader()
             // call, so that all of them are at the same txn.
             engine.detachReader(baseTableReader);
             refreshExecutionContext.of(baseTableReader);

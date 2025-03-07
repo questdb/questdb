@@ -172,7 +172,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
 
                 try (SqlCompiler compiler = serverMain.getEngine().getSqlCompiler()) {
                     final StringSink actualSink = new StringSink();
-                    printSql(compiler, executionContext,
+                    printSql(
+                            compiler,
+                            executionContext,
                             "(show parameters) where property_path not in (" +
                                     "'cairo.root', 'cairo.sql.backup.root', 'cairo.sql.copy.root', 'cairo.sql.copy.work.root', " +
                                     "'cairo.writer.misc.append.page.size', 'line.tcp.io.worker.count', " +
@@ -182,8 +184,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                     );
                     final Set<String> actualProps = new HashSet<>(asList(actualSink.toString().split("\n")));
 
-                    final String[] expectedProps =
-                            ("property_path\tenv_var_name\tvalue\tvalue_source\tsensitive\treloadable\n" +
+                    final String[] expectedProps = (
+                            "property_path\tenv_var_name\tvalue\tvalue_source\tsensitive\treloadable\n" +
                                     "binarydata.encoding.maxlength\tQDB_BINARYDATA_ENCODING_MAXLENGTH\t32768\tdefault\tfalse\tfalse\n" +
                                     "cairo.attach.partition.copy\tQDB_CAIRO_ATTACH_PARTITION_COPY\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.attach.partition.suffix\tQDB_CAIRO_ATTACH_PARTITION_SUFFIX\t.attachable\tdefault\tfalse\tfalse\n" +
@@ -657,8 +659,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.context.settings\tQDB_HTTP_CONTEXT_SETTINGS\t\tdefault\tfalse\tfalse\n" +
                                     "http.context.warnings\tQDB_HTTP_CONTEXT_WARNINGS\t\tdefault\tfalse\tfalse\n" +
                                     "telemetry.db.size.estimate.timeout\tQDB_TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT\t1000\tdefault\tfalse\tfalse\n"
-                            )
-                                    .split("\n");
+                    ).split("\n");
 
                     final Set<String> missingProps = new HashSet<>();
                     for (String property : expectedProps) {

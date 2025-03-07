@@ -85,6 +85,7 @@ import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.Job;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
@@ -1447,11 +1448,16 @@ public class CairoEngine implements Closeable, WriterSource {
                                 matViewGraph.enqueueIncrementalRefresh(tableToken);
                             }
                         }
-                    } catch (CairoException e) {
-                        LOG.error().$("could not load materialized view definition [view=").utf8(tableToken.getTableName())
-                                .$(", msg=").$(e.getFlyweightMessage())
-                                .$(", errno=").$(e.getErrno())
-                                .I$();
+                    } catch (Throwable th) {
+                        final LogRecord rec = LOG.error().$("could not load materialized view definition [view=").utf8(tableToken.getTableName());
+                        if (th instanceof CairoException) {
+                            final CairoException ce = (CairoException) th;
+                            rec.$(", msg=").$(ce.getFlyweightMessage())
+                                    .$(", errno=").$(ce.getErrno());
+                        } else {
+                            rec.$(", msg=").$(th.getMessage());
+                        }
+                        rec.I$();
                     }
                 }
             }

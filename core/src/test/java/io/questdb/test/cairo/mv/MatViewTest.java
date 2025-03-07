@@ -1001,6 +1001,37 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testQueryError2() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x (" +
+                            "sym varchar, price double, amount int, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create table y (sym varchar)"
+            );
+
+            execute(
+                    "create materialized view x_1h with base x as ( " +
+                            "  select x.sym, last(x.price) as price, x.ts from x join y on (sym) sample by 1h " +
+                            ") partition by week"
+            );
+
+            execute("drop table y");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
+                            "x_1h\tx\tinvalid\t[58] table does not exist [table=y]\n",
+                    "select view_name, base_table_name, view_status, invalidation_reason from materialized_views",
+                    null,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testQueryWithCte() throws Exception {
         assertMemoryLeak(() -> {
             execute(

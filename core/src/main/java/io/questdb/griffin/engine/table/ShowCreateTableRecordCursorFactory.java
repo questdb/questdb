@@ -71,12 +71,11 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
 
             configuration.getFilesFacade().readLink(softLinkPath, otherVolumePath);
             otherVolumePath.trimTo(otherVolumePath.size()
-                    - table.getDirectoryName().length()  // look for directory
+                    - table.getDirectoryName().length() // look for directory
                     - 1 // get rid of trailing slash
             );
 
-            CharSequence alias = configuration.getVolumeDefinitions().resolvePath(otherVolumePath.asAsciiCharSequence());
-
+            final CharSequence alias = configuration.getVolumeDefinitions().resolvePath(otherVolumePath.asAsciiCharSequence());
             if (alias == null) {
                 throw CairoException.nonCritical().put("could not find volume alias for table [table=").put(table.getTableToken()).put(']');
             } else {
