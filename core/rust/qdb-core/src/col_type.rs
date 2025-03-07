@@ -68,6 +68,42 @@ pub enum ColumnTypeTag {
     Varchar = 26,
 }
 
+impl ColumnTypeTag {
+    /// If true, the column is encoded with both data and aux vectors.
+    pub fn is_var_size(self) -> bool {
+        self.fixed_size().is_none()
+    }
+
+    /// Obtains the fixed size required to encode the type on disk in bytes.
+    /// If the type is var size, returns None.
+    /// N.B. Symbol columns are _also_ considered fixed size.
+    pub fn fixed_size(self) -> Option<usize> {
+        match self {
+            ColumnTypeTag::Boolean | ColumnTypeTag::GeoByte | ColumnTypeTag::Byte => Some(1),
+
+            ColumnTypeTag::Short | ColumnTypeTag::GeoShort | ColumnTypeTag::Char => Some(2),
+
+            ColumnTypeTag::Float
+            | ColumnTypeTag::Int
+            | ColumnTypeTag::IPv4
+            | ColumnTypeTag::GeoInt
+            | ColumnTypeTag::Symbol => Some(4),
+
+            ColumnTypeTag::Double
+            | ColumnTypeTag::Long
+            | ColumnTypeTag::Date
+            | ColumnTypeTag::GeoLong
+            | ColumnTypeTag::Timestamp => Some(8),
+
+            ColumnTypeTag::Long128 | ColumnTypeTag::Uuid => Some(16),
+
+            ColumnTypeTag::Long256 => Some(32),
+
+            ColumnTypeTag::Binary | ColumnTypeTag::String | ColumnTypeTag::Varchar => None,
+        }
+    }
+}
+
 impl TryFrom<u8> for ColumnTypeTag {
     type Error = InvalidColumnType;
 
@@ -221,5 +257,34 @@ mod tests {
             let msg = deserialized.unwrap_err().to_string();
             assert_eq!(msg, exp_err_msg);
         }
+    }
+
+    #[test]
+    fn test_is_var_size() {
+        assert_eq!(ColumnTypeTag::Byte.is_var_size(), false);
+        assert_eq!(ColumnTypeTag::Boolean.is_var_size(), false);
+        assert_eq!(ColumnTypeTag::Long.is_var_size(), false);
+        assert_eq!(ColumnTypeTag::Double.is_var_size(), false);
+        assert_eq!(ColumnTypeTag::String.is_var_size(), true);
+
+        // Yes, symbols too.
+        assert_eq!(ColumnTypeTag::Symbol.is_var_size(), false);
+
+        assert_eq!(ColumnTypeTag::Binary.is_var_size(), true);
+        assert_eq!(ColumnTypeTag::String.is_var_size(), true);
+        assert_eq!(ColumnTypeTag::Varchar.is_var_size(), true);
+    }
+
+    #[test]
+    fn test_fixed_size() {
+        assert_eq!(ColumnTypeTag::Boolean.fixed_size(), Some(1));
+        assert_eq!(ColumnTypeTag::Short.fixed_size(), Some(2));
+        assert_eq!(ColumnTypeTag::Int.fixed_size(), Some(4));
+        assert_eq!(ColumnTypeTag::Long.fixed_size(), Some(8));
+        assert_eq!(ColumnTypeTag::Uuid.fixed_size(), Some(16));
+        assert_eq!(ColumnTypeTag::Long256.fixed_size(), Some(32));
+        assert_eq!(ColumnTypeTag::Binary.fixed_size(), None);
+        assert_eq!(ColumnTypeTag::String.fixed_size(), None);
+        assert_eq!(ColumnTypeTag::Varchar.fixed_size(), None);
     }
 }
