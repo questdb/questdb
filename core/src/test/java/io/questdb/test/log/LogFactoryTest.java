@@ -24,7 +24,7 @@
 
 package io.questdb.test.log;
 
-import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.GuaranteedLogger;
 import io.questdb.log.Log;
@@ -236,13 +236,13 @@ public class LogFactoryTest {
             factory.bind();
             factory.startThread();
 
-            Assert.assertEquals(Logger.class, getLogger(SqlCompilerImpl.class).getClass());
+            Assert.assertEquals(Logger.class, getLogger(QueryProgress.class).getClass());
 
-            LogFactory.enableGuaranteedLogging(SqlCompilerImpl.class);
-            Assert.assertEquals(GuaranteedLogger.class, getLogger(SqlCompilerImpl.class).getClass());
+            LogFactory.enableGuaranteedLogging(QueryProgress.class);
+            Assert.assertEquals(GuaranteedLogger.class, getLogger(QueryProgress.class).getClass());
 
-            LogFactory.disableGuaranteedLogging(SqlCompilerImpl.class);
-            Assert.assertEquals(Logger.class, getLogger(SqlCompilerImpl.class).getClass());
+            LogFactory.disableGuaranteedLogging(QueryProgress.class);
+            Assert.assertEquals(Logger.class, getLogger(QueryProgress.class).getClass());
         }
     }
 

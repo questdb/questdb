@@ -22,26 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.ops;
+package io.questdb.test.griffin;
 
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.ExecutionModel;
-import io.questdb.griffin.model.QueryModel;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Test;
 
-public interface CreateMatViewOperationBuilder extends ExecutionModel {
+public class ShowParametersTest extends AbstractCairoTest {
 
-    CreateMatViewOperation build(
-            SqlCompiler sqlCompiler,
-            SqlExecutionContext executionContext,
-            CharSequence sqlText
-    ) throws SqlException;
-
-    @Override
-    default int getModelType() {
-        return CREATE_MAT_VIEW;
+    @Test
+    public void testSmoke() throws Exception {
+        assertQuery(
+                "property_path\tenv_var_name\tvalue\tvalue_source\tsensitive\treloadable\n" +
+                        "cairo.commit.lag\tQDB_CAIRO_COMMIT_LAG\t300000000\tconf\tfalse\tfalse\n",
+                "(show parameters) where property_path = 'cairo.commit.lag'",
+                null,
+                null,
+                false
+        );
     }
-
-    void setSelectModel(QueryModel selectModel);
 }

@@ -109,9 +109,6 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                     assertEquals(withErrPos(errPos, "Invalid column: " + WRONG_NAME), message);
                     return;
                 }
-                if (ddl.indexOf(WRONG_NAME) != -1) {
-                    fail("SQL statement uses a wrong column name, yet compilation didn't fail");
-                }
                 if (messWithTableAfterCompile) {
                     messWithSourceTable();
                 }
@@ -119,11 +116,16 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                     assertNotNull(op);
                     try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
                         fut.await();
-                    } catch (SqlException e) {
-                        if (!messWithTableAfterCompile) {
-                            throw new Exception("Didn't mess with table after compile, yet CREATE operation failed", e);
+                        if (ddl.indexOf(WRONG_NAME) != -1) {
+                            fail("SQL statement uses a wrong column name, yet execution didn't fail");
                         }
-                        validateCreateAsSelectException(e);
+                    } catch (SqlException e) {
+                        if (ddl.indexOf(WRONG_NAME) == -1) {
+                            if (!messWithTableAfterCompile) {
+                                throw new Exception("Didn't mess with table after compile, yet CREATE operation failed", e);
+                            }
+                            validateCreateAsSelectException(e);
+                        }
                         return;
                     }
                     if (messWithTableAfterCompile) {

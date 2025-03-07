@@ -36,7 +36,7 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
     public String invalidationReason;
     public TableToken matViewToken;
     public int operation = UNDEFINED;
-    public long refreshTriggeredTimestamp;
+    public long refreshTriggeredTimestamp = -1;
 
     @Override
     public void clear() {

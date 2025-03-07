@@ -487,12 +487,6 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
 
         @Override
-        public long getMetadataVersion() {
-            // new table only
-            return 0;
-        }
-
-        @Override
         public long getO3MaxLag() {
             return o3MaxLag > -1 && PartitionBy.isPartitioned(partitionBy) ? o3MaxLag : configuration.getO3MaxLag();
         }
