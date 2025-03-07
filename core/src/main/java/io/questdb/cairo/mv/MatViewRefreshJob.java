@@ -361,11 +361,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     private boolean refreshDependentViewsIncremental(TableToken baseTableToken, MatViewGraph viewGraph, long refreshTriggeredTimestamp) {
-        if (!baseTableToken.isWal()) {
-            LOG.error().$("found materialized views dependent on non-WAL table that will not be refreshed [parent=").utf8(baseTableToken.getTableName()).I$();
-            enqueueInvalidateDependentViews(baseTableToken, "base table is not a WAL table");
-            return false;
-        }
+        assert baseTableToken.isWal();
 
         boolean refreshed = false;
         final SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseTableToken);

@@ -153,16 +153,6 @@ public class MatViewGraphImpl implements MatViewGraph {
         enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.INCREMENTAL_REFRESH, null);
     }
 
-    @TestOnly
-    public void enqueueIncrementalRefreshForBaseTable(TableToken baseTableToken) {
-        final MatViewRefreshTask task = taskHolder.get();
-        task.clear();
-        task.baseTableToken = baseTableToken;
-        task.operation = MatViewRefreshTask.INCREMENTAL_REFRESH;
-        task.refreshTriggeredTimestamp = microsecondClock.getTicks();
-        refreshTaskQueue.enqueue(task);
-    }
-
     @Override
     public void enqueueInvalidate(TableToken matViewToken, String invalidationReason) {
         enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.INVALIDATE, invalidationReason);
