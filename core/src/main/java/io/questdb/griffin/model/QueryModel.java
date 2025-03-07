@@ -36,8 +36,6 @@ import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.ObjectPool;
@@ -1086,22 +1084,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return nestedModelIsSubQuery;
     }
 
-    public boolean isOrderByTimestamp(CharSequence orderByToken) {
-        if (Chars.equalsIgnoreCase(orderByToken, timestamp.token)) {
-            return true;
-        }
-
-        try {
-            int columnIndex = Numbers.parseInt(orderByToken);
-            if (columnIndex < 1 && columnIndex > bottomUpColumns.size()) {
-                return false;
-            }
-            return Chars.equalsIgnoreCase(bottomUpColumnAliases.getQuick(columnIndex - 1), timestamp.token);
-        } catch (NumericException e) {
-            return false;
-        }
-    }
-
     public boolean isOrderDescendingByDesignatedTimestampOnly() {
         return orderDescendingByDesignatedTimestampOnly;
     }
@@ -1221,7 +1203,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
      * <p>
      * To facilitate this behaviour the function will always return non-current list.
      *
-     * @return non current order list.
+     * @return non-current order list.
      */
     public IntList nextOrderedJoinModels() {
         IntList ordered = orderedJoinModels == orderedJoinModels1 ? orderedJoinModels2 : orderedJoinModels1;

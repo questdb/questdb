@@ -1385,7 +1385,7 @@ public class MatViewTest extends AbstractCairoTest {
             final long step = 300000000;
             final int N = 100;
             final int K = 5;
-            updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
+            updateViewIncrementally(viewQuery, startTs, step, N, K);
 
             final String expected = "k\tc\n" +
                     "1970-01-02T14:42:00.000000Z\t5\n" +
@@ -1409,7 +1409,7 @@ public class MatViewTest extends AbstractCairoTest {
             final long step = 6 * 60000000;
             final int N = 100;
             final int K = 5;
-            updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
+            updateViewIncrementally(viewQuery, startTs, step, N, K);
 
             final String expected = "k\tc\n" +
                     "2021-03-28T04:00:00.000000Z\t3\n" +
@@ -1439,7 +1439,7 @@ public class MatViewTest extends AbstractCairoTest {
             final long step = 6 * 60000000;
             final int N = 100;
             final int K = 5;
-            updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
+            updateViewIncrementally(viewQuery, startTs, step, N, K);
 
             final String expected = "k\tc\n" +
                     "2021-03-28T01:00:00.000000Z\t8\n" +
@@ -1478,7 +1478,7 @@ public class MatViewTest extends AbstractCairoTest {
             final long step = 6 * 60000000;
             final int N = 100;
             final int K = 5;
-            updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
+            updateViewIncrementally(viewQuery, startTs, step, N, K);
 
             final String expected = "k\tc\n" +
                     "2021-10-31T02:00:00.000000Z\t18\n" +
@@ -1511,7 +1511,7 @@ public class MatViewTest extends AbstractCairoTest {
             final long step = 6 * 60000000;
             final int N = 100;
             final int K = 5;
-            updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
+            updateViewIncrementally(viewQuery, startTs, step, N, K);
 
             final String expected = "k\tc\n" +
                     "2021-10-31T02:00:00.000000Z\t3\n" +
@@ -1555,7 +1555,7 @@ public class MatViewTest extends AbstractCairoTest {
             final long step = 300000000;
             final int N = 100;
             final int K = 5;
-            updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
+            updateViewIncrementally(viewQuery, startTs, step, N, K);
 
             final String expected = "k\tc\n" +
                     "1970-01-03T00:00:00.000000Z\t18\n" +
@@ -1579,7 +1579,7 @@ public class MatViewTest extends AbstractCairoTest {
             final long step = 300000000;
             final int N = 100;
             final int K = 5;
-            updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
+            updateViewIncrementally(viewQuery, startTs, step, N, K);
 
             final String expected = "k\tc\n" +
                     "1970-01-02T23:12:00.000000Z\t9\n" +
@@ -1848,12 +1848,8 @@ public class MatViewTest extends AbstractCairoTest {
         execute("create materialized view " + viewName + " as (" + viewSql + ") partition by DAY");
     }
 
-    private String copyDataSql(String dst, String src, int from, int count) {
-        return "insert into " + dst + " " + copySql(src, from, count);
-    }
-
-    private String copySql(String src, int from, int count) {
-        return "select * from " + src + " where n >= " + from + " and n < " + (from + count);
+    private String copySql(int from, int count) {
+        return "select * from tmp where n >= " + from + " and n < " + (from + count);
     }
 
     private String createTableSql(String tableName, String columns, @Nullable String index, long startTs, long step, int count) {
@@ -1861,10 +1857,6 @@ public class MatViewTest extends AbstractCairoTest {
         return "create table " + tableName + " as (" + generateSelectSql(columns, startTs, step, 0, count) + ")" +
                 indexStr +
                 " timestamp(k) partition by DAY WAL";
-    }
-
-    private String createTableSql(String tableName, String src, int from, int count) {
-        return "create table " + tableName + " as (" + copySql(src, from, count) + ") timestamp(k) partition by DAY WAL";
     }
 
     private void drainQueues() {
@@ -1903,7 +1895,7 @@ public class MatViewTest extends AbstractCairoTest {
         final long step = 300000000;
         final int N = 100;
         final int K = 5;
-        updateViewIncrementally(viewName, viewQuery, startTs, step, N, K);
+        updateViewIncrementally(viewQuery, startTs, step, N, K);
 
         final String expected = "k\tc\n" +
                 "1970-01-02T23:42:00.000000Z\t15\n" +
@@ -2092,12 +2084,12 @@ public class MatViewTest extends AbstractCairoTest {
         });
     }
 
-    private void updateViewIncrementally(String viewName, String viewQuery, long startTs, long step, int N, int K) throws SqlException {
-        updateViewIncrementally(viewName, viewQuery, " rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b,", startTs, step, N, K);
+    private void updateViewIncrementally(String viewQuery, long startTs, long step, int N, int K) throws SqlException {
+        updateViewIncrementally(viewQuery, " rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b,", startTs, step, N, K);
     }
 
-    private void updateViewIncrementally(String viewName, String viewQuery, String columns, long startTs, long step, int N, int K) throws SqlException {
-        updateViewIncrementally(viewName, viewQuery, columns, null, startTs, step, N, K);
+    private void updateViewIncrementally(String viewQuery, String columns, long startTs, long step, int N, int K) throws SqlException {
+        updateViewIncrementally("x_view", viewQuery, columns, null, startTs, step, N, K);
     }
 
     private void updateViewIncrementally(String viewName, String viewQuery, String columns, @Nullable String index, long startTs, long step, int N, int K) throws SqlException {
@@ -2110,7 +2102,7 @@ public class MatViewTest extends AbstractCairoTest {
         // create full tmp table in one go
         execute(createTableSql("tmp", columns, index, startTs, step, N));
         drainQueues();
-        execute(createTableSql("x", "tmp", 1, initSize));
+        execute("create table " + "x" + " as (" + copySql(1, initSize) + ") timestamp(k) partition by DAY WAL");
         drainQueues();
         createMatView(viewName, viewQuery);
         drainQueues();
@@ -2122,7 +2114,7 @@ public class MatViewTest extends AbstractCairoTest {
             int prev = initSize + 1;
             for (int i = 0; i < K; i++) {
                 int size = chunkSize + (i < tail ? 1 : 0);
-                execute(copyDataSql("x", "tmp", prev, size));
+                execute("insert into x " + copySql(prev, size));
                 prev = prev + size;
                 drainWalQueue();
                 refreshJob.run(0);
