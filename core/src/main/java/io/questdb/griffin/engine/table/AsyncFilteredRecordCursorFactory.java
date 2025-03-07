@@ -28,7 +28,13 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.cairo.sql.async.PageFrameReducer;
@@ -37,7 +43,11 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.*;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -69,6 +79,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             @Nullable Function limitLoFunction,
             int limitLoPos,
             boolean preTouchColumns,
+            double preTouchThreshold,
             int workerCount
     ) {
         super(base.getMetadata());
@@ -83,8 +94,23 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             int columnType = base.getMetadata().getColumnType(i);
             columnTypes.add(columnType);
         }
-        AsyncFilterAtom atom = new AsyncFilterAtom(configuration, filter, perWorkerFilters, columnTypes, !preTouchColumns);
-        this.frameSequence = new PageFrameSequence<>(configuration, messageBus, atom, REDUCER, reduceTaskFactory, workerCount, PageFrameReduceTask.TYPE_FILTER);
+        AsyncFilterAtom atom = new AsyncFilterAtom(
+                configuration,
+                filter,
+                perWorkerFilters,
+                columnTypes,
+                !preTouchColumns,
+                preTouchThreshold
+        );
+        this.frameSequence = new PageFrameSequence<>(
+                configuration,
+                messageBus,
+                atom,
+                REDUCER,
+                reduceTaskFactory,
+                workerCount,
+                PageFrameReduceTask.TYPE_FILTER
+        );
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
         this.maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
@@ -243,7 +269,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
 
         // Pre-touch native columns, if asked.
         if (frameMemory.getFrameFormat() == PartitionFormat.NATIVE) {
-            atom.preTouchColumns(record, rows);
+            atom.preTouchColumns(record, rows, frameRowCount);
         }
     }
 

@@ -54,6 +54,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
     private final boolean forceDisablePreTouch;
     private final ObjList<Function> perWorkerFilters;
     private final PerWorkerLocks perWorkerLocks;
+    private final double preTouchThreshold;
     private boolean preTouchEnabled;
 
     public AsyncFilterAtom(
@@ -61,7 +62,8 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
             @NotNull Function filter,
             @Nullable ObjList<Function> perWorkerFilters,
             @NotNull IntList columnTypes,
-            boolean forceDisablePreTouch
+            boolean forceDisablePreTouch,
+            double preTouchThreshold
     ) {
         this.filter = filter;
         this.perWorkerFilters = perWorkerFilters;
@@ -72,6 +74,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
         }
         this.columnTypes = columnTypes;
         this.forceDisablePreTouch = forceDisablePreTouch;
+        this.preTouchThreshold = preTouchThreshold;
     }
 
     @Override
@@ -131,11 +134,16 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
      * in parallel, on multiple threads, instead of relying on the "query owner" thread
      * to do it later serially.
      *
-     * @param record record to use
-     * @param rows   rows to pre-touch
+     * @param record        record to use
+     * @param rows          rows to pre-touch
+     * @param frameRowCount total number of rows in the frame
      */
-    public void preTouchColumns(PageFrameMemoryRecord record, DirectLongList rows) {
+    public void preTouchColumns(PageFrameMemoryRecord record, DirectLongList rows, long frameRowCount) {
         if (!preTouchEnabled || forceDisablePreTouch) {
+            return;
+        }
+        // Only pre-touch if the filter selectivity is high, i.e. when reading the column values may involve random I/O.
+        if (rows.size() > frameRowCount * preTouchThreshold) {
             return;
         }
         // We use a LongAdder as a black hole to make sure that the JVM JIT compiler keeps the load instructions in place.
