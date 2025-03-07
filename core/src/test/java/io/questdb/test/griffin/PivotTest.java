@@ -251,7 +251,6 @@ public class PivotTest extends AbstractSqlParserTest {
         });
     }
 
-    // todo(nwoolmer): fix order by bug https://github.com/questdb/questdb/issues/5405
     @Test
     public void testPivotNoGroupByWithOrderBy1() throws Exception {
         assertMemoryLeak(() -> {
@@ -268,11 +267,41 @@ public class PivotTest extends AbstractSqlParserTest {
                             "    ORDER BY \"2000\"\n" +
                             ");\n";
 
-//            assertException(pivotQuery, 105, "order column position is out of range [max=3]");
-
             String result = "2000\t2010\t2020\n" +
                     "9584\t9848\t10668\n";
 
+            assertSql(result, pivotQuery);
+        });
+    }
+
+    @Test
+    public void testPivotOHLC() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlTrades);
+            execute(dmlTrades);
+            drainWalQueue();
+
+            String pivotQuery = "trades PIVOT (\n" +
+                    "first(price) as open,\n" +
+                    "max(price) as high,\n" +
+                    "min(price) as low,\n" +
+                    "last(price) as close\n" +
+                    "FOR symbol IN ('ETH-USD', 'BTC-USD')\n" +
+//                    "GROUP BY side\n" +
+                    ");";
+
+
+            String result = "side\tETH-USD_open\tETH-USD_high\tETH-USD_low\tETH-USD_close\tBTC-USD_open\tBTC-USD_high\tBTC-USD_low\tBTC-USD_close\n" +
+                    "sell\tnull\t3678.25\t3678.0\t3678.0\tnull\t101502.1\t101497.0\tnull\n" +
+                    "buy\tnull\t3678.01\t3678.01\tnull\tnull\t101502.2\t101497.6\t101497.6\n";
+
+//            assertPlanNoLeakCheck(pivotQuery, "Async Group By workers: 1\n" +
+//                    "  keys: [side]\n" +
+//                    "  values: [first(case([price,NaN,symbol])),max(case([price,NaN,symbol])),min(case([price,NaN,symbol])),last(case([price,NaN,symbol])),first(case([price,NaN,symbol])),max(case([price,NaN,symbol])),min(case([price,NaN,symbol])),last(case([price,NaN,symbol]))]\n" +
+//                    "  filter: null\n" +
+//                    "    PageFrame\n" +
+//                    "        Row forward scan\n" +
+//                    "        Frame forward scan on: trades\n");
             assertSql(result, pivotQuery);
         });
     }
@@ -361,7 +390,6 @@ public class PivotTest extends AbstractSqlParserTest {
         });
     }
 
-    // todo(nwoolmer): fix order by bug https://github.com/questdb/questdb/issues/5407
     @Test
     public void testPivotWithGroupByAndOrderBy() throws Exception {
         assertMemoryLeak(() -> {
@@ -539,6 +567,28 @@ public class PivotTest extends AbstractSqlParserTest {
 
             assertSql(result, pivotQuery);
             assertSql(result, rewrittenQuery);
+        });
+    }
+
+    @Test
+    public void testPivotWithTimestmapGrouping() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlCities);
+            execute(dmlCities);
+
+            String pivotQuery =
+                    "SELECT *\n" +
+                            "FROM cities\n" +
+                            "PIVOT (\n" +
+                            "    SUM(population)\n" +
+                            "    FOR\n" +
+                            "        year IN (2000, 2010, 2020)\n" +
+                            ");\n";
+
+            String result = "2000\t2010\t2020\n" +
+                    "9584\t9848\t10668\n";
+
+            assertSql(result, pivotQuery);
         });
     }
 

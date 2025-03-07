@@ -2657,7 +2657,14 @@ public class SqlParser {
         ExpressionNode expr;
 
         while (true) {
-            expr = expr(lexer, model, sqlParserCallback);
+            expr = null;
+
+            while (expr == null && lexer.hasNext()) {
+                expr = expr(lexer, model, sqlParserCallback);
+                if (expr == null) {
+                    optTok(lexer);
+                }
+            }
 
             if (expr == null) {
                 throw SqlException.$(lexer.lastTokenPosition(), "missing aggregate expression");
@@ -2667,7 +2674,7 @@ public class SqlParser {
                 throw SqlException.$(lexer.lastTokenPosition(), "expected aggregate function");
             }
 
-            final CharSequence alias;
+            CharSequence alias = null;
 
             lexer.unparseLast();
 
@@ -2705,15 +2712,6 @@ public class SqlParser {
 
                 aliasMap.put(alias, col);
                 col.setAlias(alias);
-            } else {
-                alias = null;
-            }
-
-            if (alias != null) {
-                if (alias.length() == 0) {
-                    throw err(lexer, null, "column alias cannot be a blank string");
-                }
-                col.setAlias(alias);
             }
 
             model.addPivotColumn(col);
@@ -2725,7 +2723,7 @@ public class SqlParser {
 
             if (isForKeyword(tok)) {
                 break;
-            } else if (Chars.equals(tok, ",")) {
+            } else if (Chars.equals(tok, ",") && alias == null) {
                 optTok(lexer);
             } else {
                 lexer.unparseLast();
