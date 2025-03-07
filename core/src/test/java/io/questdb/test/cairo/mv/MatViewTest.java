@@ -26,7 +26,10 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.mv.MatViewRefreshExecutionContext;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -442,6 +445,32 @@ public class MatViewTest extends AbstractCairoTest {
 
             Assert.assertNull(engine.getMatViewGraph().getViewRefreshState(matViewToken1));
             Assert.assertNotNull(engine.getMatViewGraph().getViewRefreshState(matViewToken2));
+        });
+    }
+
+    @Test
+    public void testDisableParallelSqlExecution() throws Exception {
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            final String viewSql = "select sym, last(price) as price, ts from base_price sample by 1h";
+            createMatView(viewSql);
+
+            execute(
+                    "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+
+            drainQueues();
+
+            assertViewMatchesSqlOverBaseTable(viewSql);
         });
     }
 
@@ -1272,6 +1301,38 @@ public class MatViewTest extends AbstractCairoTest {
                     null,
                     true
             );
+        });
+    }
+
+    @Test
+    public void testRefreshExecutionContextBansWrongInsertions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create table y (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            final MatViewRefreshExecutionContext refreshExecutionContext = new MatViewRefreshExecutionContext(engine, 1, 1);
+
+            try (TableReader baseReader = engine.getReader("x")) {
+                refreshExecutionContext.of(baseReader);
+
+                // Base table writes should be permitted.
+                engine.execute("insert into x values('gbpusd', 1.320, '2024-09-10T12:01')", refreshExecutionContext);
+                // Everything else should be banned.
+                try {
+                    engine.execute("insert into y values('gbpusd', 1.320, '2024-09-10T12:01')", refreshExecutionContext);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Write permission denied");
+                }
+            }
         });
     }
 
