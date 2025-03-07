@@ -63,15 +63,14 @@ import org.jetbrains.annotations.TestOnly;
 
 public class MatViewRefreshJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MatViewRefreshJob.class);
-    private final long batchSize;
     private final BlockFileWriter blockFileWriter;
     private final ObjList<TableToken> childViewSink = new ObjList<>();
     private final ObjList<TableToken> childViewSink2 = new ObjList<>();
     private final EntityColumnFilter columnFilter = new EntityColumnFilter();
+    private final CairoConfiguration configuration;
     private final Path dbRoot;
     private final int dbRootLen;
     private final CairoEngine engine;
-    private final int maxRecompileAttempts;
     private final MicrosecondClock microsecondClock;
     private final MatViewRefreshExecutionContext refreshExecutionContext;
     private final MatViewRefreshTask refreshTask = new MatViewRefreshTask();
@@ -85,11 +84,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             this.engine = engine;
             this.refreshExecutionContext = new MatViewRefreshExecutionContext(engine, workerCount, sharedWorkerCount);
             this.viewGraph = engine.getMatViewGraph();
-            final CairoConfiguration configuration = engine.getConfiguration();
+            this.configuration = engine.getConfiguration();
             this.txnRangeLoader = new WalTxnRangeLoader(configuration.getFilesFacade());
-            this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
-            this.maxRecompileAttempts = engine.getConfiguration().getMatViewMaxRecompileAttempts();
-            this.batchSize = engine.getConfiguration().getMatViewInsertAsSelectBatchSize();
+            this.microsecondClock = configuration.getMicrosecondClock();
             this.blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
             this.dbRoot = new Path();
             dbRoot.of(engine.getConfiguration().getDbRoot());
@@ -222,6 +219,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             long refreshTriggeredTimestamp
     ) throws SqlException {
         assert state.isLocked();
+
+        final int maxRecompileAttempts = configuration.getMatViewMaxRecompileAttempts();
+        final long batchSize = configuration.getMatViewInsertAsSelectBatchSize();
 
         RecordCursorFactory factory = null;
         RecordToRowCopier copier;
@@ -515,7 +515,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // - update applied to txn in MatViewGraph
         try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
             // Operate SQL on a fixed reader that has known max transaction visible. The reader
-            // is used to initialize base table readers returned from the mvRefreshExecutionContext.getReader()
+            // is used to initialize base table readers returned from the refreshExecutionContext.getReader()
             // call, so that all of them are at the same txn.
             engine.detachReader(baseTableReader);
             refreshExecutionContext.of(baseTableReader);
@@ -624,7 +624,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
             // Operate SQL on a fixed reader that has known max transaction visible. The reader
-            // is used to initialize base table readers returned from the mvRefreshExecutionContext.getReader()
+            // is used to initialize base table readers returned from the refreshExecutionContext.getReader()
             // call, so that all of them are at the same txn.
             engine.detachReader(baseTableReader);
             refreshExecutionContext.of(baseTableReader);
