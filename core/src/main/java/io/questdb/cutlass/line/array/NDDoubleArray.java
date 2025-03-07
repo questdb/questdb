@@ -68,7 +68,7 @@ public class NDDoubleArray extends AbstractNDArray {
     }
 
     /**
-     * Create an 1 dim ndADoubleArray based on the provided `double[][]`.
+     * Create an 2 dims ndADoubleArray based on the provided `double[][]`.
      */
     public static NDDoubleArray create(double[][] values) {
         NDDoubleArray ndArray = createWithoutDefault(values.length, values[0].length);
@@ -77,7 +77,7 @@ public class NDDoubleArray extends AbstractNDArray {
     }
 
     /**
-     * Create an 1 dim ndADoubleArray based on the provided `double[][][]`.
+     * Create an 3 dims ndADoubleArray based on the provided `double[][][]`.
      */
     public static NDDoubleArray create(double[][][] values) {
         NDDoubleArray ndArray = createWithoutDefault(values.length, values[0].length, values[0][0].length);
