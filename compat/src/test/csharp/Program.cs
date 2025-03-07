@@ -244,6 +244,7 @@ public class TestRunner
         "timestamp" => NpgsqlDbType.Timestamp,
         "date" => NpgsqlDbType.Date,
         "char" => NpgsqlDbType.Char,
+        "array_float8" => NpgsqlDbType.Double | NpgsqlDbType.Array,
         _ => throw new ArgumentException($"Unsupported type: {type}")
     };
 
@@ -258,8 +259,27 @@ public class TestRunner
             "date" => DateTime.Parse(value.ToString()!, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
             "char" => Convert.ToChar(value),
             "timestamp" => DateTime.Parse(value.ToString()!, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+            "array_float8" =>  ParseFloatArray(value.ToString()),
             _ => value
         };
+    }
+    
+    private double[] ParseFloatArray(string? arrayString)
+    {
+        if (string.IsNullOrEmpty(arrayString))
+            return Array.Empty<double>();
+    
+        // Remove the curly braces and split by comma
+        string trimmed = arrayString.Trim().TrimStart('{').TrimEnd('}');
+    
+        // Handle empty array case
+        if (string.IsNullOrWhiteSpace(trimmed))
+            return Array.Empty<double>();
+    
+        // Split the string by commas and convert each element to double
+        return trimmed.Split(',')
+            .Select(s => Convert.ToDouble(s.Trim(), CultureInfo.InvariantCulture))
+            .ToArray();
     }
 
     private void AssertResult(ExpectDefinition expect, object actual)
@@ -319,12 +339,24 @@ public class TestRunner
                     int i => i.ToString(CultureInfo.InvariantCulture),
                     short s => s.ToString(CultureInfo.InvariantCulture),
                     decimal dec => dec.ToString(CultureInfo.InvariantCulture),
+                    double[] doubleArray => ConvertDoubleArrayToString(doubleArray),
                     _ => value.ToString() ?? ""
                 })
                 .ToList())
             .ToList();
     }
+    
+    private string ConvertDoubleArrayToString(double[] doubleArray)
+    {
+        if (doubleArray == null || doubleArray.Length == 0)
+            return "{}";
 
+        // Convert each double to string with at least one decimal place using "0.0" format
+        string valuesString = string.Join(",", doubleArray.Select(d => d.ToString("0.0########", CultureInfo.InvariantCulture)));
+
+        // Enclose in curly braces
+        return "{" + valuesString + "}";
+    }
     private bool DeepEquals(object obj1, object obj2)
     {
         if (obj1 == null && obj2 == null) return true;

@@ -231,13 +231,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         portalNames.add(portalName);
     }
 
-    public void cacheIfPossible(@NotNull AssociativeCache<TypesAndSelectModern> tasCache, @Nullable SimpleAssociativeCache<TypesAndInsertModern> taiCache) {
+    public void cacheIfPossible(@Nullable AssociativeCache<TypesAndSelectModern> tasCache, @Nullable SimpleAssociativeCache<TypesAndInsertModern> taiCache) {
         if (isPortal() || isPreparedStatement()) {
             // must not cache prepared statements etc.; we must only cache abandoned pipeline entries (their contents)
             return;
         }
 
-        if (tas != null) {
+        if (tas != null && tasCache != null) {
             // close cursor in case it is open
             cursor = Misc.free(cursor);
             // make sure factory is not released when the pipeline entry is closed
@@ -249,6 +249,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             taiCache.put(sqlText, tai);
             // make sure we don't close insert operation when the pipeline entry is closed
             insertOp = null;
+            tai = null;
         }
     }
 
@@ -1474,8 +1475,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                                 sqlAffectedRowCount = m.execute();
                                 TableWriterAPI writer = m.popWriter();
                                 pendingWriters.put(writer.getTableToken(), writer);
+
+                                // return to cache eagerly so other pipelined entries can use the cached insert, even before SYNC
+                                // we only cache if there are bind variables since insert without binding variables
+                                // are unlikely to be re-used
                                 if (tai.hasBindVariables()) {
-                                    taiCache.put(sqlText, tai);
+                                    cacheIfPossible(null, taiCache);
                                 }
                             } catch (Throwable e) {
                                 Misc.free(m);

@@ -25,6 +25,7 @@
 package io.questdb.cairo.arr;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -131,7 +132,8 @@ public class FunctionArray extends MutableArray implements FlatArrayView {
 
     @Override
     public double getDouble(int flatIndex) {
-        return functions()[flatIndex].getDouble(record);
+        validateFlatIndex(flatIndex);
+        return functions[flatIndex].getDouble(record);
     }
 
     public Function getFunctionAtFlatIndex(int flatIndex) {
@@ -140,6 +142,7 @@ public class FunctionArray extends MutableArray implements FlatArrayView {
 
     @Override
     public long getLong(int flatIndex) {
+        validateFlatIndex(flatIndex);
         return functions()[flatIndex].getLong(record);
     }
 
@@ -161,6 +164,12 @@ public class FunctionArray extends MutableArray implements FlatArrayView {
             return functions;
         } catch (NullPointerException e) {
             throw new IllegalStateException("FunctionArray used before calling applyShape()");
+        }
+    }
+
+    private void validateFlatIndex(int flatIndex) {
+        if (flatIndex < 0 || flatIndex > functions.length) {
+            throw CairoException.nonCritical().put("flatIndex out of range [flatIndex=").put(flatIndex);
         }
     }
 }

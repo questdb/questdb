@@ -2,6 +2,38 @@ variables:
   table_name: "sensor_data"
 
 tests:
+  - name: Test Array
+    description: Test inserting and selecting data with an array.
+    prepare:
+      - action: execute
+        query: "CREATE TABLE ${table_name} (id INT, arr double[]);"
+    steps:
+      - loop:
+          range:
+            start: 1
+            end: 10
+          as: id
+          steps:
+            - action: execute
+              query: "INSERT INTO ${table_name} (id, arr) VALUES ($[1], $[2]);"
+              parameters:
+                - value: "${id}"
+                  type: "INT4"
+                - value: "{-1, 2, 3, 4, 5.42}"
+                  type: "ARRAY_FLOAT8"
+              expect:
+                result:
+                  - [ 1 ]
+      - action: query
+        query: "SELECT * FROM ${table_name}"
+        expect:
+          result_contains:
+            - [ 1, "{-1.0,2.0,3.0,4.0,5.42}" ]
+            - [ 2, "{-1.0,2.0,3.0,4.0,5.42}" ]
+            - [ 10, "{-1.0,2.0,3.0,4.0,5.42}" ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS ${table_name};"
   - name: Binding in projection
     description: Test binding variable in projection, without any function
     prepare:

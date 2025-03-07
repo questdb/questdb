@@ -1062,14 +1062,12 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
 
         int cachedStatus = CACHE_MISS;
         int taiKeyIndex = taiCache.keyIndex(utf16SqlText);
-        final TypesAndInsertModern tai = taiCache.peek(taiKeyIndex);
+        final TypesAndInsertModern tai = taiCache.poll(taiKeyIndex);
         if (tai != null) {
             if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tai)) {
                 pipelineCurrentEntry.ofCachedInsert(utf16SqlText, tai);
                 cachedStatus = CACHE_HIT_INSERT_VALID;
             } else {
-                TypesAndInsertModern tai2 = taiCache.poll(taiKeyIndex);
-                assert tai2 == tai;
                 tai.close();
                 cachedStatus = CACHE_HIT_INSERT_INVALID;
             }

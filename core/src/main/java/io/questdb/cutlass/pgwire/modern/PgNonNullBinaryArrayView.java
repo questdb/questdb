@@ -25,7 +25,6 @@
 package io.questdb.cutlass.pgwire.modern;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cutlass.pgwire.PGOids;
@@ -110,10 +109,9 @@ final class PgNonNullBinaryArrayView extends PGWireArrayView implements FlatArra
             default:
                 throw new UnsupportedOperationException("not implemented yet");
         }
-
-        resetToDefaultStrides();
         this.lo = lo;
         this.hi = hi;
         this.type = ColumnType.encodeArrayType(componentNativeType, shape.size());
+        resetToDefaultStrides();
     }
 }

@@ -56,6 +56,20 @@ def convert_and_append_parameters(value, type, resolved_parameters):
         resolved_parameters.append(int(value))
     elif type == 'float4' or type == 'float8':
         resolved_parameters.append(float(value))
+    elif type == 'array_float8':
+        # Handle floating point arrays like {-1, 2, 3, 4, 5.42}
+        if isinstance(value, str):
+            # Strip curly braces and split by comma
+            value = value.strip('{}')
+            # Convert each element to float and create a list
+            float_array = [float(item.strip()) for item in value.split(',') if item.strip()]
+            resolved_parameters.append(float_array)
+        elif isinstance(value, list):
+            # If already a list, ensure all elements are floats
+            float_array = [float(item) for item in value]
+            resolved_parameters.append(float_array)
+        else:
+            raise ValueError(f"Invalid array_float8 value: {value}")
     elif type == 'boolean':
         value = value.lower().strip()
         if value == 'true':
@@ -94,11 +108,22 @@ def convert_query_result(result):
             # convert timestamps to strings for comparison, format: '2021-09-01T12:34:56.123456Z'
             if isinstance(value, datetime.datetime):
                 row[i] = value.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
-            # convert bytes to char. why? asyncpg client uses binary codec for char type
-            # This means char columns are returned as bytes, but we want to compare them as chars
+            # convert bytes to char
             elif isinstance(value, bytes):
                 row[i] = value.decode()
-
+            # convert lists of floats to PostgreSQL array string representation
+            elif isinstance(value, list) and all(isinstance(item, (int, float)) for item in value):
+                # Format as {n1, n2, n3, ...} with proper float representation
+                # Ensure at least one digit after decimal point for all numbers
+                float_strs = []
+                for item in value:
+                    float_val = float(item)
+                    # Check if it's an integer value and add .0 if needed
+                    if float_val.is_integer():
+                        float_strs.append(f"{float_val:.1f}")
+                    else:
+                        float_strs.append(str(float_val))
+                row[i] = '{' + ','.join(float_strs) + '}'
 
     for row in result_converted:
         for i, value in enumerate(row):

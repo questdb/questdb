@@ -61,6 +61,26 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void test2dArrayFrom1dArrays() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE samba (ask_price DOUBLE[], ask_size DOUBLE[])");
+            execute("CREATE TABLE tango (ask DOUBLE[][])");
+            execute("INSERT INTO samba VALUES (ARRAY[1.0, 2, 3], ARRAY[4.0, 5, 6]), (ARRAY[7.0, 8, 9], ARRAY[10.0, 11, 12])");
+            execute("INSERT INTO tango SELECT ARRAY[[ask_price[0], ask_price[1]], [ask_size[0], ask_size[1]]] from samba");
+            execute("INSERT INTO tango SELECT ARRAY[ask_price, ask_size] from samba");
+            execute("INSERT INTO tango SELECT ARRAY[ask_price[0:2], ask_size[1:3]] from samba");
+            assertSql("ask\n" +
+                            "[[1.0,2.0],[4.0,5.0]]\n" +
+                            "[[7.0,8.0],[10.0,11.0]]\n" +
+                            "[[1.0,2.0,3.0],[4.0,5.0,6.0]]\n" +
+                            "[[7.0,8.0,9.0],[10.0,11.0,12.0]]\n" +
+                            "[[1.0,2.0],[5.0,6.0]]\n" +
+                            "[[7.0,8.0],[11.0,12.0]]\n",
+                    "tango");
+        });
+    }
+
+    @Test
     public void testAccessArray1d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[1.0, 2, 3] arr FROM long_sequence(1))");
@@ -628,9 +648,9 @@ public class ArrayTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck("SELECT ARRAY[[a, a], [a]] FROM tango",
                     21, "element counts in sub-arrays don't match");
             assertExceptionNoLeakCheck("SELECT ARRAY[[[a], [a]], [a]] FROM tango",
-                    25, "mismatched array shape");
+                    25, "sub-arrays don't match in number of dimensions");
             assertExceptionNoLeakCheck("SELECT ARRAY[[[a], [a]], [a, a]] FROM tango",
-                    25, "mismatched array shape");
+                    25, "sub-arrays don't match in number of dimensions");
         });
     }
 

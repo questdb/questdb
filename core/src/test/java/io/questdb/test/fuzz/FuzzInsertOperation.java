@@ -237,7 +237,8 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
                                 break;
                             case ColumnType.ARRAY:
                                 if (rnd.nextPositiveInt() % 4 == 0) {
-                                    row.putArray(index, null);
+                                    array.ofNull();
+                                    row.putArray(index, array);
                                 } else {
                                     rnd.nextDoubleArray(ColumnType.decodeArrayDimensionality(type), array, 1, 8, 0);
                                     row.putArray(index, array);

@@ -25,12 +25,15 @@
 package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.FunctionArray;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -38,6 +41,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.ColumnType.commonWideningType;
 import static io.questdb.cairo.ColumnType.decodeArrayElementType;
@@ -56,52 +60,65 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        try {
-            int outerDimLen = args.size();
-            Function arg0 = args.getQuick(0);
-            int arg0Pos = argPositions.getQuick(0);
-            short type0 = (short) arg0.getType();
-            short commonElemType = type0;
-            boolean isConstant = arg0.isConstant();
-            if (!ColumnType.isArray(type0)) {
-                for (int i = 1; i < outerDimLen; i++) {
-                    Function argI = args.getQuick(i);
-                    short typeI = (short) argI.getType();
-                    if (ColumnType.isArray(typeI)) {
-                        throw SqlException.$(argPositions.getQuick(i), "mixed array and non-array elements");
-                    }
-                    isConstant &= argI.isConstant();
-                    commonElemType = commonWideningType(commonElemType, typeI);
+        int outerDimLen = args.size();
+        Function arg0 = args.getQuick(0);
+        int arg0Pos = argPositions.getQuick(0);
+        short type0 = (short) arg0.getType();
+        short commonElemType = type0;
+        boolean isConstant = arg0.isConstant();
+        if (!ColumnType.isArray(type0)) {
+            for (int i = 1; i < outerDimLen; i++) {
+                Function argI = args.getQuick(i);
+                short typeI = (short) argI.getType();
+                if (ColumnType.isArray(typeI)) {
+                    throw SqlException.$(argPositions.getQuick(i), "mixed array and non-array elements");
                 }
-                FunctionArray array = new FunctionArray(commonElemType, 1);
-                array.setDimLen(0, outerDimLen);
-                array.applyShape(configuration, arg0Pos);
-                for (int i = 0; i < outerDimLen; i++) {
-                    Function argI = args.getQuick(i);
-                    array.putFunction(i, argI);
-                }
-                return new FunctionArrayFunction(array, isConstant);
+                isConstant &= argI.isConstant();
+                commonElemType = commonWideningType(commonElemType, typeI);
             }
+            FunctionArray array = new FunctionArray(commonElemType, 1);
+            array.setDimLen(0, outerDimLen);
+            array.applyShape(configuration, arg0Pos);
+            for (int i = 0; i < outerDimLen; i++) {
+                Function argI = args.getQuick(i);
+                array.putFunction(i, argI);
+            }
+            return new FunctionArrayFunction(array, isConstant);
+        }
 
-            commonElemType = decodeArrayElementType(type0);
+        // First argument is an array, validate that all of them arrays. Mixed array and
+        // non-array arguments aren't allowed, because they must all come together to form
+        // a new array with one more dimension.
+        commonElemType = ColumnType.decodeArrayElementType(type0);
+        final int nestedNDims = ColumnType.decodeArrayDimensionality(arg0.getType());
+        for (int n = args.size(), i = 1; i < n; i++) {
+            Function argI = args.getQuick(i);
+            int typeI = argI.getType();
+            int argPosI = argPositions.getQuick(i);
+            if (!ColumnType.isArray(typeI)) {
+                throw SqlException.$(argPosI, "mixed array and non-array elements");
+            }
+            if (ColumnType.decodeArrayDimensionality(typeI) != nestedNDims) {
+                throw SqlException.$(argPosI, "sub-arrays don't match in number of dimensions");
+            }
+            commonElemType = commonWideningType(commonElemType, decodeArrayElementType(typeI));
+            isConstant &= argI.isConstant();
+        }
+
+        FUNCTION_ARRAY:
+        if (arg0 instanceof FunctionArrayFunction) {
+            for (int i = 1; i < outerDimLen; i++) {
+                if (!(args.getQuick(i) instanceof FunctionArrayFunction)) {
+                    break FUNCTION_ARRAY;
+                }
+            }
+            // All arguments are of type FunctionArrayFunction, we can gather all their
+            // functions into a new single FunctionArrayFunction
             FunctionArray array0 = (FunctionArray) arg0.getArray(null);
-            final int nestedNDims = array0.getDimCount();
             final int nestedElemCount = array0.getFlatViewLength();
             for (int n = args.size(), i = 1; i < n; i++) {
-                Function argI = args.getQuick(i);
-                int typeI = argI.getType();
-                int argPos = argPositions.getQuick(i);
-                if (!ColumnType.isArray(typeI)) {
-                    throw SqlException.$(argPos, "mixed array and non-array elements");
-                }
-                commonElemType = commonWideningType(commonElemType, decodeArrayElementType(typeI));
-                isConstant &= argI.isConstant();
-                ArrayView arrayI = argI.getArray(null);
-                if (arrayI.getDimCount() != nestedNDims) {
-                    throw SqlException.$(argPos, "mismatched array shape");
-                }
-                if (arrayI.getFlatViewLength() != nestedElemCount) {
-                    throw SqlException.$(argPos, "element counts in sub-arrays don't match");
+                if (args.getQuick(i).getArray(null).getFlatViewLength() != nestedElemCount) {
+                    throw SqlException.$(argPositions.getQuick(i), "element counts in sub-arrays don't match");
                 }
             }
             FunctionArray array = new FunctionArray(commonElemType, nestedNDims + 1);
@@ -118,19 +135,88 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                 }
             }
             return new FunctionArrayFunction(array, isConstant);
-        } finally {
-            for (int n = args.size(), i = 0; i < n; i++) {
-                Function arg = args.getQuick(i);
-                if (ColumnType.isArray(arg.getType())) {
-                    arg.close();
-                }
-            }
         }
+
+        // Arguments aren't all FunctionArrayFunctions, treat them generically as some
+        // kind of array functions.
+        return new ArrayFunctionArrayFunction(
+                configuration,
+                new ObjList<>(args),
+                argPositions,
+                commonElemType,
+                nestedNDims,
+                isConstant
+        );
     }
 
     @Override
     public int resolvePreferredVariadicType(int sqlPos, int argPos, ObjList<Function> args) {
         return ColumnType.ARRAY;
+    }
+
+    private static class ArrayFunctionArrayFunction extends ArrayFunction {
+        private final @NotNull IntList argPositions;
+        private final @NotNull ObjList<Function> args;
+        private final boolean isConstant;
+        private DirectArray arrayOut;
+
+        public ArrayFunctionArrayFunction(
+                @NotNull CairoConfiguration configuration,
+                @NotNull ObjList<Function> args,
+                @NotNull IntList argPositions,
+                short commonElemType,
+                int nestedNDims,
+                boolean isConstant
+        ) {
+            this.type = ColumnType.encodeArrayType(commonElemType, nestedNDims + 1);
+            this.isConstant = isConstant;
+            this.args = args;
+            this.argPositions = argPositions;
+            this.arrayOut = new DirectArray(configuration);
+            arrayOut.setType(type);
+        }
+
+        @Override
+        public void close() {
+            this.arrayOut = Misc.free(this.arrayOut);
+            Misc.freeObjList(args);
+        }
+
+        @Override
+        public ArrayView getArray(Record rec) {
+            ArrayView array0 = args.getQuick(0).getArray(rec);
+            int nDims = array0.getDimCount();
+            arrayOut.clear();
+            arrayOut.setDimLen(0, args.size());
+            for (int dim = 0; dim < nDims; dim++) {
+                arrayOut.setDimLen(dim + 1, array0.getDimLen(dim));
+            }
+            arrayOut.applyShape(argPositions.getQuick(0));
+            MemoryA memA = arrayOut.startAppendMemory();
+            array0.appendToMem(memA);
+            for (int n = args.size(), i = 1; i < n; i++) {
+                ArrayView arrayI = args.getQuick(i).getArray(rec);
+                int argPosI = argPositions.getQuick(i);
+                for (int dim = 0; dim < nDims; dim++) {
+                    if (arrayI.getDimLen(dim) != arrayOut.getDimLen(dim + 1)) {
+                        throw CairoException.nonCritical().position(argPosI)
+                                .put("array shapes don't match");
+                    }
+                }
+                arrayI.appendToMem(memA);
+            }
+            return arrayOut;
+        }
+
+        @Override
+        public boolean isConstant() {
+            return isConstant;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("ARRAY[]");
+        }
     }
 
     private static class FunctionArrayFunction extends ArrayFunction {

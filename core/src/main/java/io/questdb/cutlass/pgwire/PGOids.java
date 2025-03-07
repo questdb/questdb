@@ -70,12 +70,12 @@ public class PGOids {
     public static final int PG_TIMESTAMP_TZ = 1184;
     public static final IntList PG_TYPE_OIDS = new IntList();
     public static final IntList PG_TYPE_PROC_OIDS = new IntList();
-    public static final char[] PG_TYPE_TO_CATEGORY = new char[14];
-    public static final CharSequence[] PG_TYPE_TO_DEFAULT = new CharSequence[14];
-    public static final short[] PG_TYPE_TO_LENGTH = new short[14];
-    public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[14];
-    public static final CharSequence[] PG_TYPE_TO_PROC_NAME = new CharSequence[14];
-    public static final CharSequence[] PG_TYPE_TO_PROC_SRC = new CharSequence[14];
+    public static final char[] PG_TYPE_TO_CATEGORY = new char[15];
+    public static final CharSequence[] PG_TYPE_TO_DEFAULT = new CharSequence[15];
+    public static final short[] PG_TYPE_TO_LENGTH = new short[15];
+    public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[15];
+    public static final CharSequence[] PG_TYPE_TO_PROC_NAME = new CharSequence[15];
+    public static final CharSequence[] PG_TYPE_TO_PROC_SRC = new CharSequence[15];
     public static final IntShortHashMap PG_TYPE_TO_SIZE_MAP = new IntShortHashMap();
     public static final int PG_UNSPECIFIED = 0;
     public static final int PG_UUID = 2950;
@@ -166,6 +166,42 @@ public class PGOids {
         return type & (~(1 << 31));
     }
 
+    /**
+     * Returns PostgreSQL array type OID for given PostgreSQL type OID.
+     * <p>
+     * When a given type OID is not supported as an array, 0 is returned.
+     *
+     * @param pgOid PostgreSQL type OID
+     * @return PostgreSQL array type OID
+     */
+    public static int pgToArrayOid(int pgOid) {
+        switch (pgOid) {
+            case PG_FLOAT8:
+                return PG_ARR_FLOAT8;
+            default:
+                return 0;
+        }
+    }
+
+    /**
+     * Returns PostgreSQL element type OID for given PostgreSQL array type OID.
+     * <p>
+     * When a given array type OID is not supported, 0 is returned.
+     *
+     * @param pgOid PostgreSQL array type OID
+     * @return PostgreSQL element type OID
+     */
+    public static int pgArrayToElementType(int pgOid) {
+        switch (pgOid) {
+            case PG_ARR_FLOAT8:
+                return PG_FLOAT8;
+            case PG_ARR_INT8:
+                return PG_INT8;
+            default:
+                return 0;
+        }
+    }
+
     public static int toParamBinaryType(short code, int type) {
         return code | type;
     }
@@ -216,6 +252,7 @@ public class PGOids {
         PG_TYPE_OIDS.add(PG_UUID);
         PG_TYPE_OIDS.add(PG_INTERNAL);
         PG_TYPE_OIDS.add(PG_OID);
+        PG_TYPE_OIDS.add(PG_ARR_FLOAT8);
 
         // these values are taken from PostgreSQL pg_proc view
         PG_TYPE_PROC_OIDS.add(2432);
@@ -232,6 +269,7 @@ public class PGOids {
         PG_TYPE_PROC_OIDS.add(2961);
         PG_TYPE_PROC_OIDS.add(0); // INTERNAL
         PG_TYPE_PROC_OIDS.add(2418); // OID
+        PG_TYPE_PROC_OIDS.add(2400); // // ARRAY
 
         // Fixed-size types only since variable size types have size -1 in PostgreSQL and -1 this happens
         // to be a marker for 'no value' in this map.
@@ -278,10 +316,20 @@ public class PGOids {
         PG_TYPE_TO_NAME[11] = "uuid";
         PG_TYPE_TO_NAME[12] = "internal";
         PG_TYPE_TO_NAME[13] = "oid";
+        PG_TYPE_TO_NAME[14] = "_float8";
 
+        // array are excluded since all arrays are handled by the same function
         for (int i = 0, n = PG_TYPE_TO_NAME.length; i < n; i++) {
-            PG_TYPE_TO_PROC_NAME[i] = PG_TYPE_TO_NAME[i] + "_recv";
-            PG_TYPE_TO_PROC_SRC[i] = PG_TYPE_TO_NAME[i] + "recv";
+            int pgOid = PG_TYPE_OIDS.getQuick(i);
+            boolean isArr = pgArrayToElementType(pgOid) != 0;
+            if (!isArr) {
+                PG_TYPE_TO_PROC_NAME[i] = PG_TYPE_TO_NAME[i] + "_recv";
+                PG_TYPE_TO_PROC_SRC[i] = PG_TYPE_TO_NAME[i] + "recv";
+            } else {
+                // array types are handled by the same function in PostgreSQL
+                PG_TYPE_TO_PROC_NAME[i] = "array_recv";
+                PG_TYPE_TO_PROC_SRC[i] = "array_recv"; // intentionally the same as name (=with underscore), that's how it is in PostgreSQL
+            }
         }
 
         PG_TYPE_TO_CATEGORY[0] = 'S';
@@ -298,6 +346,7 @@ public class PGOids {
         PG_TYPE_TO_CATEGORY[11] = 'U';
         PG_TYPE_TO_CATEGORY[12] = 'P';
         PG_TYPE_TO_CATEGORY[13] = 'N';
+        PG_TYPE_TO_CATEGORY[14] = 'A';
 
         PG_TYPE_TO_LENGTH[0] = -1;
         PG_TYPE_TO_LENGTH[1] = 8;
@@ -313,6 +362,7 @@ public class PGOids {
         PG_TYPE_TO_LENGTH[11] = 16;
         PG_TYPE_TO_LENGTH[12] = 8;
         PG_TYPE_TO_LENGTH[13] = 4;
+        PG_TYPE_TO_LENGTH[14] = -1;
 
         PG_TYPE_TO_DEFAULT[0] = null;
         PG_TYPE_TO_DEFAULT[1] = null;
@@ -328,5 +378,6 @@ public class PGOids {
         PG_TYPE_TO_DEFAULT[11] = null;
         PG_TYPE_TO_DEFAULT[12] = null;
         PG_TYPE_TO_DEFAULT[13] = null;
+        PG_TYPE_TO_DEFAULT[14] = null;
     }
 }
