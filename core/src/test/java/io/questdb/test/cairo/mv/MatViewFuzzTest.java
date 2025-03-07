@@ -179,7 +179,18 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             // truncate will lead to mat view invalidation
             setFuzzParams(rnd, 0, 0.5);
             setFuzzProperties(rnd);
-            runMvFuzz(rnd, getTestName(), 1, false);
+            runMvFuzz(rnd, getTestName(), 1, false, false);
+        });
+    }
+
+    @Test
+    public void testManyTablesRefreshJobRace() throws Exception {
+        assertMemoryLeak(() -> {
+            Rnd rnd = fuzzer.generateRandom(LOG);
+            setFuzzParams(rnd, 2_000, 1_000, 0, 0.0);
+            setFuzzProperties(rnd);
+            // use sleep(1) to make sure that the view is not refreshed too quickly
+            runMvFuzz(rnd, getTestName(), 1 + rnd.nextInt(4), false, true);
         });
     }
 
@@ -261,10 +272,10 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     private void runMvFuzz(Rnd rnd, String testTableName, int tableCount) throws Exception {
-        runMvFuzz(rnd, testTableName, tableCount, true);
+        runMvFuzz(rnd, testTableName, tableCount, true, false);
     }
 
-    private void runMvFuzz(Rnd rnd, String testTableName, int tableCount, boolean expectValidMatViews) throws Exception {
+    private void runMvFuzz(Rnd rnd, String testTableName, int tableCount, boolean expectValidMatViews, boolean sleep) throws Exception {
         AtomicBoolean stop = new AtomicBoolean();
         ObjList<Thread> refreshJobs = new ObjList<>();
         int refreshJobCount = 1 + rnd.nextInt(4);
@@ -279,7 +290,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         for (int i = 0; i < tableCount; i++) {
             String tableNameBase = testTableName + "_" + i;
             String tableNameMv = tableNameBase + "_mv";
-            String viewSql = "select min(c3), max(c3), ts from  " + tableNameBase + " sample by 1h";
+            String viewSql = "select min(c3), max(c3), ts from  " + tableNameBase + (sleep ? " where sleep(1)" : "") + " sample by 1h";
             ObjList<FuzzTransaction> transactions = createTransactionsAndMv(rnd, tableNameBase, tableNameMv, viewSql);
             fuzzTransactions.add(transactions);
             viewSqls.add(viewSql);
@@ -336,18 +347,22 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     private void setFuzzParams(Rnd rnd, double colAddProb) {
-        setFuzzParams(rnd, colAddProb, 0.0);
+        setFuzzParams(rnd, 2_000_000, 1_000_000, colAddProb, 0.0);
     }
 
     private void setFuzzParams(Rnd rnd, double colAddProb, double truncateProb) {
+        setFuzzParams(rnd, 2_000_000, 1_000_000, colAddProb, truncateProb);
+    }
+
+    private void setFuzzParams(Rnd rnd, int transactionCount, int initialRowCount, double colAddProb, double truncateProb) {
         fuzzer.setFuzzCounts(
                 rnd.nextBoolean(),
-                rnd.nextInt(2_000_000),
+                rnd.nextInt(transactionCount),
                 rnd.nextInt(1000),
                 rnd.nextInt(3),
                 rnd.nextInt(5),
                 rnd.nextInt(1000),
-                rnd.nextInt(1_000_000),
+                rnd.nextInt(initialRowCount),
                 5 + rnd.nextInt(10)
         );
 
