@@ -27,8 +27,6 @@ package io.questdb.cairo.mv;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnFilter;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -38,8 +36,6 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.CompiledQuery;
@@ -179,35 +175,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return false;
     }
 
-    private ColumnFilter generatedColumnFilter(RecordMetadata cursorMetadata, TableRecordMetadata writerMetadata) throws SqlException {
-        for (int i = 0, n = cursorMetadata.getColumnCount(); i < n; i++) {
-            int columnType = cursorMetadata.getColumnType(i);
-            assert columnType > 0;
-            if (columnType != writerMetadata.getColumnType(i)) {
-                throw SqlException.$(0, "materialized view column type mismatch. Query column: ")
-                        .put(cursorMetadata.getColumnName(i))
-                        .put(" type: ")
-                        .put(ColumnType.nameOf(columnType))
-                        .put(", view column: ")
-                        .put(writerMetadata.getColumnName(i))
-                        .put(" type: ")
-                        .put(ColumnType.nameOf(writerMetadata.getColumnType(i)));
-            }
-        }
-        columnFilter.of(cursorMetadata.getColumnCount());
-        return columnFilter;
-    }
-
     private RecordToRowCopier getRecordToRowCopier(TableWriterAPI tableWriter, RecordCursorFactory factory, SqlCompiler compiler) throws SqlException {
-        final ColumnFilter entityColumnFilter = generatedColumnFilter(
-                factory.getMetadata(),
-                tableWriter.getMetadata()
-        );
+        columnFilter.of(factory.getMetadata().getColumnCount());
         return RecordToRowCopierUtils.generateCopier(
                 compiler.getAsm(),
                 factory.getMetadata(),
                 tableWriter.getMetadata(),
-                entityColumnFilter
+                columnFilter
         );
     }
 

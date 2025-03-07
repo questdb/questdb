@@ -1057,6 +1057,27 @@ public class CreateMatViewTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testShowCreateMatViewFail2() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            assertExceptionNoLeakCheck(
+                    "show create materialized view " + TABLE1,
+                    30,
+                    "materialized view name expected, got table name"
+            );
+        });
+    }
+
+    @Test
+    public void testShowCreateMatViewFail3() throws Exception {
+        assertException(
+                "show create materialized view 'test';",
+                30,
+                "table does not exist [table=test]"
+        );
+    }
+
     private static void assertMatViewDefinition(
             String name,
             String query,
