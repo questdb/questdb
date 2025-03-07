@@ -482,7 +482,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     final MatViewDefinition viewDef = state.getViewDefinition();
                     insertAsSelect(state, viewDef, commitWriter, toBaseTxn, refreshTriggeredTimestamp);
                     resetInvalidState(state);
-                    writeLastRefreshBaseTableTxn(state, toBaseTxn);
+                    long seqTxn = engine.getTableSequencerAPI().getTxnTracker(viewToken).getSeqTxn();
+                    writeLastRefreshBaseTableTxn(state, toBaseTxn, seqTxn);
                 }
             } finally {
                 refreshExecutionContext.clearReader();
@@ -539,6 +540,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         assert state.isLocked();
 
         final SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseTableToken);
+        final SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
+
         long toBaseTxn = baseSeqTracker.getWriterTxn();
 
         final long fromBaseTxn = state.getLastRefreshBaseTxn();
@@ -567,7 +570,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     try (TableWriterAPI tableWriter = engine.getTableWriterAPI(viewToken, "Mat View refresh")) {
                         boolean changed = insertAsSelect(state, viewDef, tableWriter, toBaseTxn, refreshTriggeredTimestamp);
                         if (changed) {
-                            writeLastRefreshBaseTableTxn(state, toBaseTxn);
+                            long seqTxn = viewSeqTracker.getSeqTxn();
+                            writeLastRefreshBaseTableTxn(state, toBaseTxn, seqTxn);
                         }
                         return changed;
                     }
@@ -588,7 +592,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         state.markAsInvalid(blockFileWriter, dbRoot.trimTo(dbRootLen), invalidationReason);
     }
 
-    private void writeLastRefreshBaseTableTxn(MatViewRefreshState state, long txn) {
-        state.writeLastRefreshBaseTableTxn(blockFileWriter, dbRoot.trimTo(dbRootLen), txn);
+    private void writeLastRefreshBaseTableTxn(MatViewRefreshState state, long refreshTxn, long seqTxn) {
+        state.writeLastRefreshBaseTableTxn(blockFileWriter, dbRoot.trimTo(dbRootLen), refreshTxn, seqTxn);
     }
 }

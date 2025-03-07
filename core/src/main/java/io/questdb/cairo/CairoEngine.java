@@ -1422,7 +1422,8 @@ public class CairoEngine implements Closeable, WriterSource {
                                 tableToken
                         );
                         final TableToken baseTableToken = tableNameRegistry.getTableToken(matViewDefinition.getBaseTableName());
-                        if (baseTableToken == null || tableNameRegistry.isTableDropped(baseTableToken)) {
+                        final boolean baseTableExists = baseTableToken != null && !tableNameRegistry.isTableDropped(baseTableToken);
+                        if (!baseTableExists) {
                             // Print a warning, but let the mat view load in invalid state.
                             LOG.info().$("base table for materialized view does not exist [table=").utf8(matViewDefinition.getBaseTableName())
                                     .$(", view=").utf8(tableToken.getTableName())
@@ -1445,6 +1446,17 @@ public class CairoEngine implements Closeable, WriterSource {
                             }
 
                             if (!state.isInvalid()) {
+                                long matViewLastTxn = getTableSequencerAPI().lastTxn(tableToken);
+                                long baseTableLastTxn = baseTableExists && baseTableToken.isWal()
+                                        ? getTableSequencerAPI().lastTxn(baseTableToken)
+                                        : Long.MAX_VALUE;
+                                if (state.getSeqTxn() > matViewLastTxn || state.getLastRefreshBaseTxn() > baseTableLastTxn) {
+                                    // Materialized view refresh state is ahead of the base table or the view itself.
+                                    // This may happen when a read-only replica node which isn't fully caught up
+                                    // was converted to primary.
+                                    // Set the last refreshed txn to -1 to have the view fully refreshed.
+                                    state.setLastRefreshBaseTxn(-1);
+                                }
                                 matViewGraph.enqueueIncrementalRefresh(tableToken);
                             }
                         }
