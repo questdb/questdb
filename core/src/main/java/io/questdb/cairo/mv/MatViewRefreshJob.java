@@ -575,13 +575,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
 
         final MatViewDefinition viewDef = state.getViewDefinition();
-        if (viewDef == null) {
-            // The view must have been deleted.
-            LOG.info().$("not refreshing materialized view, new definition does not exist [view=").$(viewToken)
-                    .$(", base=").$(baseTableToken)
-                    .I$();
-            return false;
-        }
 
         // Steps:
         // - compile view and execute with timestamp ranges from the unprocessed commits

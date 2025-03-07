@@ -869,6 +869,84 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEmptyBaseTableSqlInDefinitionBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                createTable(TABLE1);
+
+                final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+                execute("create materialized view test as (" + query + ") partition by day");
+
+                final TableToken matViewToken = engine.getTableTokenIfExists("test");
+                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                assertNotNull(matViewDefinition);
+
+                try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
+                    writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                    AppendableBlock block = writer.append();
+                    block.putInt(matViewDefinition.getRefreshType());
+                    block.putStr(null);
+                    block.putLong(matViewDefinition.getSamplingInterval());
+                    block.putChar(matViewDefinition.getSamplingIntervalUnit());
+                    block.putStr(matViewDefinition.getTimeZone());
+                    block.putStr(matViewDefinition.getTimeZoneOffset());
+                    block.putStr(matViewDefinition.getMatViewSql());
+                    block.commit(MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE);
+                    writer.commit();
+                }
+
+                // Reader should fail to load unknown definition file.
+                try (BlockFileReader reader = new BlockFileReader(configuration)) {
+                    path.of(configuration.getDbRoot());
+                    final int rootLen = path.size();
+                    MatViewDefinition actualDefinition = new MatViewDefinition();
+                    MatViewDefinition.readFrom(
+                            actualDefinition,
+                            reader,
+                            path,
+                            rootLen,
+                            matViewToken
+                    );
+                    Assert.fail("exception expected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "base table name for materialized view is empty");
+                }
+
+                try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
+                    writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                    AppendableBlock block = writer.append();
+                    block.putInt(matViewDefinition.getRefreshType());
+                    block.putStr(matViewDefinition.getBaseTableName());
+                    block.putLong(matViewDefinition.getSamplingInterval());
+                    block.putChar(matViewDefinition.getSamplingIntervalUnit());
+                    block.putStr(matViewDefinition.getTimeZone());
+                    block.putStr(matViewDefinition.getTimeZoneOffset());
+                    block.putStr(null);
+                    block.commit(MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE);
+                    writer.commit();
+                }
+
+                // Reader should fail to load unknown definition file.
+                try (BlockFileReader reader = new BlockFileReader(configuration)) {
+                    path.of(configuration.getDbRoot());
+                    final int rootLen = path.size();
+                    MatViewDefinition actualDefinition = new MatViewDefinition();
+                    MatViewDefinition.readFrom(
+                            actualDefinition,
+                            reader,
+                            path,
+                            rootLen,
+                            matViewToken
+                    );
+                    Assert.fail("exception expected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "materialized view SQL is empty");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testIgnoreUnknownDefinitionBlock() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path()) {
@@ -960,6 +1038,65 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     assertEquals(matViewRefreshState.isInvalid(), actualState.isInvalid());
                     assertEquals(matViewRefreshState.getLastRefreshBaseTxn(), actualState.getLastRefreshBaseTxn());
                     assertEquals(matViewRefreshState.getInvalidationReason(), actualState.getInvalidationReason());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMatViewDefinitionInvalidTz() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                createTable(TABLE1);
+                final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+                execute("create materialized view test as (" + query + ") partition by day");
+                final TableToken matViewToken = engine.getTableTokenIfExists("test");
+                MatViewDefinition def = new MatViewDefinition();
+                try {
+                    def.init(
+                            MatViewDefinition.INCREMENTAL_REFRESH_TYPE,
+                            matViewToken,
+                            query,
+                            TABLE1,
+                            30,
+                            'K',
+                            "Europe/Berlin",
+                            "00:00"
+                    );
+                    Assert.fail("exception expected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid sampling interval and/or unit: 30, K");
+                }
+
+                try {
+                    def.init(
+                            MatViewDefinition.INCREMENTAL_REFRESH_TYPE,
+                            matViewToken,
+                            query,
+                            TABLE1,
+                            30,
+                            's',
+                            "Oceania",
+                            "00:00"
+                    );
+                    Assert.fail("exception expected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: Oceania");
+                }
+                try {
+                    def.init(
+                            MatViewDefinition.INCREMENTAL_REFRESH_TYPE,
+                            matViewToken,
+                            query,
+                            TABLE1,
+                            30,
+                            's',
+                            "Europe/Berlin",
+                            "T00:00"
+                    );
+                    Assert.fail("exception expected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: T00:00");
                 }
             }
         });
@@ -1076,6 +1213,90 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 30,
                 "table does not exist [table=test]"
         );
+    }
+
+    @Test
+    public void testUnknownDefinitionBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                createTable(TABLE1);
+
+                final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+                execute("create materialized view test as (" + query + ") partition by day");
+
+                final TableToken matViewToken = engine.getTableTokenIfExists("test");
+                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                assertNotNull(matViewDefinition);
+
+                try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
+                    writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                    // Add unknown block.
+                    AppendableBlock block = writer.append();
+                    block.putStr("foobar");
+                    block.commit(MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE + 1);
+                    writer.commit();
+                }
+
+                // Reader should fail to load unknown definition file.
+                try (BlockFileReader reader = new BlockFileReader(configuration)) {
+                    path.of(configuration.getDbRoot());
+                    final int rootLen = path.size();
+                    MatViewDefinition actualDefinition = new MatViewDefinition();
+                    MatViewDefinition.readFrom(
+                            actualDefinition,
+                            reader,
+                            path,
+                            rootLen,
+                            matViewToken
+                    );
+                    Assert.fail("exception expected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot read materialized view definition, block not found");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUnknownStateBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                createTable(TABLE1);
+
+                final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+                execute("create materialized view test as (" + query + ") partition by day");
+
+                final TableToken matViewToken = engine.getTableTokenIfExists("test");
+                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                assertNotNull(matViewDefinition);
+                final MatViewRefreshState matViewRefreshState = engine.getMatViewGraph().getViewRefreshState(matViewToken);
+                assertNotNull(matViewRefreshState);
+
+                try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
+                    writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                    // Add unknown block.
+                    AppendableBlock block = writer.append();
+                    block.putStr("foobar");
+                    block.commit(MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_TYPE + 1);
+                    writer.commit();
+                }
+
+                // Reader should fail to load unknown state file.
+                try (BlockFileReader reader = new BlockFileReader(configuration)) {
+                    reader.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                    MatViewRefreshState actualState = new MatViewRefreshState(
+                            matViewDefinition,
+                            false,
+                            (event, tableToken, baseTableTxn, errorMessage, latencyUs) -> {
+                            }
+                    );
+                    MatViewRefreshState.readFrom(reader, actualState);
+                    Assert.fail("exception expected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot read materialized view state, block not found");
+                }
+            }
+        });
     }
 
     private static void assertMatViewDefinition(

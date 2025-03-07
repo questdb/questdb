@@ -63,7 +63,7 @@ public class MatViewRefreshState implements QuietCloseable {
     private RecordToRowCopier recordToRowCopier;
 
     public MatViewRefreshState(
-            MatViewDefinition viewDefinition,
+            @NotNull MatViewDefinition viewDefinition,
             boolean invalid,
             MatViewTelemetryFacade telemetryFacade
     ) {
@@ -106,9 +106,9 @@ public class MatViewRefreshState implements QuietCloseable {
             refreshState.invalidationReason = Chars.toString(block.getStr(Long.BYTES + Byte.BYTES));
             return;
         }
-        final TableToken matViewToken = refreshState.getViewDefinition() != null ? refreshState.getViewDefinition().getMatViewToken() : null;
+        final TableToken matViewToken = refreshState.getViewDefinition().getMatViewToken();
         throw CairoException.critical(0).put("cannot read materialized view state, block not found [view=")
-                .put(matViewToken != null ? matViewToken.getTableName() : "N/A")
+                .put(matViewToken.getTableName())
                 .put(']');
     }
 
@@ -145,7 +145,7 @@ public class MatViewRefreshState implements QuietCloseable {
         return recordToRowCopier;
     }
 
-    public MatViewDefinition getViewDefinition() {
+    public @NotNull MatViewDefinition getViewDefinition() {
         return viewDefinition;
     }
 
