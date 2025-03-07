@@ -42,7 +42,6 @@ import org.jetbrains.annotations.NotNull;
 import java.util.Iterator;
 
 public class ShowParametersCursorFactory extends AbstractRecordCursorFactory {
-
     private static final GenericRecordMetadata METADATA = new GenericRecordMetadata();
     private final ShowParametersRecordCursor cursor = new ShowParametersRecordCursor();
 
