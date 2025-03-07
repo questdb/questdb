@@ -210,10 +210,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     if (factory == null) {
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
                             LOG.info().$("compiling materialized view [view=").$(viewDef.getMatViewToken()).$(", attempt=").$(i).I$();
-                            CompiledQuery compiledQuery = compiler.compile(viewDef.getMatViewSql(), refreshExecutionContext);
-                            if (compiledQuery.getType() != CompiledQuery.SELECT) {
-                                throw SqlException.$(0, "materialized view query must be a SELECT statement");
-                            }
+                            final CompiledQuery compiledQuery = compiler.compile(viewDef.getMatViewSql(), refreshExecutionContext);
+                            assert compiledQuery.getType() == CompiledQuery.SELECT;
                             factory = compiledQuery.getRecordCursorFactory();
 
                             if (copier == null || tableWriter.getMetadata().getMetadataVersion() != state.getRecordRowCopierMetadataVersion()) {
