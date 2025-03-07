@@ -2132,94 +2132,7 @@ public class SqlParser {
         // expect [sample by]
 
         if (tok != null && isSampleKeyword(tok)) {
-            expectBy(lexer);
-            expectSample(lexer, model, sqlParserCallback);
-            tok = optTok(lexer);
-
-            ExpressionNode fromNode = null, toNode = null;
-            // support `SAMPLE BY 5m FROM foo TO bah`
-            if (tok != null && isFromKeyword(tok)) {
-                fromNode = expr(lexer, model, sqlParserCallback, model.getDecls());
-                if (fromNode == null) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'timestamp' expression expected");
-                }
-                tok = optTok(lexer);
-            }
-
-            if (tok != null && isToKeyword(tok)) {
-                toNode = expr(lexer, model, sqlParserCallback, model.getDecls());
-                if (toNode == null) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'timestamp' expression expected");
-                }
-                tok = optTok(lexer);
-            }
-
-            model.setSampleByFromTo(fromNode, toNode);
-
-            if (tok != null && isFillKeyword(tok)) {
-                expectTok(lexer, '(');
-                do {
-                    final ExpressionNode fillNode = expr(lexer, model, sqlParserCallback, model.getDecls());
-                    if (fillNode == null) {
-                        throw SqlException.$(lexer.lastTokenPosition(), "'none', 'prev', 'mid', 'null' or number expected");
-                    }
-                    model.addSampleByFill(fillNode);
-                    tok = tokIncludingLocalBrace(lexer, "',' or ')'");
-                    if (Chars.equals(tok, ')')) {
-                        break;
-                    }
-                    expectTok(tok, lexer.lastTokenPosition(), ',');
-                } while (true);
-
-                tok = optTok(lexer);
-            }
-
-            if (tok != null && isAlignKeyword(tok)) {
-                expectTo(lexer);
-
-                tok = tok(lexer, "'calendar' or 'first observation'");
-
-                if (isCalendarKeyword(tok)) {
-                    tok = optTok(lexer);
-                    if (tok == null) {
-                        model.setSampleByTimezoneName(null);
-                        model.setSampleByOffset(ZERO_OFFSET);
-                    } else if (isTimeKeyword(tok)) {
-                        expectZone(lexer);
-                        model.setSampleByTimezoneName(expectExpr(lexer, sqlParserCallback, model.getDecls()));
-                        tok = optTok(lexer);
-                        if (tok != null && isWithKeyword(tok)) {
-                            tok = parseWithOffset(lexer, model, sqlParserCallback);
-                        } else {
-                            model.setSampleByOffset(ZERO_OFFSET);
-                        }
-                    } else if (isWithKeyword(tok)) {
-                        tok = parseWithOffset(lexer, model, sqlParserCallback);
-                    } else {
-                        model.setSampleByTimezoneName(null);
-                        model.setSampleByOffset(ZERO_OFFSET);
-                    }
-                } else if (isFirstKeyword(tok)) {
-                    expectObservation(lexer);
-
-                    if (model.getSampleByTo() != null || model.getSampleByFrom() != null) {
-                        throw SqlException.$(lexer.getPosition(), "ALIGN TO FIRST OBSERVATION is incompatible with FROM-TO");
-                    }
-
-                    model.setSampleByTimezoneName(null);
-                    model.setSampleByOffset(null);
-                    tok = optTok(lexer);
-                } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'calendar' or 'first observation' expected");
-                }
-            } else {
-                // Set offset according to default config
-                if (configuration.getSampleByDefaultAlignmentCalendar()) {
-                    model.setSampleByOffset(ZERO_OFFSET);
-                } else {
-                    model.setSampleByOffset(null);
-                }
-            }
+            tok = parseSampleBy(model, lexer, sqlParserCallback);
         }
 
         // expect [group by]
@@ -2582,7 +2495,7 @@ public class SqlParser {
         }
     }
 
-    private CharSequence parseLimit(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
+    private CharSequence parseLimit(QueryModel model, GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
         CharSequence tok;
         model.setLimitPosition(lexer.lastTokenPosition());
         ExpressionNode lo = expr(lexer, model, sqlParserCallback, model.getDecls());
@@ -2754,7 +2667,7 @@ public class SqlParser {
             }
 
             if (isGroupKeyword(tok) || Chars.equals(tok, ';') || Chars.equals(tok, ')')
-                    || isOrderKeyword(tok) || isLimitKeyword(tok)) {
+                    || isOrderKeyword(tok) || isLimitKeyword(tok) || isSampleKeyword(tok)) {
                 break;
             } else if (Chars.equals(tok, ",")) {
                 tok = tok(lexer, "'FOR-IN'");
@@ -2763,8 +2676,12 @@ public class SqlParser {
             }
         }
 
+        if (tok != null && isSampleKeyword(tok)) {
+            tok = parseSampleBy(model, lexer, sqlParserCallback);
+        }
+
         // parseGroupBy
-        if (isGroupKeyword(tok)) {
+        if (tok != null && isGroupKeyword(tok)) {
             expectBy(lexer);
 
             do {
@@ -2781,20 +2698,12 @@ public class SqlParser {
             } while (tok != null && !Chars.equals(tok, ')') && Chars.equals(tok, ','));
         }
 
-        if (tok == null) {
-            throw SqlException.$(lexer.lastTokenPosition(), "missing ')'");
-        }
-
-        if (isOrderKeyword(tok)) {
+        if (tok != null && isOrderKeyword(tok)) {
             tok = parseOrderBy(model, lexer, sqlParserCallback);
         }
 
-        if (tok == null) {
-            throw SqlException.$(lexer.lastTokenPosition(), "missing ')'");
-        }
-
-        if (isLimitKeyword(tok)) {
-            tok = parseLimit(lexer, model, sqlParserCallback);
+        if (tok != null && isLimitKeyword(tok)) {
+            tok = parseLimit(model, lexer, sqlParserCallback);
         }
 
         if (tok == null) {
@@ -2840,6 +2749,98 @@ public class SqlParser {
         }
 
         return model;
+    }
+
+    private CharSequence parseSampleBy(QueryModel model, GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
+        expectBy(lexer);
+        expectSample(lexer, model, sqlParserCallback);
+        CharSequence tok = optTok(lexer);
+
+        ExpressionNode fromNode = null, toNode = null;
+        // support `SAMPLE BY 5m FROM foo TO bah`
+        if (tok != null && isFromKeyword(tok)) {
+            fromNode = expr(lexer, model, sqlParserCallback, model.getDecls());
+            if (fromNode == null) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'timestamp' expression expected");
+            }
+            tok = optTok(lexer);
+        }
+
+        if (tok != null && isToKeyword(tok)) {
+            toNode = expr(lexer, model, sqlParserCallback, model.getDecls());
+            if (toNode == null) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'timestamp' expression expected");
+            }
+            tok = optTok(lexer);
+        }
+
+        model.setSampleByFromTo(fromNode, toNode);
+
+        if (tok != null && isFillKeyword(tok)) {
+            expectTok(lexer, '(');
+            do {
+                final ExpressionNode fillNode = expr(lexer, model, sqlParserCallback, model.getDecls());
+                if (fillNode == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'none', 'prev', 'mid', 'null' or number expected");
+                }
+                model.addSampleByFill(fillNode);
+                tok = tokIncludingLocalBrace(lexer, "',' or ')'");
+                if (Chars.equals(tok, ')')) {
+                    break;
+                }
+                expectTok(tok, lexer.lastTokenPosition(), ',');
+            } while (true);
+
+            tok = optTok(lexer);
+        }
+
+        if (tok != null && isAlignKeyword(tok)) {
+            expectTo(lexer);
+
+            tok = tok(lexer, "'calendar' or 'first observation'");
+
+            if (isCalendarKeyword(tok)) {
+                tok = optTok(lexer);
+                if (tok == null) {
+                    model.setSampleByTimezoneName(null);
+                    model.setSampleByOffset(ZERO_OFFSET);
+                } else if (isTimeKeyword(tok)) {
+                    expectZone(lexer);
+                    model.setSampleByTimezoneName(expectExpr(lexer, sqlParserCallback, model.getDecls()));
+                    tok = optTok(lexer);
+                    if (tok != null && isWithKeyword(tok)) {
+                        tok = parseWithOffset(lexer, model, sqlParserCallback);
+                    } else {
+                        model.setSampleByOffset(ZERO_OFFSET);
+                    }
+                } else if (isWithKeyword(tok)) {
+                    tok = parseWithOffset(lexer, model, sqlParserCallback);
+                } else {
+                    model.setSampleByTimezoneName(null);
+                    model.setSampleByOffset(ZERO_OFFSET);
+                }
+            } else if (isFirstKeyword(tok)) {
+                expectObservation(lexer);
+
+                if (model.getSampleByTo() != null || model.getSampleByFrom() != null) {
+                    throw SqlException.$(lexer.getPosition(), "ALIGN TO FIRST OBSERVATION is incompatible with FROM-TO");
+                }
+
+                model.setSampleByTimezoneName(null);
+                model.setSampleByOffset(null);
+                tok = optTok(lexer);
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "'calendar' or 'first observation' expected");
+            }
+        } else {
+            // Set offset according to default config
+            if (configuration.getSampleByDefaultAlignmentCalendar()) {
+                model.setSampleByOffset(ZERO_OFFSET);
+            } else {
+                model.setSampleByOffset(null);
+            }
+        }
+        return tok;
     }
 
     private ExecutionModel parseSelect(

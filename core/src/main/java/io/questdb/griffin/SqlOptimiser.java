@@ -2236,7 +2236,15 @@ public class SqlOptimiser implements Mutable {
             }
 
             if (timestamp != null) {
-                return model.getColumnNameToAliasMap().get(timestamp);
+                CharSequence name = model.getColumnNameToAliasMap().get(timestamp);
+                if (name == null) {
+                    // could be select *
+                    if (model.getColumnNameToAliasMap().contains("*") || model.getColumnNameToAliasMap().size() == 0) {
+                        return timestamp;
+                    }
+                } else {
+                    return name;
+                }
             }
         }
         return null;
@@ -6420,31 +6428,34 @@ public class SqlOptimiser implements Mutable {
                 && model.getBottomUpColumns().size() == 1
                 && Chars.equals(model.getBottomUpColumns().getQuick(0).getAst().token, "*")) {
 
+            QueryColumn timestampColumn = null;
+
+            // get the timestamp column if there is a sample by
+            if (nested.getSampleBy() != null) {
+                // must come from somewhere
+                CharSequence timestampCs = findTimestamp(nested);
+
+                timestampColumn = queryColumnPool.next().of(timestampCs, expressionNodePool.next().of(LITERAL, timestampCs, 0, 0));
+            }
+
+            // todo(nwoolmer): pass through columns properly, so we can handle non '*' selects
             // clear out the '*'
             model.getBottomUpColumns().clear();
             model.getBottomUpColumnAliases().clear();
+
+            // add sample by if needed
+            if (timestampColumn != null) {
+                // todo(nwoolmer): only do this if they haven't specified it
+                model.addBottomUpColumn(timestampColumn);
+                model.moveSampleByFrom(nested);
+            }
+
 
             // add the group by column
             for (int i = 0, n = nested.getGroupBy().size(); i < n; i++) {
                 ExpressionNode groupByExpr = nested.getGroupBy().getQuick(i);
                 if (groupByExpr.type == CONSTANT) {
-//                    try {
-//                        int colIndex = Numbers.parseInt(groupByExpr.token);
-//                        QueryColumn column = nested.getColumns().getQuick(colIndex - 1);
-//                        ExpressionNode reifiedExpr = expressionNodePool.next().of(
-//                                LITERAL,
-//                                column.getAlias(),
-//                                -1,
-//                                column.getAst().position
-//                        );
-//                        model.addBottomUpColumn(queryColumnPool.next().of(
-//                                        reifiedExpr.token,
-//                                        reifiedExpr
-//                                )
-//                        );
-//                    } catch (NumericException ignore) {
-//                    }
-                    // todo: find a way to match these up, perhaps by re-ordering calls in `optimise()`
+                    // todo: find a way to handle positional group by perhaps by re-ordering calls in `optimise()`
                     throw SqlException.$(groupByExpr.position, "cannot use positional group by inside `PIVOT`");
 
                 } else {

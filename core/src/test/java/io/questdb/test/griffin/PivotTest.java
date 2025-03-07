@@ -571,6 +571,41 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotWithSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(ddlTrades);
+            execute(dmlTrades);
+            drainWalQueue();
+
+            String pivotQuery = "(select * from trades where symbol in 'ETH-USDT')\n" +
+                    "  pivot (\n" +
+                    "    sum(price)\n" +
+                    "    FOR \"symbol\" IN ('ETH-USDT')\n" +
+                    "        side in ('buy', 'sell')\n" +
+                    "    SAMPLE BY 100T\n" +
+                    "  );";
+
+            assertPlanNoLeakCheck(pivotQuery,
+                    "Async Group By workers: 1\n" +
+                            "  keys: [timestamp]\n" +
+                            "  values: [sum(case([(symbol='ETH-USDT' and side='buy'),price,null])),sum(case([(symbol='ETH-USDT' and side='sell'),price,null]))]\n" +
+                            "  filter: symbol in [ETH-USDT]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trades\n");
+
+            assertSql("timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
+                            "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n" +
+                            "2024-12-19T08:10:00.736000Z\tnull\t3678.25\n" +
+                            "2024-12-19T08:10:00.759000Z\tnull\t3678.0\n" +
+                            "2024-12-19T08:10:00.772999Z\tnull\t3678.0\n" +
+                            "2024-12-19T08:10:00.887000Z\t3678.01\tnull\n" +
+                            "2024-12-19T08:10:00.950000Z\tnull\t3678.0\n",
+                    pivotQuery);
+        });
+    }
+
+    @Test
     public void testPivotWithTimestmapGrouping() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlCities);
