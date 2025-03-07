@@ -27,6 +27,7 @@ package io.questdb.test.cairo.mv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.mv.MatViewGraphImpl;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -388,6 +389,62 @@ public class MatViewTest extends AbstractCairoTest {
             assertCannotModifyMatView("drop table price_1h");
             // vacuum
             assertCannotModifyMatView("vacuum table price_1h");
+        });
+    }
+
+    @Test
+    public void testConvertBaseTableToNonWal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute(
+                    "insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+
+            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t1\t1\n",
+                    "materialized_views",
+                    null,
+                    false
+            );
+
+            // Drop the base table via engine, so that the invalidation message is not published.
+            try (Path path = new Path()) {
+                engine.dropTableOrMatView(path, engine.verifyTableName("base_price"));
+            }
+
+            // Create another base table instead of the one that was renamed.
+            // This table is non-WAL, so mat view should become invalid.
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY BYPASS WAL"
+            );
+            TableToken nonWalTableToken = engine.getTableTokenIfExists("base_price");
+            ((MatViewGraphImpl) engine.getMatViewGraph()).enqueueIncrementalRefreshForBaseTable(nonWalTableToken);
+
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t2024-10-24T17:22:09.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tbase table is not a WAL table\tinvalid\t1\t-1\n",
+                    "materialized_views",
+                    null,
+                    false
+            );
         });
     }
 

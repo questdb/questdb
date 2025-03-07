@@ -49,7 +49,7 @@ import java.util.function.Function;
 public class MatViewGraphImpl implements MatViewGraph {
     private static final Log LOG = LogFactory.getLog(MatViewGraphImpl.class);
     private final Function<CharSequence, MatViewRefreshList> createRefreshList;
-    // TODO(puzpuzpuz): this map is grow-only, i.e. keys are never removed
+    // Note: this map is grow-only, i.e. keys are never removed.
     private final ConcurrentHashMap<MatViewRefreshList> dependentViewsByTableName = new ConcurrentHashMap<>();
     private final Telemetry<TelemetryMatViewTask> matViewTelemetry;
     private final MatViewTelemetryFacade matViewTelemetryFacade;
@@ -151,6 +151,16 @@ public class MatViewGraphImpl implements MatViewGraph {
     @Override
     public void enqueueIncrementalRefresh(TableToken matViewToken) {
         enqueueRefreshTaskIfStateExists(matViewToken, MatViewRefreshTask.INCREMENTAL_REFRESH, null);
+    }
+
+    @TestOnly
+    public void enqueueIncrementalRefreshForBaseTable(TableToken baseTableToken) {
+        final MatViewRefreshTask task = taskHolder.get();
+        task.clear();
+        task.baseTableToken = baseTableToken;
+        task.operation = MatViewRefreshTask.INCREMENTAL_REFRESH;
+        task.refreshTriggeredTimestamp = microsecondClock.getTicks();
+        refreshTaskQueue.enqueue(task);
     }
 
     @Override
