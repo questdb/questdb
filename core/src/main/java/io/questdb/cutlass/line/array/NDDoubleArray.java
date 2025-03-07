@@ -105,7 +105,7 @@ public class NDDoubleArray extends AbstractNDArray {
         int flawLength = flawLengthOf(coords, false);
         Vect.memcpy(array.ptr() + (long) flawLength * Double.BYTES, value.array.ptr(), value.array.size());
         if (move) {
-            close();
+            value.close();
         }
         return this;
     }

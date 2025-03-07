@@ -80,7 +80,7 @@ public class NDLongArray extends AbstractNDArray {
         int flawLength = flawLengthOf(shape, false);
         Vect.memcpy(array.ptr() + (long) flawLength * Long.BYTES, value.array.ptr(), value.array.size());
         if (move) {
-            close();
+            value.close();
         }
         return this;
     }
