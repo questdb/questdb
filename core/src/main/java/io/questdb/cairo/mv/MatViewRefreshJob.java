@@ -386,6 +386,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 try {
                     refreshed = refreshIncremental0(state, baseTableToken, viewToken, refreshTriggeredTimestamp);
                 } catch (Throwable th) {
+                    LOG.error().$("error refreshing materialized view [view=").$(viewToken).$(", error=").$(th).I$();
                     refreshFailState(state, microsecondClock.getTicks(), th.getMessage());
                 } finally {
                     state.unlock();
@@ -463,17 +464,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @NotNull TableToken baseTableToken,
             @NotNull TableToken viewToken,
             long refreshTriggeredTimestamp
-    ) {
+    ) throws SqlException {
         assert state.isLocked();
-
-        final MatViewDefinition viewDef = state.getViewDefinition();
-        if (viewDef == null) {
-            // The view must have been deleted.
-            LOG.info().$("skipping full refresh for materialized view, new definition does not exist [view=").$(viewToken)
-                    .$(", base=").$(baseTableToken)
-                    .I$();
-            return false;
-        }
 
         // Steps:
         // - truncate view
@@ -494,6 +486,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                 try (TableWriterAPI commitWriter = engine.getTableWriterAPI(viewToken, "mat view full refresh")) {
                     commitWriter.truncateSoft();
+                    final MatViewDefinition viewDef = state.getViewDefinition();
                     insertAsSelect(state, viewDef, commitWriter, toBaseTxn, refreshTriggeredTimestamp);
                     resetInvalidState(state);
                     writeLastRefreshBaseTableTxn(state, toBaseTxn);
@@ -510,11 +503,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 refreshExecutionContext.clearReader();
                 engine.attachReader(baseTableReader);
             }
-        } catch (SqlException e) {
-            LOG.error().$("error refreshing materialized view [view=").$(viewToken)
-                    .$(", error=").$(e.getFlyweightMessage())
-                    .I$();
-            refreshFailState(state, microsecondClock.getTicks(), e.getMessage());
         }
         return false;
     }
@@ -563,7 +551,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @NotNull TableToken baseTableToken,
             @NotNull TableToken viewToken,
             long refreshTriggeredTimestamp
-    ) {
+    ) throws SqlException {
         assert state.isLocked();
 
         final SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseTableToken);
@@ -574,8 +562,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // Already refreshed
             return false;
         }
-
-        final MatViewDefinition viewDef = state.getViewDefinition();
 
         // Steps:
         // - compile view and execute with timestamp ranges from the unprocessed commits
@@ -590,6 +576,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             engine.detachReader(baseTableReader);
             refreshExecutionContext.of(baseTableReader);
             try {
+                final MatViewDefinition viewDef = state.getViewDefinition();
                 if (findCommitTimestampRanges(refreshExecutionContext, baseTableReader, viewDef, fromBaseTxn)) {
                     toBaseTxn = baseTableReader.getSeqTxn();
 
@@ -612,11 +599,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 refreshExecutionContext.clearReader();
                 engine.attachReader(baseTableReader);
             }
-        } catch (SqlException e) {
-            LOG.error().$("error refreshing materialized view [view=").$(viewToken)
-                    .$(", error=").$(e.getFlyweightMessage())
-                    .I$();
-            refreshFailState(state, microsecondClock.getTicks(), e.getMessage());
         }
         return false;
     }
