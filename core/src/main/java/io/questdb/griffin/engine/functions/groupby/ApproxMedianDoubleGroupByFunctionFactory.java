@@ -33,8 +33,10 @@ import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
+import static io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoubleGroupByFunctionFactory.checkAndReturnPrecision;
+
 public class ApproxMedianDoubleGroupByFunctionFactory implements FunctionFactory {
-    private final DoubleConstant percentile = DoubleConstant.newInstance(0.5);
+    private final DoubleConstant percentileFunc = DoubleConstant.newInstance(0.5);
 
     @Override
     public String getSignature() {
@@ -54,9 +56,16 @@ public class ApproxMedianDoubleGroupByFunctionFactory implements FunctionFactory
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        args.insert(1, 1, percentile);
-        argPositions.insert(1, -1);
-        return new ApproxPercentileDoubleGroupByFunctionFactory().newInstance(position, args, argPositions, configuration, sqlExecutionContext);
+        final Function exprFunc = args.getQuick(0);
+        final Function precisionFunc = args.getQuick(1);
+        final int precisionPosition = argPositions.getQuick(1);
+
+        final int precision = checkAndReturnPrecision(precisionFunc, precisionPosition);
+
+        if (precision > 2) {
+            return new ApproxPercentileDoublePackedGroupByFunction(exprFunc, percentileFunc, precision, position);
+        }
+        return new ApproxPercentileDoubleGroupByFunction(exprFunc, percentileFunc, precision, position);
     }
 
 }

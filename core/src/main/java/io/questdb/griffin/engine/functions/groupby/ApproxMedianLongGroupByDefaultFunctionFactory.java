@@ -34,7 +34,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class ApproxMedianLongGroupByDefaultFunctionFactory implements FunctionFactory {
-    private final DoubleConstant percentile = DoubleConstant.newInstance(0.5);
+    private final DoubleConstant percentileFunc = DoubleConstant.newInstance(0.5);
 
     @Override
     public String getSignature() {
@@ -54,9 +54,7 @@ public class ApproxMedianLongGroupByDefaultFunctionFactory implements FunctionFa
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        args.extendAndSet(1, percentile);
-        argPositions.extendAndSet(1, -1);
-        return new ApproxPercentileLongGroupByDefaultFunctionFactory().newInstance(position, args, argPositions, configuration, sqlExecutionContext);
+        return new ApproxPercentileLongGroupByFunction(args.getQuick(0), percentileFunc, ApproxPercentileLongGroupByDefaultFunctionFactory.DEFAULT_PRECISION, position);
     }
 
 }
