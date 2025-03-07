@@ -173,6 +173,17 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testInvalidate() throws Exception {
+        assertMemoryLeak(() -> {
+            Rnd rnd = fuzzer.generateRandom(LOG);
+            // truncate will lead to mat view invalidation
+            setFuzzParams(rnd, 0, 0.5);
+            setFuzzProperties(rnd);
+            runMvFuzz(rnd, getTestName(), 1, false);
+        });
+    }
+
+    @Test
     public void testManyTablesView() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = fuzzer.generateRandom(LOG);
@@ -250,6 +261,10 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     private void runMvFuzz(Rnd rnd, String testTableName, int tableCount) throws Exception {
+        runMvFuzz(rnd, testTableName, tableCount, true);
+    }
+
+    private void runMvFuzz(Rnd rnd, String testTableName, int tableCount, boolean expectValidMatViews) throws Exception {
         AtomicBoolean stop = new AtomicBoolean();
         ObjList<Thread> refreshJobs = new ObjList<>();
         int refreshJobCount = 1 + rnd.nextInt(4);
@@ -285,28 +300,46 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         runRefreshJobAndDrainWalQueue();
         fuzzer.checkNoSuspendedTables();
 
+
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             for (int i = 0; i < tableCount; i++) {
                 String viewSql = viewSqls.getQuick(i);
                 String mvName = testTableName + "_" + i + "_mv";
                 LOG.info().$("asserting view ").$(mvName).$(" against ").$(viewSql).$();
-                assertSql(
-                        "count\n" +
-                                "1\n",
-                        "select count() from materialized_views where view_name = '" + mvName + "' and view_status = 'valid';"
-                );
-                TestUtils.assertSqlCursors(
-                        compiler,
-                        sqlExecutionContext,
-                        viewSql,
-                        mvName,
-                        LOG
-                );
+                if (expectValidMatViews) {
+                    assertSql(
+                            "count\n" +
+                                    "1\n",
+                            "select count() " +
+                                    "from materialized_views " +
+                                    "where view_name = '" + mvName + "' and view_status = 'valid';"
+                    );
+                    TestUtils.assertSqlCursors(
+                            compiler,
+                            sqlExecutionContext,
+                            viewSql,
+                            mvName,
+                            LOG
+                    );
+                } else {
+                    // Simply check that the view exists.
+                    assertSql(
+                            "count\n" +
+                                    "1\n",
+                            "select count() " +
+                                    "from materialized_views " +
+                                    "where view_name = '" + mvName + "';"
+                    );
+                }
             }
         }
     }
 
-    private void setFuzzParams(Rnd rnd, double collAddProb) {
+    private void setFuzzParams(Rnd rnd, double colAddProb) {
+        setFuzzParams(rnd, colAddProb, 0.0);
+    }
+
+    private void setFuzzParams(Rnd rnd, double colAddProb, double truncateProb) {
         fuzzer.setFuzzCounts(
                 rnd.nextBoolean(),
                 rnd.nextInt(2_000_000),
@@ -324,14 +357,14 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0.0,
                 0.0,
-                collAddProb,
+                colAddProb,
                 0.0,
                 0.0,
                 0.0,
                 1,
                 0.0,
                 0.0,
-                0.0,
+                truncateProb,
                 0.0,
                 0.0
         );
