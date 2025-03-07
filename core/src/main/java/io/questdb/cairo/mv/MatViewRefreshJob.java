@@ -442,7 +442,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 return false;
             }
 
-            rebuilt = refreshFull(state, baseTableToken, viewToken, refreshTriggeredTimestamp);
+            rebuilt = refreshFull0(state, baseTableToken, viewToken, refreshTriggeredTimestamp);
         } catch (Throwable th) {
             LOG.error().$("full refresh error [view=").$(viewToken).$(", error=").$(th).I$();
             refreshFailState(state, microsecondClock.getTicks(), th.getMessage());
@@ -458,7 +458,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return rebuilt;
     }
 
-    private boolean refreshFull(
+    private boolean refreshFull0(
             @NotNull MatViewRefreshState state,
             @NotNull TableToken baseTableToken,
             @NotNull TableToken viewToken,
