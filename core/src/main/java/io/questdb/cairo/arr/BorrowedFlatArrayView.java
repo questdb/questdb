@@ -27,7 +27,6 @@ package io.questdb.cairo.arr;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.Unsafe;
-import org.jetbrains.annotations.TestOnly;
 
 /**
  * Immutable view over the backing native memory of an array. Does not own the memory.
@@ -81,7 +80,6 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
         return this;
     }
 
-    @TestOnly
     public long ptr() {
         return this.ptr;
     }
@@ -100,7 +98,6 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
         this.ptr -= delta;
     }
 
-    @TestOnly
     public int size() {
         return this.size;
     }

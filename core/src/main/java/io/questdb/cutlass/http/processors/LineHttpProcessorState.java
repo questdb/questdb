@@ -234,6 +234,9 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     }
 
     private void adjustRecvBuffer(long newBufSize, boolean needShift) {
+        LOG.info().$("adjust ILP http receive buffer size [currentSize=").$(currentBufSize)
+                .$(", newBufferSize=").$(newBufSize)
+                .I$();
         long newBufLo = Unsafe.realloc(buffer, currentBufSize, newBufSize, MemoryTag.NATIVE_HTTP_CONN);
         long offset = buffer - newBufLo;
         if (needShift) {
@@ -298,7 +301,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 return false;
             }
 
-            // otherwise try to grow current recvBuffer with a step of four times the currentSize
+            // otherwise grow current recvBuffer to currentBufSize * RECV_BUFFER_INCREMENT_COEFFICIENT
             adjustRecvBuffer(Math.min(currentBufSize * RECV_BUFFER_INCREMENT_COEFFICIENT, maxBufferSize), true);
             decrease = false;
         }
@@ -525,9 +528,9 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     }
 
     /*
-     * Attempts to dynamically downsize the receive buffer when conditions permit.
-     * The condition for reduction is met only if, during two consecutive instances (either when the buffer is fully filled or commit),
-     * no measurement size exceeds (current buffer size / {@link #RECV_BUFFER_DECREMENT_COEFFICIENT}).
+     * Attempts to dynamically downsize the recvBuffer when conditions permit.
+     * The condition for reduction is met only if, during two consecutive instances (either when the buffer is fully filled or upon commit),
+     * no measurement exceeds (currentBufSize / RECV_BUFFER_DECREMENT_COEFFICIENT).
      */
     private void tryToShrinkRecvBuffer(boolean shiftParser) {
         if (maxMeasureSize == 0) {

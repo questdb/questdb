@@ -55,8 +55,8 @@ public class ArrayTest extends AbstractCairoTest {
             addr += 4;
             size += 4;
         }
-        Vect.memcpy(addr, view.getFlatViewPtr(), view.getFlatViewSize());
-        size += view.getFlatViewSize();
+        Vect.memcpy(addr, view.ptr(), view.size());
+        size += view.size();
         return size;
     }
 

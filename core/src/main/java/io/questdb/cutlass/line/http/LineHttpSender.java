@@ -40,7 +40,11 @@ import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.json.JsonParser;
 import io.questdb.cutlass.line.LineSenderException;
+import io.questdb.cutlass.line.array.ArrayDataAppender;
+import io.questdb.cutlass.line.array.ArrayShapeAppender;
 import io.questdb.cutlass.line.array.NDArrayFlattener;
+import io.questdb.cutlass.line.array.NDDoubleArray;
+import io.questdb.cutlass.line.array.NDLongArray;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
@@ -220,82 +224,35 @@ public final class LineHttpSender implements Sender {
 
     @Override
     public Sender doubleArray(CharSequence name, double[] values) {
-        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 1, values);
+        return arrayColumn(name, ColumnType.DOUBLE, (byte) 1, values,
+                NDArrayFlattener::processArrayShape,
+                NDArrayFlattener::processArrayData);
     }
 
     @Override
     public Sender doubleArray(CharSequence name, double[][] values) {
-        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 2, values);
+        return arrayColumn(name, ColumnType.DOUBLE, (byte) 2, values,
+                NDArrayFlattener::processArrayShape,
+                NDArrayFlattener::processArrayData);
     }
 
     @Override
     public Sender doubleArray(CharSequence name, double[][][] values) {
-        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 3, values);
+        return arrayColumn(name, ColumnType.DOUBLE, (byte) 3, values,
+                NDArrayFlattener::processArrayShape,
+                NDArrayFlattener::processArrayData);
     }
 
     @Override
-    public Sender doubleArray(CharSequence name, double[][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 4, values);
-    }
-
-    @Override
-    public Sender doubleArray(CharSequence name, double[][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 5, values);
-    }
-
-    @Override
-    public Sender doubleArray(CharSequence name, double[][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 6, values);
-    }
-
-    @Override
-    public Sender doubleArray(CharSequence name, double[][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 7, values);
-    }
-
-    @Override
-    public Sender doubleArray(CharSequence name, double[][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 8, values);
-    }
-
-    @Override
-    public Sender doubleArray(CharSequence name, double[][][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 9, values);
-    }
-
-    @Override
-    public Sender doubleArray(CharSequence name, double[][][][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 10, values);
-    }
-
-    @Override
-    public Sender doubleArray(CharSequence name, double[][][][][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 11, values);
-    }
-
-    @Override
-    public Sender doubleArray(CharSequence name, double[][][][][][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 12, values);
-    }
-
-    @Override
-    public Sender doubleArray(CharSequence name, double[][][][][][][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 13, values);
-    }
-
-    @Override
-    public Sender doubleArray(CharSequence name, double[][][][][][][][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 14, values);
-    }
-
-    @Override
-    public Sender doubleArray(CharSequence name, double[][][][][][][][][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 15, values);
-    }
-
-    @Override
-    public Sender doubleArray(CharSequence name, double[][][][][][][][][][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.DOUBLE, (byte) 16, values);
+    public Sender doubleArray(CharSequence name, NDDoubleArray values) {
+        if (processNullArray(name, values)) {
+            return this;
+        }
+        writeFieldName(name, true)
+                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                .put((byte) ColumnType.DOUBLE); // element type
+        request.setPtr(values.appendToBufPtr(request.getPtr(), request::checkCapacity, true));
+        return this;
     }
 
     @Override
@@ -312,82 +269,35 @@ public final class LineHttpSender implements Sender {
 
     @Override
     public Sender longArray(CharSequence name, long[] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 1, values);
+        return arrayColumn(name, ColumnType.LONG, (byte) 1, values,
+                NDArrayFlattener::processArrayShape,
+                NDArrayFlattener::processArrayData);
     }
 
     @Override
     public Sender longArray(CharSequence name, long[][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 2, values);
+        return arrayColumn(name, ColumnType.LONG, (byte) 2, values,
+                NDArrayFlattener::processArrayShape,
+                NDArrayFlattener::processArrayData);
     }
 
     @Override
     public Sender longArray(CharSequence name, long[][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 3, values);
+        return arrayColumn(name, ColumnType.LONG, (byte) 3, values,
+                NDArrayFlattener::processArrayShape,
+                NDArrayFlattener::processArrayData);
     }
 
     @Override
-    public Sender longArray(CharSequence name, long[][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 4, values);
-    }
-
-    @Override
-    public Sender longArray(CharSequence name, long[][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 5, values);
-    }
-
-    @Override
-    public Sender longArray(CharSequence name, long[][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 6, values);
-    }
-
-    @Override
-    public Sender longArray(CharSequence name, long[][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 7, values);
-    }
-
-    @Override
-    public Sender longArray(CharSequence name, long[][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 8, values);
-    }
-
-    @Override
-    public Sender longArray(CharSequence name, long[][][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 9, values);
-    }
-
-    @Override
-    public Sender longArray(CharSequence name, long[][][][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 10, values);
-    }
-
-    @Override
-    public Sender longArray(CharSequence name, long[][][][][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 11, values);
-    }
-
-    @Override
-    public Sender longArray(CharSequence name, long[][][][][][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 12, values);
-    }
-
-    @Override
-    public Sender longArray(CharSequence name, long[][][][][][][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 13, values);
-    }
-
-    @Override
-    public Sender longArray(CharSequence name, long[][][][][][][][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 14, values);
-    }
-
-    @Override
-    public Sender longArray(CharSequence name, long[][][][][][][][][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 15, values);
-    }
-
-    @Override
-    public Sender longArray(CharSequence name, long[][][][][][][][][][][][][][][][] values) {
-        return arrayColumn(name, (byte) ColumnType.LONG, (byte) 16, values);
+    public Sender longArray(CharSequence name, NDLongArray values) {
+        if (processNullArray(name, values)) {
+            return this;
+        }
+        writeFieldName(name, true)
+                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                .put((byte) ColumnType.LONG); // element type
+        request.setPtr(values.appendToBufPtr(request.getPtr(), request::checkCapacity, true));
+        return this;
     }
 
     @Override
@@ -490,16 +400,25 @@ public final class LineHttpSender implements Sender {
         return connectionHeader != null && Utf8s.equalsAscii("close", connectionHeader);
     }
 
-    private Sender arrayColumn(CharSequence name, short columnType, byte nDims, Object array) {
+    private <T> Sender arrayColumn(CharSequence name,
+                                   short columnType,
+                                   byte nDims,
+                                   T array,
+                                   ArrayShapeAppender<T> shapeAppender,
+                                   ArrayDataAppender<T> dataAppender) {
         if (processNullArray(name, array)) {
             return this;
         }
-
-        writeFieldName(name, true);
-        request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+        writeFieldName(name, true)
+                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
                 .put((byte) columnType) // element type
                 .put(nDims); // dims.
-        request.setPtr(NDArrayFlattener.flattenIntoBuf(request.getPtr(), request::checkCapacity, array, nDims, columnType));
+        request.checkCapacity(Integer.BYTES * nDims);
+        long addr = request.getPtr();
+
+        shapeAppender.append(addr, array);
+        addr += Integer.BYTES * nDims;
+        request.setPtr(dataAppender.append(addr, request::checkCapacity, array));
         return this;
     }
 

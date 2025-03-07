@@ -30,7 +30,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
-import org.jetbrains.annotations.TestOnly;
 
 /**
  * Mutable array that owns its backing native memory.
@@ -92,12 +91,20 @@ public final class DirectArray extends MutableArray implements Mutable {
         strides.clear();
     }
 
+    public long ptr() {
+        return ptr;
+    }
+
     public void putDouble(int flatIndex, double value) {
         assert ColumnType.decodeArrayElementType(type) == ColumnType.DOUBLE : "putting DOUBLE to a non-DOUBLE array";
         assert flatIndex >= 0 : "negative flatIndex";
         long offset = flatIndex * DOUBLE_BYTES;
         ensureCapacity(offset + DOUBLE_BYTES);
         Unsafe.getUnsafe().putDouble(ptr + offset, value);
+    }
+
+    public void putDoubleQuick(int flatIndex, double value) {
+        Unsafe.getUnsafe().putDouble(ptr + flatIndex * DOUBLE_BYTES, value);
     }
 
     public void putLong(int flatIndex, long value) {
@@ -108,13 +115,11 @@ public final class DirectArray extends MutableArray implements Mutable {
         Unsafe.getUnsafe().putLong(ptr + offset, value);
     }
 
-    @TestOnly
-    public long getFlatViewPtr() {
-        return borrowedFlatView().ptr();
+    public void putLongQuick(int flatIndex, long value) {
+        Unsafe.getUnsafe().putLong(ptr + flatIndex * LONG_BYTES, value);
     }
 
-    @TestOnly
-    public long getFlatViewSize() {
+    public long size() {
         return borrowedFlatView().size();
     }
 

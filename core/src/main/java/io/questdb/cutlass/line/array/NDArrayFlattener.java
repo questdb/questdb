@@ -24,8 +24,8 @@
 
 package io.questdb.cutlass.line.array;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.line.LineSenderException;
+import io.questdb.std.Unsafe;
 
 /**
  * Flattens an any dimensional array (up to 32 dimensions) and stores it in the request buffer.
@@ -34,49 +34,115 @@ import io.questdb.cutlass.line.LineSenderException;
  */
 public class NDArrayFlattener {
 
-    private static final short[] ELEM_TYPE_INDEX = new short[ColumnType.NULL + 1];
+    public static long processArrayData(long bufPtr, CheckCapacity checkFn, double[] array) {
+        CheckCapacity.check(checkFn, (long) array.length * Double.BYTES);
+        for (double v : array) {
+            Unsafe.getUnsafe().putDouble(bufPtr, v);
+            bufPtr += Double.BYTES;
+        }
+        return bufPtr;
+    }
 
-    public static long flattenIntoBuf(
-            long bufPtr,
-            CheckCapacity checkCapacityFn,
-            Object array,
-            int nDims,
-            short elemType
-    ) {
-        check(checkCapacityFn, (long) nDims * Integer.BYTES);
-        int flatLength = determineFlatLength(bufPtr, array, nDims);
-        if (flatLength == 0) {
+    public static long processArrayData(long bufPtr, CheckCapacity checkFn, double[][] array) {
+        int length = array[0].length;
+        for (double[] v : array) {
+            if (length != v.length) {
+                throw new LineSenderException("array is not regular");
+            }
+            bufPtr = processArrayData(bufPtr, checkFn, v);
+        }
+        return bufPtr;
+    }
+
+    public static long processArrayData(long bufPtr, CheckCapacity checkFn, double[][][] array) {
+        int length = array[0].length;
+        for (double[][] v : array) {
+            if (length != v.length) {
+                throw new LineSenderException("array is not regular");
+            }
+            bufPtr = processArrayData(bufPtr, checkFn, v);
+        }
+        return bufPtr;
+    }
+
+    public static long processArrayData(long bufPtr, CheckCapacity checkFn, long[] array) {
+        CheckCapacity.check(checkFn, (long) array.length * Double.BYTES);
+        for (long v : array) {
+            Unsafe.getUnsafe().putLong(bufPtr, v);
+            bufPtr += Long.BYTES;
+        }
+        return bufPtr;
+    }
+
+    public static long processArrayData(long bufPtr, CheckCapacity checkFn, long[][] array) {
+        int length = array[0].length;
+        for (long[] v : array) {
+            if (length != v.length) {
+                throw new LineSenderException("array is not regular");
+            }
+            bufPtr = processArrayData(bufPtr, checkFn, v);
+        }
+        return bufPtr;
+    }
+
+    public static long processArrayData(long bufPtr, CheckCapacity checkFn, long[][][] array) {
+        int length = array[0].length;
+        for (long[][] v : array) {
+            if (length != v.length) {
+                throw new LineSenderException("array is not regular");
+            }
+            bufPtr = processArrayData(bufPtr, checkFn, v);
+        }
+        return bufPtr;
+    }
+
+    public static void processArrayShape(long bufPtr, double[] array) {
+        if (array.length == 0) {
             throw new LineSenderException("zero length array not supported");
         }
-
-        final int elementSize = ColumnType.sizeOf(elemType);
-        check(checkCapacityFn, (long) flatLength * elementSize);
-        bufPtr += (long) nDims * Integer.BYTES;
-        long ptr = flattenIntoBuf(bufPtr, array, nDims, ELEM_TYPE_INDEX[elemType]);
-        if (ptr == 0) {
-            throw new LineSenderException("array is not regular");
-        }
-        return ptr;
+        Unsafe.getUnsafe().putInt(bufPtr, array.length);
     }
 
-    private static void check(CheckCapacity checkFn, long addr) {
-        if (checkFn != null) {
-            checkFn.checkCapacity(addr);
+    public static void processArrayShape(long bufPtr, double[][] array) {
+        if (array.length == 0) {
+            throw new LineSenderException("zero length array not supported");
         }
+        Unsafe.getUnsafe().putInt(bufPtr, array.length);
+        bufPtr += Integer.BYTES;
+        processArrayShape(bufPtr, array[0]);
     }
 
-    private native static int determineFlatLength(long addr, Object array, int nDims);
+    public static void processArrayShape(long bufPtr, double[][][] array) {
+        if (array.length == 0) {
+            throw new LineSenderException("zero length array not supported");
+        }
+        Unsafe.getUnsafe().putInt(bufPtr, array.length);
+        bufPtr += Integer.BYTES;
+        processArrayShape(bufPtr, array[0]);
+    }
 
-    private native static long flattenIntoBuf(long addr, Object array, int nDims, int elemTypeIndex);
+    public static void processArrayShape(long bufPtr, long[] array) {
+        if (array.length == 0) {
+            throw new LineSenderException("zero length array not supported");
+        }
+        Unsafe.getUnsafe().putInt(bufPtr, array.length);
+    }
 
-    static {
-        // Corresponding to index of `process_array_datas` and `process_array_shapes` function arrays in nd_array.cpp.
-        ELEM_TYPE_INDEX[ColumnType.BOOLEAN] = 0;
-        ELEM_TYPE_INDEX[ColumnType.BYTE] = 1;
-        ELEM_TYPE_INDEX[ColumnType.SHORT] = 2;
-        ELEM_TYPE_INDEX[ColumnType.INT] = 3;
-        ELEM_TYPE_INDEX[ColumnType.LONG] = 4;
-        ELEM_TYPE_INDEX[ColumnType.FLOAT] = 5;
-        ELEM_TYPE_INDEX[ColumnType.DOUBLE] = 6;
+    public static void processArrayShape(long bufPtr, long[][] array) {
+        if (array.length == 0) {
+            throw new LineSenderException("zero length array not supported");
+        }
+        Unsafe.getUnsafe().putInt(bufPtr, array.length);
+        bufPtr += Integer.BYTES;
+        processArrayShape(bufPtr, array[0]);
+    }
+
+    public static void processArrayShape(long bufPtr, long[][][] array) {
+        if (array.length == 0) {
+            throw new LineSenderException("zero length array not supported");
+        }
+        Unsafe.getUnsafe().putInt(bufPtr, array.length);
+        bufPtr += Integer.BYTES;
+        processArrayShape(bufPtr, array[0]);
     }
 }

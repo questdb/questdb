@@ -22,19 +22,12 @@
  *
  ******************************************************************************/
 
-#ifndef QUESTDB_ND_ARRAY_H
-#define QUESTDB_ND_ARRAY_H
+package io.questdb.cutlass.line.array;
 
-#include <jni.h>
-
-extern "C" JNIEXPORT jlong JNICALL
-Java_io_questdb_cutlass_line_array_NDArrayFlattener_flattenIntoBuf(
-    JNIEnv *env, jclass, jlong addr, jobject array, jint dims, jint elementType
-);
-
-extern "C" JNIEXPORT jlong JNICALL
-Java_io_questdb_cutlass_line_array_NDArrayFlattener_determineFlatLength(
-    JNIEnv *env, jclass, jlong addr, jobject array, jint dims
-);
-
-#endif // QUESTDB_ARRAY_H
+@FunctionalInterface
+public interface ArrayShapeAppender<T> {
+    void append(
+            long bufPtr,
+            T values
+    );
+}

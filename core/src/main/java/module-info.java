@@ -124,4 +124,5 @@ open module io.questdb {
     exports io.questdb.cairo.arr;
     exports io.questdb.griffin.engine.functions.array;
     exports io.questdb.cairo.file;
+    exports io.questdb.cutlass.line.array;
 }

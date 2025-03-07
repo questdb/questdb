@@ -33,7 +33,8 @@ import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.*;
+import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.ND_ARR_INVALID_TYPE;
+import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.ND_ARR_LARGE_DIMENSIONS;
 
 /**
  * Parses an ND array native format used in ILP, which achieves higher write performance compared to the array text format.
@@ -43,7 +44,7 @@ import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.*;
  * +----------+----------+------------------------+--------------------+
  * | elemType |  dims    |       shapes           |    flat values     |
  * +----------+----------+------------------------+--------------------+
- * |  1 byte  | 1 byte  |     $dims * 4 bytes    |                    |
+ * |  1 byte  |  1 byte  |     $dims * 4 bytes    |                    |
  * </pre>
  *
  * <strong>Won't validate length of flat values for performance reason</strong>
@@ -51,11 +52,11 @@ import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.*;
 public class ArrayNativeFormatParser implements QuietCloseable {
 
     private final MmappedArray view = new MmappedArray();
-    private short elemType;
-    private int dims;
-    private long shapeAddr;
-    private int nextBinaryPartExpectSize = 1;
     private BinaryPart binaryPart;
+    private int dims;
+    private short elemType;
+    private int nextBinaryPartExpectSize = 1;
+    private long shapeAddr;
 
     @Override
     public void close() {
@@ -66,6 +67,10 @@ public class ArrayNativeFormatParser implements QuietCloseable {
     public @Nullable MmappedArray getArray() {
         assert binaryPart == BinaryPart.FINISH;
         return view.isNull() ? null : view;
+    }
+
+    public int getNextExpectSize() {
+        return nextBinaryPartExpectSize;
     }
 
     public boolean processNextBinaryPart(long addr) throws ParseException {
@@ -102,7 +107,7 @@ public class ArrayNativeFormatParser implements QuietCloseable {
                 shapeAddr = addr;
                 nextBinaryPartExpectSize = ColumnType.sizeOf(elemType);
                 for (int i = 0; i < dims; ++i) {
-                    final int dimLength = Unsafe.getUnsafe().getByte(addr + (long) i * Integer.BYTES);
+                    final int dimLength = Unsafe.getUnsafe().getInt(addr + (long) i * Integer.BYTES);
                     nextBinaryPartExpectSize = Math.multiplyExact(nextBinaryPartExpectSize, dimLength);
                 }
                 if (nextBinaryPartExpectSize == 0) {
@@ -133,10 +138,6 @@ public class ArrayNativeFormatParser implements QuietCloseable {
         nextBinaryPartExpectSize = 1;
         binaryPart = BinaryPart.ELEMENT_TYPE;
         view.reset();
-    }
-
-    public int getNextExpectSize() {
-        return nextBinaryPartExpectSize;
     }
 
     public void shl(long delta) {

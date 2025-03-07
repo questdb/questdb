@@ -25,12 +25,10 @@
 package io.questdb.cutlass.line.array;
 
 @FunctionalInterface
-public interface CheckCapacity {
-    static void check(CheckCapacity checkFn, long addr) {
-        if (checkFn != null) {
-            checkFn.checkCapacity(addr);
-        }
-    }
-
-    void checkCapacity(long capacity);
+public interface ArrayDataAppender<T> {
+    long append(
+            long bufPtr,
+            CheckCapacity checkFunc,
+            T values
+    );
 }

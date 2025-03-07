@@ -24,11 +24,14 @@
 
 package io.questdb.client;
 
+import io.questdb.cutlass.line.array.NDDoubleArray;
+import io.questdb.cutlass.line.array.NDLongArray;
+
 public interface INDArray<T> {
     /**
-     * Adds a column containing multi-dimensional double array values.
+     * Adds a column containing multi-dimensional array values.
      *
-     * <p>Overloaded methods support arrays from 1D to 16D dimensions. All variants share the same semantic meaning,
+     * <p>Overloaded methods support arrays from 1D to 32D dimensions. All variants share the same semantic meaning,
      * differing only in the dimensionality of the input array structure.
      *
      * <h3>Dimension Examples:</h3>
@@ -36,13 +39,12 @@ public interface INDArray<T> {
      * - double[]        : 1D (vector)
      * - double[][]      : 2D (matrix)
      * - double[][][]    : 3D (tensor)
-     * ...
-     * - double[][][][][][][][][][][][][][][][] : 16D
+     * - {@link NDDoubleArray}: any-D (upto 32)
      * </pre>
      *
-     * @param name   Column name identifier (non-null)
+     * @param name Column name identifier (non-null)
      * @param values N-dimensional double array to be added. Supported dimensions: 1D to 16D.
-     * @return Sender instance to support method chaining
+     * @return T instance to support method chaining
      */
     T doubleArray(CharSequence name, double[] values);
 
@@ -50,31 +52,7 @@ public interface INDArray<T> {
 
     T doubleArray(CharSequence name, double[][][] values);
 
-    T doubleArray(CharSequence name, double[][][][] values);
-
-    T doubleArray(CharSequence name, double[][][][][] values);
-
-    T doubleArray(CharSequence name, double[][][][][][] values);
-
-    T doubleArray(CharSequence name, double[][][][][][][] values);
-
-    T doubleArray(CharSequence name, double[][][][][][][][] values);
-
-    T doubleArray(CharSequence name, double[][][][][][][][][] values);
-
-    T doubleArray(CharSequence name, double[][][][][][][][][][] values);
-
-    T doubleArray(CharSequence name, double[][][][][][][][][][][] values);
-
-    T doubleArray(CharSequence name, double[][][][][][][][][][][][] values);
-
-    T doubleArray(CharSequence name, double[][][][][][][][][][][][][] values);
-
-    T doubleArray(CharSequence name, double[][][][][][][][][][][][][][] values);
-
-    T doubleArray(CharSequence name, double[][][][][][][][][][][][][][][] values);
-
-    T doubleArray(CharSequence name, double[][][][][][][][][][][][][][][][] values);
+    T doubleArray(CharSequence name, NDDoubleArray values);
 
     T longArray(CharSequence name, long[] values);
 
@@ -82,29 +60,5 @@ public interface INDArray<T> {
 
     T longArray(CharSequence name, long[][][] values);
 
-    T longArray(CharSequence name, long[][][][] values);
-
-    T longArray(CharSequence name, long[][][][][] values);
-
-    T longArray(CharSequence name, long[][][][][][] values);
-
-    T longArray(CharSequence name, long[][][][][][][] values);
-
-    T longArray(CharSequence name, long[][][][][][][][] values);
-
-    T longArray(CharSequence name, long[][][][][][][][][] values);
-
-    T longArray(CharSequence name, long[][][][][][][][][][] values);
-
-    T longArray(CharSequence name, long[][][][][][][][][][][] values);
-
-    T longArray(CharSequence name, long[][][][][][][][][][][][] values);
-
-    T longArray(CharSequence name, long[][][][][][][][][][][][][] values);
-
-    T longArray(CharSequence name, long[][][][][][][][][][][][][][] values);
-
-    T longArray(CharSequence name, long[][][][][][][][][][][][][][][] values);
-
-    T longArray(CharSequence name, long[][][][][][][][][][][][][][][][] values);
+    T longArray(CharSequence name, NDLongArray values);
 }
