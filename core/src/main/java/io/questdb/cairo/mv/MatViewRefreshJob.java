@@ -232,12 +232,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                     final CharSequence timestampName = tableWriter.getMetadata().getColumnName(tableWriter.getMetadata().getTimestampIndex());
                     final int cursorTimestampIndex = factory.getMetadata().getColumnIndex(timestampName);
-
-                    if (cursorTimestampIndex < 0) {
-                        throw SqlException.invalidColumn(0, "timestamp column '")
-                                .put(tableWriter.getMetadata().getColumnName(tableWriter.getMetadata().getTimestampIndex()))
-                                .put("' not found in view select query");
-                    }
+                    assert cursorTimestampIndex > -1;
 
                     try (RecordCursor cursor = factory.getCursor(refreshExecutionContext)) {
                         final Record record = cursor.getRecord();
