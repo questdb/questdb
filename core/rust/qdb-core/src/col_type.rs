@@ -70,14 +70,14 @@ pub enum ColumnTypeTag {
 
 impl ColumnTypeTag {
     /// If true, the column is encoded with both data and aux vectors.
-    pub fn is_var_size(self) -> bool {
+    pub const fn is_var_size(self) -> bool {
         self.fixed_size().is_none()
     }
 
     /// Obtains the fixed size required to encode the type on disk in bytes.
     /// If the type is var size, returns None.
     /// N.B. Symbol columns are _also_ considered fixed size.
-    pub fn fixed_size(self) -> Option<usize> {
+    pub const fn fixed_size(self) -> Option<usize> {
         match self {
             ColumnTypeTag::Boolean | ColumnTypeTag::GeoByte | ColumnTypeTag::Byte => Some(1),
 
