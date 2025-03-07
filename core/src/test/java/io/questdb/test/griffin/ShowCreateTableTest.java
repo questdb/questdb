@@ -29,7 +29,7 @@ import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.io.File;
@@ -109,7 +109,9 @@ public class ShowCreateTableTest extends AbstractCairoTest {
 
     @Test
     public void testInVolumeNotFound() throws Exception {
-        Assert.assertFalse(Os.isWindows());
+
+        Assume.assumeFalse(Os.isWindows());
+
         assertMemoryLeak(() -> {
             final File volume = temp.newFolder("other_path");
             final String volumeAlias = "foobar";
