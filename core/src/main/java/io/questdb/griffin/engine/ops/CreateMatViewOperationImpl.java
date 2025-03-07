@@ -152,11 +152,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
-    public long getMetadataVersion() {
-        return createTableOperation.getMetadataVersion();
-    }
-
-    @Override
     public long getO3MaxLag() {
         return createTableOperation.getO3MaxLag();
     }
