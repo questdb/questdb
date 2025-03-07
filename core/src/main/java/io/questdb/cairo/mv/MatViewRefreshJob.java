@@ -421,7 +421,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
 
-        final boolean rebuilt;
         try {
             final TableToken baseTableToken;
             try {
@@ -439,7 +438,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 return false;
             }
 
-            rebuilt = refreshFull0(state, baseTableToken, viewToken, refreshTriggeredTimestamp);
+            refreshFull0(state, baseTableToken, viewToken, refreshTriggeredTimestamp);
         } catch (Throwable th) {
             LOG.error().$("full refresh error [view=").$(viewToken).$(", error=").$(th).I$();
             refreshFailState(state, microsecondClock.getTicks(), th.getMessage());
@@ -449,13 +448,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
 
         // Kickstart incremental refresh.
-        if (rebuilt) {
-            viewGraph.enqueueIncrementalRefresh(viewToken);
-        }
-        return rebuilt;
+        viewGraph.enqueueIncrementalRefresh(viewToken);
+        return true;
     }
 
-    private boolean refreshFull0(
+    private void refreshFull0(
             @NotNull MatViewRefreshState state,
             @NotNull TableToken baseTableToken,
             @NotNull TableToken viewToken,
@@ -486,21 +483,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     insertAsSelect(state, viewDef, commitWriter, toBaseTxn, refreshTriggeredTimestamp);
                     resetInvalidState(state);
                     writeLastRefreshBaseTableTxn(state, toBaseTxn);
-                    return true;
-                } catch (CairoException ex) {
-                    if (ex.isTableDropped() || ex.tableDoesNotExist()) {
-                        // There is an ongoing drop mat view. It will clean up the state.
-                        LOG.info().$("materialized view is dropped, it will be removed from the graph [view=").$(viewToken).I$();
-                    } else {
-                        throw ex;
-                    }
                 }
             } finally {
                 refreshExecutionContext.clearReader();
                 engine.attachReader(baseTableReader);
             }
         }
-        return false;
     }
 
     private boolean refreshIncremental(@NotNull TableToken viewToken, MatViewGraph viewGraph, long refreshTriggeredTimestamp) {
@@ -582,13 +570,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             writeLastRefreshBaseTableTxn(state, toBaseTxn);
                         }
                         return changed;
-                    } catch (CairoException ex) {
-                        if (ex.isTableDropped() || ex.tableDoesNotExist()) {
-                            // There is an ongoing drop mat view. It will clean up the state.
-                            LOG.info().$("materialized view is dropped, it will be removed from the graph [view=").$(viewToken).I$();
-                        } else {
-                            throw ex;
-                        }
                     }
                 }
             } finally {
