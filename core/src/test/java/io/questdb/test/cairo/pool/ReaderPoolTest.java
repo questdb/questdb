@@ -42,11 +42,14 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
@@ -72,7 +75,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.Assert.fail;
 
 public class ReaderPoolTest extends AbstractCairoTest {
-
     private TableToken uTableToken;
 
     @Before
@@ -84,7 +86,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
     @Test
     public void testAllocate() throws Exception {
-
         assertWithPool(pool -> {
             // has to be less than the available entries in the pool, default is 160
             final int numOfThreads = 50;
@@ -123,7 +124,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
     @Test
     public void testAllocateAndClear() throws Exception {
-
         assertWithPool(pool -> {
             int n = 2;
             final CyclicBarrier barrier = new CyclicBarrier(n);
@@ -160,7 +160,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
                         pool.releaseInactive();
                         Os.pause();
                     }
-
                 } catch (Exception e) {
                     e.printStackTrace();
                     errors.incrementAndGet();
@@ -178,7 +177,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
     @Test
     public void testBasicCharSequence() throws Exception {
-
         TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE);
         AbstractCairoTest.create(model);
         sink.clear();
@@ -269,6 +267,116 @@ public class ReaderPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConcurrentGetAndGetCopyOfFuzz() throws Exception {
+        final int readerThreadCount = 4;
+        final int readerIterations = 200;
+        final int writerIterations = 50;
+        final int writerBatchSize = 10;
+        final String tableName = "test";
+
+        final Rnd seedRnd = TestUtils.generateRandom(LOG);
+
+        assertWithPool((ReaderPool pool) -> {
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
+                    .col("sym", ColumnType.SYMBOL)
+                    .timestamp("ts");
+            AbstractCairoTest.create(model);
+
+            final CyclicBarrier barrier = new CyclicBarrier(readerThreadCount + 1);
+            final CountDownLatch halt = new CountDownLatch(readerThreadCount + 1);
+            final AtomicInteger errors = new AtomicInteger();
+
+            final Rnd writerRnd = new Rnd(seedRnd.nextLong(), seedRnd.nextLong());
+            new Thread(() -> {
+                try {
+                    barrier.await();
+                    try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
+                        boolean columnsAdded = false;
+                        boolean columnTypeChanged = false;
+                        boolean columnRenamed = false;
+                        for (int i = 0; i < writerIterations; i++) {
+                            final int prob = writerRnd.nextInt(100);
+                            if (prob >= 95 && columnsAdded) {
+                                writer.removeColumn("sym2");
+                                writer.removeColumn("int2");
+                                writer.removeColumn(columnRenamed ? "bool3" : "bool2");
+                                columnsAdded = false;
+                                columnTypeChanged = false;
+                                columnRenamed = false;
+                            } else if (prob >= 90 && !columnsAdded) {
+                                writer.addColumn("sym2", ColumnType.SYMBOL, 256, true, true, 256, false);
+                                writer.addColumn("int2", ColumnType.INT);
+                                writer.addColumn("bool2", ColumnType.BOOLEAN);
+                                columnsAdded = true;
+                            } else if (prob >= 85 && columnsAdded && !columnTypeChanged) {
+                                writer.changeColumnType("sym2", ColumnType.STRING, 0, false, false, 0, false, null);
+                                columnTypeChanged = true;
+                            } else if (prob >= 80 && columnsAdded && !columnRenamed) {
+                                writer.renameColumn("bool2", "bool3");
+                                columnRenamed = true;
+                            } else {
+                                for (int j = 0; j < writerBatchSize; j++) {
+                                    TableWriter.Row r = writer.newRow(Timestamps.SECOND_MICROS * i);
+                                    r.putSym(0, writerRnd.nextString(writerRnd.nextInt(32)));
+                                    r.append();
+                                }
+                                writer.commit();
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    errors.incrementAndGet();
+                    e.printStackTrace(System.out);
+                } finally {
+                    halt.countDown();
+                    Path.clearThreadLocals();
+                }
+            }).start();
+
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            for (int t = 0; t < readerThreadCount; t++) {
+                final Rnd readerRnd = new Rnd(seedRnd.nextLong(), seedRnd.nextLong());
+                new Thread(() -> {
+                    final StringSink sink = new StringSink();
+                    try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()) {
+                        barrier.await();
+                        for (int i = 0; i < readerIterations; i++) {
+                            TableReader copiedReader = null;
+                            TableReader reader = null;
+                            try {
+                                if (readerRnd.nextBoolean()) {
+                                    reader = pool.get(tableToken);
+                                } else {
+                                    copiedReader = pool.get(tableToken);
+                                    Os.sleep(1); // wait a bit
+                                    reader = pool.getCopyOf(copiedReader);
+                                }
+
+                                // Just read the table contents.
+                                cursor.of(reader);
+                                println(reader.getMetadata(), cursor, sink);
+                            } finally {
+                                Misc.free(copiedReader);
+                                Misc.free(reader);
+                            }
+                        }
+                    } catch (Exception e) {
+                        errors.incrementAndGet();
+                        e.printStackTrace(System.out);
+                    } finally {
+                        halt.countDown();
+                        Path.clearThreadLocals();
+                    }
+                }).start();
+            }
+
+            halt.await();
+            Assert.assertEquals(0, halt.getCount());
+            Assert.assertEquals(0, errors.get());
+        });
+    }
+
+    @Test
     public void testConcurrentOpenAndClose() throws Exception {
         final int readerCount = 5;
         int threadCount = 2;
@@ -296,12 +404,10 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
                         for (int i1 = 0; i1 < iterations; i1++) {
                             TableToken m = names[rnd.nextPositiveInt() % readerCount];
-
                             try (TableReader ignored = pool.get(m)) {
                                 Os.pause();
                             }
                         }
-
                     } catch (Exception e) {
                         e.printStackTrace();
                         errors.incrementAndGet();
@@ -359,7 +465,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
 
             for (int k = 0; k < threadCount; k++) {
                 new Thread(new Runnable() {
-
                     final ObjHashSet<TableReader> readers = new ObjHashSet<>();
                     final StringSink sink = new StringSink();
 
@@ -429,6 +534,276 @@ public class ReaderPoolTest extends AbstractCairoTest {
             halt.await();
             Assert.assertEquals(0, halt.getCount());
             Assert.assertEquals(0, errors.get());
+        });
+    }
+
+    @Test
+    public void testCopyOfCreatesNewReader() throws Exception {
+        assertWithPool(pool -> {
+            final String tableName = "test";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                    .col("sym", ColumnType.SYMBOL)
+                    .timestamp("ts");
+            AbstractCairoTest.create(model);
+
+            try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
+                TableWriter.Row r = writer.newRow(1);
+                r.putSym(0, "foo");
+                r.append();
+                writer.commit();
+            }
+
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            try (
+                    TableReader ogReader = pool.get(tableToken);
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
+            ) {
+                try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
+                    TableWriter.Row r = writer.newRow(Timestamps.DAY_MICROS + 1);
+                    r.putSym(0, "bar");
+                    r.append();
+                    writer.commit();
+                }
+
+                cursor.of(ogReader);
+                println(ogReader.getMetadata(), cursor);
+                final String expected = sink.toString();
+
+                TableReader copyReaderRef;
+                try (TableReader copyReader = pool.getCopyOf(ogReader)) {
+                    copyReaderRef = copyReader;
+                    cursor.of(copyReader);
+                    println(copyReader.getMetadata(), cursor);
+                    final String copyActual = sink.toString();
+
+                    Assert.assertEquals(expected, copyActual);
+                }
+
+                // This is the same instance as copyReader, but this time it's fully up-to-date.
+                try (TableReader newerTxnReader = pool.get(tableToken)) {
+                    Assert.assertSame(copyReaderRef, newerTxnReader);
+                    cursor.of(newerTxnReader);
+                    println(newerTxnReader.getMetadata(), cursor);
+                    final String newerTxnActual = sink.toString();
+
+                    Assert.assertNotEquals(expected, newerTxnActual);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCopyOfEmptyTable() throws Exception {
+        assertWithPool(pool -> {
+            final String tableName = "test";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                    .col("sym", ColumnType.SYMBOL)
+                    .timestamp("ts");
+            AbstractCairoTest.create(model);
+
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            try (
+                    TableReader ogReader = pool.get(tableToken);
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
+            ) {
+                cursor.of(ogReader);
+                println(ogReader.getMetadata(), cursor);
+                final String expected = sink.toString();
+
+                try (TableReader copyReader = pool.getCopyOf(ogReader)) {
+                    cursor.of(copyReader);
+                    println(copyReader.getMetadata(), cursor);
+                    final String copyActual = sink.toString();
+
+                    Assert.assertEquals(expected, copyActual);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCopyOfReloadsNewerTxnReader() throws Exception {
+        assertWithPool(pool -> {
+            final String tableName = "test";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                    .col("sym", ColumnType.SYMBOL)
+                    .timestamp("ts");
+            AbstractCairoTest.create(model);
+
+            try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
+                TableWriter.Row r = writer.newRow(1);
+                r.putSym(0, "foo");
+                r.append();
+                writer.commit();
+            }
+
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            try (
+                    TableReader ogReader = pool.get(tableToken);
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
+            ) {
+                cursor.of(ogReader);
+                println(ogReader.getMetadata(), cursor);
+                final String expected = sink.toString();
+
+                try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
+                    TableWriter.Row r = writer.newRow(Timestamps.DAY_MICROS + 1);
+                    r.putSym(0, "bar");
+                    r.append();
+                    writer.commit();
+                }
+
+                TableReader newerTxnReaderRef;
+                try (TableReader newerTxnReader = pool.get(tableToken)) {
+                    newerTxnReaderRef = newerTxnReader;
+                    cursor.of(newerTxnReader);
+                    println(newerTxnReader.getMetadata(), cursor);
+                    final String newerTxnActual = sink.toString();
+
+                    Assert.assertNotEquals(expected, newerTxnActual);
+                }
+
+                try (TableReader copyReader = pool.getCopyOf(ogReader)) {
+                    Assert.assertSame(newerTxnReaderRef, copyReader);
+                    cursor.of(copyReader);
+                    println(copyReader.getMetadata(), cursor);
+                    final String copyActual = sink.toString();
+
+                    Assert.assertEquals(expected, copyActual);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCopyOfReloadsOlderTxnReader() throws Exception {
+        assertWithPool(pool -> {
+            final String tableName = "test";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                    .col("sym", ColumnType.SYMBOL)
+                    .timestamp("ts");
+            AbstractCairoTest.create(model);
+
+            try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
+                TableWriter.Row r = writer.newRow(1);
+                r.putSym(0, "foo");
+                r.append();
+                writer.commit();
+            }
+
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            // Grab a couple of readers, so that we have a stale reader when we acquire the OG reader.
+            try (
+                    TableReader ignore1 = pool.get(tableToken);
+                    TableReader ignore2 = pool.get(tableToken)
+            ) {
+            }
+
+            try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
+                TableWriter.Row r = writer.newRow(Timestamps.DAY_MICROS + 1);
+                r.putSym(0, "bar");
+                r.append();
+                writer.commit();
+            }
+
+            try (
+                    TableReader ogReader = pool.get(tableToken);
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
+            ) {
+                try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
+                    TableWriter.Row r = writer.newRow(2 * Timestamps.DAY_MICROS + 1);
+                    r.putSym(0, "baz");
+                    r.append();
+                    writer.commit();
+                }
+
+                cursor.of(ogReader);
+                println(ogReader.getMetadata(), cursor);
+                final String expected = sink.toString();
+
+                try (TableReader copyReader = pool.getCopyOf(ogReader)) {
+                    cursor.of(copyReader);
+                    println(copyReader.getMetadata(), cursor);
+                    final String copyActual = sink.toString();
+
+                    Assert.assertEquals(expected, copyActual);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCopyOfReturnsSameTxnReader() throws Exception {
+        assertWithPool(pool -> {
+            final String tableName = "test";
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                    .col("sym", ColumnType.SYMBOL)
+                    .timestamp("ts");
+            AbstractCairoTest.create(model);
+
+            try (TableWriter writer = newOffPoolWriter(configuration, tableName)) {
+                TableWriter.Row r = writer.newRow(1);
+                r.putSym(0, "foo");
+                r.append();
+                writer.commit();
+            }
+
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            try (
+                    TableReader ogReader = pool.get(tableToken);
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
+            ) {
+                cursor.of(ogReader);
+                println(ogReader.getMetadata(), cursor);
+                final String expected = sink.toString();
+
+                TableReader sameTxnReaderRef;
+                try (TableReader sameTxnReader = pool.get(tableToken)) {
+                    sameTxnReaderRef = sameTxnReader;
+                    cursor.of(sameTxnReader);
+                    println(sameTxnReader.getMetadata(), cursor);
+                    final String sameTxnActual = sink.toString();
+
+                    Assert.assertEquals(expected, sameTxnActual);
+                }
+
+                // We should get the same reader as before since getCopyOf() is no-op in this case.
+                try (TableReader copyReader = pool.getCopyOf(ogReader)) {
+                    Assert.assertSame(sameTxnReaderRef, copyReader);
+                    cursor.of(copyReader);
+                    println(copyReader.getMetadata(), cursor);
+                    final String copyActual = sink.toString();
+
+                    Assert.assertEquals(expected, copyActual);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDetachedRefCount() throws Exception {
+        TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE);
+        AbstractCairoTest.create(model);
+        TableToken tableToken = engine.verifyTableName("x");
+        assertWithPool(pool -> {
+            ReaderPool.R reader = pool.get(tableToken);
+            Assert.assertEquals(0, reader.getDetachedRefCount());
+
+            pool.detach(reader);
+            Assert.assertEquals(0, reader.getDetachedRefCount());
+
+            for (int i = 0; i < 10; i++) {
+                reader.incrementDetachedRefCount();
+                Assert.assertEquals(i + 1, reader.getDetachedRefCount());
+            }
+            for (int i = 9; i > -1; i--) {
+                reader.close();
+                Assert.assertEquals(i, reader.getDetachedRefCount());
+            }
+
+            pool.attach(reader);
+            reader.close();
+            Assert.assertEquals(0, reader.getDetachedRefCount());
         });
     }
 
@@ -572,7 +947,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
                 Assert.assertTrue(reader.isOpen());
                 reader.close();
             }
-
         }, new DefaultTestCairoConfiguration(root) {
             @Override
             public @NotNull FilesFacade getFilesFacade() {
@@ -865,7 +1239,6 @@ public class ReaderPoolTest extends AbstractCairoTest {
     @Test
     public void testReaderDoubleClose() throws Exception {
         assertWithPool(pool -> {
-
             class Listener implements PoolListener {
                 private final IntList events = new IntList();
                 private final ObjList<TableToken> names = new ObjList<>();

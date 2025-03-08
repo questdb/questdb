@@ -168,8 +168,9 @@ public class ColumnPurgeOperator implements Closeable {
             LOG.error().$("cannot lock last txn in scoreboard, column purge will re-run [table=")
                     .utf8(task.getTableName().getTableName())
                     .$(", txn=").$(updateTxn)
-                    .$(", error=").$(ex.getFlyweightMessage())
-                    .$(", errno=").$(ex.getErrno()).I$();
+                    .$(", msg=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
             return true;
         }
     }
@@ -427,7 +428,8 @@ public class ColumnPurgeOperator implements Closeable {
                     LOG.error().$("could not mark record as purged [errno=").$(errno)
                             .$(", writeOffset=").$(offset)
                             .$(", fd=").$(purgeLogPartitionFd)
-                            .$(", fileSize=").$(length).I$();
+                            .$(", fileSize=").$(length)
+                            .I$();
                     // Re-open of the file next run in case something went wrong.
                     purgeLogPartitionTimestamp = -1;
                 }

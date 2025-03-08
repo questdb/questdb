@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -45,6 +46,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 
+@SuppressWarnings("unused")
 public class QueryActivityFunctionFactory implements FunctionFactory {
     private static final RecordMetadata METADATA;
     private static final String SIGNATURE = "query_activity()";
@@ -170,8 +172,7 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
 
             @Override
             public int getStrLen(int col) {
-                CharSequence str = getStrA(col);
-                return str != null ? str.length() : -1;
+                return TableUtils.lengthOf(getStrA(col));
             }
 
             @Override
