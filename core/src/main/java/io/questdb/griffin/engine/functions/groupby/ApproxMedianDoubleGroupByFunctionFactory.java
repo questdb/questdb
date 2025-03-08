@@ -36,7 +36,7 @@ import io.questdb.std.ObjList;
 import static io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoubleGroupByFunctionFactory.checkAndReturnPrecision;
 
 public class ApproxMedianDoubleGroupByFunctionFactory implements FunctionFactory {
-    private final DoubleConstant percentileFunc = DoubleConstant.newInstance(0.5);
+    private static final DoubleConstant percentileFunc = DoubleConstant.newInstance(0.5);
 
     @Override
     public String getSignature() {
