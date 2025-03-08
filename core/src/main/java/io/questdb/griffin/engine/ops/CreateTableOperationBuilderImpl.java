@@ -27,8 +27,6 @@ package io.questdb.griffin.engine.ops;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -36,11 +34,9 @@ import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
-import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
-import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
@@ -57,7 +53,6 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> columnModels = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
-    private final IntIntHashMap typeCasts = new IntIntHashMap();
     private long batchO3MaxLag = -1;
     private long batchSize = -1;
     private int defaultSymbolCapacity;
@@ -66,8 +61,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private int maxUncommittedRows;
     private long o3MaxLag = -1;
     private ExpressionNode partitionByExpr;
-    private QueryModel queryModel;
-    private RecordCursorFactory recordCursorFactory;
+    // transient field, unoptimized AS SELECT model, used in toSink()
+    private QueryModel selectModel;
     private CharSequence selectText;
     private ExpressionNode tableNameExpr;
     private ExpressionNode timestampExpr;
@@ -85,16 +80,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     }
 
     @Override
-    public CreateTableOperation build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sqlText) throws SqlException {
-        tableNameExpr.token = Chars.toString(tableNameExpr.token);
-        if (queryModel != null) {
-            final RecordCursorFactory factory = compiler.generateSelectWithRetries(queryModel, sqlExecutionContext, false);
-            try {
-                setFactory(factory);
-            } catch (Throwable th) {
-                Misc.free(factory);
-                throw th;
-            }
+    public CreateTableOperationImpl build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sqlText) throws SqlException {
+        if (selectText != null) {
             return new CreateTableOperationImpl(
                     Chars.toString(sqlText),
                     Chars.toString(tableNameExpr.token),
@@ -109,17 +96,16 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     defaultSymbolCapacity,
                     maxUncommittedRows,
                     o3MaxLag,
-                    recordCursorFactory,
                     columnModels,
                     batchSize,
                     batchO3MaxLag
             );
         }
 
-        if (this.likeTableNameExpr != null) {
-            TableToken likeTableNameToken = compiler.getEngine().getTableTokenIfExists(this.likeTableNameExpr.token);
+        if (likeTableNameExpr != null) {
+            TableToken likeTableNameToken = compiler.getEngine().getTableTokenIfExists(likeTableNameExpr.token);
             if (likeTableNameToken == null) {
-                throw SqlException.tableDoesNotExist(this.likeTableNameExpr.position, this.likeTableNameExpr.token);
+                throw SqlException.tableDoesNotExist(likeTableNameExpr.position, likeTableNameExpr.token);
             }
             return new CreateTableOperationImpl(
                     Chars.toString(sqlText),
@@ -155,7 +141,6 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         columnNameIndexMap.clear();
         columnNames.clear();
         columnModels.clear();
-        typeCasts.clear();
         batchO3MaxLag = -1;
         batchSize = -1;
         defaultSymbolCapacity = 0;
@@ -164,10 +149,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         maxUncommittedRows = 0;
         o3MaxLag = -1;
         partitionByExpr = null;
-        queryModel = null;
         tableNameExpr = null;
         timestampExpr = null;
         selectText = null;
+        selectModel = null;
         volumeAlias = null;
         ttlHoursOrMonths = 0;
         walEnabled = false;
@@ -195,7 +180,11 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     @Override
     public QueryModel getQueryModel() {
-        return queryModel;
+        return selectModel;
+    }
+
+    public CharSequence getSelectText() {
+        return selectText;
     }
 
     @Override
@@ -243,38 +232,6 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         this.defaultSymbolCapacity = defaultSymbolCapacity;
     }
 
-    public void setFactory(RecordCursorFactory factory) throws SqlException {
-        this.recordCursorFactory = factory;
-        final RecordMetadata metadata = factory.getMetadata();
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            columnNameIndexMap.put(metadata.getColumnName(i), i);
-        }
-
-        if (timestampExpr != null && metadata.getColumnIndexQuiet(timestampExpr.token) == -1) {
-            throw SqlException.invalidColumn(timestampExpr.position, timestampExpr.token);
-        }
-        ObjList<CharSequence> touchUpColumnNames = columnModels.keys();
-        for (int i = 0, n = touchUpColumnNames.size(); i < n; i++) {
-            CharSequence columnName = touchUpColumnNames.getQuick(i);
-            int index = metadata.getColumnIndexQuiet(columnName);
-            CreateTableColumnModel touchUp = columnModels.get(columnName);
-            if (index == -1) {
-                throw SqlException.invalidColumn(touchUp.getColumnNamePos(), columnName);
-            }
-            int from = metadata.getColumnType(index);
-            int to = touchUp.getColumnType();
-            if (to == ColumnType.UNDEFINED) {
-                assert !touchUp.isCast() : "CAST TO type is UNDEFINED";
-                touchUp.setColumnType(from);
-            } else if (isCompatibleCast(from, to)) {
-                assert touchUp.isCast() : "touchUp type is set, but isCast is false";
-                typeCasts.put(index, to);
-            } else {
-                throw SqlException.unsupportedCast(touchUp.getColumnTypePos(), columnName, from, to);
-            }
-        }
-    }
-
     public void setIgnoreIfExists(boolean flag) {
         this.ignoreIfExists = flag;
     }
@@ -295,8 +252,9 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         this.partitionByExpr = partitionByExpr;
     }
 
-    public void setQueryModel(QueryModel queryModel) {
-        this.queryModel = queryModel;
+    @Override
+    public void setSelectModel(QueryModel selectModel) {
+        this.selectModel = selectModel;
     }
 
     public void setSelectText(CharSequence selectText) {
@@ -340,9 +298,9 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         }
         sink.putAscii(" table ");
         sink.put(getTableNameExpr().token);
-        if (getQueryModel() != null) {
+        if (selectModel != null) {
             sink.putAscii(" as (");
-            getQueryModel().toSink(sink);
+            selectModel.toSink(sink);
             sink.putAscii(')');
             final ObjList<CharSequence> castColumns = columnModels.keys();
             for (int i = 0, n = castColumns.size(); i < n; i++) {
