@@ -59,14 +59,27 @@ def convert_and_append_parameters(value, type, resolved_parameters):
     elif type == 'array_float8':
         # Handle floating point arrays like {-1, 2, 3, 4, 5.42}
         if isinstance(value, str):
-            # Strip curly braces and split by comma
+             # Strip curly braces and split by comma
             value = value.strip('{}')
-            # Convert each element to float and create a list
-            float_array = [float(item.strip()) for item in value.split(',') if item.strip()]
+            # Convert each element to float, handling null values
+            float_array = []
+            for item in value.split(','):
+                item = item.strip()
+                if not item:
+                    continue
+                if item.lower() == 'null':
+                    float_array.append(None)
+                else:
+                    float_array.append(float(item))
             resolved_parameters.append(float_array)
+        # If already a list, ensure all elements are floats or None
         elif isinstance(value, list):
-            # If already a list, ensure all elements are floats
-            float_array = [float(item) for item in value]
+            float_array = []
+            for item in value:
+                if item is None:
+                    float_array.append(None)
+                else:
+                    float_array.append(float(item))
             resolved_parameters.append(float_array)
         else:
             raise ValueError(f"Invalid array_float8 value: {value}")
@@ -112,18 +125,22 @@ def convert_query_result(result):
             elif isinstance(value, bytes):
                 row[i] = value.decode()
             # convert lists of floats to PostgreSQL array string representation
-            elif isinstance(value, list) and all(isinstance(item, (int, float)) for item in value):
-                # Format as {n1, n2, n3, ...} with proper float representation
-                # Ensure at least one digit after decimal point for all numbers
-                float_strs = []
-                for item in value:
-                    float_val = float(item)
-                    # Check if it's an integer value and add .0 if needed
-                    if float_val.is_integer():
-                        float_strs.append(f"{float_val:.1f}")
-                    else:
-                        float_strs.append(str(float_val))
-                row[i] = '{' + ','.join(float_strs) + '}'
+            elif isinstance(value, list):
+                # Check if it's a list of numbers or None values
+                if all(isinstance(item, (int, float, type(None))) for item in value):
+                    # Format as {n1, n2, n3, ...} with proper float representation
+                    float_strs = []
+                    for item in value:
+                        if item is None:
+                            float_strs.append("NULL")
+                        else:
+                            float_val = float(item)
+                            # Check if it's an integer value and add .0 if needed
+                            if float_val.is_integer():
+                                float_strs.append(f"{float_val:.1f}")
+                            else:
+                                float_strs.append(str(float_val))
+                    row[i] = '{' + ','.join(float_strs) + '}'
 
     for row in result_converted:
         for i, value in enumerate(row):

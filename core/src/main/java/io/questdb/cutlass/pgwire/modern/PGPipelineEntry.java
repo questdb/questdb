@@ -2602,11 +2602,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         valueSize -= Integer.BYTES;
 
         int hasNull = getInt(lo, msgLimit, "malformed array null flag");
-        if (hasNull == 1) {
+        // todo: clarify the exact semantic of this flag; apparently python asyncpg client sends it as 0,
+        // even when there are NULL elements in the array
+//        if (hasNull == 1) {
             arrayView = transcodingBinaryArrayViews.next();
-        } else {
-            arrayView = pgNonNullBinaryArrayViewPool.next();
-        }
+//        } else {
+//            arrayView = pgNonNullBinaryArrayViewPool.next();
+//        }
         lo += Integer.BYTES;
         valueSize -= Integer.BYTES;
 
