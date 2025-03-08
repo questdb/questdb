@@ -31,8 +31,26 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
 public class ApproxPercentileDoubleGroupByFunctionFactory implements FunctionFactory {
+
+    public static int checkAndReturnPrecision(@NotNull Function precisionFunc, int precisionPos) throws SqlException {
+        if (!precisionFunc.isConstant()) {
+            throw SqlException.$(precisionPos, "precision must be a constant");
+        }
+        final int precision = precisionFunc.getInt(null);
+        if (precision < 0 || precision > 5) {
+            throw SqlException.$(precisionPos, "precision must be between 0 and 5");
+        }
+        return precision;
+    }
+
+    public static void checkPercentile(@NotNull Function percentileFunc, int percentilePos) throws SqlException {
+        if (!percentileFunc.isConstant() && !percentileFunc.isRuntimeConstant()) {
+            throw SqlException.$(percentilePos, "percentile must be a constant or runtime constant");
+        }
+    }
 
     @Override
     public String getSignature() {
@@ -56,17 +74,8 @@ public class ApproxPercentileDoubleGroupByFunctionFactory implements FunctionFac
         final Function percentileFunc = args.getQuick(1);
         final Function precisionFunc = args.getQuick(2);
 
-        if (!percentileFunc.isConstant() && !percentileFunc.isRuntimeConstant()) {
-            throw SqlException.$(argPositions.getQuick(1), "percentile must be a constant");
-        }
-        if (!precisionFunc.isConstant()) {
-            throw SqlException.$(argPositions.getQuick(2), "precision must be a constant");
-        }
-
-        final int precision = precisionFunc.getInt(null);
-        if (precision < 0 || precision > 5) {
-            throw SqlException.$(position, "precision must be between 0 and 5");
-        }
+        checkPercentile(percentileFunc, argPositions.getQuick(1));
+        final int precision = checkAndReturnPrecision(precisionFunc, argPositions.getQuick(2));
 
         if (precision > 2) {
             return new ApproxPercentileDoublePackedGroupByFunction(exprFunc, percentileFunc, precision, position);

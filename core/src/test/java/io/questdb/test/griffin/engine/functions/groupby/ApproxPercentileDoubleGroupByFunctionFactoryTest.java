@@ -298,7 +298,7 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
     public void testInvalidPrecision1() throws Exception {
         assertException(
                 "select approx_percentile(x::double, 0.5, 6) from long_sequence(1)",
-                7,
+                41,
                 "precision must be between 0 and 5"
         );
     }
@@ -307,7 +307,7 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
     public void testInvalidPrecision2() throws Exception {
         assertException(
                 "select approx_percentile(x::double, 0.5, -1) from long_sequence(1)",
-                7,
+                41,
                 "precision must be between 0 and 5"
         );
     }
