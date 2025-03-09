@@ -30,51 +30,48 @@ import io.questdb.std.Vect;
 
 public class LongArray extends AbstractArray {
 
-    private static final long DEFAULT_VALUE = 0L;
-
-    private LongArray(int[] shape, boolean initDefault, long defaultValue) {
+    private LongArray(int... shape) {
         super(shape, ColumnType.LONG);
-        if (initDefault) {
-            // fill default value
-            long ptr = array.ptr();
-            for (int i = 0, size = array.getFlatViewLength(); i < size; i++) {
-                Unsafe.getUnsafe().putLong(ptr, defaultValue);
-                ptr += Long.BYTES;
-            }
-        }
     }
 
     public static LongArray create(int... shape) {
-        return new LongArray(shape, true, DEFAULT_VALUE);
-    }
-
-    public static LongArray create(long defaultValue, int... shape) {
-        return new LongArray(shape, true, defaultValue);
+        return new LongArray(shape);
     }
 
     public static LongArray create(long[] values) {
-        LongArray ndArray = createWithoutDefault(values.length);
+        LongArray ndArray = new LongArray(values.length);
         FlattenArrayUtils.putDataToBuf(ndArray.array.ptr(), null, values);
         return ndArray;
     }
 
     public static LongArray create(long[][] values) {
-        LongArray ndArray = createWithoutDefault(values.length, values[0].length);
+        LongArray ndArray = new LongArray(values.length, values[0].length);
         FlattenArrayUtils.putDataToBuf(ndArray.array.ptr(), null, values);
         return ndArray;
     }
 
     public static LongArray create(long[][][] values) {
-        LongArray ndArray = createWithoutDefault(values.length, values[0].length, values[0][0].length);
+        LongArray ndArray = new LongArray(values.length, values[0].length, values[0][0].length);
         FlattenArrayUtils.putDataToBuf(ndArray.array.ptr(), null, values);
         return ndArray;
     }
 
-    public static LongArray createWithoutDefault(int... shape) {
-        return new LongArray(shape, false, DEFAULT_VALUE);
+    public LongArray set(long value, int... shape) {
+        assert !closed;
+        array.putLong(toFlatOffset(shape, true), value);
+        return this;
     }
 
-    public LongArray set(LongArray value, boolean move, int... shape) {
+    public LongArray setAll(long value) {
+        long ptr = array.ptr();
+        for (int i = 0, size = array.getFlatViewLength(); i < size; i++) {
+            Unsafe.getUnsafe().putLong(ptr, value);
+            ptr += Long.BYTES;
+        }
+        return this;
+    }
+
+    public LongArray setSubArray(LongArray value, boolean move, int... shape) {
         assert !closed && !value.closed;
         validateSubarrayShape(value, shape);
         int flawLength = toFlatOffset(shape, false);
@@ -82,12 +79,6 @@ public class LongArray extends AbstractArray {
         if (move) {
             value.close();
         }
-        return this;
-    }
-
-    public LongArray set(long value, int... shape) {
-        assert !closed;
-        array.putLong(toFlatOffset(shape, true), value);
         return this;
     }
 }
