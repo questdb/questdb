@@ -25,8 +25,8 @@
 package io.questdb.cutlass.line.array;
 
 @FunctionalInterface
-public interface CheckCapacity {
-    static void check(CheckCapacity checkFn, long addr) {
+public interface CapacityChecker {
+    static void check(CapacityChecker checkFn, long addr) {
         if (checkFn != null) {
             checkFn.checkCapacity(addr);
         }

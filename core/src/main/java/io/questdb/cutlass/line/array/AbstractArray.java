@@ -36,7 +36,7 @@ import io.questdb.std.Vect;
  * supporting up to 32 dimensions.
  * <p>It manages a contiguous block of memory to store the actual array data.
  * To prevent memory leaks, please ensure to invoke the {@link #close()}  method after usage.
- * <p>Additionally, the memory will also be released after calling {@link #appendToBufPtr(long, CheckCapacity, boolean)}.
+ * <p>Additionally, the memory will also be released after calling {@link #appendToBufPtr(long, CapacityChecker, boolean)}.
  * <p>Example of usage:
  * <pre>{@code
  *    // Creates a 2x3x2 matrix (of rank 3)
@@ -71,11 +71,11 @@ public abstract class AbstractArray implements QuietCloseable {
     /*
      * append current array to request buffer.
      */
-    public long appendToBufPtr(long bufPtr, CheckCapacity checkCapacityFn, boolean move) {
+    public long appendToBufPtr(long bufPtr, CapacityChecker checkCapacityFn, boolean move) {
         assert !closed;
         byte nDims = (byte) array.getDimCount();
         long size = array.size();
-        CheckCapacity.check(checkCapacityFn, Byte.BYTES + nDims * Integer.BYTES + size);
+        CapacityChecker.check(checkCapacityFn, Byte.BYTES + nDims * Integer.BYTES + size);
         Unsafe.getUnsafe().putByte(bufPtr, nDims);
         bufPtr += Byte.BYTES;
         for (byte i = 0; i < nDims; i++) {
