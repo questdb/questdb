@@ -24,6 +24,8 @@
 
 package io.questdb.metrics;
 
+import io.questdb.cairo.ColumnType;
+
 public interface LongGauge extends Target {
 
     void add(long value);
@@ -32,7 +34,22 @@ public interface LongGauge extends Target {
 
     CharSequence getName();
 
+    @Override
+    default String getType() {
+        return "gauge";
+    }
+
     long getValue();
+
+    @Override
+    default String getValueAsString() {
+        return String.valueOf(getValue());
+    }
+
+    @Override
+    default CharSequence getValueType() {
+        return ColumnType.nameOf(ColumnType.LONG);
+    }
 
     void inc();
 

@@ -24,13 +24,30 @@
 
 package io.questdb.metrics;
 
+import io.questdb.cairo.ColumnType;
 import org.jetbrains.annotations.TestOnly;
 
 public interface Counter extends Target {
 
     void add(long value);
 
+    @Override
+    default String getType() {
+        return "counter";
+    }
+
     long getValue();
+
+    @Override
+    default String getValueAsString() {
+        return String.valueOf(getValue());
+    }
+
+    @Override
+    default CharSequence getValueType() {
+        return ColumnType.nameOf(ColumnType.LONG);
+    }
+
 
     default void inc() {
         add(1);

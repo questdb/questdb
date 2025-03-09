@@ -62,6 +62,26 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
     }
 
     @Override
+    public CharSequence getName() {
+        return name;
+    }
+
+    @Override
+    public CharSequence getType() {
+        return "counter";
+    }
+
+    @Override
+    public CharSequence getValueAsString() {
+        return "unsupported";
+    }
+
+    @Override
+    public CharSequence getValueType() {
+        return "unsupported";
+    }
+
+    @Override
     public void inc(short label0, short label1) {
         counters[(label0 << shl) + label1].increment();
     }

@@ -31,6 +31,22 @@ import io.questdb.std.str.BorrowableUtf8Sink;
  */
 public interface Target {
 
+    default CharSequence getName() {
+        return "unknown";
+    }
+
+    default CharSequence getType() {
+        return "unknown";
+    }
+
+    default CharSequence getValueAsString() {
+        return "unknown";
+    }
+
+    default CharSequence getValueType() {
+        return "unknown";
+    }
+
     // We need a sink that we can borrow from and append to in native code.
     void scrapeIntoPrometheus(BorrowableUtf8Sink sink);
 }
