@@ -28,7 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
-public class NDDoubleArray extends AbstractNDArray {
+public class NDDoubleArray extends AbstractArray {
 
     private static final double DEFAULT_VALUE = 0.0;
 

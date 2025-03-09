@@ -32,7 +32,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 /**
- * `AbstractNDArray` provides an interface for Java client users to create multi-dimensional arrays,
+ * `AbstractArray` provides an interface for Java client users to create multi-dimensional arrays,
  * supporting up to 32 dimensions.
  * <p>It manages a contiguous block of memory to store the actual array data.
  * To prevent memory leaks, please ensure to invoke the {@link #close()}  method after usage.
@@ -55,12 +55,12 @@ import io.questdb.std.Vect;
  *
  * }</pre>
  */
-public abstract class AbstractNDArray implements QuietCloseable {
+public abstract class AbstractArray implements QuietCloseable {
 
     protected final DirectArray array = new DirectArray();
     protected boolean closed = false;
 
-    protected AbstractNDArray(int[] shape, short columnType) {
+    protected AbstractArray(int[] shape, short columnType) {
         array.setType(ColumnType.encodeArrayType(columnType, shape.length));
         for (int dim = 0, size = shape.length; dim < size; dim++) {
             array.setDimLen(dim, shape[dim]);
@@ -99,10 +99,10 @@ public abstract class AbstractNDArray implements QuietCloseable {
     }
 
     /*
-     * get flat length according to given coordinates.
-     * NOTE: the param coordinates must match the array's shape.
+     * Computes the flat array offset from the given coordinates.
+     * NOTE: the passed coordinates must be valid for the array's shape.
      */
-    protected int flawLengthOf(int[] coords, boolean isValue) {
+    protected int toFlatOffset(int[] coords, boolean isValue) {
         if (coords == null || coords.length == 0) {
             return 0;
         }
@@ -110,23 +110,21 @@ public abstract class AbstractNDArray implements QuietCloseable {
             if (coords.length != array.getDimCount()) {
                 throw new LineSenderException("coordinates and array shape do not match");
             }
-        } else {
-            if (array.getDimCount() <= coords.length) {
-                throw new LineSenderException("coordinates and array shape do not match");
-            }
+        } else if (coords.length >= array.getDimCount()) {
+            throw new LineSenderException("coordinates and array shape do not match");
         }
 
-        int flawLength = 0;
-        for (int dim = 0, size = coords.length; dim < size; dim++) {
+        int flatOffset = 0;
+        for (int dim = 0, n = coords.length; dim < n; dim++) {
             if (array.getDimLen(dim) <= coords[dim]) {
                 throw new LineSenderException("coordinates and array shape do not match");
             }
-            flawLength += array.getStride(dim) * coords[dim];
+            flatOffset += array.getStride(dim) * coords[dim];
         }
-        return flawLength;
+        return flatOffset;
     }
 
-    protected void validSubarrayShape(AbstractNDArray value, int[] shape) {
+    protected void validateSubarrayShape(AbstractArray value, int[] shape) {
         if (value.array.getDimCount() + shape.length != array.getDimCount()) {
             throw new LineSenderException("subArray do not match current array's shape");
         }
