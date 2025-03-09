@@ -113,9 +113,9 @@ public class DoubleArray extends AbstractArray {
     /**
      * Fill a value at the specified coordinates within the current array.
      */
-    public DoubleArray set(double value, int... shape) {
+    public DoubleArray set(double value, int... coords) {
         assert !closed;
-        array.putDouble(toFlatOffset(shape, true), value);
+        array.putDouble(toFlatOffset(coords, true), value);
         return this;
     }
 }
