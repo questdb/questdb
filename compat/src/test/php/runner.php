@@ -4,6 +4,9 @@
  * PHP Port of the Python test runner using PDO
  */
 
+// the 'Large Result Set' test eats memory like there is no tomorrow
+ini_set('memory_limit', '512M');
+
 require 'vendor/autoload.php';
 
 use Symfony\Component\Yaml\Yaml;
