@@ -27,6 +27,7 @@ package io.questdb.std;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.arr.DirectArray;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sink;
@@ -147,6 +148,7 @@ public class Rnd {
     }
 
     public void nextFlatDoubleArray(DirectArray array, int nanRate, int size) {
+        MemoryA memA = array.startAppendMemory();
         for (int i = 0; i < size; i++) {
             double val;
             if (nanRate > 0 && nextInt(nanRate) == 1) {
@@ -154,7 +156,7 @@ public class Rnd {
             } else {
                 val = nextDouble();
             }
-            array.putDouble(i, val);
+            memA.putDouble(val);
         }
     }
 
@@ -221,7 +223,7 @@ public class Rnd {
         }
 
         array.applyShape(errorPosition);
-
+        MemoryA memA = array.startAppendMemory();
         for (int i = 0; i < size; i++) {
             long val;
             if (nanRate > 0 && nextInt(nanRate) == 1) {
@@ -229,7 +231,7 @@ public class Rnd {
             } else {
                 val = nextLong();
             }
-            array.putLong(i, val);
+            memA.putLong(val);
         }
     }
 
