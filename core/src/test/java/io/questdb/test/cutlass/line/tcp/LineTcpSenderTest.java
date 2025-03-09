@@ -34,7 +34,7 @@ import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
-import io.questdb.cutlass.line.array.NDDoubleArray;
+import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.NDLongArray;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.network.Net;
@@ -515,19 +515,19 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         .doubleArray("a1", (double[]) createDoubleArray(new int[]{5}))
                         .doubleArray("a2", (double[][]) createDoubleArray(new int[]{2, 3}))
                         .doubleArray("a3", (double[][][]) createDoubleArray(new int[]{1, 2, 3}))
-                        .doubleArray("a4", NDDoubleArray.create(4.0, 1, 1, 2, 1))
-                        .doubleArray("a5", NDDoubleArray.create(5.0, 3, 2, 1, 4, 1))
-                        .doubleArray("a6", NDDoubleArray.create(6.0, 1, 3, 4, 2, 1, 1))
-                        .doubleArray("a7", NDDoubleArray.create(7.0, 2, 2, 2, 1, 1, 1, 2))
-                        .doubleArray("a8", NDDoubleArray.create(8.0, 1, 1, 2, 1, 1, 1, 2, 1))
-                        .doubleArray("a9", NDDoubleArray.create(9.0, 1, 2, 1, 2, 1, 1, 2, 1, 1))
-                        .doubleArray("a10", NDDoubleArray.create(10.0, 2, 1, 1, 2, 1, 1, 1, 1, 1, 2))
-                        .doubleArray("a11", NDDoubleArray.create(11.0, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 2))
-                        .doubleArray("a12", NDDoubleArray.create(12.0, 1, 2, 1, 2, 1, 1, 1, 1, 2, 2, 1, 1))
-                        .doubleArray("a13", NDDoubleArray.create(13.0, 1, 1, 2, 2, 1, 2, 1, 1, 2, 1, 1, 2, 1))
-                        .doubleArray("a14", NDDoubleArray.create(14.0, 1, 1, 3, 1, 1, 1, 1, 1, 2, 1, 1, 2, 2, 1))
-                        .doubleArray("a15", NDDoubleArray.create(15.0, 1, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 3, 1, 1, 1))
-                        .doubleArray("a16", NDDoubleArray.create(16.0, 1, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1))
+                        .doubleArray("a4", DoubleArray.create(4.0, 1, 1, 2, 1))
+                        .doubleArray("a5", DoubleArray.create(5.0, 3, 2, 1, 4, 1))
+                        .doubleArray("a6", DoubleArray.create(6.0, 1, 3, 4, 2, 1, 1))
+                        .doubleArray("a7", DoubleArray.create(7.0, 2, 2, 2, 1, 1, 1, 2))
+                        .doubleArray("a8", DoubleArray.create(8.0, 1, 1, 2, 1, 1, 1, 2, 1))
+                        .doubleArray("a9", DoubleArray.create(9.0, 1, 2, 1, 2, 1, 1, 2, 1, 1))
+                        .doubleArray("a10", DoubleArray.create(10.0, 2, 1, 1, 2, 1, 1, 1, 1, 1, 2))
+                        .doubleArray("a11", DoubleArray.create(11.0, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 2))
+                        .doubleArray("a12", DoubleArray.create(12.0, 1, 2, 1, 2, 1, 1, 1, 1, 2, 2, 1, 1))
+                        .doubleArray("a13", DoubleArray.create(13.0, 1, 1, 2, 2, 1, 2, 1, 1, 2, 1, 1, 2, 1))
+                        .doubleArray("a14", DoubleArray.create(14.0, 1, 1, 3, 1, 1, 1, 1, 1, 2, 1, 1, 2, 2, 1))
+                        .doubleArray("a15", DoubleArray.create(15.0, 1, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 3, 1, 1, 1))
+                        .doubleArray("a16", DoubleArray.create(16.0, 1, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1))
                         .at(ts, ChronoUnit.MICROS);
                 sender.flush();
 

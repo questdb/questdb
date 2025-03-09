@@ -41,13 +41,13 @@ import io.questdb.std.Vect;
  * <pre>{@code
  *    // Creates a 2x3x2 matrix (of rank 3)
  *    try (
- *        NDDoubleArray matrix3d = NDDoubleArray.create(2, 3, 2)) {
- *              matrix3d.set(NDDoubleArray.create(new double[]{1.0, 2.0}), true, 0, 0)
- *                  .set(NDDoubleArray.create(new double[]{3.0, 4.0}), true, 0, 1)
- *                  .set(NDDoubleArray.create(new double[]{5.0, 6.0}), true, 0, 2)
- *                  .set(NDDoubleArray.create(new double[]{7.0, 8.0}), true, 1, 0)
- *                  .set(NDDoubleArray.create(new double[]{9.0, 10.0}), true, 1, 1)
- *                  .set(NDDoubleArray.create(new double[]{11.0, 12.0}), true, 1, 2);
+ *        DoubleArray matrix3d = DoubleArray.create(2, 3, 2)) {
+ *              matrix3d.set(DoubleArray.create(new double[]{1.0, 2.0}), true, 0, 0)
+ *                  .set(DoubleArray.create(new double[]{3.0, 4.0}), true, 0, 1)
+ *                  .set(DoubleArray.create(new double[]{5.0, 6.0}), true, 0, 2)
+ *                  .set(DoubleArray.create(new double[]{7.0, 8.0}), true, 1, 0)
+ *                  .set(DoubleArray.create(new double[]{9.0, 10.0}), true, 1, 1)
+ *                  .set(DoubleArray.create(new double[]{11.0, 12.0}), true, 1, 2);
  *
  *                  // send matrix3d to line
  *                  sender.table(tableName).doubleArray(columnName, matrix3d);

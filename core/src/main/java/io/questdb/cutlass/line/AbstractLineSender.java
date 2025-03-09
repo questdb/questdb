@@ -30,8 +30,8 @@ import io.questdb.client.Sender;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.line.array.ArrayDataAppender;
 import io.questdb.cutlass.line.array.ArrayShapeAppender;
+import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.NDArrayFlattener;
-import io.questdb.cutlass.line.array.NDDoubleArray;
 import io.questdb.cutlass.line.array.NDLongArray;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.std.MemoryTag;
@@ -170,7 +170,7 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
     }
 
     @Override
-    public Sender doubleArray(CharSequence name, NDDoubleArray values) {
+    public Sender doubleArray(CharSequence name, DoubleArray values) {
         if (processNullArray(name, values)) {
             return this;
         }

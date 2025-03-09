@@ -24,7 +24,7 @@
 
 package io.questdb.client;
 
-import io.questdb.cutlass.line.array.NDDoubleArray;
+import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.NDLongArray;
 
 public interface INDArray<T> {
@@ -39,10 +39,10 @@ public interface INDArray<T> {
      * - double[]        : 1D (vector)
      * - double[][]      : 2D (matrix)
      * - double[][][]    : 3D (tensor)
-     * - {@link NDDoubleArray}: any-D (upto 32)
+     * - {@link DoubleArray}: any-D (upto 32)
      * </pre>
      *
-     * @param name Column name identifier (non-null)
+     * @param name   Column name identifier (non-null)
      * @param values N-dimensional double array to be added. Supported dimensions: 1D to 16D.
      * @return T instance to support method chaining
      */
@@ -52,7 +52,7 @@ public interface INDArray<T> {
 
     T doubleArray(CharSequence name, double[][][] values);
 
-    T doubleArray(CharSequence name, NDDoubleArray values);
+    T doubleArray(CharSequence name, DoubleArray values);
 
     T longArray(CharSequence name, long[] values);
 

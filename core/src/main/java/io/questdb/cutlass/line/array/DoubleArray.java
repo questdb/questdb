@@ -28,11 +28,11 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
-public class NDDoubleArray extends AbstractArray {
+public class DoubleArray extends AbstractArray {
 
     private static final double DEFAULT_VALUE = 0.0;
 
-    private NDDoubleArray(int[] shape, boolean initDefault, double defaultValue) {
+    private DoubleArray(int[] shape, boolean initDefault, double defaultValue) {
         super(shape, ColumnType.DOUBLE);
         if (initDefault) {
             // fill default value
@@ -47,22 +47,22 @@ public class NDDoubleArray extends AbstractArray {
     /**
      * Create an ndADoubleArray based on the provided shape and fill it with the {@link #DEFAULT_VALUE}`.
      */
-    public static NDDoubleArray create(int... shape) {
-        return new NDDoubleArray(shape, true, DEFAULT_VALUE);
+    public static DoubleArray create(int... shape) {
+        return new DoubleArray(shape, true, DEFAULT_VALUE);
     }
 
     /*
      * Create an ndADoubleArray based on the provided shape and defaultValue.
      */
-    public static NDDoubleArray create(double defaultValue, int... shape) {
-        return new NDDoubleArray(shape, true, defaultValue);
+    public static DoubleArray create(double defaultValue, int... shape) {
+        return new DoubleArray(shape, true, defaultValue);
     }
 
     /**
      * Create an 1 dim ndADoubleArray based on the provided `double[]`.
      */
-    public static NDDoubleArray create(double[] values) {
-        NDDoubleArray ndArray = createWithoutDefault(values.length);
+    public static DoubleArray create(double[] values) {
+        DoubleArray ndArray = createWithoutDefault(values.length);
         NDArrayFlattener.processArrayData(ndArray.array.ptr(), null, values);
         return ndArray;
     }
@@ -70,8 +70,8 @@ public class NDDoubleArray extends AbstractArray {
     /**
      * Create an 2 dims ndADoubleArray based on the provided `double[][]`.
      */
-    public static NDDoubleArray create(double[][] values) {
-        NDDoubleArray ndArray = createWithoutDefault(values.length, values[0].length);
+    public static DoubleArray create(double[][] values) {
+        DoubleArray ndArray = createWithoutDefault(values.length, values[0].length);
         NDArrayFlattener.processArrayData(ndArray.array.ptr(), null, values);
         return ndArray;
     }
@@ -79,8 +79,8 @@ public class NDDoubleArray extends AbstractArray {
     /**
      * Create an 3 dims ndADoubleArray based on the provided `double[][][]`.
      */
-    public static NDDoubleArray create(double[][][] values) {
-        NDDoubleArray ndArray = createWithoutDefault(values.length, values[0].length, values[0][0].length);
+    public static DoubleArray create(double[][][] values) {
+        DoubleArray ndArray = createWithoutDefault(values.length, values[0].length, values[0][0].length);
         NDArrayFlattener.processArrayData(ndArray.array.ptr(), null, values);
         return ndArray;
     }
@@ -88,8 +88,8 @@ public class NDDoubleArray extends AbstractArray {
     /**
      * Create an ndADoubleArray based on the provided shape and do not fill default value.
      */
-    public static NDDoubleArray createWithoutDefault(int... shape) {
-        return new NDDoubleArray(shape, false, DEFAULT_VALUE);
+    public static DoubleArray createWithoutDefault(int... shape) {
+        return new DoubleArray(shape, false, DEFAULT_VALUE);
     }
 
     /**
@@ -99,7 +99,7 @@ public class NDDoubleArray extends AbstractArray {
      * @param move   whether released the memory of the subarray after set.
      * @param coords current array's position.
      */
-    public NDDoubleArray set(NDDoubleArray value, boolean move, int... coords) {
+    public DoubleArray set(DoubleArray value, boolean move, int... coords) {
         assert !closed && !value.closed;
         validateSubarrayShape(value, coords);
         int flawLength = toFlatOffset(coords, false);
@@ -113,7 +113,7 @@ public class NDDoubleArray extends AbstractArray {
     /**
      * Fill a value at the specified coordinates within the current array.
      */
-    public NDDoubleArray set(double value, int... shape) {
+    public DoubleArray set(double value, int... shape) {
         assert !closed;
         array.putDouble(toFlatOffset(shape, true), value);
         return this;
