@@ -56,12 +56,6 @@ public class LongArray extends AbstractArray {
         return ndArray;
     }
 
-    public LongArray set(long value, int... shape) {
-        assert !closed;
-        array.putLong(toFlatOffset(shape, true), value);
-        return this;
-    }
-
     public LongArray setAll(long value) {
         long ptr = array.ptr();
         for (int i = 0, size = array.getFlatViewLength(); i < size; i++) {
@@ -79,6 +73,12 @@ public class LongArray extends AbstractArray {
         if (move) {
             value.close();
         }
+        return this;
+    }
+
+    public LongArray setValue(long value, int... shape) {
+        assert !closed;
+        array.putLong(toFlatOffset(shape, true), value);
         return this;
     }
 }
