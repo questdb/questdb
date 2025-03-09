@@ -56,6 +56,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -223,21 +224,21 @@ public final class LineHttpSender implements Sender {
     }
 
     @Override
-    public Sender doubleArray(CharSequence name, double[] values) {
+    public Sender doubleArray(@NotNull CharSequence name, double[] values) {
         return arrayColumn(name, ColumnType.DOUBLE, (byte) 1, values,
                 NDArrayFlattener::processArrayShape,
                 NDArrayFlattener::processArrayData);
     }
 
     @Override
-    public Sender doubleArray(CharSequence name, double[][] values) {
+    public Sender doubleArray(@NotNull CharSequence name, double[][] values) {
         return arrayColumn(name, ColumnType.DOUBLE, (byte) 2, values,
                 NDArrayFlattener::processArrayShape,
                 NDArrayFlattener::processArrayData);
     }
 
     @Override
-    public Sender doubleArray(CharSequence name, double[][][] values) {
+    public Sender doubleArray(@NotNull CharSequence name, double[][][] values) {
         return arrayColumn(name, ColumnType.DOUBLE, (byte) 3, values,
                 NDArrayFlattener::processArrayShape,
                 NDArrayFlattener::processArrayData);
@@ -268,28 +269,28 @@ public final class LineHttpSender implements Sender {
     }
 
     @Override
-    public Sender longArray(CharSequence name, long[] values) {
+    public Sender longArray(@NotNull CharSequence name, long[] values) {
         return arrayColumn(name, ColumnType.LONG, (byte) 1, values,
                 NDArrayFlattener::processArrayShape,
                 NDArrayFlattener::processArrayData);
     }
 
     @Override
-    public Sender longArray(CharSequence name, long[][] values) {
+    public Sender longArray(@NotNull CharSequence name, long[][] values) {
         return arrayColumn(name, ColumnType.LONG, (byte) 2, values,
                 NDArrayFlattener::processArrayShape,
                 NDArrayFlattener::processArrayData);
     }
 
     @Override
-    public Sender longArray(CharSequence name, long[][][] values) {
+    public Sender longArray(@NotNull CharSequence name, long[][][] values) {
         return arrayColumn(name, ColumnType.LONG, (byte) 3, values,
                 NDArrayFlattener::processArrayShape,
                 NDArrayFlattener::processArrayData);
     }
 
     @Override
-    public Sender longArray(CharSequence name, LongArray values) {
+    public Sender longArray(@NotNull CharSequence name, LongArray values) {
         if (processNullArray(name, values)) {
             return this;
         }

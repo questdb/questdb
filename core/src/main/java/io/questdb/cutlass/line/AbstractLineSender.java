@@ -149,21 +149,21 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
     }
 
     @Override
-    public Sender doubleArray(CharSequence name, double[] values) {
+    public Sender doubleArray(@NotNull CharSequence name, double[] values) {
         return arrayColumn(name, ColumnType.DOUBLE, (byte) 1, values,
                 NDArrayFlattener::processArrayShape,
                 NDArrayFlattener::processArrayData);
     }
 
     @Override
-    public Sender doubleArray(CharSequence name, double[][] values) {
+    public Sender doubleArray(@NotNull CharSequence name, double[][] values) {
         return arrayColumn(name, ColumnType.DOUBLE, (byte) 2, values,
                 NDArrayFlattener::processArrayShape,
                 NDArrayFlattener::processArrayData);
     }
 
     @Override
-    public Sender doubleArray(CharSequence name, double[][][] values) {
+    public Sender doubleArray(@NotNull CharSequence name, double[][][] values) {
         return arrayColumn(name, ColumnType.DOUBLE, (byte) 3, values,
                 NDArrayFlattener::processArrayShape,
                 NDArrayFlattener::processArrayData);
@@ -218,28 +218,28 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
     }
 
     @Override
-    public Sender longArray(CharSequence name, long[] values) {
+    public Sender longArray(@NotNull CharSequence name, long[] values) {
         return arrayColumn(name, ColumnType.LONG, (byte) 1, values,
                 NDArrayFlattener::processArrayShape,
                 NDArrayFlattener::processArrayData);
     }
 
     @Override
-    public Sender longArray(CharSequence name, long[][] values) {
+    public Sender longArray(@NotNull CharSequence name, long[][] values) {
         return arrayColumn(name, ColumnType.LONG, (byte) 2, values,
                 NDArrayFlattener::processArrayShape,
                 NDArrayFlattener::processArrayData);
     }
 
     @Override
-    public Sender longArray(CharSequence name, long[][][] values) {
+    public Sender longArray(@NotNull CharSequence name, long[][][] values) {
         return arrayColumn(name, ColumnType.LONG, (byte) 3, values,
                 NDArrayFlattener::processArrayShape,
                 NDArrayFlattener::processArrayData);
     }
 
     @Override
-    public Sender longArray(CharSequence name, LongArray values) {
+    public Sender longArray(@NotNull CharSequence name, LongArray values) {
         if (processNullArray(name, values)) {
             return this;
         }
