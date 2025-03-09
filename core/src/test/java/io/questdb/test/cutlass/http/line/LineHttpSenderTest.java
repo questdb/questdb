@@ -336,18 +336,15 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testInsertNdDoubleArray() throws Exception {
+    public void testInsertDoubleArray() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512"
             )) {
-                String tableName = "ndarr_double_test";
+                String tableName = "arr_double_test";
                 serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, y SYMBOL, l1 LONG, a1 DOUBLE[], " +
                         "a2 DOUBLE[][], a3 DOUBLE[][][], a4 DOUBLE[][][][], a5 DOUBLE[][][][][], a6 DOUBLE[][][][][][]," +
-                        "a7 DOUBLE[][][][][][][], a8 DOUBLE[][][][][][][][], a9 DOUBLE[][][][][][][][][]," +
-                        "a10 DOUBLE[][][][][][][][][][], a11 DOUBLE[][][][][][][][][][][], a12 DOUBLE[][][][][][][][][][][][], " +
-                        "a13 DOUBLE[][][][][][][][][][][][][], a14 DOUBLE[][][][][][][][][][][][][][], a15 DOUBLE[][][][][][][][][][][][][][][]," +
-                        "a16 DOUBLE[][][][][][][][][][][][][][][][], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
@@ -367,23 +364,13 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .doubleArray("a4", DoubleArray.create(4.0, 1, 1, 2, 1))
                             .doubleArray("a5", DoubleArray.create(5.0, 3, 2, 1, 4, 1))
                             .doubleArray("a6", DoubleArray.create(6.0, 1, 3, 4, 2, 1, 1))
-                            .doubleArray("a7", DoubleArray.create(7.0, 2, 2, 2, 1, 1, 1, 2))
-                            .doubleArray("a8", DoubleArray.create(8.0, 1, 1, 2, 1, 1, 1, 2, 1))
-                            .doubleArray("a9", DoubleArray.create(9.0, 1, 2, 1, 2, 1, 1, 2, 1, 1))
-                            .doubleArray("a10", DoubleArray.create(10.0, 2, 1, 1, 2, 1, 1, 1, 1, 1, 2))
-                            .doubleArray("a11", DoubleArray.create(11.0, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 2))
-                            .doubleArray("a12", DoubleArray.create(12.0, 1, 2, 1, 2, 1, 1, 1, 1, 2, 2, 1, 1))
-                            .doubleArray("a13", DoubleArray.create(13.0, 1, 1, 2, 2, 1, 2, 1, 1, 2, 1, 1, 2, 1))
-                            .doubleArray("a14", DoubleArray.create(14.0, 1, 1, 3, 1, 1, 1, 1, 1, 2, 1, 1, 2, 2, 1))
-                            .doubleArray("a15", DoubleArray.create(15.0, 1, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 3, 1, 1, 1))
-                            .doubleArray("a16", DoubleArray.create(16.0, 1, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1))
                             .at(100000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
                 serverMain.awaitTxn(tableName, 1);
 
-                serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta1\ta2\ta3\ta4\ta5\ta6\ta7\ta8\ta9\ta10\ta11\ta12\ta13\ta14\ta15\ta16\tts\n" +
+                serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta1\ta2\ta3\ta4\ta5\ta6\tts\n" +
                         "42i\t[6f1.0,2.5,3.0,4.5,5.0]\t23452345\t" +
                         "[1.0,2.0,3.0,4.0,5.0]\t" +
                         "[[1.0,2.0,3.0],[2.0,4.0,6.0]]\t" +
@@ -391,34 +378,21 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         "[[[[4.0],[4.0]]]]\t" +
                         "[[[[[5.0],[5.0],[5.0],[5.0]]],[[[5.0],[5.0],[5.0],[5.0]]]],[[[[5.0],[5.0],[5.0],[5.0]]],[[[5.0],[5.0],[5.0],[5.0]]]],[[[[5.0],[5.0],[5.0],[5.0]]],[[[5.0],[5.0],[5.0],[5.0]]]]]\t" +
                         "[[[[[[6.0]],[[6.0]]],[[[6.0]],[[6.0]]],[[[6.0]],[[6.0]]],[[[6.0]],[[6.0]]]],[[[[6.0]],[[6.0]]],[[[6.0]],[[6.0]]],[[[6.0]],[[6.0]]],[[[6.0]],[[6.0]]]],[[[[6.0]],[[6.0]]],[[[6.0]],[[6.0]]],[[[6.0]],[[6.0]]],[[[6.0]],[[6.0]]]]]]\t" +
-                        "[[[[[[[7.0,7.0]]]],[[[[7.0,7.0]]]]],[[[[[7.0,7.0]]]],[[[[7.0,7.0]]]]]],[[[[[[7.0,7.0]]]],[[[[7.0,7.0]]]]],[[[[[7.0,7.0]]]],[[[[7.0,7.0]]]]]]]\t" +
-                        "[[[[[[[[8.0],[8.0]]]]],[[[[[8.0],[8.0]]]]]]]]\t" +
-                        "[[[[[[[[[9.0]],[[9.0]]]]],[[[[[9.0]],[[9.0]]]]]]],[[[[[[[9.0]],[[9.0]]]]],[[[[[9.0]],[[9.0]]]]]]]]]\t" +
-                        "[[[[[[[[[[10.0,10.0]]]]]],[[[[[[10.0,10.0]]]]]]]]],[[[[[[[[[10.0,10.0]]]]]],[[[[[[10.0,10.0]]]]]]]]]]\t" +
-                        "[[[[[[[[[[[11.0,11.0]],[[11.0,11.0]]]]]]]],[[[[[[[[11.0,11.0]],[[11.0,11.0]]]]]]]]]]]\t" +
-                        "[[[[[[[[[[[[12.0]],[[12.0]]],[[[12.0]],[[12.0]]]]]]]],[[[[[[[[12.0]],[[12.0]]],[[[12.0]],[[12.0]]]]]]]]]],[[[[[[[[[[12.0]],[[12.0]]],[[[12.0]],[[12.0]]]]]]]],[[[[[[[[12.0]],[[12.0]]],[[[12.0]],[[12.0]]]]]]]]]]]]\t" +
-                        "[[[[[[[[[[[[[13.0],[13.0]]]],[[[[13.0],[13.0]]]]]]],[[[[[[[13.0],[13.0]]]],[[[[13.0],[13.0]]]]]]]]],[[[[[[[[[13.0],[13.0]]]],[[[[13.0],[13.0]]]]]]],[[[[[[[13.0],[13.0]]]],[[[[13.0],[13.0]]]]]]]]]],[[[[[[[[[[13.0],[13.0]]]],[[[[13.0],[13.0]]]]]]],[[[[[[[13.0],[13.0]]]],[[[[13.0],[13.0]]]]]]]]],[[[[[[[[[13.0],[13.0]]]],[[[[13.0],[13.0]]]]]]],[[[[[[[13.0],[13.0]]]],[[[[13.0],[13.0]]]]]]]]]]]]]\t" +
-                        "[[[[[[[[[[[[[[14.0],[14.0]],[[14.0],[14.0]]]]],[[[[[14.0],[14.0]],[[14.0],[14.0]]]]]]]]]]],[[[[[[[[[[[14.0],[14.0]],[[14.0],[14.0]]]]],[[[[[14.0],[14.0]],[[14.0],[14.0]]]]]]]]]]],[[[[[[[[[[[14.0],[14.0]],[[14.0],[14.0]]]]],[[[[[14.0],[14.0]],[[14.0],[14.0]]]]]]]]]]]]]]\t" +
-                        "[[[[[[[[[[[[[[[15.0]]],[[[15.0]]],[[[15.0]]]]],[[[[[15.0]]],[[[15.0]]],[[[15.0]]]]]]]]]]],[[[[[[[[[[[15.0]]],[[[15.0]]],[[[15.0]]]]],[[[[[15.0]]],[[[15.0]]],[[[15.0]]]]]]]]]]]]]]]\t" +
-                        "[[[[[[[[[[[[[[[[16.0]]]]]]]]]]]],[[[[[[[[[[[[16.0]]]]]]]]]]]],[[[[[[[[[[[[16.0]]]]]]]]]]]]],[[[[[[[[[[[[[16.0]]]]]]]]]]]],[[[[[[[[[[[[16.0]]]]]]]]]]]],[[[[[[[[[[[[16.0]]]]]]]]]]]]]]]]\t" +
                         "1970-01-02T03:46:40.000000Z\n");
             }
         });
     }
 
     @Test
-    public void testInsertNdLongArray() throws Exception {
+    public void testInsertLongArray() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "8192"
             )) {
-                String tableName = "ndarr_long_test";
+                String tableName = "arr_long_test";
                 serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, y SYMBOL, l1 LONG, a1 LONG[], " +
-                        "a2 LONG[][], a3 LONG[][][], a4 LONG[][][][], a5 LONG[][][][][], a6 LONG[][][][][][]," +
-                        "a7 LONG[][][][][][][], a8 LONG[][][][][][][][], a9 LONG[][][][][][][][][]," +
-                        "a10 LONG[][][][][][][][][][], a11 LONG[][][][][][][][][][][], a12 LONG[][][][][][][][][][][][], " +
-                        "a13 LONG[][][][][][][][][][][][][], a14 LONG[][][][][][][][][][][][][][], a15 LONG[][][][][][][][][][][][][][][]," +
-                        "a16 LONG[][][][][][][][][][][][][][][][], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        "a2 LONG[][], a3 LONG[][][], a4 LONG[][][][], a5 LONG[][][][][], a6 LONG[][][][][][], " +
+                        "ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
                 int port = serverMain.getHttpServerPort();
@@ -435,26 +409,16 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .longArray("a1", (long[]) createLongArray(new int[]{5}))
                             .longArray("a2", (long[][]) createLongArray(new int[]{2, 3}))
                             .longArray("a3", (long[][][]) createLongArray(new int[]{1, 2, 3}))
-                            .longArray("a4", LongArray.create(4L, 1, 2, 1, 1))
-                            .longArray("a5", LongArray.create(5L, 3, 2, 1, 4, 1))
-                            .longArray("a6", LongArray.create(6L, 1, 3, 4, 2, 1, 1))
-                            .longArray("a7", LongArray.create(7L, 2, 2, 2, 1, 1, 1, 2))
-                            .longArray("a8", LongArray.create(8L, 1, 1, 2, 1, 1, 1, 2, 1))
-                            .longArray("a9", LongArray.create(9L, 1, 2, 1, 2, 1, 1, 2, 1, 1))
-                            .longArray("a10", LongArray.create(10L, 2, 1, 1, 2, 1, 1, 1, 1, 1, 2))
-                            .longArray("a11", LongArray.create(11L, 3, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1))
-                            .longArray("a12", LongArray.create(12L, 1, 2, 1, 2, 1, 1, 1, 1, 2, 2, 1, 1))
-                            .longArray("a13", LongArray.create(13L, 1, 1, 2, 2, 1, 2, 1, 1, 2, 1, 1, 2, 1))
-                            .longArray("a14", LongArray.create(14L, 1, 1, 3, 1, 1, 1, 1, 1, 2, 1, 1, 2, 2, 1))
-                            .longArray("a15", LongArray.create(15L, 1, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 3, 1, 1, 1))
-                            .longArray("a16", LongArray.create(16L, 1, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1))
+                            .longArray("a4", LongArray.create(1, 2, 1, 1).setAll(4))
+                            .longArray("a5", LongArray.create(3, 2, 1, 4, 1).setAll(5))
+                            .longArray("a6", LongArray.create(1, 3, 4, 2, 1, 1).setAll(6))
                             .at(100000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
                 serverMain.awaitTxn(tableName, 1);
 
-                serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta1\ta2\ta3\ta4\ta5\ta6\ta7\ta8\ta9\ta10\ta11\ta12\ta13\ta14\ta15\ta16\tts\n" +
+                serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta1\ta2\ta3\ta4\ta5\ta6\tts\n" +
                         "42i\t[6f1.0,2.5,3.0,4.5,5.0]\t23452345\t" +
                         "[1,2,3,4,5]\t" +
                         "[[1,2,3],[2,4,6]]\t" +
@@ -462,16 +426,6 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         "[[[[4]],[[4]]]]\t" +
                         "[[[[[5],[5],[5],[5]]],[[[5],[5],[5],[5]]]],[[[[5],[5],[5],[5]]],[[[5],[5],[5],[5]]]],[[[[5],[5],[5],[5]]],[[[5],[5],[5],[5]]]]]\t" +
                         "[[[[[[6]],[[6]]],[[[6]],[[6]]],[[[6]],[[6]]],[[[6]],[[6]]]],[[[[6]],[[6]]],[[[6]],[[6]]],[[[6]],[[6]]],[[[6]],[[6]]]],[[[[6]],[[6]]],[[[6]],[[6]]],[[[6]],[[6]]],[[[6]],[[6]]]]]]\t" +
-                        "[[[[[[[7,7]]]],[[[[7,7]]]]],[[[[[7,7]]]],[[[[7,7]]]]]],[[[[[[7,7]]]],[[[[7,7]]]]],[[[[[7,7]]]],[[[[7,7]]]]]]]\t" +
-                        "[[[[[[[[8],[8]]]]],[[[[[8],[8]]]]]]]]\t" +
-                        "[[[[[[[[[9]],[[9]]]]],[[[[[9]],[[9]]]]]]],[[[[[[[9]],[[9]]]]],[[[[[9]],[[9]]]]]]]]]\t" +
-                        "[[[[[[[[[[10,10]]]]]],[[[[[[10,10]]]]]]]]],[[[[[[[[[10,10]]]]]],[[[[[[10,10]]]]]]]]]]\t" +
-                        "[[[[[[[[[[[11],[11]]]]]]],[[[[[[[11],[11]]]]]]]]]],[[[[[[[[[[11],[11]]]]]]],[[[[[[[11],[11]]]]]]]]]],[[[[[[[[[[11],[11]]]]]]],[[[[[[[11],[11]]]]]]]]]]]\t" +
-                        "[[[[[[[[[[[[12]],[[12]]],[[[12]],[[12]]]]]]]],[[[[[[[[12]],[[12]]],[[[12]],[[12]]]]]]]]]],[[[[[[[[[[12]],[[12]]],[[[12]],[[12]]]]]]]],[[[[[[[[12]],[[12]]],[[[12]],[[12]]]]]]]]]]]]\t" +
-                        "[[[[[[[[[[[[[13],[13]]]],[[[[13],[13]]]]]]],[[[[[[[13],[13]]]],[[[[13],[13]]]]]]]]],[[[[[[[[[13],[13]]]],[[[[13],[13]]]]]]],[[[[[[[13],[13]]]],[[[[13],[13]]]]]]]]]],[[[[[[[[[[13],[13]]]],[[[[13],[13]]]]]]],[[[[[[[13],[13]]]],[[[[13],[13]]]]]]]]],[[[[[[[[[13],[13]]]],[[[[13],[13]]]]]]],[[[[[[[13],[13]]]],[[[[13],[13]]]]]]]]]]]]]\t" +
-                        "[[[[[[[[[[[[[[14],[14]],[[14],[14]]]]],[[[[[14],[14]],[[14],[14]]]]]]]]]]],[[[[[[[[[[[14],[14]],[[14],[14]]]]],[[[[[14],[14]],[[14],[14]]]]]]]]]]],[[[[[[[[[[[14],[14]],[[14],[14]]]]],[[[[[14],[14]],[[14],[14]]]]]]]]]]]]]]\t" +
-                        "[[[[[[[[[[[[[[[15]]],[[[15]]],[[[15]]]]],[[[[[15]]],[[[15]]],[[[15]]]]]]]]]]],[[[[[[[[[[[15]]],[[[15]]],[[[15]]]]],[[[[[15]]],[[[15]]],[[[15]]]]]]]]]]]]]]]\t" +
-                        "[[[[[[[[[[[[[[[[16]]]]]]]]]]]],[[[[[[[[[[[[16]]]]]]]]]]]],[[[[[[[[[[[[16]]]]]]]]]]]]],[[[[[[[[[[[[[16]]]]]]]]]]]],[[[[[[[[[[[[16]]]]]]]]]]]],[[[[[[[[[[[[16]]]]]]]]]]]]]]]]\t" +
                         "1970-01-02T03:46:40.000000Z\n");
             }
         });
@@ -686,14 +640,14 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         .build();
                      LongArray a1 = LongArray.create(2, 2, 2);
                      LongArray a2 = LongArray.create(2, 2, 2);
-                     LongArray a3 = LongArray.create(101L, 2, 2, 2);
+                     LongArray a3 = LongArray.create(2, 2, 2).setAll(101);
                      LongArray a4 = LongArray.create(new long[][]{{10, 11}, {12, 13}});
-                     LongArray a5 = LongArray.create(9L, 2);
+                     LongArray a5 = LongArray.create(2).setAll(9);
                 ) {
                     a1.set(99L, 0, 1, 0);
-                    a1.set(a4, false, 1);
+                    a1.setSubArray(a4, false, 1);
                     a2.set(100L, 1, 1, 1);
-                    a2.set(a5, false, 0, 0);
+                    a2.setSubArray(a5, false, 0, 0);
 
                     sender.table(tableName)
                             .symbol("x", "42i")
