@@ -43,8 +43,8 @@ import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.array.ArrayDataAppender;
 import io.questdb.cutlass.line.array.ArrayShapeAppender;
 import io.questdb.cutlass.line.array.DoubleArray;
+import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.cutlass.line.array.NDArrayFlattener;
-import io.questdb.cutlass.line.array.NDLongArray;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
@@ -289,7 +289,7 @@ public final class LineHttpSender implements Sender {
     }
 
     @Override
-    public Sender longArray(CharSequence name, NDLongArray values) {
+    public Sender longArray(CharSequence name, LongArray values) {
         if (processNullArray(name, values)) {
             return this;
         }

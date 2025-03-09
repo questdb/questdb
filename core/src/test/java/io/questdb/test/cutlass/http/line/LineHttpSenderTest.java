@@ -31,7 +31,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.array.DoubleArray;
-import io.questdb.cutlass.line.array.NDLongArray;
+import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.cutlass.line.http.LineHttpSender;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
@@ -435,19 +435,19 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .longArray("a1", (long[]) createLongArray(new int[]{5}))
                             .longArray("a2", (long[][]) createLongArray(new int[]{2, 3}))
                             .longArray("a3", (long[][][]) createLongArray(new int[]{1, 2, 3}))
-                            .longArray("a4", NDLongArray.create(4L, 1, 2, 1, 1))
-                            .longArray("a5", NDLongArray.create(5L, 3, 2, 1, 4, 1))
-                            .longArray("a6", NDLongArray.create(6L, 1, 3, 4, 2, 1, 1))
-                            .longArray("a7", NDLongArray.create(7L, 2, 2, 2, 1, 1, 1, 2))
-                            .longArray("a8", NDLongArray.create(8L, 1, 1, 2, 1, 1, 1, 2, 1))
-                            .longArray("a9", NDLongArray.create(9L, 1, 2, 1, 2, 1, 1, 2, 1, 1))
-                            .longArray("a10", NDLongArray.create(10L, 2, 1, 1, 2, 1, 1, 1, 1, 1, 2))
-                            .longArray("a11", NDLongArray.create(11L, 3, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1))
-                            .longArray("a12", NDLongArray.create(12L, 1, 2, 1, 2, 1, 1, 1, 1, 2, 2, 1, 1))
-                            .longArray("a13", NDLongArray.create(13L, 1, 1, 2, 2, 1, 2, 1, 1, 2, 1, 1, 2, 1))
-                            .longArray("a14", NDLongArray.create(14L, 1, 1, 3, 1, 1, 1, 1, 1, 2, 1, 1, 2, 2, 1))
-                            .longArray("a15", NDLongArray.create(15L, 1, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 3, 1, 1, 1))
-                            .longArray("a16", NDLongArray.create(16L, 1, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1))
+                            .longArray("a4", LongArray.create(4L, 1, 2, 1, 1))
+                            .longArray("a5", LongArray.create(5L, 3, 2, 1, 4, 1))
+                            .longArray("a6", LongArray.create(6L, 1, 3, 4, 2, 1, 1))
+                            .longArray("a7", LongArray.create(7L, 2, 2, 2, 1, 1, 1, 2))
+                            .longArray("a8", LongArray.create(8L, 1, 1, 2, 1, 1, 1, 2, 1))
+                            .longArray("a9", LongArray.create(9L, 1, 2, 1, 2, 1, 1, 2, 1, 1))
+                            .longArray("a10", LongArray.create(10L, 2, 1, 1, 2, 1, 1, 1, 1, 1, 2))
+                            .longArray("a11", LongArray.create(11L, 3, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1))
+                            .longArray("a12", LongArray.create(12L, 1, 2, 1, 2, 1, 1, 1, 1, 2, 2, 1, 1))
+                            .longArray("a13", LongArray.create(13L, 1, 1, 2, 2, 1, 2, 1, 1, 2, 1, 1, 2, 1))
+                            .longArray("a14", LongArray.create(14L, 1, 1, 3, 1, 1, 1, 1, 1, 2, 1, 1, 2, 2, 1))
+                            .longArray("a15", LongArray.create(15L, 1, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 3, 1, 1, 1))
+                            .longArray("a16", LongArray.create(16L, 1, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1))
                             .at(100000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
@@ -684,11 +684,11 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
                         .retryTimeoutMillis(0)
                         .build();
-                     NDLongArray a1 = NDLongArray.create(2, 2, 2);
-                     NDLongArray a2 = NDLongArray.create(2, 2, 2);
-                     NDLongArray a3 = NDLongArray.create(101L, 2, 2, 2);
-                     NDLongArray a4 = NDLongArray.create(new long[][]{{10, 11}, {12, 13}});
-                     NDLongArray a5 = NDLongArray.create(9L, 2);
+                     LongArray a1 = LongArray.create(2, 2, 2);
+                     LongArray a2 = LongArray.create(2, 2, 2);
+                     LongArray a3 = LongArray.create(101L, 2, 2, 2);
+                     LongArray a4 = LongArray.create(new long[][]{{10, 11}, {12, 13}});
+                     LongArray a5 = LongArray.create(9L, 2);
                 ) {
                     a1.set(99L, 0, 1, 0);
                     a1.set(a4, false, 1);

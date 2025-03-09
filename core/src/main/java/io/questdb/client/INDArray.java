@@ -25,7 +25,7 @@
 package io.questdb.client;
 
 import io.questdb.cutlass.line.array.DoubleArray;
-import io.questdb.cutlass.line.array.NDLongArray;
+import io.questdb.cutlass.line.array.LongArray;
 
 public interface INDArray<T> {
     /**
@@ -60,5 +60,5 @@ public interface INDArray<T> {
 
     T longArray(CharSequence name, long[][][] values);
 
-    T longArray(CharSequence name, NDLongArray values);
+    T longArray(CharSequence name, LongArray values);
 }
