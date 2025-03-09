@@ -420,7 +420,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
      */
     public void prepareForDispatch() {
         if (!readyToDispatch) {
-            atom.initCursor();
             buildAddressCache();
             readyToDispatch = true;
         }

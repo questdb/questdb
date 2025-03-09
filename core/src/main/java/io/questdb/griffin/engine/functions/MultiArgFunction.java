@@ -48,11 +48,6 @@ public interface MultiArgFunction extends Function {
     }
 
     @Override
-    default void initCursor() {
-        Function.initCursor(getArgs());
-    }
-
-    @Override
     default boolean isConstant() {
         ObjList<Function> args = getArgs();
         for (int i = 0, n = args.size(); i < n; i++) {

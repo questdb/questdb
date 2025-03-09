@@ -153,11 +153,32 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCompareTimestampWithVarcharNegated() throws Exception {
+    public void testCompareTimestampWithVarcharFromTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (" +
-                    "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(2)" +
+                    "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(100000)" +
                     ") timestamp(ts) partition by day");
+
+            assertQueryNoLeakCheck(
+                    "a\tts\n" +
+                            "8#3TsZ\t1970-01-01T00:00:02.500000Z\n" +
+                            "zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:05.000000Z\n" +
+                            "ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t1970-01-01T00:00:07.500000Z\n",
+                    "select * from x where ts > (select ts::varchar from x limit 2) limit 3",
+                    "ts",
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCompareTimestampWithVarcharNegated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x as (" +
+                            "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(2)" +
+                            ") timestamp(ts) partition by day"
+            );
 
             assertSql(
                     "a\tts\n" +
