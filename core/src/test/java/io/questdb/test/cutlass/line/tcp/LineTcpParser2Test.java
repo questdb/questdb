@@ -33,7 +33,13 @@ import io.questdb.cutlass.line.LineException;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ProtoEntity;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -53,22 +59,6 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     @BeforeClass
     public static void init() {
         Os.init();
-    }
-
-    @Override
-    public void testDanglingCommaOnTag() {
-        assertThat(
-                "measurement,tag=value field=\"x\" 10000\n",
-                "measurement,tag=value, field=\"x\" 10000\n"
-        );
-    }
-
-    @Test
-    public void testDoubleScientificNotation() {
-        assertThat(
-                "measurement,tag=value,tag2=value field=1.123E-03,field2=9.19097E10,field3=10.097E+3 100000\n",
-                "measurement,tag=value,tag2=value field=1.123E-03,field2=9.19097E10,field3=10.097E+3 100000\n"
-        );
     }
 
     @Test
@@ -116,6 +106,22 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
         } finally {
             Unsafe.free(mem, allocSize, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    @Override
+    public void testDanglingCommaOnTag() {
+        assertThat(
+                "measurement,tag=value field=\"x\" 10000\n",
+                "measurement,tag=value, field=\"x\" 10000\n"
+        );
+    }
+
+    @Test
+    public void testDoubleScientificNotation() {
+        assertThat(
+                "measurement,tag=value,tag2=value field=1.123E-03,field2=9.19097E10,field3=10.097E+3 100000\n",
+                "measurement,tag=value,tag2=value field=1.123E-03,field2=9.19097E10,field3=10.097E+3 100000\n"
+        );
     }
 
     @Test
