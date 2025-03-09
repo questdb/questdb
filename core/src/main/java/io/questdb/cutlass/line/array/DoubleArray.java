@@ -30,39 +30,22 @@ import io.questdb.std.Vect;
 
 public class DoubleArray extends AbstractArray {
 
-    private static final double DEFAULT_VALUE = 0.0;
-
-    private DoubleArray(int[] shape, boolean initDefault, double defaultValue) {
+    private DoubleArray(int... shape) {
         super(shape, ColumnType.DOUBLE);
-        if (initDefault) {
-            // fill default value
-            long ptr = array.ptr();
-            for (int i = 0, size = array.getFlatViewLength(); i < size; i++) {
-                Unsafe.getUnsafe().putDouble(ptr, defaultValue);
-                ptr += Double.BYTES;
-            }
-        }
     }
 
     /**
-     * Create an ndADoubleArray based on the provided shape and fill it with the {@link #DEFAULT_VALUE}`.
+     * Creates a DoubleArray based on the provided shape.
      */
     public static DoubleArray create(int... shape) {
-        return new DoubleArray(shape, true, DEFAULT_VALUE);
-    }
-
-    /*
-     * Create an ndADoubleArray based on the provided shape and defaultValue.
-     */
-    public static DoubleArray create(double defaultValue, int... shape) {
-        return new DoubleArray(shape, true, defaultValue);
+        return new DoubleArray(shape);
     }
 
     /**
      * Create an 1 dim ndADoubleArray based on the provided `double[]`.
      */
     public static DoubleArray create(double[] values) {
-        DoubleArray ndArray = createWithoutDefault(values.length);
+        DoubleArray ndArray = new DoubleArray(values.length);
         FlattenArrayUtils.putDataToBuf(ndArray.array.ptr(), null, values);
         return ndArray;
     }
@@ -71,7 +54,7 @@ public class DoubleArray extends AbstractArray {
      * Create an 2 dims ndADoubleArray based on the provided `double[][]`.
      */
     public static DoubleArray create(double[][] values) {
-        DoubleArray ndArray = createWithoutDefault(values.length, values[0].length);
+        DoubleArray ndArray = new DoubleArray(values.length, values[0].length);
         FlattenArrayUtils.putDataToBuf(ndArray.array.ptr(), null, values);
         return ndArray;
     }
@@ -80,26 +63,31 @@ public class DoubleArray extends AbstractArray {
      * Create an 3 dims ndADoubleArray based on the provided `double[][][]`.
      */
     public static DoubleArray create(double[][][] values) {
-        DoubleArray ndArray = createWithoutDefault(values.length, values[0].length, values[0][0].length);
+        DoubleArray ndArray = new DoubleArray(values.length, values[0].length, values[0][0].length);
         FlattenArrayUtils.putDataToBuf(ndArray.array.ptr(), null, values);
         return ndArray;
     }
 
     /**
-     * Create an ndADoubleArray based on the provided shape and do not fill default value.
+     * Sets all data points in the array to the supplied value.
      */
-    public static DoubleArray createWithoutDefault(int... shape) {
-        return new DoubleArray(shape, false, DEFAULT_VALUE);
+    public DoubleArray setAll(double value) {
+        long ptr = array.ptr();
+        for (int i = 0, size = array.getFlatViewLength(); i < size; i++) {
+            Unsafe.getUnsafe().putDouble(ptr, value);
+            ptr += Double.BYTES;
+        }
+        return this;
     }
 
     /**
      * Fill a sub-array at the specified coordinates within the current array.
      *
      * @param value  subarray, must match array's shapes in coordinates.
-     * @param move   whether released the memory of the subarray after set.
-     * @param coords current array's position.
+     * @param move   whether to release the memory of the subarray after using it.
+     * @param coords the coordinates where to insert the sub-array
      */
-    public DoubleArray set(DoubleArray value, boolean move, int... coords) {
+    public DoubleArray setSubArray(DoubleArray value, boolean move, int... coords) {
         assert !closed && !value.closed;
         validateSubarrayShape(value, coords);
         int flawLength = toFlatOffset(coords, false);
@@ -113,7 +101,7 @@ public class DoubleArray extends AbstractArray {
     /**
      * Fill a value at the specified coordinates within the current array.
      */
-    public DoubleArray set(double value, int... coords) {
+    public DoubleArray setValue(double value, int... coords) {
         assert !closed;
         array.putDouble(toFlatOffset(coords, true), value);
         return this;
