@@ -53,8 +53,8 @@ import java.util.concurrent.atomic.AtomicLong;
 public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private static final AtomicLong ERROR_COUNT = new AtomicLong();
     private static final String ERROR_ID = generateErrorId();
-    private static final byte RECV_BUFFER_DECREMENT_COEFFICIENT = 2;
-    private static final byte RECV_BUFFER_INCREMENT_COEFFICIENT = 4;
+    private static final byte RECV_BUFFER_GROW_FACTOR = 4;
+    private static final byte RECV_BUFFER_SHRINK_FACTOR = 2;
     @SuppressWarnings("FieldMayBeFinal")
     private static Log LOG = LogFactory.getLog(LineHttpProcessorState.class);
     private final LineWalAppender appender;
@@ -528,17 +528,17 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     }
 
     /*
-     * Attempts to dynamically downsize the recvBuffer when conditions permit.
-     * The condition for reduction is met only if, during two consecutive instances (either when the buffer is fully filled or upon commit),
-     * no measurement exceeds (currentBufSize / RECV_BUFFER_DECREMENT_COEFFICIENT).
+     * Attempts to shrink the recvBuffer, if the conditions permit.
+     * Condition to shrink: at two consecutive moments (either when the buffer is fully filled or upon commit),
+     * no measurement exceeds (currentBufSize / RECV_BUFFER_SHRINK_FACTOR).
      */
     private void tryToShrinkRecvBuffer(boolean shiftParser) {
         if (maxMeasureSize == 0) {
             return;
         }
-        if (currentBufSize != initialBufSize && maxMeasureSize < currentBufSize / RECV_BUFFER_DECREMENT_COEFFICIENT) {
+        if (currentBufSize != initialBufSize && maxMeasureSize < currentBufSize / RECV_BUFFER_SHRINK_FACTOR) {
             if (decrease) {
-                adjustRecvBuffer(Math.max(initialBufSize, currentBufSize / RECV_BUFFER_DECREMENT_COEFFICIENT), shiftParser);
+                adjustRecvBuffer(Math.max(initialBufSize, currentBufSize / RECV_BUFFER_SHRINK_FACTOR), shiftParser);
                 decrease = false;
             } else {
                 decrease = true;
