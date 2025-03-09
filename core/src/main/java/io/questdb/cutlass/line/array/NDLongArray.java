@@ -76,8 +76,8 @@ public class NDLongArray extends AbstractArray {
 
     public NDLongArray set(NDLongArray value, boolean move, int... shape) {
         assert !closed && !value.closed;
-        validSubarrayShape(value, shape);
-        int flawLength = flawLengthOf(shape, false);
+        validateSubarrayShape(value, shape);
+        int flawLength = toFlatOffset(shape, false);
         Vect.memcpy(array.ptr() + (long) flawLength * Long.BYTES, value.array.ptr(), value.array.size());
         if (move) {
             value.close();
@@ -87,7 +87,7 @@ public class NDLongArray extends AbstractArray {
 
     public NDLongArray set(long value, int... shape) {
         assert !closed;
-        array.putLong(flawLengthOf(shape, true), value);
+        array.putLong(toFlatOffset(shape, true), value);
         return this;
     }
 }

@@ -101,8 +101,8 @@ public class NDDoubleArray extends AbstractArray {
      */
     public NDDoubleArray set(NDDoubleArray value, boolean move, int... coords) {
         assert !closed && !value.closed;
-        validSubarrayShape(value, coords);
-        int flawLength = flawLengthOf(coords, false);
+        validateSubarrayShape(value, coords);
+        int flawLength = toFlatOffset(coords, false);
         Vect.memcpy(array.ptr() + (long) flawLength * Double.BYTES, value.array.ptr(), value.array.size());
         if (move) {
             value.close();
@@ -115,7 +115,7 @@ public class NDDoubleArray extends AbstractArray {
      */
     public NDDoubleArray set(double value, int... shape) {
         assert !closed;
-        array.putDouble(flawLengthOf(shape, true), value);
+        array.putDouble(toFlatOffset(shape, true), value);
         return this;
     }
 }
