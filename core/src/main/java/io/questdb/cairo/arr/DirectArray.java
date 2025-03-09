@@ -103,6 +103,11 @@ public final class DirectArray extends MutableArray implements Mutable {
         return ptr;
     }
 
+    /**
+     * Puts a double to a randomly-accessed flat index of the array. If you're populating
+     * the whole array, prefer obtaining {@code MemoryA} via {@link #startAppendMemory()},
+     * and then use {@link MemoryA#putDouble(double)} to append all values in row-major order.
+     */
     public void putDouble(int flatIndex, double value) {
         assert ColumnType.decodeArrayElementType(type) == ColumnType.DOUBLE : "putting DOUBLE to a non-DOUBLE array";
         assert flatIndex >= 0 : "negative flatIndex";
@@ -112,6 +117,11 @@ public final class DirectArray extends MutableArray implements Mutable {
         Unsafe.getUnsafe().putDouble(ptr + offset, value);
     }
 
+    /**
+     * Puts a long to a randomly-accessed flat index of the array. If you're populating
+     * the whole array, prefer obtaining {@code MemoryA} via {@link #startAppendMemory()},
+     * and then use {@link MemoryA#putLong(long)} to append all values in row-major order.
+     */
     public void putLong(int flatIndex, long value) {
         assert ColumnType.decodeArrayElementType(type) == ColumnType.LONG : "putting LONG to a non-LONG array";
         assert flatIndex >= 0 : "negative flatIndex";
