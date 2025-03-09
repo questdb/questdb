@@ -43,8 +43,8 @@ import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.array.ArrayDataAppender;
 import io.questdb.cutlass.line.array.ArrayShapeAppender;
 import io.questdb.cutlass.line.array.DoubleArray;
+import io.questdb.cutlass.line.array.FlattenArrayUtils;
 import io.questdb.cutlass.line.array.LongArray;
-import io.questdb.cutlass.line.array.NDArrayFlattener;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
@@ -226,22 +226,22 @@ public final class LineHttpSender implements Sender {
     @Override
     public Sender doubleArray(@NotNull CharSequence name, double[] values) {
         return arrayColumn(name, ColumnType.DOUBLE, (byte) 1, values,
-                NDArrayFlattener::processArrayShape,
-                NDArrayFlattener::processArrayData);
+                FlattenArrayUtils::putShapeToBuf,
+                FlattenArrayUtils::copyToBuf);
     }
 
     @Override
     public Sender doubleArray(@NotNull CharSequence name, double[][] values) {
         return arrayColumn(name, ColumnType.DOUBLE, (byte) 2, values,
-                NDArrayFlattener::processArrayShape,
-                NDArrayFlattener::processArrayData);
+                FlattenArrayUtils::putShapeToBuf,
+                FlattenArrayUtils::copyToBuf);
     }
 
     @Override
     public Sender doubleArray(@NotNull CharSequence name, double[][][] values) {
         return arrayColumn(name, ColumnType.DOUBLE, (byte) 3, values,
-                NDArrayFlattener::processArrayShape,
-                NDArrayFlattener::processArrayData);
+                FlattenArrayUtils::putShapeToBuf,
+                FlattenArrayUtils::copyToBuf);
     }
 
     @Override
@@ -271,22 +271,22 @@ public final class LineHttpSender implements Sender {
     @Override
     public Sender longArray(@NotNull CharSequence name, long[] values) {
         return arrayColumn(name, ColumnType.LONG, (byte) 1, values,
-                NDArrayFlattener::processArrayShape,
-                NDArrayFlattener::processArrayData);
+                FlattenArrayUtils::putShapeToBuf,
+                FlattenArrayUtils::copyToBuf);
     }
 
     @Override
     public Sender longArray(@NotNull CharSequence name, long[][] values) {
         return arrayColumn(name, ColumnType.LONG, (byte) 2, values,
-                NDArrayFlattener::processArrayShape,
-                NDArrayFlattener::processArrayData);
+                FlattenArrayUtils::putShapeToBuf,
+                FlattenArrayUtils::copyToBuf);
     }
 
     @Override
     public Sender longArray(@NotNull CharSequence name, long[][][] values) {
         return arrayColumn(name, ColumnType.LONG, (byte) 3, values,
-                NDArrayFlattener::processArrayShape,
-                NDArrayFlattener::processArrayData);
+                FlattenArrayUtils::putShapeToBuf,
+                FlattenArrayUtils::copyToBuf);
     }
 
     @Override
