@@ -81,7 +81,12 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private SecurityContext securityContext;
     private SendStatus sendStatus = SendStatus.NONE;
 
-    public LineHttpProcessorState(int initRecvBufSize, int maxResponseContentLength, CairoEngine engine, LineHttpProcessorConfiguration configuration) {
+    public LineHttpProcessorState(
+            int initRecvBufSize,
+            int maxResponseContentLength,
+            CairoEngine engine,
+            LineHttpProcessorConfiguration configuration
+    ) {
         assert initRecvBufSize > 0;
         this.initialBufSize = this.currentBufSize = initRecvBufSize;
         this.maxBufferSize = configuration.getMaxRecvBufferSize();
@@ -89,7 +94,9 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         // Response is measured in bytes some error messages can have non-ascii characters
         // approximate 1.5 bytes per character
         this.maxResponseErrorMessageLength = (int) ((maxResponseContentLength - 100) / 1.5);
-        this.recvBufPos = this.buffer = this.recvBufStartOfMeasurement = Unsafe.malloc(initRecvBufSize, MemoryTag.NATIVE_HTTP_CONN);
+        this.buffer = Unsafe.malloc(initRecvBufSize, MemoryTag.NATIVE_HTTP_CONN);
+        this.recvBufPos = this.buffer;
+        this.recvBufStartOfMeasurement = this.buffer;
         this.recvBufEnd = this.recvBufPos + initRecvBufSize;
         this.parser = new LineTcpParser(configuration.getCairoConfiguration());
         this.parser.of(buffer);
@@ -283,28 +290,27 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     }
 
     private boolean compactOrGrowBuffer(long recvBufStartOfMeasurement) {
-        if (recvBufPos == recvBufEnd) {
-            if (recvBufStartOfMeasurement > buffer) {
-                long size = recvBufPos - recvBufStartOfMeasurement;
-                long shl = recvBufStartOfMeasurement - buffer;
-                Vect.memmove(buffer, buffer + shl, size);
-                parser.shl(shl);
-                recvBufPos -= shl;
-                this.recvBufStartOfMeasurement -= shl;
-                setMaxMeasureSize(size);
-                tryToShrinkRecvBuffer(true);
-                return true;
-            }
-
-            // when the size of a single measure exceeds the maxBufferSize(default 1G), rise an error
-            if (currentBufSize == maxBufferSize) {
-                return false;
-            }
-
-            // otherwise grow current recvBuffer to currentBufSize * RECV_BUFFER_INCREMENT_COEFFICIENT
-            adjustRecvBuffer(Math.min(currentBufSize * RECV_BUFFER_INCREMENT_COEFFICIENT, maxBufferSize), true);
-            decrease = false;
+        if (recvBufPos != recvBufEnd) {
+            return true;
         }
+        if (recvBufStartOfMeasurement > buffer) {
+            long size = recvBufPos - recvBufStartOfMeasurement;
+            long shl = recvBufStartOfMeasurement - buffer;
+            Vect.memmove(buffer, buffer + shl, size);
+            parser.shl(shl);
+            recvBufPos -= shl;
+            this.recvBufStartOfMeasurement -= shl;
+            setMaxMeasureSize(size);
+            tryToShrinkRecvBuffer(true);
+            return true;
+        }
+        // if the size of a single measurement exceeds maxBufferSize, raise an error
+        if (currentBufSize == maxBufferSize) {
+            return false;
+        }
+        // otherwise, grow the current recvBuffer to currentBufSize * RECV_BUFFER_GROW_FACTOR
+        adjustRecvBuffer(Math.min(currentBufSize * RECV_BUFFER_GROW_FACTOR, maxBufferSize), true);
+        decrease = false;
         return true;
     }
 

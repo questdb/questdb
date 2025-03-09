@@ -431,12 +431,14 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
         return -1;
     }
 
-    private <T> Sender arrayColumn(CharSequence name,
-                                   short columnType,
-                                   byte nDims,
-                                   T array,
-                                   ArrayShapeAppender<T> shapeAppender,
-                                   ArrayDataAppender<T> dataAppender) {
+    private <T> Sender arrayColumn(
+            CharSequence name,
+            short columnType,
+            byte nDims,
+            T array,
+            ArrayShapeAppender<T> shapeAppender,
+            ArrayDataAppender<T> dataAppender
+    ) {
         if (processNullArray(name, array)) {
             return this;
         }
