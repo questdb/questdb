@@ -38,7 +38,7 @@ public class MmappedArray extends MutableArray {
         this.flatView = new BorrowedFlatArrayView();
     }
 
-    public MmappedArray of(int columnType, long auxAddr, long auxLim, long dataAddr, long dataLim, long row) {
+    public MmappedArray of(int columnType, long auxAddr, long auxLim, long dataAddr, long dataLim, long rowNum) {
         assert ColumnType.isArray(columnType) : "type class is not Array";
         setType(columnType);
         short elemType = ColumnType.decodeArrayElementType(columnType);
@@ -46,7 +46,7 @@ public class MmappedArray extends MutableArray {
         final int nDims = ColumnType.decodeArrayDimensionality(columnType);
         assert nDims > 0 && nDims <= ColumnType.ARRAY_NDIMS_LIMIT;
 
-        final long rowOffset = ArrayTypeDriver.getAuxVectorOffsetStatic(row);
+        final long rowOffset = ArrayTypeDriver.getAuxVectorOffsetStatic(rowNum);
         assert auxAddr + ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES <= auxLim;
         final long crcAndOffset = Unsafe.getUnsafe().getLong(auxAddr + rowOffset);
         final long sizeBytes = Unsafe.getUnsafe().getInt(auxAddr + rowOffset + Long.BYTES);
