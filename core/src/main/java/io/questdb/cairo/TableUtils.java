@@ -723,7 +723,7 @@ public final class TableUtils {
         return type;
     }
 
-    public static int getInt(MemoryMR metaMem, long memSize, long offset) {
+    public static int getInt(MemoryR metaMem, long memSize, long offset) {
         if (memSize < offset + Integer.BYTES) {
             throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + Integer.BYTES);
         }
@@ -818,7 +818,7 @@ public final class TableUtils {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8 + 4 + 8) - 1;
     }
 
-    public static int getSymbolCapacity(MemoryMR metaMem, int columnIndex) {
+    public static int getSymbolCapacity(MemoryR metaMem, int columnIndex) {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8 + 4);
     }
 
@@ -869,8 +869,9 @@ public final class TableUtils {
         if (ex.errnoReadPathDoesNotExist()) {
             if (millisecondClock.getTicks() < deadline) {
                 LOG.info().$("error reloading metadata [table=").utf8(tableName)
+                        .$(", msg=").utf8(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
-                        .$(", error=").utf8(ex.getFlyweightMessage()).I$();
+                        .I$();
                 Os.pause();
             } else {
                 throw CairoException.critical(ex.getErrno()).put("Metadata read timeout [src=writer, timeout=").put(spinLockTimeout).put("ms, err=").put(ex.getFlyweightMessage()).put(']');
@@ -941,7 +942,7 @@ public final class TableUtils {
         return savedChecksum == actualChecksum && savedMetaFormatMinorVersion >= META_FORMAT_MINOR_VERSION_LATEST;
     }
 
-    public static boolean isSymbolCached(MemoryMR metaMem, int columnIndex) {
+    public static boolean isSymbolCached(MemoryR metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_SYMBOL_CACHE) != 0;
     }
 
@@ -1807,6 +1808,13 @@ public final class TableUtils {
         return CairoException.critical(CairoException.METADATA_VALIDATION).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
     }
 
+    public static CairoException validationException(MemoryR mem) {
+        if (mem instanceof MemoryMR) {
+            return CairoException.critical(CairoException.METADATA_VALIDATION).put("Invalid metadata at fd=").put(((MemoryMR) mem).getFd()).put(". ");
+        }
+        return CairoException.critical(CairoException.METADATA_VALIDATION).put("Invalid metadata. ");
+    }
+
     public static void writeIntOrFail(FilesFacade ff, long fd, long offset, int value, long tempMem8b, Path path) {
         Unsafe.getUnsafe().putInt(tempMem8b, value);
         if (ff.write(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
@@ -1917,23 +1925,23 @@ public final class TableUtils {
         return true;
     }
 
-    static void buildWriterOrderMap(MemoryMR metaMem, IntList columnOrderMap, MemoryMR newMeta, int newColumnCount) {
+    static void buildWriterOrderMap(MemoryR newMetaMem, IntList columnOrderMap, int newColumnCount) {
         int nameOffset = (int) TableUtils.getColumnNameOffset(newColumnCount);
         columnOrderMap.clear();
 
         int denseSymbolIndex = 0;
         for (int i = 0; i < newColumnCount; i++) {
-            int strLen = TableUtils.getInt(newMeta, newMeta.size(), nameOffset);
+            int strLen = TableUtils.getInt(newMetaMem, newMetaMem.size(), nameOffset);
             if (strLen == TableUtils.NULL_LEN) {
-                throw validationException(metaMem).put("NULL column name at [").put(i).put(']');
+                throw validationException(newMetaMem).put("NULL column name at [").put(i).put(']');
             }
             if (strLen < 1 || strLen > 255) {
                 // EXT4 and many others do not allow file name length > 255 bytes
-                throw validationException(metaMem).put("String length of ").put(strLen).put(" is invalid at offset ").put(nameOffset);
+                throw validationException(newMetaMem).put("String length of ").put(strLen).put(" is invalid at offset ").put(nameOffset);
             }
             int nameLen = (int) Vm.getStorageLength(strLen);
-            int newOrderIndex = TableUtils.getReplacingColumnIndex(newMeta, i);
-            boolean isSymbol = ColumnType.isSymbol(TableUtils.getColumnType(newMeta, i));
+            int newOrderIndex = TableUtils.getReplacingColumnIndex(newMetaMem, i);
+            boolean isSymbol = ColumnType.isSymbol(TableUtils.getColumnType(newMetaMem, i));
 
             if (newOrderIndex > -1 && newOrderIndex < newColumnCount - 1) {
                 // Replace the column index
@@ -1975,7 +1983,7 @@ public final class TableUtils {
         return isMetaFormatUpToDate(metaMem) ? metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS) : 0;
     }
 
-    static boolean isColumnDedupKey(MemoryMR metaMem, int columnIndex) {
+    static boolean isColumnDedupKey(MemoryR metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_DEDUP_KEY) != 0;
     }
 

@@ -22,26 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.ops;
+package io.questdb.test.cairo.pool;
 
+import io.questdb.cairo.pool.SqlCompilerPool;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.ExecutionModel;
-import io.questdb.griffin.model.QueryModel;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
+import org.junit.Test;
 
-public interface CreateMatViewOperationBuilder extends ExecutionModel {
+public class SqlCompilerPoolTest extends AbstractCairoTest {
 
-    CreateMatViewOperation build(
-            SqlCompiler sqlCompiler,
-            SqlExecutionContext executionContext,
-            CharSequence sqlText
-    ) throws SqlException;
-
-    @Override
-    default int getModelType() {
-        return CREATE_MAT_VIEW;
+    @Test
+    public void testDoesNotSupportRefreshAt() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    SqlCompiler compiler1 = engine.getSqlCompiler();
+                    SqlCompiler compiler2 = engine.getSqlCompiler()
+            ) {
+                SqlCompilerPool.C c1 = (SqlCompilerPool.C) compiler1;
+                SqlCompilerPool.C c2 = (SqlCompilerPool.C) compiler2;
+                try {
+                    c1.refreshAt(null, c2);
+                    Assert.fail();
+                } catch (UnsupportedOperationException ignore) {
+                }
+            }
+        });
     }
-
-    void setSelectModel(QueryModel selectModel);
 }

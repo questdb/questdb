@@ -27,19 +27,26 @@ package io.questdb;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Mutable;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
-public class VolumeDefinitions {
-
+public class VolumeDefinitions implements Mutable {
     private static final char SEPARATOR = ',';
-
     private final LowerCaseCharSequenceObjHashMap<String> aliasToVolumeRoot = new LowerCaseCharSequenceObjHashMap<>(4);
     private int hi;
     private int limit;
     private int lo;
+
+    @TestOnly
+    @Override
+    public void clear() {
+        aliasToVolumeRoot.clear();
+        lo = hi = limit = 0;
+    }
 
     public void forEach(LowerCaseCharSequenceObjHashMap.CharSequenceObjConsumer<String> action) {
         aliasToVolumeRoot.forEach(action);

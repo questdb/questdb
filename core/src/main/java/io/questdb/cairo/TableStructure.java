@@ -42,8 +42,6 @@ public interface TableStructure {
 
     int getMaxUncommittedRows();
 
-    long getMetadataVersion();
-
     long getO3MaxLag();
 
     int getPartitionBy();

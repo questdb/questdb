@@ -60,7 +60,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class WriterPoolTest extends AbstractCairoTest {
-
     private TableToken zTableToken;
 
     @Before
@@ -128,7 +127,6 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     @Test
     public void testBasicCharSequence() throws Exception {
-
         TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("ts", ColumnType.DATE);
         AbstractCairoTest.create(model);
 
@@ -136,7 +134,6 @@ public class WriterPoolTest extends AbstractCairoTest {
             sink.clear();
             sink.put("x");
             TableToken xTableToken = engine.verifyTableName(sink);
-
 
             TableWriter writer1 = pool.get(xTableToken, "testing");
             Assert.assertNotNull(writer1);
@@ -154,7 +151,6 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     @Test
     public void testCannotLockWriter() throws Exception {
-
         final TestFilesFacade ff = new TestFilesFacade() {
             int count = 1;
 
@@ -180,7 +176,6 @@ public class WriterPoolTest extends AbstractCairoTest {
         };
 
         assertWithPool(pool -> {
-
             // fail first time
             Assert.assertEquals(WriterPool.OWNERSHIP_REASON_MISSING, pool.lock(zTableToken, "testing"));
 
@@ -190,7 +185,6 @@ public class WriterPoolTest extends AbstractCairoTest {
             Assert.assertNotNull(writer);
             writer.close();
 
-
             Assert.assertEquals(WriterPool.OWNERSHIP_REASON_NONE, pool.lock(zTableToken, "testing"));
 
             // check that we can't get writer from pool
@@ -199,7 +193,6 @@ public class WriterPoolTest extends AbstractCairoTest {
                 Assert.fail();
             } catch (CairoException ignore) {
             }
-
 
             // check that we can't create standalone writer either
             try {
@@ -273,7 +266,6 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     @Test
     public void testGetAndCloseRace() throws Exception {
-
         TableModel model = new TableModel(configuration, "xyz", PartitionBy.NONE).col("ts", ColumnType.DATE);
         AbstractCairoTest.create(model);
 
@@ -301,7 +293,6 @@ public class WriterPoolTest extends AbstractCairoTest {
                     }
                 }).start();
 
-
                 new Thread(() -> {
                     try {
                         barrier.await();
@@ -326,7 +317,6 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     @Test
     public void testGetAndReleaseRace() throws Exception {
-
         TableModel model = new TableModel(configuration, "xyz", PartitionBy.NONE).col("ts", ColumnType.DATE);
         AbstractCairoTest.create(model);
 
@@ -353,7 +343,6 @@ public class WriterPoolTest extends AbstractCairoTest {
                         stopLatch.countDown();
                     }
                 }).start();
-
 
                 new Thread(() -> {
                     try {
@@ -408,7 +397,6 @@ public class WriterPoolTest extends AbstractCairoTest {
         TableToken yTableToken = engine.verifyTableName("y");
 
         assertWithPool(pool -> {
-
             try (TableWriter wy = pool.get(yTableToken, "testing")) {
                 Assert.assertNotNull(wy);
                 Assert.assertTrue(wy.isOpen());
@@ -424,7 +412,6 @@ public class WriterPoolTest extends AbstractCairoTest {
                     pool.get(xTableToken, "testing");
                     Assert.fail();
                 } catch (EntryLockedException ignored) {
-
                 }
 
                 final CountDownLatch done = new CountDownLatch(1);
@@ -469,7 +456,6 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     @Test
     public void testLockUnlockAndReleaseRace() throws Exception {
-
         TableModel model = new TableModel(configuration, "xyz", PartitionBy.NONE).col("ts", ColumnType.DATE);
         AbstractCairoTest.create(model);
 
@@ -496,7 +482,6 @@ public class WriterPoolTest extends AbstractCairoTest {
                         stopLatch.countDown();
                     }
                 }).start();
-
 
                 new Thread(() -> {
                     try {
@@ -619,7 +604,6 @@ public class WriterPoolTest extends AbstractCairoTest {
 
     @Test
     public void testOneThreadGetRelease() throws Exception {
-
         assertWithPool(pool -> {
             TableWriter x;
             TableWriter y;
