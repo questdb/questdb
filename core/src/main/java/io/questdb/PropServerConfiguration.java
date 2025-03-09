@@ -537,6 +537,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpNetConnectionSndBuf;
     private long httpNetConnectionTimeout;
     private int httpRecvBufferSize;
+    private long httpRecvMaxBufferSize;
     private short integerDefaultColumnType;
     private int jsonQueryConnectionCheckFrequency;
     private int jsonQueryDoubleScale;
@@ -1126,6 +1127,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_CONNECTION_RCVBUF, httpNetConnectionRcvBuf);
             this.httpRecvBufferSize = getIntSize(properties, env, PropertyKey.HTTP_RECEIVE_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.httpRecvBufferSize = getIntSize(properties, env, PropertyKey.HTTP_RECV_BUFFER_SIZE, httpRecvBufferSize);
+            this.httpRecvMaxBufferSize = getLongSize(properties, env, PropertyKey.LINE_HTTP_MAX_RECV_BUFFER_SIZE, Numbers.SIZE_1GB);
 
             this.dateAdapterPoolCapacity = getInt(properties, env, PropertyKey.HTTP_TEXT_DATE_ADAPTER_POOL_CAPACITY, 16);
             this.jsonCacheLimit = getIntSize(properties, env, PropertyKey.HTTP_TEXT_JSON_CACHE_LIMIT, 16384);
@@ -3468,6 +3470,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             return cairoTableRegistryCompactionThreshold;
         }
 
+        @Override
         public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
             return telemetryConfiguration;
         }
@@ -3737,6 +3740,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             return walParallelExecutionEnabled;
         }
 
+        @Override
         public boolean isWalSupported() {
             return walSupported;
         }
@@ -4332,6 +4336,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getMaxRecvBufferSize() {
+            return httpRecvMaxBufferSize;
+        }
+
+        @Override
         public MicrosecondClock getMicrosecondClock() {
             return microsecondClock;
         }
@@ -4455,6 +4464,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             );
         }
 
+        @Override
         public long getCommitIntervalDefault() {
             return lineTcpCommitIntervalDefault;
         }
@@ -5215,6 +5225,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             return posthogEnabled;
         }
 
+        @Override
         public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
             settings.put(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), JsonPropertyValueFormatter.bool(isPosthogEnabled()));
             settings.put(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), str(getPosthogApiKey()));

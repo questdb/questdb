@@ -22,41 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.processors;
+package io.questdb.cutlass.line.array;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-
-public interface LineHttpProcessorConfiguration {
-
-    boolean autoCreateNewColumns();
-
-    boolean autoCreateNewTables();
-
-    CairoConfiguration getCairoConfiguration();
-
-    short getDefaultColumnTypeForFloat();
-
-    short getDefaultColumnTypeForInteger();
-
-    int getDefaultPartitionBy();
-
-    CharSequence getInfluxPingVersion();
-
-    long getMaxRecvBufferSize();
-
-    MicrosecondClock getMicrosecondClock();
-
-    long getSymbolCacheWaitUsBeforeReload();
-
-    LineTcpTimestampAdapter getTimestampAdapter();
-
-    boolean isEnabled();
-
-    boolean isStringToCharCastAllowed();
-
-    boolean isUseLegacyStringDefault();
-
-    boolean logMessageOnError();
+@FunctionalInterface
+public interface ArrayDataAppender<T> {
+    long append(long bufPtr, CapacityChecker checkFunc, T values);
 }

@@ -53,6 +53,8 @@ public class MutableArray extends ArrayView {
         strides.clear();
         flatViewLength = 0;
         int nDims = ColumnType.decodeArrayDimensionality(encodedType);
+        shape.checkCapacity(nDims);
+        strides.checkCapacity(nDims);
         for (int i = 0; i < nDims; i++) {
             shape.add(0);
         }

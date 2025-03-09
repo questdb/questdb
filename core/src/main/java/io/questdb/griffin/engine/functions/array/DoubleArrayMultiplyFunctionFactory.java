@@ -33,6 +33,7 @@ import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -126,7 +127,7 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
             arrayOut.setDimLen(0, outRowCount);
             arrayOut.setDimLen(1, outColCount);
             arrayOut.applyShape(leftArgPos);
-            int flatIndexOut = 0;
+            MemoryA memOut = arrayOut.startMemoryA();
             for (int rowOut = 0; rowOut < outRowCount; rowOut++) {
                 for (int colOut = 0; colOut < outColCount; colOut++) {
                     double sum = 0;
@@ -135,7 +136,7 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
                         int rightFlatIndex = rightIndexOffset + rightStride0 * commonDim + rightStride1 * colOut;
                         sum += leftFlatView.getDouble(leftFlatIndex) * rightFlatView.getDouble(rightFlatIndex);
                     }
-                    arrayOut.putDouble(flatIndexOut++, sum);
+                    memOut.putDouble(sum);
                 }
             }
             return arrayOut;

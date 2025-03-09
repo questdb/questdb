@@ -38,14 +38,7 @@ public class MmappedArray extends MutableArray {
         this.flatView = new BorrowedFlatArrayView();
     }
 
-    public MmappedArray of(
-            int columnType,
-            long auxAddr,
-            long auxLim,
-            long dataAddr,
-            long dataLim,
-            long row
-    ) {
+    public MmappedArray of(int columnType, long auxAddr, long auxLim, long dataAddr, long dataLim, long rowNum) {
         assert ColumnType.isArray(columnType) : "type class is not Array";
         setType(columnType);
         short elemType = ColumnType.decodeArrayElementType(columnType);
@@ -53,7 +46,7 @@ public class MmappedArray extends MutableArray {
         final int nDims = ColumnType.decodeArrayDimensionality(columnType);
         assert nDims > 0 && nDims <= ColumnType.ARRAY_NDIMS_LIMIT;
 
-        final long rowOffset = ArrayTypeDriver.getAuxVectorOffsetStatic(row);
+        final long rowOffset = ArrayTypeDriver.getAuxVectorOffsetStatic(rowNum);
         assert auxAddr + ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES <= auxLim;
         final long crcAndOffset = Unsafe.getUnsafe().getLong(auxAddr + rowOffset);
         final long sizeBytes = Unsafe.getUnsafe().getInt(auxAddr + rowOffset + Long.BYTES);
@@ -66,14 +59,7 @@ public class MmappedArray extends MutableArray {
         final long offset = crcAndOffset & ArrayTypeDriver.OFFSET_MAX;
         final long dataEntryPtr = dataAddr + offset;
 
-        mmappedShape.of(dataEntryPtr, nDims);
-        try {
-            for (int i = 0; i < nDims; i++) {
-                setDimLen(i, mmappedShape.get(i));
-            }
-        } finally {
-            mmappedShape.reset();
-        }
+        loadShape(dataEntryPtr, nDims);
         assert (dataEntryPtr + nDims * Integer.BYTES) <= dataLim : "dataEntryPtr + shapeSize > dataLim";
         resetToDefaultStrides();
 
@@ -83,6 +69,17 @@ public class MmappedArray extends MutableArray {
         final long valuesPtr = dataAddr + unalignedValuesOffset + bytesToSkipForAlignment;
         assert valuesPtr + (long) flatViewLength * elemSize <= dataLim;
         borrowedFlatView().of(valuesPtr, elemType, flatViewLength);
+        return this;
+    }
+
+    public MmappedArray of(int columnType, int nDims, long shapeAddr, long valuePtr, int valueSize) {
+        assert valueSize > 0;
+        setType(columnType);
+        loadShape(shapeAddr, nDims);
+        resetToDefaultStrides();
+        short elemType = ColumnType.decodeArrayElementType(columnType);
+        assert ColumnType.sizeOf(elemType) * flatViewLength == valueSize;
+        borrowedFlatView().of(valuePtr, elemType, flatViewLength);
         return this;
     }
 
@@ -102,5 +99,16 @@ public class MmappedArray extends MutableArray {
         borrowedFlatView().reset();
         shape.clear();
         strides.clear();
+    }
+
+    private void loadShape(long shapeAddr, int nDims) {
+        mmappedShape.of(shapeAddr, nDims);
+        try {
+            for (int i = 0; i < nDims; i++) {
+                setDimLen(i, mmappedShape.get(i));
+            }
+        } finally {
+            mmappedShape.reset();
+        }
     }
 }

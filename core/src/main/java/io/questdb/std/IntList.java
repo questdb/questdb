@@ -34,6 +34,7 @@ import java.util.Arrays;
 public class IntList implements Mutable, Sinkable {
     public static final int NO_ENTRY_VALUE = -1;
     private static final int DEFAULT_ARRAY_SIZE = 16;
+    private static final int[] EMPTY_ARRAY = new int[0];
     private final int initialCapacity;
     private int[] data;
     private int pos = 0;
@@ -44,7 +45,7 @@ public class IntList implements Mutable, Sinkable {
 
     public IntList(int capacity) {
         this.initialCapacity = capacity;
-        this.data = new int[initialCapacity];
+        this.data = capacity == 0 ? EMPTY_ARRAY : new int[initialCapacity];
     }
 
     public void add(int value) {

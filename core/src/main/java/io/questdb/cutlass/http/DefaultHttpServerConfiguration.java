@@ -284,6 +284,11 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         }
 
         @Override
+        public long getMaxRecvBufferSize() {
+            return lineHttpProcessorConfiguration.getMaxRecvBufferSize();
+        }
+
+        @Override
         public MicrosecondClock getMicrosecondClock() {
             return lineHttpProcessorConfiguration.getMicrosecondClock();
         }

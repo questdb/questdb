@@ -22,41 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.processors;
+package io.questdb.cutlass.line.array;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+@FunctionalInterface
+public interface CapacityChecker {
+    static void check(CapacityChecker checkFn, long addr) {
+        if (checkFn != null) {
+            checkFn.checkCapacity(addr);
+        }
+    }
 
-public interface LineHttpProcessorConfiguration {
-
-    boolean autoCreateNewColumns();
-
-    boolean autoCreateNewTables();
-
-    CairoConfiguration getCairoConfiguration();
-
-    short getDefaultColumnTypeForFloat();
-
-    short getDefaultColumnTypeForInteger();
-
-    int getDefaultPartitionBy();
-
-    CharSequence getInfluxPingVersion();
-
-    long getMaxRecvBufferSize();
-
-    MicrosecondClock getMicrosecondClock();
-
-    long getSymbolCacheWaitUsBeforeReload();
-
-    LineTcpTimestampAdapter getTimestampAdapter();
-
-    boolean isEnabled();
-
-    boolean isStringToCharCastAllowed();
-
-    boolean isUseLegacyStringDefault();
-
-    boolean logMessageOnError();
+    void checkCapacity(long capacity);
 }
