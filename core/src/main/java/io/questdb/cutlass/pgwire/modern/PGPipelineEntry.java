@@ -61,7 +61,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.QueryPausedException;
-import io.questdb.network.SuspendEvent;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.BitSet;
@@ -153,7 +152,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private boolean cacheHit = false;    // extended protocol cursor resume callback
     private CompiledQueryImpl compiledQuery;
     private RecordCursor cursor;
-    private SuspendEvent dataUnavailable = null;
     private boolean empty;
     private boolean error = false;
     private int errorMessagePosition;
@@ -331,7 +329,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateSync = SYNC_PARSE;
         tai = null;
         tas = null;
-        dataUnavailable = null;
     }
 
     public void commit(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) throws BadProtocolException {
@@ -753,14 +750,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     ) throws QueryPausedException, NoSpaceLeftInResponseBufferException {
         if (isError()) {
             outError(utf8Sink, pendingWriters);
-        } else if (this.dataUnavailable != null) {
-            // We hit cursor level data unavailable exception earlier,
-            // park the connection. On restart, we will find that "cursor" is still null,
-            // so we have to obtain it from the factory.
-            SuspendEvent e = dataUnavailable;
-            this.dataUnavailable = null;
-            utf8Sink.resetToBookmark();
-            throw QueryPausedException.instance(e, sqlExecutionContext.getCircuitBreaker());
         } else {
             switch (stateSync) {
                 case SYNC_PARSE:
@@ -925,17 +914,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // Calling a compiler while being called from a compiler is a bad idea.
         sqlExecutionContext.setCacheHit(cacheHit);
         sqlExecutionContext.getCircuitBreaker().resetTimer();
-        try {
-            cursor = factory.getCursor(sqlExecutionContext);
-            copyPgResultSetColumnTypesAndNames();
-        } catch (DataUnavailableException e) {
-            // we hit cursor level "data unavailable" exception
-            // the intent is to park the pipeline until data becomes available
-            // this should already be implemented when "data unavailable" is thrown out of
-            // cursor.hasNext()
-            // for now we proceed up to "sync" message, which will deal with this problem
-            this.dataUnavailable = e.getEvent();
-        }
+        cursor = factory.getCursor(sqlExecutionContext);
+        copyPgResultSetColumnTypesAndNames();
         setStateExec(true);
     }
 
@@ -1558,11 +1538,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             if (attempt == maxRecompileAttempts) {
                                 throw e;
                             }
-                        } catch (DataUnavailableException e) {
-                            // we will keep "cursor" null while instructing the pipeline to
-                            // pause the query when processing sync message
-                            dataUnavailable = e.getEvent();
-                            break;
                         }
                         factory = Misc.free(factory);
                     }
@@ -2046,11 +2021,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
         long recordStartAddress = utf8Sink.getSendBufferPtr();
         try {
-            if (cursor == null) {
-                // We assume cursor to be null here due to "data unavailable" exception
-                // We do not handle metadata changes here because part of the cursor will have been sent out.
-                cursor = factory.getCursor(sqlExecutionContext);
-            }
             final Record record = cursor.getRecord();
             if (outResendCursorRecord) {
                 outRecord(utf8Sink, record, columnCount);

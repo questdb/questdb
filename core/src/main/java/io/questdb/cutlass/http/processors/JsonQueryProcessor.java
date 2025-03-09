@@ -378,7 +378,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpChunkedResponse response = context.getChunkedResponse();
         while (true) {
             try {
-                state.resume(sqlExecutionContext, response);
+                state.resume(response);
                 break;
             } catch (SqlException | ImplicitCastException e) {
                 sqlError(context.getChunkedResponse(), state, e, configuration.getKeepAliveHeader());
@@ -684,8 +684,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final RecordCursor cursor;
         try {
             cursor = factory.getCursor(sqlExecutionContext);
-        } catch (DataUnavailableException e) {
-            throw e;
         } catch (Throwable th) {
             // clear factory in the state because we already set it
             state.clearFactory();

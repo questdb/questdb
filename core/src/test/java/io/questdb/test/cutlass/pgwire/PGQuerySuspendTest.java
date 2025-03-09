@@ -88,9 +88,6 @@ public class PGQuerySuspendTest extends BasePGTest {
                 engine.releaseAllReaders();
                 engine.setReaderListener(null);
 
-                if (tc.getQuery().equals("select * from x where ts = (select ts from y limit 3) and i != 41 limit -10")) {
-                    System.out.println("ok");
-                }
                 try (PreparedStatement statement = connection.prepareStatement(tc.getQuery())) {
                     sink.clear();
                     if (tc.getBindVariableValues() != null) {

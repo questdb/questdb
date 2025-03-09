@@ -41,7 +41,6 @@ import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpResponseSink;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.log.Log;
@@ -584,14 +583,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private void doNextRecordLoop(
-            SqlExecutionContext sqlExecutionContext,
             HttpChunkedResponse response,
             int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (doQueryNextRecord()) {
-            doRecordFetchLoop(sqlExecutionContext, response, columnCount);
+            doRecordFetchLoop(response, columnCount);
         } else {
-            doQuerySuffix(sqlExecutionContext, response, columnCount);
+            doQuerySuffix(response, columnCount);
         }
     }
 
@@ -751,7 +749,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private void doQuerySuffix(
-            SqlExecutionContext executionContext,
             HttpChunkedResponse response,
             int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -759,7 +756,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private void doRecordFetchLoop(
-            SqlExecutionContext sqlExecutionContext,
             HttpChunkedResponse response,
             int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -775,7 +771,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             response.resetToBookmark();
             throw e;
         }
-        doQuerySuffix(sqlExecutionContext, response, columnCount);
+        doQuerySuffix(response, columnCount);
     }
 
     private long getFd() {
@@ -805,26 +801,20 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         recordCountNanos = nanosecondClock.getTicks() - nanos;
     }
 
-    private void onQueryMetadata(
-            SqlExecutionContext sqlExecutionContext,
-            HttpChunkedResponse response,
-            int columnCount
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void onQueryMetadata(HttpChunkedResponse response, int columnCount) throws PeerDisconnectedException, PeerIsSlowToReadException {
         doQueryMetadata(response, columnCount);
-        onQueryMetadataSuffix(sqlExecutionContext, response, columnCount);
+        onQueryMetadataSuffix(response, columnCount);
     }
 
     private void onQueryMetadataSuffix(
-            SqlExecutionContext sqlExecutionContext,
             HttpChunkedResponse response,
             int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         doQueryMetadataSuffix(response);
-        onSendRecordsLoop(sqlExecutionContext, response, columnCount);
+        onSendRecordsLoop(response, columnCount);
     }
 
     private void onQueryPrefix(
-            SqlExecutionContext sqlExecutionContext,
             HttpChunkedResponse response,
             int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -832,53 +822,49 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             doQueryMetadata(response, columnCount);
             doQueryMetadataSuffix(response);
         }
-        onSendRecordsLoop(sqlExecutionContext, response, columnCount);
+        onSendRecordsLoop(response, columnCount);
     }
 
-    private void onQueryRecord(SqlExecutionContext sqlExecutionContext, HttpChunkedResponse response, int columnCount)
+    private void onQueryRecord(HttpChunkedResponse response, int columnCount)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         doQueryRecord(response, columnCount);
-        onQueryRecordSuffix(sqlExecutionContext, response, columnCount);
+        onQueryRecordSuffix(response, columnCount);
     }
 
     private void onQueryRecordPrefix(
-            SqlExecutionContext sqlExecutionContext,
             HttpChunkedResponse response,
             int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         doQueryRecordPrefix(response);
-        onQueryRecord(sqlExecutionContext, response, columnCount);
+        onQueryRecord(response, columnCount);
     }
 
     private void onQueryRecordSuffix(
-            SqlExecutionContext sqlExecutionContext,
             HttpChunkedResponse response,
             int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         doQueryRecordSuffix(response);
-        doNextRecordLoop(sqlExecutionContext, response, columnCount);
+        doNextRecordLoop(response, columnCount);
     }
 
     private void onSendRecordsLoop(
-            SqlExecutionContext sqlExecutionContext,
             HttpChunkedResponse response,
             int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (cursorHasRows) {
-            doRecordFetchLoop(sqlExecutionContext, response, columnCount);
+            doRecordFetchLoop(response, columnCount);
         } else {
-            doQuerySuffix(sqlExecutionContext, response, columnCount);
+            doQuerySuffix(response, columnCount);
         }
     }
 
     private void onSetupFirstRecord(
-            SqlExecutionContext sqlExecutionContext,
             HttpChunkedResponse response,
             int columnCount
-    ) throws PeerIsSlowToReadException, PeerDisconnectedException, SqlException {
+    ) throws PeerIsSlowToReadException, PeerDisconnectedException {
         // If there is an exception in the first record setup then upper layers will handle it:
         // Either they will send error or pause execution on DataUnavailableException
-        setupFirstRecord(sqlExecutionContext);
+        setupFirstRecord();
         // If we make it past setup then we optimistically send HTTP 200 header.
         // There is still a risk of exception while iterating over cursor, but there is not much we can do about it.
         // Trying to access the first record before sending HTTP headers will already catch many errors.
@@ -889,7 +875,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         // before actually sending HTTP headers. Otherwise, we would have to make JsonQueryProcessor.header() idempotent
         queryState = QUERY_PREFIX;
         JsonQueryProcessor.header(response, getHttpConnectionContext(), keepAliveHeader, 200);
-        onQueryPrefix(sqlExecutionContext, response, columnCount);
+        onQueryPrefix(response, columnCount);
     }
 
     private void putBinValue(HttpChunkedResponse response) {
@@ -914,11 +900,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
     }
 
-    private void setupFirstRecord(SqlExecutionContext sqlExecutionContext) throws SqlException {
-        if (cursor == null) {
-            cursor = recordCursorFactory.getCursor(sqlExecutionContext);
-        }
-
+    private void setupFirstRecord() {
         if (skip > 0) {
             final RecordCursor cursor = this.cursor;
             long target = skip + 1;
@@ -1067,9 +1049,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         response.done();
     }
 
-    void resume(SqlExecutionContext sqlExecutionContext, HttpChunkedResponse response)
+    void resume(HttpChunkedResponse response)
             throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
-        resumeActions.getQuick(queryState).onResume(sqlExecutionContext, response, columnCount);
+        resumeActions.getQuick(queryState).onResume(response, columnCount);
     }
 
     void setQueryCacheable(boolean queryCacheable) {
@@ -1079,7 +1061,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     @FunctionalInterface
     interface StateResumeAction {
         void onResume(
-                SqlExecutionContext sqlExecutionContext,
                 HttpChunkedResponse response,
                 int columnCount
         ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException;

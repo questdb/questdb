@@ -179,9 +179,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                         }
                     }
                     doResumeSend(context);
-                } catch (DataUnavailableException e) {
-                    context.getChunkedResponse().resetToBookmark();
-                    throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
                 } catch (CairoException e) {
                     state.setQueryCacheable(e.isCacheable());
                     internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e, state);
@@ -241,7 +238,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
         try {
             doResumeSend(context);
-        } catch (CairoError | CairoException | SqlException e) {
+        } catch (CairoError | CairoException e) {
             // this is something we didn't expect
             // log the exception and disconnect
             TextQueryProcessorState state = LV.get(context);
@@ -325,7 +322,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private void doResumeSend(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
         TextQueryProcessorState state = LV.get(context);
         if (state == null) {
             return;
@@ -351,9 +348,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 SWITCH:
                 switch (state.queryState) {
                     case JsonQueryProcessorState.QUERY_SETUP_FIRST_RECORD:
-                        if (state.cursor == null) {
-                            state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
-                        }
                         state.hasNext = state.cursor.hasNext();
                         header(response, state, 200);
                         state.queryState = JsonQueryProcessorState.QUERY_METADATA;
