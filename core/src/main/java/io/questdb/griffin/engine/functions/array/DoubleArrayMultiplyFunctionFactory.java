@@ -127,7 +127,7 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
             arrayOut.setDimLen(0, outRowCount);
             arrayOut.setDimLen(1, outColCount);
             arrayOut.applyShape(leftArgPos);
-            MemoryA memOut = arrayOut.startAppendMemory();
+            MemoryA memOut = arrayOut.startMemoryA();
             for (int rowOut = 0; rowOut < outRowCount; rowOut++) {
                 for (int colOut = 0; colOut < outColCount; colOut++) {
                     double sum = 0;

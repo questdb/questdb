@@ -67,9 +67,9 @@ public class ArrayTest extends AbstractCairoTest {
             execute("CREATE TABLE samba (ask_price DOUBLE[], ask_size DOUBLE[])");
             execute("CREATE TABLE tango (ask DOUBLE[][])");
             execute("INSERT INTO samba VALUES (ARRAY[1.0, 2, 3], ARRAY[4.0, 5, 6]), (ARRAY[7.0, 8, 9], ARRAY[10.0, 11, 12])");
-            execute("INSERT INTO tango SELECT ARRAY[[ask_price[0], ask_price[1]], [ask_size[0], ask_size[1]]] from samba");
-            execute("INSERT INTO tango SELECT ARRAY[ask_price, ask_size] from samba");
-            execute("INSERT INTO tango SELECT ARRAY[ask_price[0:2], ask_size[1:3]] from samba");
+            execute("INSERT INTO tango SELECT ARRAY[[ask_price[0], ask_price[1]], [ask_size[0], ask_size[1]]] FROM samba");
+            execute("INSERT INTO tango SELECT ARRAY[ask_price, ask_size] FROM samba");
+            execute("INSERT INTO tango SELECT ARRAY[ask_price[0:2], ask_size[1:3]] FROM samba");
             assertSql("ask\n" +
                             "[[1.0,2.0],[4.0,5.0]]\n" +
                             "[[7.0,8.0],[10.0,11.0]]\n" +
@@ -161,7 +161,7 @@ public class ArrayTest extends AbstractCairoTest {
             array.setDimLen(0, 3);
             array.setDimLen(1, 2);
             array.applyShape(-1);
-            MemoryA memA = array.startAppendMemory();
+            MemoryA memA = array.startMemoryA();
             memA.putLong(1);
             memA.putLong(2);
             memA.putLong(3);
@@ -199,7 +199,6 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("x\n[[3.0,4.0]]\n", "SELECT arr[1:2] x FROM tango");
             assertSql("x\n[3.0,4.0]\n", "SELECT arr[1] x FROM tango");
             assertSql("x\n[[3.0],[4.0]]\n", "SELECT t(arr[1:2]) x FROM tango");
-            assertSql("x\n[[3.0],[4.0]]\n", "SELECT t(arr[1:2]) x FROM tango");
             assertSql("x\n[2.0,4.0,6.0]\n", "SELECT t(arr)[1] x FROM tango");
             assertSql("x\n4.0\n", "SELECT arr[1][1] x FROM tango");
             assertSql("x\n[4.0]\n", "SELECT arr[1][1:2] x FROM tango");
@@ -217,7 +216,7 @@ public class ArrayTest extends AbstractCairoTest {
             array.setDimLen(0, 2);
             array.setDimLen(1, 2);
             array.applyShape(1);
-            MemoryA memA = array.startAppendMemory();
+            MemoryA memA = array.startMemoryA();
             memA.putDouble(1.0);
             memA.putDouble(2.0);
             memA.putDouble(3.0);
@@ -237,7 +236,7 @@ public class ArrayTest extends AbstractCairoTest {
             array.setDimLen(0, 2);
             array.setDimLen(1, 2);
             array.applyShape(2);
-            MemoryA memA = array.startAppendMemory();
+            MemoryA memA = array.startMemoryA();
             memA.putLong(1);
             memA.putLong(2);
             memA.putLong(3);
@@ -503,7 +502,7 @@ public class ArrayTest extends AbstractCairoTest {
             execute("INSERT INTO tango VALUES " +
                     "(ARRAY[[1.0, 3]], ARRAY[[5.0], [7]]), " +
                     "(ARRAY[[1.0, 1, 1], [2, 2, 2]], ARRAY[[3.0], [5], [7]])");
-            assertSql("product\n[[26.0]]\n[[15.0],[30.0]]\n", "SELECT left * right AS product from tango");
+            assertSql("product\n[[26.0]]\n[[15.0],[30.0]]\n", "SELECT left * right AS product FROM tango");
         });
     }
 
@@ -818,16 +817,16 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUnsupportedArrayDimension() throws Exception {
+    public void testUnsupportedArrayDimensionality() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (a DOUBLE[][][][][][][][][][][][][][][][])");
+            execute("CREATE TABLE x (a DOUBLE[][][][][][][][][][][][][][][][])");
             try (TableMetadata m = engine.getTableMetadata(engine.verifyTableName("x"))) {
                 Assert.assertEquals(1, m.getColumnCount());
                 Assert.assertEquals("a", m.getColumnName(0));
                 Assert.assertEquals("DOUBLE[][][][][][][][][][][][][][][][]", ColumnType.nameOf(m.getColumnType(0)));
             }
             assertExceptionNoLeakCheck(
-                    "create table y (a DOUBLE[][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][])", // 33 dimensions
+                    "CREATE TABLE y (a DOUBLE[][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][])", // 33 dimensions
                     18,
                     "array dimension limit is 32"
             );

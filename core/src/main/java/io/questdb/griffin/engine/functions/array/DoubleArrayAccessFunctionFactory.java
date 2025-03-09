@@ -167,11 +167,13 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("[](").val(arrayArg);
+            sink.val(arrayArg).val('[');
+            String comma = "";
             for (int n = indexArgs.size(), i = 0; i < n; i++) {
-                sink.val(',').val(indexArgs.getQuick(i));
+                sink.val(comma).val(indexArgs.getQuick(i));
+                comma = ",";
             }
-            sink.val(')');
+            sink.val(']');
         }
     }
 
@@ -240,11 +242,13 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("[](").val(arrayArg);
+            sink.val(arrayArg).val('[');
+            String comma = "";
             for (int n = rangeArgs.size(), i = 0; i < n; i++) {
-                sink.val(',').val(rangeArgs.getQuick(i));
+                sink.val(comma).val(rangeArgs.getQuick(i));
+                comma = ",";
             }
-            sink.val(')');
+            sink.val(']');
         }
     }
 }

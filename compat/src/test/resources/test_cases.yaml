@@ -19,7 +19,7 @@ tests:
               parameters:
                 - value: "${id}"
                   type: "INT4"
-                - value: "{-1, 2, 3, 4, 5.42}"
+                - value: "{-1, 2, 3, NULL, 5.42}"
                   type: "ARRAY_FLOAT8"
               expect:
                 result:
@@ -28,9 +28,9 @@ tests:
         query: "SELECT * FROM ${table_name}"
         expect:
           result_contains:
-            - [ 1, "{-1.0,2.0,3.0,4.0,5.42}" ]
-            - [ 2, "{-1.0,2.0,3.0,4.0,5.42}" ]
-            - [ 10, "{-1.0,2.0,3.0,4.0,5.42}" ]
+            - [ 1, "{-1.0,2.0,3.0,NULL,5.42}" ]
+            - [ 2, "{-1.0,2.0,3.0,NULL,5.42}" ]
+            - [ 10, "{-1.0,2.0,3.0,NULL,5.42}" ]
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS ${table_name};"

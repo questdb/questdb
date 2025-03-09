@@ -105,7 +105,7 @@ public final class DirectArray extends MutableArray implements Mutable {
 
     /**
      * Puts a double to a randomly-accessed flat index of the array. If you're populating
-     * the whole array, prefer obtaining {@code MemoryA} via {@link #startAppendMemory()},
+     * the whole array, prefer obtaining {@code MemoryA} via {@link #startMemoryA()},
      * and then use {@link MemoryA#putDouble(double)} to append all values in row-major order.
      */
     public void putDouble(int flatIndex, double value) {
@@ -119,7 +119,7 @@ public final class DirectArray extends MutableArray implements Mutable {
 
     /**
      * Puts a long to a randomly-accessed flat index of the array. If you're populating
-     * the whole array, prefer obtaining {@code MemoryA} via {@link #startAppendMemory()},
+     * the whole array, prefer obtaining {@code MemoryA} via {@link #startMemoryA()},
      * and then use {@link MemoryA#putLong(long)} to append all values in row-major order.
      */
     public void putLong(int flatIndex, long value) {
@@ -134,8 +134,7 @@ public final class DirectArray extends MutableArray implements Mutable {
         return borrowedFlatView().size();
     }
 
-
-    public MemoryA startAppendMemory() {
+    public MemoryA startMemoryA() {
         flatViewMemory.appendOffset = 0;
         return flatViewMemory;
     }

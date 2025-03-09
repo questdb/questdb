@@ -87,7 +87,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
             array.setDimLen(0, 2);
             array.setDimLen(1, 3);
             array.applyShape(-1);
-            MemoryA memA = array.startAppendMemory();
+            MemoryA memA = array.startMemoryA();
             memA.putDouble(1.1);
             memA.putDouble(2.1);
             memA.putDouble(3.1);

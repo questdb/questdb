@@ -148,7 +148,7 @@ public class Rnd {
     }
 
     public void nextFlatDoubleArray(DirectArray array, int nanRate, int size) {
-        MemoryA memA = array.startAppendMemory();
+        MemoryA memA = array.startMemoryA();
         for (int i = 0; i < size; i++) {
             double val;
             if (nanRate > 0 && nextInt(nanRate) == 1) {
@@ -223,7 +223,7 @@ public class Rnd {
         }
 
         array.applyShape(errorPosition);
-        MemoryA memA = array.startAppendMemory();
+        MemoryA memA = array.startMemoryA();
         for (int i = 0; i < size; i++) {
             long val;
             if (nanRate > 0 && nextInt(nanRate) == 1) {

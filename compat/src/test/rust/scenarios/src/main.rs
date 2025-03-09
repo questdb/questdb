@@ -307,12 +307,19 @@ fn extract_parameters(
                         ),
 
                         "array_float8" => {
-                            // Parse PostgreSQL float array format: {-1, 2, 3, 4, 5.42}
+                            // Parse PostgreSQL float array format: {-1, 2, NULL, 4, 5.42}
                             let trimmed = substituted.trim_start_matches('{').trim_end_matches('}');
-                            let float_array: Vec<f64> = trimmed
+                            let float_array: Vec<Option<f64>> = trimmed
                                 .split(',')
-                                .map(|s| s.trim().parse::<f64>())
-                                .collect::<Result<Vec<f64>, _>>()?;
+                                .map(|s| {
+                                    let trimmed = s.trim();
+                                    if trimmed.eq_ignore_ascii_case("NULL") {
+                                        Ok(None)
+                                    } else {
+                                        trimmed.parse::<f64>().map(Some)
+                                    }
+                                })
+                                .collect::<Result<Vec<Option<f64>>, _>>()?;
                             Box::new(float_array)
                         }
 
@@ -388,19 +395,22 @@ fn get_value_as_yaml(row: &Row, idx: usize) -> Value {
         }
         tokio_postgres::types::Type::VARCHAR => Value::String(row.get(idx)),
         tokio_postgres::types::Type::FLOAT8_ARRAY => {
-            // Convert float array to a YAML sequence
-            let float_array: Vec<f64> = row.get(idx);
+            let float_array: Vec<Option<f64>> = row.get(idx);
             let float_strs: Vec<String> = float_array.iter()
-                .map(|&num| {
-                    // Ensure at least one digit after decimal point
-                    if num.fract().abs() < f64::EPSILON {
-                        format!("{:.1}", num) // Force one decimal place for integers
-                    } else {
-                        num.to_string() // Regular formatting for non-integers
+                .map(|&opt_num| {
+                    match opt_num {
+                        None => "NULL".to_string(),
+                        Some(num) => {
+                            // Ensure at least one digit after decimal point
+                            if num.fract().abs() < f64::EPSILON {
+                                format!("{:.1}", num) // Force one decimal place for integers
+                            } else {
+                                num.to_string() // Regular formatting for non-integers
+                            }
+                        }
                     }
                 })
                 .collect();
-
             Value::String(format!("{{{}}}", float_strs.join(",")))
         }
         _ => Value::String(row.get(idx)),

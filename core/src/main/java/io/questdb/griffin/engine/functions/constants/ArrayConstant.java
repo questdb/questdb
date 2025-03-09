@@ -53,7 +53,7 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
         }
         array.applyShape(-1);
         FlatArrayView flatViewIn = arrayIn.flatView();
-        MemoryA memA = array.startAppendMemory();
+        MemoryA memA = array.startMemoryA();
         for (int n = arrayIn.getFlatViewLength(), i = 0; i < n; i++) {
             memA.putDouble(flatViewIn.getDouble(i));
         }
@@ -64,7 +64,7 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
         array.setType(type);
         array.setDimLen(0, vals.length);
         array.applyShape(-1);
-        MemoryA memA = array.startAppendMemory();
+        MemoryA memA = array.startMemoryA();
         for (int n = vals.length, i = 0; i < n; i++) {
             memA.putDouble(vals[i]);
         }
@@ -76,7 +76,7 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
         array.setDimLen(0, vals.length);
         array.setDimLen(1, vals[0].length);
         array.applyShape(-1);
-        MemoryA memA = array.startAppendMemory();
+        MemoryA memA = array.startMemoryA();
         for (int n = vals.length, i = 0; i < n; i++) {
             for (int m = vals[0].length, j = 0; j < m; j++) {
                 memA.putDouble(vals[i][j]);
