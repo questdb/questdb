@@ -115,7 +115,7 @@ public class NDDoubleArray extends AbstractNDArray {
      */
     public NDDoubleArray set(double value, int... shape) {
         assert !closed;
-        array.putDoubleQuick(flawLengthOf(shape, true), value);
+        array.putDouble(flawLengthOf(shape, true), value);
         return this;
     }
 }

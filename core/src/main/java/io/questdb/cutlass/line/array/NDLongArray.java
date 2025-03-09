@@ -87,7 +87,7 @@ public class NDLongArray extends AbstractNDArray {
 
     public NDLongArray set(long value, int... shape) {
         assert !closed;
-        array.putLongQuick(flawLengthOf(shape, true), value);
+        array.putLong(flawLengthOf(shape, true), value);
         return this;
     }
 }

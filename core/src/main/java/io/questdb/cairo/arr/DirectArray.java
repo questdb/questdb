@@ -106,25 +106,18 @@ public final class DirectArray extends MutableArray implements Mutable {
     public void putDouble(int flatIndex, double value) {
         assert ColumnType.decodeArrayElementType(type) == ColumnType.DOUBLE : "putting DOUBLE to a non-DOUBLE array";
         assert flatIndex >= 0 : "negative flatIndex";
+        assert ptr > 0 : "ptr <= 0";
         long offset = flatIndex * DOUBLE_BYTES;
-        ensureCapacity(offset + DOUBLE_BYTES);
+        assert capacity >= offset + DOUBLE_BYTES : "capacity < offset + DOUBLE_BYTES";
         Unsafe.getUnsafe().putDouble(ptr + offset, value);
-    }
-
-    public void putDoubleQuick(int flatIndex, double value) {
-        Unsafe.getUnsafe().putDouble(ptr + flatIndex * DOUBLE_BYTES, value);
     }
 
     public void putLong(int flatIndex, long value) {
         assert ColumnType.decodeArrayElementType(type) == ColumnType.LONG : "putting LONG to a non-LONG array";
         assert flatIndex >= 0 : "negative flatIndex";
         long offset = flatIndex * LONG_BYTES;
-        ensureCapacity(offset + LONG_BYTES);
+        assert capacity >= offset + LONG_BYTES : "capacity < offset + LONG_BYTES";
         Unsafe.getUnsafe().putLong(ptr + offset, value);
-    }
-
-    public void putLongQuick(int flatIndex, long value) {
-        Unsafe.getUnsafe().putLong(ptr + flatIndex * LONG_BYTES, value);
     }
 
     public long size() {
