@@ -76,7 +76,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
             array.applyShape(1);
             array.putLong(0, 1);
             array.putLong(1, 2);
-            Unsafe.getUnsafe().putByte(mem, LineTcpParser.ENTITY_TYPE_ND_ARRAY);
+            Unsafe.getUnsafe().putByte(mem, LineTcpParser.ENTITY_TYPE_ARRAY);
             long array1Addr = mem + 1;
             long array1Size = ArrayTest.arrayViewToBinaryFormat(array, array1Addr);
             long array2Addr = array1Addr + array1Size;
@@ -94,7 +94,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
             memA.putDouble(4.1);
             memA.putDouble(5.1);
             memA.putDouble(6.1);
-            Unsafe.getUnsafe().putByte(array2Addr, LineTcpParser.ENTITY_TYPE_ND_ARRAY);
+            Unsafe.getUnsafe().putByte(array2Addr, LineTcpParser.ENTITY_TYPE_ARRAY);
             sink.clear();
             long array2Size = ArrayTest.arrayViewToBinaryFormat(array, array2Addr + 1);
 
@@ -538,7 +538,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
                 case LineTcpParser.ENTITY_TYPE_LONG256:
                     sink.put(entity.getValue()).put('i');
                     break;
-                case LineTcpParser.ENTITY_TYPE_ND_ARRAY:
+                case LineTcpParser.ENTITY_TYPE_ARRAY:
                     ArrayTypeDriver.arrayToJson(entity.getArray(), sink, NoopArrayState.INSTANCE);
                     break;
                 default:

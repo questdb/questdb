@@ -252,7 +252,7 @@ class LineTcpMeasurementEvent implements Closeable {
                         row.putVarchar(colIndex, s);
                         address += Integer.BYTES + s.size();
                         break;
-                    case LineTcpParser.ENTITY_TYPE_ND_ARRAY:
+                    case LineTcpParser.ENTITY_TYPE_ARRAY:
                         ArrayView array = buffer.readArray(address);
                         row.putArray(colIndex, array);
                         address += buffer.columnValueLength(entityType, address);
@@ -568,7 +568,7 @@ class LineTcpMeasurementEvent implements Closeable {
                     }
                     break;
                 }
-                case LineTcpParser.ENTITY_TYPE_ND_ARRAY:
+                case LineTcpParser.ENTITY_TYPE_ARRAY:
                     if (!ColumnType.isArray(colType)) {
                         throw castError(tud.getTableNameUtf16(), "ND_ARRAY", colType, entity.getName());
                     }

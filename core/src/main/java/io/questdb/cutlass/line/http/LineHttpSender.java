@@ -250,7 +250,7 @@ public final class LineHttpSender implements Sender {
             return this;
         }
         writeFieldName(name, true)
-                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ND_ARRAY binary format
                 .put((byte) ColumnType.DOUBLE); // element type
         request.setPtr(values.appendToBufPtr(request.getPtr(), request::checkCapacity, true));
         return this;
@@ -295,7 +295,7 @@ public final class LineHttpSender implements Sender {
             return this;
         }
         writeFieldName(name, true)
-                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ND_ARRAY binary format
                 .put((byte) ColumnType.LONG); // element type
         request.setPtr(values.appendToBufPtr(request.getPtr(), request::checkCapacity, true));
         return this;
@@ -411,7 +411,7 @@ public final class LineHttpSender implements Sender {
             return this;
         }
         writeFieldName(name, true)
-                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ND_ARRAY binary format
                 .put((byte) columnType) // element type
                 .put(nDims); // dims.
         request.checkCapacity(Integer.BYTES * nDims);
@@ -593,7 +593,7 @@ public final class LineHttpSender implements Sender {
     private boolean processNullArray(CharSequence name, Object value) {
         if (value == null) {
             writeFieldName(name, true);
-            request.put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+            request.put(LineTcpParser.ENTITY_TYPE_ARRAY) // ND_ARRAY binary format
                     .put((byte) ColumnType.NULL); // element type
             return true;
         }

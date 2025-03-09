@@ -175,7 +175,7 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
             return this;
         }
         writeFieldName(name, true)
-                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ARRAY binary format
                 .put((byte) ColumnType.DOUBLE); // element type
         ptr = values.appendToBufPtr(ptr, null, true);
         return this;
@@ -244,7 +244,7 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
             return this;
         }
         writeFieldName(name, true)
-                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ARRAY binary format
                 .put((byte) ColumnType.LONG); // element type
         ptr = values.appendToBufPtr(ptr, null, true);
         return this;
@@ -442,7 +442,7 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
         }
 
         writeFieldName(name, true)
-                .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY)
+                .put(LineTcpParser.ENTITY_TYPE_ARRAY)
                 .put((byte) columnType)
                 .put(nDims);
         shapeAppender.append(ptr, array);
@@ -454,7 +454,7 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
     private boolean processNullArray(CharSequence name, Object value) {
         if (value == null) {
             writeFieldName(name, true)
-                    .put(LineTcpParser.ENTITY_TYPE_ND_ARRAY) // ND_ARRAY binary format
+                    .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ARRAY binary format
                     .put((byte) ColumnType.NULL); // element type
             return true;
         }

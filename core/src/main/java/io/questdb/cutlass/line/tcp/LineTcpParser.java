@@ -44,6 +44,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class LineTcpParser implements QuietCloseable {
 
+    public static final byte ENTITY_TYPE_ARRAY = 14;
     public static final byte ENTITY_TYPE_BOOLEAN = 6;
     public static final byte ENTITY_TYPE_BYTE = 18;
     public static final byte ENTITY_TYPE_CACHED_TAG = 8;
@@ -65,7 +66,6 @@ public class LineTcpParser implements QuietCloseable {
     public static final byte ENTITY_TYPE_SYMBOL = 5;
     public static final byte ENTITY_TYPE_TAG = 1;
     public static final byte ENTITY_TYPE_TIMESTAMP = 13;
-    public static final byte ENTITY_TYPE_ND_ARRAY = 14;
     public static final byte ENTITY_TYPE_UUID = 21;
     public static final byte ENTITY_TYPE_VARCHAR = 22;
     public static final byte ENTITY_UNIT_NONE = 0;
@@ -76,7 +76,7 @@ public class LineTcpParser implements QuietCloseable {
     public static final byte ENTITY_UNIT_MINUTE = ENTITY_UNIT_SECOND + 1;
     public static final byte ENTITY_UNIT_HOUR = ENTITY_UNIT_MINUTE + 1;
     public static final long NULL_TIMESTAMP = Numbers.LONG_NULL;
-    public static final int N_ENTITY_TYPES = ENTITY_TYPE_ND_ARRAY + 1;
+    public static final int N_ENTITY_TYPES = ENTITY_TYPE_ARRAY + 1;
     public static final int N_MAPPED_ENTITY_TYPES = ENTITY_TYPE_VARCHAR + 1;
     private static final byte ENTITY_HANDLER_NAME = 1;
     private static final byte ENTITY_HANDLER_NEW_LINE = 4;
@@ -866,7 +866,7 @@ public class LineTcpParser implements QuietCloseable {
                             errorCode = ErrorCode.UNSUPPORTED_NATIVE_FORMAT;
                             return false;
                         }
-                        if (type == ENTITY_TYPE_ND_ARRAY) {
+                        if (type == ENTITY_TYPE_ARRAY) {
                             arrayNativeParser.reset();
                         }
                         bufAt++;
@@ -920,7 +920,7 @@ public class LineTcpParser implements QuietCloseable {
                             }
                             bufAt++;
                             break;
-                        case ENTITY_TYPE_ND_ARRAY:
+                        case ENTITY_TYPE_ARRAY:
                             if (bufAt - entityLo + 1 == arrayNativeParser.getNextExpectSize()) {
                                 if (arrayNativeParser.processNextBinaryPart(entityLo)) {
                                     return true;
@@ -1006,6 +1006,6 @@ public class LineTcpParser implements QuietCloseable {
         nativeFormatSupportType.add(ENTITY_TYPE_INTEGER);
         nativeFormatSupportType.add(ENTITY_TYPE_LONG);
         nativeFormatSupportType.add(ENTITY_TYPE_TIMESTAMP);
-        nativeFormatSupportType.add(ENTITY_TYPE_ND_ARRAY);
+        nativeFormatSupportType.add(ENTITY_TYPE_ARRAY);
     }
 }
