@@ -79,7 +79,7 @@ import java.util.concurrent.TimeUnit;
  * <p>
  * Error-handling: Most errors throw an instance of {@link LineSenderException}.
  */
-public interface Sender extends Closeable, INDArray<Sender> {
+public interface Sender extends Closeable, ArraySender<Sender> {
 
     /**
      * Create a Sender builder instance from a configuration string.
