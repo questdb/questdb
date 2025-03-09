@@ -54,19 +54,19 @@ public class LongArray extends AbstractArray {
 
     public static LongArray create(long[] values) {
         LongArray ndArray = createWithoutDefault(values.length);
-        FlattenArrayUtils.copyToBuf(ndArray.array.ptr(), null, values);
+        FlattenArrayUtils.putDataToBuf(ndArray.array.ptr(), null, values);
         return ndArray;
     }
 
     public static LongArray create(long[][] values) {
         LongArray ndArray = createWithoutDefault(values.length, values[0].length);
-        FlattenArrayUtils.copyToBuf(ndArray.array.ptr(), null, values);
+        FlattenArrayUtils.putDataToBuf(ndArray.array.ptr(), null, values);
         return ndArray;
     }
 
     public static LongArray create(long[][][] values) {
         LongArray ndArray = createWithoutDefault(values.length, values[0].length, values[0][0].length);
-        FlattenArrayUtils.copyToBuf(ndArray.array.ptr(), null, values);
+        FlattenArrayUtils.putDataToBuf(ndArray.array.ptr(), null, values);
         return ndArray;
     }
 

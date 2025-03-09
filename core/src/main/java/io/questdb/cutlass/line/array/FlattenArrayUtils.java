@@ -35,7 +35,7 @@ import io.questdb.std.Unsafe;
  */
 public class FlattenArrayUtils {
 
-    public static long copyToBuf(long bufPtr, CheckCapacity checkFn, double[] array) {
+    public static long putDataToBuf(long bufPtr, CheckCapacity checkFn, double[] array) {
         int length = array.length;
         CheckCapacity.check(checkFn, (long) length * Double.BYTES);
         for (int i = 0; i < length; i++) {
@@ -46,7 +46,7 @@ public class FlattenArrayUtils {
         return bufPtr;
     }
 
-    public static long copyToBuf(long bufPtr, CheckCapacity checkFn, double[][] array) {
+    public static long putDataToBuf(long bufPtr, CheckCapacity checkFn, double[][] array) {
         final int dim0Len = array.length;
         final int dim1Len = array[0].length;
         for (int i = 0; i < dim0Len; i++) {
@@ -54,12 +54,12 @@ public class FlattenArrayUtils {
             if (v.length != dim1Len) {
                 throw new LineSenderException("irregular array shape");
             }
-            bufPtr = copyToBuf(bufPtr, checkFn, v);
+            bufPtr = putDataToBuf(bufPtr, checkFn, v);
         }
         return bufPtr;
     }
 
-    public static long copyToBuf(long bufPtr, CheckCapacity checkFn, double[][][] array) {
+    public static long putDataToBuf(long bufPtr, CheckCapacity checkFn, double[][][] array) {
         final int dim0Len = array.length;
         final int dim1Len = array[0].length;
         for (int i = 0; i < dim0Len; i++) {
@@ -67,12 +67,12 @@ public class FlattenArrayUtils {
             if (v.length != dim1Len) {
                 throw new LineSenderException("array is not regular");
             }
-            bufPtr = copyToBuf(bufPtr, checkFn, v);
+            bufPtr = putDataToBuf(bufPtr, checkFn, v);
         }
         return bufPtr;
     }
 
-    public static long copyToBuf(long bufPtr, CheckCapacity checkFn, long[] array) {
+    public static long putDataToBuf(long bufPtr, CheckCapacity checkFn, long[] array) {
         CheckCapacity.check(checkFn, (long) array.length * Double.BYTES);
         for (long v : array) {
             Unsafe.getUnsafe().putLong(bufPtr, v);
@@ -81,24 +81,24 @@ public class FlattenArrayUtils {
         return bufPtr;
     }
 
-    public static long copyToBuf(long bufPtr, CheckCapacity checkFn, long[][] array) {
+    public static long putDataToBuf(long bufPtr, CheckCapacity checkFn, long[][] array) {
         int length = array[0].length;
         for (long[] v : array) {
             if (length != v.length) {
                 throw new LineSenderException("array is not regular");
             }
-            bufPtr = copyToBuf(bufPtr, checkFn, v);
+            bufPtr = putDataToBuf(bufPtr, checkFn, v);
         }
         return bufPtr;
     }
 
-    public static long copyToBuf(long bufPtr, CheckCapacity checkFn, long[][][] array) {
+    public static long putDataToBuf(long bufPtr, CheckCapacity checkFn, long[][][] array) {
         int length = array[0].length;
         for (long[][] v : array) {
             if (length != v.length) {
                 throw new LineSenderException("array is not regular");
             }
-            bufPtr = copyToBuf(bufPtr, checkFn, v);
+            bufPtr = putDataToBuf(bufPtr, checkFn, v);
         }
         return bufPtr;
     }

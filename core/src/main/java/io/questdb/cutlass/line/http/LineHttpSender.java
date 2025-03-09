@@ -227,21 +227,21 @@ public final class LineHttpSender implements Sender {
     public Sender doubleArray(@NotNull CharSequence name, double[] values) {
         return arrayColumn(name, ColumnType.DOUBLE, (byte) 1, values,
                 FlattenArrayUtils::putShapeToBuf,
-                FlattenArrayUtils::copyToBuf);
+                FlattenArrayUtils::putDataToBuf);
     }
 
     @Override
     public Sender doubleArray(@NotNull CharSequence name, double[][] values) {
         return arrayColumn(name, ColumnType.DOUBLE, (byte) 2, values,
                 FlattenArrayUtils::putShapeToBuf,
-                FlattenArrayUtils::copyToBuf);
+                FlattenArrayUtils::putDataToBuf);
     }
 
     @Override
     public Sender doubleArray(@NotNull CharSequence name, double[][][] values) {
         return arrayColumn(name, ColumnType.DOUBLE, (byte) 3, values,
                 FlattenArrayUtils::putShapeToBuf,
-                FlattenArrayUtils::copyToBuf);
+                FlattenArrayUtils::putDataToBuf);
     }
 
     @Override
@@ -272,21 +272,21 @@ public final class LineHttpSender implements Sender {
     public Sender longArray(@NotNull CharSequence name, long[] values) {
         return arrayColumn(name, ColumnType.LONG, (byte) 1, values,
                 FlattenArrayUtils::putShapeToBuf,
-                FlattenArrayUtils::copyToBuf);
+                FlattenArrayUtils::putDataToBuf);
     }
 
     @Override
     public Sender longArray(@NotNull CharSequence name, long[][] values) {
         return arrayColumn(name, ColumnType.LONG, (byte) 2, values,
                 FlattenArrayUtils::putShapeToBuf,
-                FlattenArrayUtils::copyToBuf);
+                FlattenArrayUtils::putDataToBuf);
     }
 
     @Override
     public Sender longArray(@NotNull CharSequence name, long[][][] values) {
         return arrayColumn(name, ColumnType.LONG, (byte) 3, values,
                 FlattenArrayUtils::putShapeToBuf,
-                FlattenArrayUtils::copyToBuf);
+                FlattenArrayUtils::putDataToBuf);
     }
 
     @Override

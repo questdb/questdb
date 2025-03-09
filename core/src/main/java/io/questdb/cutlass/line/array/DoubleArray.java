@@ -63,7 +63,7 @@ public class DoubleArray extends AbstractArray {
      */
     public static DoubleArray create(double[] values) {
         DoubleArray ndArray = createWithoutDefault(values.length);
-        FlattenArrayUtils.copyToBuf(ndArray.array.ptr(), null, values);
+        FlattenArrayUtils.putDataToBuf(ndArray.array.ptr(), null, values);
         return ndArray;
     }
 
@@ -72,7 +72,7 @@ public class DoubleArray extends AbstractArray {
      */
     public static DoubleArray create(double[][] values) {
         DoubleArray ndArray = createWithoutDefault(values.length, values[0].length);
-        FlattenArrayUtils.copyToBuf(ndArray.array.ptr(), null, values);
+        FlattenArrayUtils.putDataToBuf(ndArray.array.ptr(), null, values);
         return ndArray;
     }
 
@@ -81,7 +81,7 @@ public class DoubleArray extends AbstractArray {
      */
     public static DoubleArray create(double[][][] values) {
         DoubleArray ndArray = createWithoutDefault(values.length, values[0].length, values[0][0].length);
-        FlattenArrayUtils.copyToBuf(ndArray.array.ptr(), null, values);
+        FlattenArrayUtils.putDataToBuf(ndArray.array.ptr(), null, values);
         return ndArray;
     }
 
