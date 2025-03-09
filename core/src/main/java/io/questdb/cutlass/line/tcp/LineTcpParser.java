@@ -25,7 +25,6 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.MmappedArray;
 import io.questdb.cutlass.line.tcp.ArrayNativeFormatParser.ParseException;
 import io.questdb.griffin.SqlKeywords;
@@ -102,12 +101,12 @@ public class LineTcpParser implements QuietCloseable {
     private int nEntities;
     private int nEscapedChars;
     private int nQuoteCharacters;
+    private NativeFormatStreamStep nativeFormatStreamStep = NativeFormatStreamStep.NotINNativeFormat;
     private boolean nextValueCanBeOpenQuote;
     private boolean scape;
     private boolean tagsComplete;
     private long timestamp;
     private byte timestampUnit;
-    private NativeFormatStreamStep nativeFormatStreamStep = NativeFormatStreamStep.NotINNativeFormat;
 
     public LineTcpParser(CairoConfiguration configuration) {
         this.cairoConfiguration = configuration;
@@ -504,6 +503,38 @@ public class LineTcpParser implements QuietCloseable {
         return false;
     }
 
+    private boolean expectNativeFormat(long bufHi) {
+        assert nativeFormatStreamStep != NativeFormatStreamStep.NotINNativeFormat;
+        if (nativeFormatStreamStep == NativeFormatStreamStep.INNativeFormat) {
+            if (!currentEntity.parseNativeFormat(bufHi)) {
+                return false;
+            }
+            nativeFormatStreamStep = NativeFormatStreamStep.ExpectFieldSeparator;
+        }
+
+        if (bufAt + 1 < bufHi) {
+            bufAt++;
+            byte expectSeparator = Unsafe.getUnsafe().getByte(bufAt);
+            if (expectSeparator == (byte) ' ') {
+                entityHandler = ENTITY_HANDLER_TIMESTAMP;
+                bufAt++;
+                entityLo = bufAt;
+                return true;
+            } else if (expectSeparator == (byte) ',' || expectSeparator == (byte) '\n' || expectSeparator == (byte) '\r') {
+                entityHandler = ENTITY_HANDLER_NAME;
+                bufAt++;
+                entityLo = bufAt;
+                return true;
+            } else {
+                entityLo = bufAt;
+                errorCode = ErrorCode.INVALID_FIELD_SEPARATOR;
+                return false;
+            }
+        }
+        errorCode = ErrorCode.INVALID_FIELD_VALUE_STR_UNDERFLOW;
+        return false;
+    }
+
     private boolean expectTableName(byte endOfEntityByte) {
         tagsComplete = endOfEntityByte == (byte) ' ';
         if (endOfEntityByte == (byte) ',' || tagsComplete) {
@@ -559,38 +590,6 @@ public class LineTcpParser implements QuietCloseable {
             errorCode = ErrorCode.INVALID_TIMESTAMP;
             return false;
         }
-    }
-
-    private boolean expectNativeFormat(long bufHi) {
-        assert nativeFormatStreamStep != NativeFormatStreamStep.NotINNativeFormat;
-        if (nativeFormatStreamStep == NativeFormatStreamStep.INNativeFormat) {
-            if (!currentEntity.parseNativeFormat(bufHi)) {
-                return false;
-            }
-            nativeFormatStreamStep = NativeFormatStreamStep.ExpectFieldSeparator;
-        }
-
-        if (bufAt + 1 < bufHi) {
-            bufAt++;
-            byte expectSeparator = Unsafe.getUnsafe().getByte(bufAt);
-            if (expectSeparator == (byte) ' ') {
-                entityHandler = ENTITY_HANDLER_TIMESTAMP;
-                bufAt++;
-                entityLo = bufAt;
-                return true;
-            } else if (expectSeparator == (byte) ',' || expectSeparator == (byte) '\n' || expectSeparator == (byte) '\r') {
-                entityHandler = ENTITY_HANDLER_NAME;
-                bufAt++;
-                entityLo = bufAt;
-                return true;
-            } else {
-                entityLo = bufAt;
-                errorCode = ErrorCode.INVALID_FIELD_SEPARATOR;
-                return false;
-            }
-        }
-        errorCode = ErrorCode.INVALID_FIELD_VALUE_STR_UNDERFLOW;
-        return false;
     }
 
     private ParseResult getError(long bufHi) {
@@ -703,6 +702,12 @@ public class LineTcpParser implements QuietCloseable {
         ND_ARR_INVALID_TYPE,
 
         NONE
+    }
+
+    private enum NativeFormatStreamStep {
+        NotINNativeFormat,
+        ExpectFieldSeparator,
+        INNativeFormat,
     }
 
     public enum ParseResult {
@@ -857,6 +862,20 @@ public class LineTcpParser implements QuietCloseable {
             }
         }
 
+        private boolean parseLong(byte entityType) {
+            try {
+                charSeq.of(value.lo(), value.hi() - 1, true);
+                longValue = Numbers.parseLong(charSeq);
+                value.decHi(); // remove the suffix ('i', 'n', 't', 'm')
+                type = entityType;
+            } catch (NumericException notANumber) {
+                unit = ENTITY_UNIT_NONE;
+                type = ENTITY_TYPE_SYMBOL;
+                return false;
+            }
+            return true;
+        }
+
         private boolean parseNativeFormat(long bufHi) {
             try {
                 while (bufAt < bufHi) {
@@ -939,20 +958,6 @@ public class LineTcpParser implements QuietCloseable {
             }
         }
 
-        private boolean parseLong(byte entityType) {
-            try {
-                charSeq.of(value.lo(), value.hi() - 1, true);
-                longValue = Numbers.parseLong(charSeq);
-                value.decHi(); // remove the suffix ('i', 'n', 't', 'm')
-                type = entityType;
-            } catch (NumericException notANumber) {
-                unit = ENTITY_UNIT_NONE;
-                type = ENTITY_TYPE_SYMBOL;
-                return false;
-            }
-            return true;
-        }
-
         private void setName() {
             name.of(entityLo, bufAt - nEscapedChars, asciiSegment);
             asciiSegment = true;
@@ -980,12 +985,6 @@ public class LineTcpParser implements QuietCloseable {
             type = ENTITY_TYPE_TAG;
             return true;
         }
-    }
-
-    private enum NativeFormatStreamStep {
-        NotINNativeFormat,
-        ExpectFieldSeparator,
-        INNativeFormat,
     }
 
     static {
