@@ -37,14 +37,14 @@ import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.ND_ARR_INVALID
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.ND_ARR_LARGE_DIMENSIONS;
 
 /**
- * Parses an ND array native format used in ILP, which achieves higher write performance compared to the array text format.
+ * Parses the binary N-dimensional array format used in ILP.
  * <br>
- * The array native format is laid out as follows:
+ * An array is laid out as follows:
  * <pre>
  * +----------+----------+------------------------+--------------------+
- * | elemType |  dims    |       shapes           |    flat values     |
+ * | elemType |  nDims   |         shape          |    flat values     |
  * +----------+----------+------------------------+--------------------+
- * |  1 byte  |  1 byte  |     $dims * 4 bytes    |                    |
+ * |  1 byte  |  1 byte  |    $nDims * 4 bytes    |                    |
  * </pre>
  *
  * <strong>Won't validate length of flat values for performance reason</strong>
@@ -52,20 +52,20 @@ import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.ND_ARR_LARGE_D
 public class ArrayNativeFormatParser implements QuietCloseable {
 
     private final MmappedArray view = new MmappedArray();
-    private BinaryPart binaryPart;
     private int dims;
     private short elemType;
     private int nextBinaryPartExpectSize = 1;
     private long shapeAddr;
+    private ParserState state;
 
     @Override
     public void close() {
         nextBinaryPartExpectSize = 1;
-        binaryPart = BinaryPart.ELEMENT_TYPE;
+        state = ParserState.ELEMENT_TYPE;
     }
 
     public @Nullable MmappedArray getArray() {
-        assert binaryPart == BinaryPart.FINISH;
+        assert state == ParserState.FINISH;
         return view.isNull() ? null : view;
     }
 
@@ -74,49 +74,50 @@ public class ArrayNativeFormatParser implements QuietCloseable {
     }
 
     public boolean processNextBinaryPart(long addr) throws ParseException {
-        switch (binaryPart) {
+        switch (state) {
             case ELEMENT_TYPE:
                 elemType = Unsafe.getUnsafe().getByte(addr);
                 if (elemType == ColumnType.NULL) {
                     view.ofNull();
-                    binaryPart = BinaryPart.FINISH;
+                    state = ParserState.FINISH;
                     return true;
                 }
                 if (!ColumnType.isSupportedArrayElementType(elemType)) {
                     throw ParseException.invalidType();
                 }
 
-                binaryPart = BinaryPart.DIMS;
+                state = ParserState.N_DIMS;
                 nextBinaryPartExpectSize = 1;
                 return false;
-            case DIMS:
+            case N_DIMS:
                 dims = Unsafe.getUnsafe().getByte(addr);
                 if (dims > ColumnType.ARRAY_NDIMS_LIMIT) {
                     throw ParseException.largeDims();
                 }
                 if (dims == 0) {
                     view.ofNull();
-                    binaryPart = BinaryPart.FINISH;
+                    state = ParserState.FINISH;
                     return true;
                 }
 
-                binaryPart = BinaryPart.SHAPES;
+                state = ParserState.SHAPE;
                 nextBinaryPartExpectSize = dims * Integer.BYTES;
                 return false;
-            case SHAPES:
+            case SHAPE:
                 shapeAddr = addr;
                 nextBinaryPartExpectSize = ColumnType.sizeOf(elemType);
                 for (int i = 0; i < dims; ++i) {
                     final int dimLength = Unsafe.getUnsafe().getInt(addr + (long) i * Integer.BYTES);
+                    //TODO: replace ArithmeticException with ParseException
                     nextBinaryPartExpectSize = Math.multiplyExact(nextBinaryPartExpectSize, dimLength);
                 }
                 if (nextBinaryPartExpectSize == 0) {
                     view.ofNull();
-                    binaryPart = BinaryPart.FINISH;
+                    state = ParserState.FINISH;
                     return true;
                 }
 
-                binaryPart = BinaryPart.VALUES;
+                state = ParserState.VALUES;
                 return false;
             case VALUES:
                 int type = ColumnType.encodeArrayType(elemType, dims);
@@ -127,7 +128,7 @@ public class ArrayNativeFormatParser implements QuietCloseable {
                         addr,
                         nextBinaryPartExpectSize
                 );
-                binaryPart = BinaryPart.FINISH;
+                state = ParserState.FINISH;
                 return true;
         }
 
@@ -136,22 +137,22 @@ public class ArrayNativeFormatParser implements QuietCloseable {
 
     public void reset() {
         nextBinaryPartExpectSize = 1;
-        binaryPart = BinaryPart.ELEMENT_TYPE;
+        state = ParserState.ELEMENT_TYPE;
         view.reset();
     }
 
     public void shl(long delta) {
-        if (binaryPart == BinaryPart.FINISH && !view.isNull()) {
+        if (state == ParserState.FINISH && !view.isNull()) {
             ((BorrowedFlatArrayView) view.flatView()).shl(delta);
-        } else if (binaryPart == BinaryPart.VALUES) {
+        } else if (state == ParserState.VALUES) {
             this.shapeAddr -= delta;
         }
     }
 
-    private enum BinaryPart {
+    private enum ParserState {
         ELEMENT_TYPE,
-        DIMS,
-        SHAPES,
+        N_DIMS,
+        SHAPE,
         VALUES,
         FINISH
     }
