@@ -40,7 +40,7 @@ public class PivotTest extends AbstractSqlParserTest {
             "  price DOUBLE,\n" +
             "  amount DOUBLE,\n" +
             "  timestamp TIMESTAMP\n" +
-            ") timestamp (timestamp) PARTITION BY DAY WAL;";
+            ") timestamp (timestamp) PARTITION BY NONE";
     public static String dmlCities =
             "INSERT INTO cities VALUES\n" +
                     "    ('NL', 'Amsterdam', 2000, 1005),\n" +
@@ -149,129 +149,120 @@ public class PivotTest extends AbstractSqlParserTest {
 
     @Test
     public void testPivot() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(ddlCities);
-            execute(dmlCities);
-
-            String pivotQuery =
-                    "SELECT *\n" +
-                            "FROM cities\n" +
-                            "PIVOT (\n" +
-                            "    SUM(population)\n" +
-                            "    FOR\n" +
-                            "        year IN (2000, 2010, 2020)\n" +
-                            "    GROUP BY country\n" +
-                            ");\n";
-            String rewrittenQuery =
-                    "SELECT \n" +
-                            "    country,\n" +
-                            "    SUM(CASE WHEN year = 2000 THEN population ELSE null END) AS \"2000\",\n" +
-                            "    SUM(CASE WHEN year = 2010 THEN population ELSE null END) AS \"2010\",\n" +
-                            "    SUM(CASE WHEN year = 2020 THEN population ELSE null END) AS \"2020\"\n" +
-                            "FROM cities\n" +
-                            "GROUP BY country;";
-
-            String model = "select-group-by country, SUM(switch(year,2000,population,null)) 2000, SUM(switch(year,2010,population,null)) 2010, SUM(switch(year,2020,population,null)) 2020 from (select [country, population, year] from cities)";
-//            assertModel(model, pivotQuery, ExecutionModel.QUERY);
-//            assertModel(model, rewrittenQuery, ExecutionModel.QUERY);
-
-            String result = "country\t2000\t2010\t2020\n" +
-                    "NL\t1005\t1065\t1158\n" +
-                    "US\t8579\t8783\t9510\n";
-
-            assertSql(result, pivotQuery);
-            assertSql(result, rewrittenQuery);
-        });
+        assertQueryAndPlan(
+                "country\t2000\t2010\t2020\n",
+                "SELECT *\n" +
+                        "FROM cities\n" +
+                        "PIVOT (\n" +
+                        "    SUM(population)\n" +
+                        "    FOR\n" +
+                        "        year IN (2000, 2010, 2020)\n" +
+                        "    GROUP BY country\n" +
+                        ");\n",
+                ddlCities,
+                null,
+                dmlCities,
+                "country\t2000\t2010\t2020\n" +
+                        "NL\t1005\t1065\t1158\n" +
+                        "US\t8579\t8783\t9510\n",
+                true,
+                true,
+                false,
+                "Async Group By workers: 1\n" +
+                        "  keys: [country]\n" +
+                        "  values: [sum(case([population,null,year])),sum(case([population,null,year])),sum(case([population,null,year]))]\n" +
+                        "  filter: null\n" +
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: cities\n");
     }
 
     @Test
     public void testPivotImplicitGroupBy() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(ddlCities);
-            execute(dmlCities);
-
-            String pivotQuery =
-                    "SELECT *\n" +
-                            "FROM cities\n" +
-                            "PIVOT (\n" +
-                            "    SUM(population)\n" +
-                            "    FOR\n" +
-                            "        year IN (2000, 2010, 2020)\n" +
-                            ");\n";
-
-            String result = "2000\t2010\t2020\n" +
-                    "9584\t9848\t10668\n";
-
-            assertSql(result, pivotQuery);
-        });
+        assertQueryAndPlan(
+                "2000\t2010\t2020\n" +
+                        "null\tnull\tnull\n",
+                "SELECT *\n" +
+                        "FROM cities\n" +
+                        "PIVOT (\n" +
+                        "    SUM(population)\n" +
+                        "    FOR\n" +
+                        "        year IN (2000, 2010, 2020)\n" +
+                        ");\n",
+                ddlCities,
+                null,
+                dmlCities,
+                "2000\t2010\t2020\n" +
+                        "9584\t9848\t10668\n",
+                false,
+                true,
+                false,
+                "Async Group By workers: 1\n" +
+                        "  values: [sum(case([population,null,year])),sum(case([population,null,year])),sum(case([population,null,year]))]\n" +
+                        "  filter: null\n" +
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: cities\n");
     }
 
     @Test
     public void testPivotImplicitGroupByWithAlias() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(ddlCities);
-            execute(dmlCities);
-
-            String pivotQuery =
-                    "SELECT *\n" +
-                            "FROM cities\n" +
-                            "PIVOT (\n" +
-                            "    SUM(population) as sum\n" +
-                            "    FOR\n" +
-                            "        year IN (2000, 2010, 2020)\n" +
-                            ");\n";
-
-            String result = "2000_sum\t2010_sum\t2020_sum\n" +
-                    "9584\t9848\t10668\n";
-
-            assertSql(result, pivotQuery);
-        });
+        assertQueryAndPlan(
+                "2000_sum\t2010_sum\t2020_sum\n" +
+                        "null\tnull\tnull\n",
+                "SELECT *\n" +
+                        "FROM cities\n" +
+                        "PIVOT (\n" +
+                        "    SUM(population) as sum\n" +
+                        "    FOR\n" +
+                        "        year IN (2000, 2010, 2020)\n" +
+                        ");\n",
+                ddlCities,
+                null,
+                dmlCities,
+                "2000_sum\t2010_sum\t2020_sum\n" +
+                        "9584\t9848\t10668\n",
+                false,
+                true,
+                false,
+                "Async Group By workers: 1\n" +
+                        "  values: [sum(case([population,null,year])),sum(case([population,null,year])),sum(case([population,null,year]))]\n" +
+                        "  filter: null\n" +
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: cities\n");
     }
 
-    @Test
-    public void testPivotNoGroupBy() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(ddlCities);
-            execute(dmlCities);
-
-            String pivotQuery =
-                    "SELECT *\n" +
-                            "FROM cities\n" +
-                            "PIVOT (\n" +
-                            "    SUM(population)\n" +
-                            "    FOR\n" +
-                            "        year IN (2000, 2010, 2020)\n" +
-                            ");\n";
-
-
-            String result = "2000\t2010\t2020\n" +
-                    "9584\t9848\t10668\n";
-
-            assertSql(result, pivotQuery);
-        });
-    }
 
     @Test
-    public void testPivotNoGroupByWithOrderBy1() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(ddlCities);
-            execute(dmlCities);
-
-            String pivotQuery =
-                    "SELECT *\n" +
-                            "FROM cities\n" +
-                            "PIVOT (\n" +
-                            "    SUM(population)\n" +
-                            "    FOR\n" +
-                            "        year IN (2000, 2010, 2020)\n" +
-                            "    ORDER BY \"2000\"\n" +
-                            ");\n";
-
-            String result = "2000\t2010\t2020\n" +
-                    "9584\t9848\t10668\n";
-
-            assertSql(result, pivotQuery);
-        });
+    public void testPivotImplicitGroupByWithOrderBy() throws Exception {
+        assertQueryAndPlan(
+                "2000\t2010\t2020\n" +
+                        "null\tnull\tnull\n",
+                "SELECT *\n" +
+                        "FROM cities\n" +
+                        "PIVOT (\n" +
+                        "    SUM(population)\n" +
+                        "    FOR\n" +
+                        "        year IN (2000, 2010, 2020)\n" +
+                        "    ORDER BY \"2000\"\n" +
+                        ");\n",
+                ddlCities,
+                null,
+                dmlCities,
+                "2000\t2010\t2020\n" +
+                        "9584\t9848\t10668\n",
+                true,
+                true,
+                false,
+                "Sort\n" +
+                        "  keys: [2000]\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      values: [sum(case([population,null,year])),sum(case([population,null,year])),sum(case([population,null,year]))]\n" +
+                        "      filter: null\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: cities\n");
     }
 
     @Test
@@ -282,26 +273,25 @@ public class PivotTest extends AbstractSqlParserTest {
             drainWalQueue();
 
             String pivotQuery = "trades PIVOT (\n" +
-                    "first(price) as open,\n" +
+                    "first_not_null(price) as open,\n" +
                     "max(price) as high,\n" +
                     "min(price) as low,\n" +
-                    "last(price) as close\n" +
-                    "FOR symbol IN ('ETH-USD', 'BTC-USD')\n" +
-//                    "GROUP BY side\n" +
+                    "last_not_null(price) as close\n" +
+                    "FOR symbol IN ('BTC-USD')\n" +
+                    "GROUP BY side\n" +
                     ");";
 
+            String result = "side\tBTC-USD_open\tBTC-USD_high\tBTC-USD_low\tBTC-USD_close\n" +
+                    "sell\t101502.1\t101502.1\t101497.0\t101497.0\n" +
+                    "buy\t101502.2\t101502.2\t101497.6\t101497.6\n";
 
-            String result = "side\tETH-USD_open\tETH-USD_high\tETH-USD_low\tETH-USD_close\tBTC-USD_open\tBTC-USD_high\tBTC-USD_low\tBTC-USD_close\n" +
-                    "sell\tnull\t3678.25\t3678.0\t3678.0\tnull\t101502.1\t101497.0\tnull\n" +
-                    "buy\tnull\t3678.01\t3678.01\tnull\tnull\t101502.2\t101497.6\t101497.6\n";
-
-//            assertPlanNoLeakCheck(pivotQuery, "Async Group By workers: 1\n" +
-//                    "  keys: [side]\n" +
-//                    "  values: [first(case([price,NaN,symbol])),max(case([price,NaN,symbol])),min(case([price,NaN,symbol])),last(case([price,NaN,symbol])),first(case([price,NaN,symbol])),max(case([price,NaN,symbol])),min(case([price,NaN,symbol])),last(case([price,NaN,symbol]))]\n" +
-//                    "  filter: null\n" +
-//                    "    PageFrame\n" +
-//                    "        Row forward scan\n" +
-//                    "        Frame forward scan on: trades\n");
+            assertPlanNoLeakCheck(pivotQuery, "Async Group By workers: 1\n" +
+                    "  keys: [side]\n" +
+                    "  values: [first_not_null(case([price,NaN,symbol])),max(case([price,NaN,symbol])),min(case([price,NaN,symbol])),last_not_null(case([price,NaN,symbol]))]\n" +
+                    "  filter: null\n" +
+                    "    PageFrame\n" +
+                    "        Row forward scan\n" +
+                    "        Frame forward scan on: trades\n");
             assertSql(result, pivotQuery);
         });
     }
@@ -568,6 +558,39 @@ public class PivotTest extends AbstractSqlParserTest {
             assertSql(result, pivotQuery);
             assertSql(result, rewrittenQuery);
         });
+    }
+
+    @Test
+    public void testPivotWithOrderBy() throws Exception {
+        assertQueryAndPlan(
+                "country\t2000\t2010\t2020\n",
+                "SELECT *\n" +
+                        "FROM cities\n" +
+                        "PIVOT (\n" +
+                        "    SUM(population)\n" +
+                        "    FOR\n" +
+                        "        year IN (2000, 2010, 2020)\n" +
+                        "    GROUP BY country\n" +
+                        "    ORDER BY \"2000\"\n" +
+                        ");\n",
+                ddlCities,
+                null,
+                dmlCities,
+                "country\t2000\t2010\t2020\n" +
+                        "NL\t1005\t1065\t1158\n" +
+                        "US\t8579\t8783\t9510\n",
+                true,
+                true,
+                false,
+                "Radix sort light\n" +
+                        "  keys: [2000]\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [country]\n" +
+                        "      values: [sum(case([population,null,year])),sum(case([population,null,year])),sum(case([population,null,year]))]\n" +
+                        "      filter: null\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: cities\n");
     }
 
     @Test
@@ -845,6 +868,37 @@ public class PivotTest extends AbstractSqlParserTest {
                             ") )\n" +
                             "SELECT * FROM P;");
         });
+    }
+
+    @Test
+    public void testPivotWithTradesOHLC() throws Exception {
+        assertQueryAndPlan(
+                "side\tETH-USD_open\tETH-USD_high\tETH-USD_low\tETH-USD_close\tBTC-USD_open\tBTC-USD_high\tBTC-USD_low\tBTC-USD_close\n",
+                "trades PIVOT (\n" +
+                        "first_not_null(price) as open,\n" +
+                        "max(price) as high,\n" +
+                        "min(price) as low,\n" +
+                        "last_not_null(price) as close\n" +
+                        "FOR symbol IN ('ETH-USD', 'BTC-USD')\n" +
+                        "GROUP BY side\n" +
+                        ");",
+                ddlTrades,
+                null,
+                dmlTrades,
+                "side\tETH-USD_open\tETH-USD_high\tETH-USD_low\tETH-USD_close\tBTC-USD_open\tBTC-USD_high\tBTC-USD_low\tBTC-USD_close\n" +
+                        "sell\t3678.25\t3678.25\t3678.0\t3678.0\t101502.1\t101502.1\t101497.0\t101497.0\n" +
+                        "buy\t3678.01\t3678.01\t3678.01\t3678.01\t101502.2\t101502.2\t101497.6\t101497.6\n",
+                true,
+                true,
+                false,
+                "Sort\n" +
+                        "  keys: [2000]\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      values: [sum(case([population,null,year])),sum(case([population,null,year])),sum(case([population,null,year]))]\n" +
+                        "      filter: null\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: cities\n");
     }
 
 }
