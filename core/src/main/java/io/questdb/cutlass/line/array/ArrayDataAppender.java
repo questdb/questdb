@@ -26,9 +26,5 @@ package io.questdb.cutlass.line.array;
 
 @FunctionalInterface
 public interface ArrayDataAppender<T> {
-    long append(
-            long bufPtr,
-            CheckCapacity checkFunc,
-            T values
-    );
+    long append(long bufPtr, CapacityChecker checkFunc, T values);
 }

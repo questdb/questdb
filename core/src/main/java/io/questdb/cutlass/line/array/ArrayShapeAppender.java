@@ -26,8 +26,5 @@ package io.questdb.cutlass.line.array;
 
 @FunctionalInterface
 public interface ArrayShapeAppender<T> {
-    void append(
-            long bufPtr,
-            T values
-    );
+    void append(long bufPtr, T values);
 }
