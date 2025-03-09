@@ -138,9 +138,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.tasks.TableWriterTask.*;
@@ -8862,7 +8862,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void cancel();
 
-        void putArray(int columnIndex, ArrayView array);
+        void putArray(int columnIndex, @NotNull ArrayView array);
 
         void putBin(int columnIndex, long address, long len);
 
@@ -8960,7 +8960,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putArray(int columnIndex, ArrayView array) {
+        public void putArray(int columnIndex, @NotNull ArrayView array) {
             // no-op
         }
 
@@ -9152,7 +9152,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         @Override
-        public void putArray(int columnIndex, ArrayView array) {
+        public void putArray(int columnIndex, @NotNull ArrayView array) {
             ArrayTypeDriver.appendValue(
                     getSecondaryColumn(columnIndex),
                     getPrimaryColumn(columnIndex),

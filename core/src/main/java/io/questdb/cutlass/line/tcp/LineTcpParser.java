@@ -39,7 +39,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.NotNull;
 
 public class LineTcpParser implements QuietCloseable {
 
@@ -729,7 +729,7 @@ public class LineTcpParser implements QuietCloseable {
             Misc.free(arrayNativeParser);
         }
 
-        public @Nullable MmappedArray getArray() {
+        public @NotNull MmappedArray getArray() {
             return arrayNativeParser.getArray();
         }
 

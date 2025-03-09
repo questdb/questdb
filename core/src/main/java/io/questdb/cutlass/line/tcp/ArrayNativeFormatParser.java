@@ -31,7 +31,6 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.ND_ARR_INVALID_TYPE;
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.ND_ARR_LARGE_DIMENSIONS;
@@ -64,9 +63,9 @@ public class ArrayNativeFormatParser implements QuietCloseable {
         state = ParserState.ELEMENT_TYPE;
     }
 
-    public @Nullable MmappedArray getArray() {
+    public @NotNull MmappedArray getArray() {
         assert state == ParserState.FINISH;
-        return view.isNull() ? null : view;
+        return view;
     }
 
     public int getNextExpectSize() {

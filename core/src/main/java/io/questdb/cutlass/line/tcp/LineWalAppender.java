@@ -428,7 +428,7 @@ public class LineWalAppender {
                     }
                     case LineTcpParser.ENTITY_TYPE_ARRAY:
                         ArrayView array = ent.getArray();
-                        if (array != null && array.getType() != colType) {
+                        if (!array.isNull() && array.getType() != colType) {
                             throw castError(tud.getTableNameUtf16(), "ARRAY", colType, ent.getName());
                         }
                         r.putArray(columnIndex, array);
