@@ -174,8 +174,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private static final int SYNC_DESCRIBE_PORTAL = 4;
     private static final int SYNC_PARSE = 1;
     private static final String WRITER_LOCK_REASON = "pgConnection";
-    @SuppressWarnings("FieldMayBeFinal")
-    private static Log LOG = LogFactory.getLog(PGConnectionContext.class);
+    private static final Log LOG = LogFactory.getLog(PGConnectionContext.class);
     private final BatchCallback batchCallback;
     private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
     // stores result format codes (0=Text,1=Binary) from the latest bind message

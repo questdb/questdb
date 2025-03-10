@@ -201,7 +201,7 @@ public class MetadataCache implements QuietCloseable {
             table.setTtlHoursOrMonths(TableUtils.getTtlHoursOrMonths(metaMem));
             table.setIsSoftLink(isSoftLink);
 
-            TableUtils.buildWriterOrderMap(metaMem, table.columnOrderMap, metaMem, columnCount);
+            TableUtils.buildWriterOrderMap(metaMem, table.columnOrderMap, columnCount);
             boolean isMetaFormatUpToDate = TableUtils.isMetaFormatUpToDate(metaMem);
             // populate columns
             for (int i = 0, n = table.columnOrderMap.size(); i < n; i += 3) {
@@ -264,14 +264,13 @@ public class MetadataCache implements QuietCloseable {
             try {
                 log
                         .$("could not hydrate metadata [table=").$(token)
-                        .$(", errno=").$(e instanceof CairoException ? ((CairoException) e).errno : 0)
-                        .$(", message=");
-
+                        .$(", msg=");
                 if (e instanceof FlyweightMessageContainer) {
                     log.$(((FlyweightMessageContainer) e).getFlyweightMessage());
                 } else {
                     log.$(e.getMessage());
                 }
+                log.$(", errno=").$(e instanceof CairoException ? ((CairoException) e).errno : 0);
             } finally {
                 log.I$();
             }

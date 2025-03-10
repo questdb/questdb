@@ -234,7 +234,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                 Assert.assertFalse(cacheString.contains("name=foo"));
                 Assert.assertTrue(cacheString.contains("name=bah"));
                 assertQueryNoLeakCheck(
-                        "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tisMatView\n" +
+                        "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\n" +
                                 "1\tbah\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\t0\tHOUR\tfalse\n",
                         "tables()",
                         ""
@@ -244,7 +244,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                 Assert.assertFalse(cacheString.contains("name=bah"));
                 Assert.assertTrue(cacheString.contains("name=foo"));
                 assertQueryNoLeakCheck(
-                        "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tisMatView\n" +
+                        "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\n" +
                                 "1\tfoo\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\t0\tHOUR\tfalse\n",
                         "tables()",
                         ""
@@ -631,26 +631,6 @@ public class MetadataCacheTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDropTable() throws Exception {
-        assertMemoryLeak(() -> {
-
-
-            execute("CREATE TABLE y ( ts TIMESTAMP, x INT ) timestamp(ts) partition by day wal;");
-            drainWalQueue();
-
-            assertCairoMetadata("MetadataCache [tableCount=1]\n" +
-                    "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]\n" +
-                    "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=0]\n" +
-                    "\t\tCairoColumn [name=x, position=1, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=1]\n");
-
-            execute("DROP TABLE y");
-            drainWalQueue();
-
-            assertException("table_columns('y')", -1, "table does not exist");
-        });
-    }
-
-    @Test
     public void testDropAndRecreateTableRefreshSnapshots() throws Exception {
         assertMemoryLeak(() -> {
             createX();
@@ -681,11 +661,31 @@ public class MetadataCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropTable() throws Exception {
+        assertMemoryLeak(() -> {
+
+
+            execute("CREATE TABLE y ( ts TIMESTAMP, x INT ) timestamp(ts) partition by day wal;");
+            drainWalQueue();
+
+            assertCairoMetadata("MetadataCache [tableCount=1]\n" +
+                    "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, ttlHours=0, walEnabled=true, columnCount=2]\n" +
+                    "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=0]\n" +
+                    "\t\tCairoColumn [name=x, position=1, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=1]\n");
+
+            execute("DROP TABLE y");
+            drainWalQueue();
+
+            assertException("table_columns('y')", -1, "table does not exist");
+        });
+    }
+
+    @Test
     public void testMetadataUpdatedCorrectlyWhenRenamingTables() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, x int) timestamp(ts) partition by day wal;");
             assertSql(
-                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tisMatView\n" +
+                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\n" +
                             "1\tfoo\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\t0\tHOUR\tfalse\n",
                     "tables()"
             );
@@ -693,7 +693,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             execute("rename table foo to bah");
             drainWalQueue();
             assertSql(
-                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tisMatView\n" +
+                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\n" +
                             "1\tbah\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\t0\tHOUR\tfalse\n",
                     "tables()"
             );

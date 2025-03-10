@@ -312,6 +312,34 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIncrementTxn() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    final Path shmPath = new Path();
+                    final TxnScoreboard scoreboard = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))
+            ) {
+                Assert.assertEquals(0, scoreboard.getMin());
+                Assert.assertTrue(scoreboard.acquireTxn(1));
+                Assert.assertEquals(1, scoreboard.getMin());
+                // Don't release the older txn.
+
+                Assert.assertTrue(scoreboard.acquireTxn(2));
+                scoreboard.releaseTxn(2);
+                Assert.assertEquals(1, scoreboard.getMin());
+
+                // acquireTxn() would have failed here, but we can use incrementTxn()
+                Assert.assertTrue(scoreboard.incrementTxn(1));
+                scoreboard.releaseTxn(1);
+                Assert.assertEquals(1, scoreboard.getMin());
+
+                // Now we can release the older txn.
+                scoreboard.releaseTxn(1);
+                Assert.assertEquals(2, scoreboard.getMin());
+            }
+        });
+    }
+
+    @Test
     public void testLimits() throws Exception {
         Assume.assumeTrue(version == 1);
         TestUtils.assertMemoryLeak(() -> {

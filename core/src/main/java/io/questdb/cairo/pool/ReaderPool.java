@@ -30,6 +30,7 @@ import io.questdb.cairo.PartitionOverwriteControl;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TxnScoreboardPool;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
@@ -60,6 +61,31 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         rdr.detach();
     }
 
+    /**
+     * Returns a pooled table reader that is pointed at the same transaction number
+     * as the source reader.
+     */
+    public TableReader getCopyOf(TableReader srcReader) {
+        return getCopyOf((ReaderPool.R) srcReader);
+    }
+
+    public int getDetachedRefCount(TableReader reader) {
+        return ((ReaderPool.R) reader).getDetachedRefCount();
+    }
+
+    public void incDetachedRefCount(TableReader reader) {
+        ((ReaderPool.R) reader).incrementDetachedRefCount();
+    }
+
+    @Override
+    public boolean isCopyOfSupported() {
+        return true;
+    }
+
+    public boolean isDetached(TableReader reader) {
+        return ((ReaderPool.R) reader).isDetached();
+    }
+
     @TestOnly
     public void setTableReaderListener(ReaderListener readerListener) {
         this.readerListener = readerListener;
@@ -68,6 +94,11 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
     @Override
     protected byte getListenerSrc() {
         return PoolListener.SRC_READER;
+    }
+
+    @Override
+    protected R newCopyOfTenant(R srcReader, Entry<R> entry, int index, ResourcePoolSupervisor<R> supervisor) {
+        return new R(this, entry, index, srcReader, messageBus, readerListener, partitionOverwriteControl, supervisor);
     }
 
     @Override
@@ -85,6 +116,11 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         private final int index;
         private final ReaderListener readerListener;
         private boolean detached;
+        // Reference counter that may be used to track usage of detached readers.
+        // A reader may be obtained from the pool and closed on different threads,
+        // but that's fine. In that case, there will be synchronization between the threads,
+        // so we don't need to make this field volatile/atomic.
+        private int detachedRefCount;
         private Entry<R> entry;
         private AbstractMultiTenantPool<R> pool;
         private ResourcePoolSupervisor<R> supervisor;
@@ -108,29 +144,57 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
             this.supervisor = supervisor;
         }
 
+        public R(
+                AbstractMultiTenantPool<R> pool,
+                Entry<R> entry,
+                int index,
+                R srcReader,
+                MessageBus messageBus,
+                ReaderListener readerListener,
+                PartitionOverwriteControl partitionOverwriteControl,
+                ResourcePoolSupervisor<R> supervisor
+        ) {
+            super(pool.getConfiguration(), srcReader, messageBus, partitionOverwriteControl);
+            this.pool = pool;
+            this.entry = entry;
+            this.index = index;
+            this.readerListener = readerListener;
+            this.supervisor = supervisor;
+        }
+
         public void attach() {
+            assert detachedRefCount == 0;
             detached = false;
         }
 
         @Override
         public void close() {
-            if (!detached && isOpen()) {
-                // report reader closure to the supervisor
-                // so that we do not freak out about reader leaks
-                if (supervisor != null) {
-                    supervisor.onResourceReturned(this);
-                    supervisor = null;
-                }
-                goPassive();
-                final AbstractMultiTenantPool<R> pool = this.pool;
-                if (pool == null || entry == null || !pool.returnToPool(this)) {
-                    super.close();
+            if (isOpen()) {
+                if (!detached) {
+                    // report reader closure to the supervisor
+                    // so that we do not freak out about reader leaks
+                    if (supervisor != null) {
+                        supervisor.onResourceReturned(this);
+                        supervisor = null;
+                    }
+                    goPassive();
+                    final AbstractMultiTenantPool<R> pool = this.pool;
+                    if (pool == null || entry == null || !pool.returnToPool(this)) {
+                        super.close();
+                    }
+                } else {
+                    detachedRefCount--;
                 }
             }
         }
 
         public void detach() {
             detached = true;
+            detachedRefCount = 0;
+        }
+
+        public int getDetachedRefCount() {
+            return detachedRefCount;
         }
 
         @Override
@@ -152,6 +216,15 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
             pool = null;
         }
 
+        public void incrementDetachedRefCount() {
+            assert detached;
+            detachedRefCount++;
+        }
+
+        public boolean isDetached() {
+            return detached;
+        }
+
         @Override
         public long openPartition(int partitionIndex) {
             if (readerListener != null) {
@@ -165,6 +238,17 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
             this.supervisor = supervisor;
             try {
                 goActive();
+            } catch (Throwable ex) {
+                close();
+                throw ex;
+            }
+        }
+
+        @Override
+        public void refreshAt(@Nullable ResourcePoolSupervisor<R> supervisor, R srcReader) {
+            this.supervisor = supervisor;
+            try {
+                goActiveAtTxn(srcReader);
             } catch (Throwable ex) {
                 close();
                 throw ex;

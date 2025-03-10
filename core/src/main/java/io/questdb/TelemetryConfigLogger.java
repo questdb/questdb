@@ -168,7 +168,7 @@ public class TelemetryConfigLogger implements Closeable {
         } catch (CairoException ex) {
             LOG.error()
                     .$("could not open [table=`").utf8(TELEMETRY_CONFIG_TABLE_NAME)
-                    .$("`, ex=").$(ex.getFlyweightMessage())
+                    .$("`, msg=").$(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
         }

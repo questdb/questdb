@@ -450,6 +450,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     public static void println(RecordMetadata metadata, RecordCursor cursor) {
+        println(metadata, cursor, sink);
+    }
+
+    public static void println(RecordMetadata metadata, RecordCursor cursor, StringSink sink) {
         sink.clear();
         CursorPrinter.println(metadata, sink);
 
@@ -657,6 +661,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     case ColumnType.STRING:
                         CharSequence s = record.getStrA(i);
                         if (s != null) {
+                            Assert.assertEquals(s.length(), record.getStrLen(i));
                             CharSequence b = record.getStrB(i);
                             if (b instanceof AbstractCharSequence) {
                                 // AbstractCharSequence are usually mutable. We cannot have same mutable instance for A and B
@@ -670,7 +675,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     case ColumnType.BINARY:
                         BinarySequence bs = record.getBin(i);
                         if (bs != null) {
-                            Assert.assertEquals(record.getBin(i).length(), record.getBinLen(i));
+                            Assert.assertEquals(bs.length(), record.getBinLen(i));
                         } else {
                             Assert.assertEquals(TableUtils.NULL_LEN, record.getBinLen(i));
                         }
