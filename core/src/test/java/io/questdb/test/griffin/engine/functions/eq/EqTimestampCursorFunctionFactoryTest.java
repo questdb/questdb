@@ -161,11 +161,12 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(100000)" +
                     ") timestamp(ts) partition by day");
 
-            assertSql(
+            assertQueryNoLeakCheck(
                     "a\tts\n" +
                             "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z\n",
-                    "select * from x where ts = (select ts::varchar from x limit 2)"
-
+                    "select * from x where ts = (select ts::varchar from x limit 2)",
+                    "ts",
+                    true
             );
 
             assertSql(
