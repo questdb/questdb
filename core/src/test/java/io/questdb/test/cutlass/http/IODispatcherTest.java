@@ -172,14 +172,10 @@ public class IODispatcherTest extends AbstractTest {
             "{\"ddl\":\"OK\"}\r\n" +
             "00\r\n" +
             "\r\n";
-    private static final RescheduleContext EmptyRescheduleContext = (retry) -> {
-    };
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
     private static final String QUERY_TIMEOUT_SELECT = "select i, avg(l), max(l) from t group by i order by i asc limit 3";
     private static final String QUERY_TIMEOUT_TABLE_DDL = "create table t as (select cast(x%10 as int) as i, x as l from long_sequence(100))";
-    private static CairoConfiguration configuration;
-    private static TestHttpClient testHttpClient;
-    private final String ValidImportResponse = "HTTP/1.1 200 OK\r\n" +
+    private static final String VALID_IMPORT_RESPONSE = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
             "Transfer-Encoding: chunked\r\n" +
@@ -203,6 +199,10 @@ public class IODispatcherTest extends AbstractTest {
             "\r\n" +
             "00\r\n" +
             "\r\n";
+    private static final RescheduleContext emptyRescheduleContext = (retry) -> {
+    };
+    private static TestHttpClient testHttpClient;
+    private static CairoConfiguration configuration;
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
@@ -1701,7 +1701,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testImportColumnMismatch() throws Exception {
         testImport(
-                ValidImportResponse,
+                VALID_IMPORT_RESPONSE,
                 "POST /upload HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
                         "User-Agent: curl/7.64.0\r\n" +
@@ -2303,7 +2303,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testImportMultipleOnSameConnection()
             throws Exception {
         testImport(
-                ValidImportResponse,
+                VALID_IMPORT_RESPONSE,
                 "POST /upload HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
                         "User-Agent: curl/7.64.0\r\n" +
@@ -2365,7 +2365,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testImportMultipleOnSameConnectionFragmented() throws Exception {
         testImport(
-                ValidImportResponse,
+                VALID_IMPORT_RESPONSE,
                 "POST /upload HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
                         "User-Agent: curl/7.64.0\r\n" +
@@ -2649,7 +2649,7 @@ public class IODispatcherTest extends AbstractTest {
                     sendAndReceive(
                             nf,
                             request,
-                            ValidImportResponse,
+                            VALID_IMPORT_RESPONSE,
                             3,
                             0,
                             false
@@ -8801,7 +8801,7 @@ public class IODispatcherTest extends AbstractTest {
             IODispatcher<HttpConnectionContext> dispatcher
     ) {
         try {
-            return context.handleClientOperation(operation, selector, IODispatcherTest.EmptyRescheduleContext);
+            return context.handleClientOperation(operation, selector, IODispatcherTest.emptyRescheduleContext);
         } catch (HeartBeatException e) {
             dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
         } catch (PeerIsSlowToReadException e) {

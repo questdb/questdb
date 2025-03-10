@@ -318,10 +318,9 @@ public class LineTcpMeasurementScheduler implements Closeable {
         } catch (CairoException ex) {
             // Table could not be created
             LOG.error().$("could not create table [tableName=").$(measurementName)
+                    .$(", msg=").$(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
-                    .$(", ex=`")
-                    .$(ex.getFlyweightMessage())
-                    .$("`]").$();
+                    .I$();
             // More details will be logged by catching thread
             throw ex;
         }

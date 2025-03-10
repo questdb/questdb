@@ -60,58 +60,13 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
-    public void test2LevelDependencyViewFuzz() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            String mvName = testName.getMethodName() + "_mv";
-            String mv2Name = testName.getMethodName() + "_mv2";
-            fuzzer.createInitialTable(tableName, true);
-            Rnd rnd = fuzzer.generateRandom(LOG);
-
-            String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by 1h";
-            createMatView(viewSql, mvName);
-
-            String view2Sql = "select min(min), max(max), ts from  " + mvName + " sample by 2h";
-            createMatView(view2Sql, mv2Name);
-
-            AtomicBoolean stop = new AtomicBoolean();
-            Thread refreshJob = startRefreshJob(0, stop, rnd);
-
-            setFuzzParams(rnd, 0);
-
-            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(configuration, tableName, rnd);
-            ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
-            fuzzTransactions.add(transactions);
-            fuzzer.applyManyWalParallel(
-                    fuzzTransactions,
-                    rnd,
-                    tableName,
-                    false,
-                    true
-            );
-
-            stop.set(true);
-            refreshJob.join();
-            drainWalQueue();
-
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                TestUtils.assertSqlCursors(
-                        compiler,
-                        sqlExecutionContext,
-                        viewSql,
-                        mvName,
-                        LOG
-                );
-
-                TestUtils.assertSqlCursors(
-                        compiler,
-                        sqlExecutionContext,
-                        view2Sql,
-                        mv2Name,
-                        LOG
-                );
-            }
-        });
+    public void test2LevelDependencyView() throws Exception {
+        final String tableName = testName.getMethodName();
+        final String mvName = testName.getMethodName() + "_mv";
+        final String mv2Name = testName.getMethodName() + "_mv2";
+        final String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by 1h";
+        final String view2Sql = "select min(min), max(max), ts from  " + mvName + " sample by 2h";
+        testMvFuzz(tableName, mvName, viewSql, mv2Name, view2Sql);
     }
 
     @Test
@@ -202,7 +157,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 assertSql(
                         "count\n" +
                                 "1\n",
-                        "select count() from mat_views where view_name = '" + mvName + "' and view_status = 'valid';"
+                        "select count() from materialized_views where view_name = '" + mvName + "' and view_status = 'valid';"
                 );
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     TestUtils.assertSqlCursors(
@@ -218,7 +173,29 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
-    public void testManyTablesViewFuzz() throws Exception {
+    public void testInvalidate() throws Exception {
+        assertMemoryLeak(() -> {
+            Rnd rnd = fuzzer.generateRandom(LOG);
+            // truncate will lead to mat view invalidation
+            setFuzzParams(rnd, 0, 0.5);
+            setFuzzProperties(rnd);
+            runMvFuzz(rnd, getTestName(), 1, false, false);
+        });
+    }
+
+    @Test
+    public void testManyTablesRefreshJobRace() throws Exception {
+        assertMemoryLeak(() -> {
+            Rnd rnd = fuzzer.generateRandom(LOG);
+            setFuzzParams(rnd, 2_000, 1_000, 0, 0.0);
+            setFuzzProperties(rnd);
+            // use sleep(1) to make sure that the view is not refreshed too quickly
+            runMvFuzz(rnd, getTestName(), 1 + rnd.nextInt(4), false, true);
+        });
+    }
+
+    @Test
+    public void testManyTablesView() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = fuzzer.generateRandom(LOG);
             setFuzzParams(rnd, 0);
@@ -228,47 +205,23 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
-    public void testOneViewFuzz() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            String mvName = testName.getMethodName() + "_mv";
-            fuzzer.createInitialTable(tableName, true);
-            Rnd rnd = fuzzer.generateRandom(LOG);
+    public void testOneView() throws Exception {
+        final String tableName = testName.getMethodName();
+        final String mvName = testName.getMethodName() + "_mv";
+        final Rnd rnd = fuzzer.generateRandom(LOG);
+        final int mins = 1 + rnd.nextInt(300);
+        final String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by " + mins + "m";
+        testMvFuzz(tableName, mvName, viewSql);
+    }
 
-            int mins = 1 + rnd.nextInt(300);
-            String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by " + mins + "m";
-            createMatView(viewSql, mvName);
-
-            AtomicBoolean stop = new AtomicBoolean();
-            Thread refreshJob = startRefreshJob(0, stop, rnd);
-
-            setFuzzParams(rnd, 0);
-
-            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(configuration, tableName, rnd);
-            ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
-            fuzzTransactions.add(transactions);
-            fuzzer.applyManyWalParallel(
-                    fuzzTransactions,
-                    rnd,
-                    tableName,
-                    false,
-                    true
-            );
-
-            stop.set(true);
-            refreshJob.join();
-            drainWalQueue();
-
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                TestUtils.assertSqlCursors(
-                        compiler,
-                        sqlExecutionContext,
-                        viewSql,
-                        mvName,
-                        LOG
-                );
-            }
-        });
+    @Test
+    public void testSelfJoinQuery() throws Exception {
+        final String tableName = testName.getMethodName();
+        final String mvName = testName.getMethodName() + "_mv";
+        final Rnd rnd = fuzzer.generateRandom(LOG);
+        final int mins = 1 + rnd.nextInt(60);
+        final String viewSql = "select first(t2.c2), last(t2.c2), t1.ts from  " + tableName + " t1 asof join " + tableName + " t2 sample by " + mins + "m";
+        testMvFuzz(tableName, mvName, viewSql);
     }
 
     @Test
@@ -319,6 +272,10 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     private void runMvFuzz(Rnd rnd, String testTableName, int tableCount) throws Exception {
+        runMvFuzz(rnd, testTableName, tableCount, true, false);
+    }
+
+    private void runMvFuzz(Rnd rnd, String testTableName, int tableCount, boolean expectValidMatViews, boolean sleep) throws Exception {
         AtomicBoolean stop = new AtomicBoolean();
         ObjList<Thread> refreshJobs = new ObjList<>();
         int refreshJobCount = 1 + rnd.nextInt(4);
@@ -333,7 +290,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         for (int i = 0; i < tableCount; i++) {
             String tableNameBase = testTableName + "_" + i;
             String tableNameMv = tableNameBase + "_mv";
-            String viewSql = "select min(c3), max(c3), ts from  " + tableNameBase + " sample by 1h";
+            String viewSql = "select min(c3), max(c3), ts from  " + tableNameBase + (sleep ? " where sleep(1)" : "") + " sample by 1h";
             ObjList<FuzzTransaction> transactions = createTransactionsAndMv(rnd, tableNameBase, tableNameMv, viewSql);
             fuzzTransactions.add(transactions);
             viewSqls.add(viewSql);
@@ -354,36 +311,58 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         runRefreshJobAndDrainWalQueue();
         fuzzer.checkNoSuspendedTables();
 
+
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             for (int i = 0; i < tableCount; i++) {
                 String viewSql = viewSqls.getQuick(i);
                 String mvName = testTableName + "_" + i + "_mv";
                 LOG.info().$("asserting view ").$(mvName).$(" against ").$(viewSql).$();
-                assertSql(
-                        "count\n" +
-                                "1\n",
-                        "select count() from mat_views where view_name = '" + mvName + "' and view_status = 'valid';"
-                );
-                TestUtils.assertSqlCursors(
-                        compiler,
-                        sqlExecutionContext,
-                        viewSql,
-                        mvName,
-                        LOG
-                );
+                if (expectValidMatViews) {
+                    assertSql(
+                            "count\n" +
+                                    "1\n",
+                            "select count() " +
+                                    "from materialized_views " +
+                                    "where view_name = '" + mvName + "' and view_status = 'valid';"
+                    );
+                    TestUtils.assertSqlCursors(
+                            compiler,
+                            sqlExecutionContext,
+                            viewSql,
+                            mvName,
+                            LOG
+                    );
+                } else {
+                    // Simply check that the view exists.
+                    assertSql(
+                            "count\n" +
+                                    "1\n",
+                            "select count() " +
+                                    "from materialized_views " +
+                                    "where view_name = '" + mvName + "';"
+                    );
+                }
             }
         }
     }
 
-    private void setFuzzParams(Rnd rnd, double collAddProb) {
+    private void setFuzzParams(Rnd rnd, double colAddProb) {
+        setFuzzParams(rnd, 2_000_000, 1_000_000, colAddProb, 0.0);
+    }
+
+    private void setFuzzParams(Rnd rnd, double colAddProb, double truncateProb) {
+        setFuzzParams(rnd, 2_000_000, 1_000_000, colAddProb, truncateProb);
+    }
+
+    private void setFuzzParams(Rnd rnd, int transactionCount, int initialRowCount, double colAddProb, double truncateProb) {
         fuzzer.setFuzzCounts(
                 rnd.nextBoolean(),
-                rnd.nextInt(2_000_000),
+                rnd.nextInt(transactionCount),
                 rnd.nextInt(1000),
                 rnd.nextInt(3),
                 rnd.nextInt(5),
                 rnd.nextInt(1000),
-                rnd.nextInt(1_000_000),
+                rnd.nextInt(initialRowCount),
                 5 + rnd.nextInt(10)
         );
 
@@ -393,14 +372,14 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 0.0,
                 0.0,
                 0.0,
-                collAddProb,
+                colAddProb,
                 0.0,
                 0.0,
                 0.0,
                 1,
                 0.0,
                 0.0,
-                0.0,
+                truncateProb,
                 0.0,
                 0.0
         );
@@ -408,29 +387,78 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
     private Thread startRefreshJob(int workerId, AtomicBoolean stop, Rnd outsideRnd) {
         Rnd rnd = new Rnd(outsideRnd.nextLong(), outsideRnd.nextLong());
-        Thread th = new Thread(() -> {
-            try {
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(workerId, engine)) {
-                    while (!stop.get()) {
-                        refreshJob.run(workerId);
-                        Os.sleep(rnd.nextInt(1000));
-                    }
+        Thread th = new Thread(
+                () -> {
+                    try {
+                        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(workerId, engine)) {
+                            while (!stop.get()) {
+                                refreshJob.run(workerId);
+                                Os.sleep(rnd.nextInt(1000));
+                            }
 
-                    // Run one final time before stopping
-                    try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
-                        do {
-                            drainWalQueue(walApplyJob);
-                        } while (refreshJob.run(workerId));
+                            // Run one final time before stopping
+                            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                                do {
+                                    drainWalQueue(walApplyJob);
+                                } while (refreshJob.run(workerId));
+                            }
+                        }
+                    } catch (Throwable throwable) {
+                        LOG.error().$("Refresh job failed: ").$(throwable).$();
+                    } finally {
+                        Path.clearThreadLocals();
+                        LOG.info().$("Refresh job stopped").$();
                     }
-                }
-            } catch (Throwable throwable) {
-                LOG.error().$("Refresh job failed: ").$(throwable).$();
-            } finally {
-                Path.clearThreadLocals();
-                LOG.info().$("Refresh job stopped").$();
-            }
-        }, "refresh-job" + workerId);
+                }, "refresh-job" + workerId
+        );
         th.start();
         return th;
+    }
+
+    private void testMvFuzz(String baseTableName, String... mvNamesAndSqls) throws Exception {
+        assertMemoryLeak(() -> {
+            fuzzer.createInitialTable(baseTableName, true);
+            Rnd rnd = fuzzer.generateRandom(LOG);
+
+            for (int i = 0, n = mvNamesAndSqls.length / 2; i < n; i += 2) {
+                final String mvName = mvNamesAndSqls[i];
+                final String mvSql = mvNamesAndSqls[i + 1];
+                createMatView(mvSql, mvName);
+            }
+
+            AtomicBoolean stop = new AtomicBoolean();
+            Thread refreshJob = startRefreshJob(0, stop, rnd);
+
+            setFuzzParams(rnd, 0);
+
+            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(configuration, baseTableName, rnd);
+            ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
+            fuzzTransactions.add(transactions);
+            fuzzer.applyManyWalParallel(
+                    fuzzTransactions,
+                    rnd,
+                    baseTableName,
+                    false,
+                    true
+            );
+
+            stop.set(true);
+            refreshJob.join();
+            drainWalQueue();
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (int i = 0, n = mvNamesAndSqls.length / 2; i < n; i += 2) {
+                    final String mvName = mvNamesAndSqls[i];
+                    final String mvSql = mvNamesAndSqls[i + 1];
+                    TestUtils.assertSqlCursors(
+                            compiler,
+                            sqlExecutionContext,
+                            mvSql,
+                            mvName,
+                            LOG
+                    );
+                }
+            }
+        });
     }
 }

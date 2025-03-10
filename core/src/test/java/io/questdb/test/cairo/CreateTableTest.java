@@ -138,7 +138,7 @@ public class CreateTableTest extends AbstractCairoTest {
                 "CREATE TABLE tab AS (" +
                         "SELECT x FROM long_sequence(1)" +
                         "), INDEX(x)",
-                60
+                0
         );
     }
 
@@ -148,7 +148,7 @@ public class CreateTableTest extends AbstractCairoTest {
                 "CREATE TABLE tab AS (" +
                         "SELECT CAST(x as STRING) x FROM long_sequence(1)" +
                         "), INDEX(x)",
-                78
+                0
         );
     }
 
@@ -158,7 +158,7 @@ public class CreateTableTest extends AbstractCairoTest {
                 "CREATE TABLE tab AS (" +
                         "SELECT CAST(x as SYMBOL) x FROM long_sequence(1)" +
                         "), CAST(x as STRING), INDEX(x)",
-                97
+                0
         );
     }
 

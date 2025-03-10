@@ -1859,22 +1859,6 @@ public final class TestUtils {
         }
     }
 
-    private static void assertEquals(Long256 expected, Long256 actual) {
-        if (expected == actual) return;
-        if (actual == null) {
-            Assert.fail("Expected " + toHexString(expected) + ", but was: null");
-        }
-
-        if (
-                expected.getLong0() != actual.getLong0()
-                        || expected.getLong1() != actual.getLong1()
-                        || expected.getLong2() != actual.getLong2()
-                        || expected.getLong3() != actual.getLong3()
-        ) {
-            Assert.assertEquals(toHexString(expected), toHexString(actual));
-        }
-    }
-
     private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual, boolean genericStringMatch) {
         Assert.assertEquals("Column count must be same", metadataExpected.getColumnCount(), metadataActual.getColumnCount());
         for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
@@ -1916,6 +1900,22 @@ public final class TestUtils {
                         actualFlatIndex + i * actual.getStride(dim)
                 );
             }
+        }
+    }
+
+    private static void assertEquals(Long256 expected, Long256 actual) {
+        if (expected == actual) return;
+        if (actual == null) {
+            Assert.fail("Expected " + toHexString(expected) + ", but was: null");
+        }
+
+        if (
+                expected.getLong0() != actual.getLong0()
+                        || expected.getLong1() != actual.getLong1()
+                        || expected.getLong2() != actual.getLong2()
+                        || expected.getLong3() != actual.getLong3()
+        ) {
+            Assert.assertEquals(toHexString(expected), toHexString(actual));
         }
     }
 

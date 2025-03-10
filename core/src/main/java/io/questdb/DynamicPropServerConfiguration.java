@@ -82,7 +82,9 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
             PropertyKey.HTTP_NET_CONNECTION_LIMIT,
             PropertyKey.LINE_HTTP_MAX_RECV_BUFFER_SIZE,
             PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT,
-            PropertyKey.QUERY_TRACING_ENABLED
+            PropertyKey.QUERY_TRACING_ENABLED,
+            PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE,
+            PropertyKey.CAIRO_MAT_VIEW_SQL_MAX_RECOMPILE_ATTEMPTS
     ));
     private static final Function<String, ? extends ConfigPropertyKey> keyResolver = (k) -> {
         Optional<PropertyKey> prop = PropertyKey.getByString(k);
