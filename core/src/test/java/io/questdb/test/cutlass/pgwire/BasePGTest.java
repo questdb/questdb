@@ -129,8 +129,9 @@ public abstract class BasePGTest extends AbstractCairoTest {
             return null;
         }
 
-        CircuitBreakerRegistry registry = fixedClientIdAndSecret ? HexTestsCircuitBreakRegistry.INSTANCE :
-                new DefaultCircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
+        CircuitBreakerRegistry registry = fixedClientIdAndSecret
+                ? HexTestsCircuitBreakRegistry.INSTANCE
+                : new DefaultCircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
 
         return IPGWireServer.newInstance(
                 configuration,
@@ -401,13 +402,26 @@ public abstract class BasePGTest extends AbstractCairoTest {
             Mode mode,
             boolean binary,
             int prepareThreshold,
-            PGJobContextTest.ConnectionAwareRunnable runnable
+            @NotNull PGJobContextTest.ConnectionAwareRunnable runnable
+    ) throws Exception {
+        assertWithPgServer(mode, binary, prepareThreshold, runnable, null);
+    }
+
+    protected void assertWithPgServer(
+            Mode mode,
+            boolean binary,
+            int prepareThreshold,
+            @NotNull PGJobContextTest.ConnectionAwareRunnable runnable,
+            @Nullable Runnable setUpRunnable
     ) throws Exception {
         LOG.info().$("asserting PG Wire server [mode=").$(mode)
                 .$(", binary=").$(binary)
                 .$(", prepareThreshold=").$(prepareThreshold)
                 .I$();
-        super.setUp();
+        setUp();
+        if (setUpRunnable != null) {
+            setUpRunnable.run();
+        }
         try {
             assertMemoryLeak(() -> {
                 try (
@@ -421,34 +435,49 @@ public abstract class BasePGTest extends AbstractCairoTest {
                 }
             });
         } finally {
-            super.tearDown();
+            tearDown();
         }
     }
 
-    protected void assertWithPgServer(long bits, PGJobContextTest.ConnectionAwareRunnable runnable) throws Exception {
+    protected void assertWithPgServer(long bits, @NotNull PGJobContextTest.ConnectionAwareRunnable runnable) throws Exception {
+        assertWithPgServer(bits, runnable, null);
+    }
+
+    protected void assertWithPgServer(
+            long bits,
+            @NotNull PGJobContextTest.ConnectionAwareRunnable runnable,
+            @Nullable Runnable setUpRunnable
+    ) throws Exception {
         // SIMPLE + TEXT
         if (((bits & BasePGTest.CONN_AWARE_SIMPLE) == BasePGTest.CONN_AWARE_SIMPLE)) {
             LOG.info().$("Mode: asserting simple text").$();
-            assertWithPgServer(Mode.SIMPLE, false, -1, runnable); // SIMPLE + TEXT
+            assertWithPgServer(Mode.SIMPLE, false, -1, runnable, setUpRunnable); // SIMPLE + TEXT
         }
 
         // EXTENDED + TEXT PARAMS + TEXT RESULT + P/B/D/E/S
         if ((bits & BasePGTest.CONN_AWARE_EXTENDED_LIMITED) == BasePGTest.CONN_AWARE_EXTENDED_LIMITED) {
-            assertWithPgServer(Mode.EXTENDED, true, -2, runnable); // EXTENDED + BINARY PARAMS + TEXT RESULT + P/B/D/E/S
-            assertWithPgServer(Mode.EXTENDED, false, -2, runnable); // EXTENDED + TEXT PARAMS + TEXT RESULT + P/B/D/E/S
-            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, -2, runnable); // EXTENDED + TEXT PARAMS + TEXT RESULT + P/B/D/E/S
+            assertWithPgServer(Mode.EXTENDED, true, -2, runnable, setUpRunnable); // EXTENDED + BINARY PARAMS + TEXT RESULT + P/B/D/E/S
+            assertWithPgServer(Mode.EXTENDED, false, -2, runnable, setUpRunnable); // EXTENDED + TEXT PARAMS + TEXT RESULT + P/B/D/E/S
+            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, -2, runnable, setUpRunnable); // EXTENDED + TEXT PARAMS + TEXT RESULT + P/B/D/E/S
         }
 
         if ((bits & BasePGTest.CONN_AWARE_EXTENDED_LIMITED) == BasePGTest.CONN_AWARE_EXTENDED_LIMITED && (bits & CONN_AWARE_QUIRKS) == CONN_AWARE_QUIRKS) {
-            assertWithPgServer(Mode.EXTENDED, true, -1, runnable); // EXTENDED + BINARY PARAMS + BINARY RESULT (P/D/S and B/E/S)
-            assertWithPgServer(Mode.EXTENDED, false, -1, runnable); // EXTENDED + TEXT PARAMS + TEXT RESULT (P/D/S and B/E/S)
-            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, -1, runnable);  // EXTENDED + BINARY PARAMS + TEXT RESULT (P/D/S and B/E/S)
-            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, -1, runnable);   // EXTENDED + TEXT PARAMS + TEXT RESULT (P/D/S and B/E/S)
+            assertWithPgServer(Mode.EXTENDED, true, -1, runnable, setUpRunnable); // EXTENDED + BINARY PARAMS + BINARY RESULT (P/D/S and B/E/S)
+            assertWithPgServer(Mode.EXTENDED, false, -1, runnable, setUpRunnable); // EXTENDED + TEXT PARAMS + TEXT RESULT (P/D/S and B/E/S)
+            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, -1, runnable, setUpRunnable);  // EXTENDED + BINARY PARAMS + TEXT RESULT (P/D/S and B/E/S)
+            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, -1, runnable, setUpRunnable);   // EXTENDED + TEXT PARAMS + TEXT RESULT (P/D/S and B/E/S)
         }
     }
 
-    protected void assertWithPgServerExtendedBinaryOnly(PGJobContextTest.ConnectionAwareRunnable runnable) throws Exception {
-        assertWithPgServer(Mode.EXTENDED, true, -1, runnable);
+    protected void assertWithPgServerExtendedBinaryOnly(@NotNull PGJobContextTest.ConnectionAwareRunnable runnable) throws Exception {
+        assertWithPgServerExtendedBinaryOnly(runnable, null);
+    }
+
+    protected void assertWithPgServerExtendedBinaryOnly(
+            @NotNull PGJobContextTest.ConnectionAwareRunnable runnable,
+            @Nullable Runnable setUpRunnable
+    ) throws Exception {
+        assertWithPgServer(Mode.EXTENDED, true, -1, runnable, setUpRunnable);
     }
 
     protected IPGWireServer createPGServer(PGWireConfiguration configuration) throws SqlException {

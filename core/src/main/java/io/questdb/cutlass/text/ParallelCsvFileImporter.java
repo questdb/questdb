@@ -1617,12 +1617,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         @Override
-        public long getMetadataVersion() {
-            // new table only
-            return 0;
-        }
-
-        @Override
         public long getO3MaxLag() {
             return configuration.getO3MaxLag();
         }

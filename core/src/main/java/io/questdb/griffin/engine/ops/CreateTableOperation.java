@@ -27,13 +27,13 @@ package io.questdb.griffin.engine.ops;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlException;
 import org.jetbrains.annotations.Nullable;
 
 public interface CreateTableOperation extends TableStructure, Operation {
+
     long getBatchO3MaxLag();
 
     long getBatchSize();
@@ -42,15 +42,13 @@ public interface CreateTableOperation extends TableStructure, Operation {
 
     int getLikeTableNamePosition();
 
-    RecordCursorFactory getRecordCursorFactory();
+    OperationFuture getOperationFuture();
 
     CharSequence getSelectText();
 
     CharSequence getSqlText();
 
     int getTableNamePosition();
-
-    OperationFuture getOperationFuture();
 
     CharSequence getVolumeAlias();
 

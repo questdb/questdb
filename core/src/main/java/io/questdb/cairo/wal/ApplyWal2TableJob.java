@@ -102,7 +102,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         walTelemetry = engine.getTelemetryWal();
         walTelemetryFacade = walTelemetry.isEnabled() ? this::doStoreWalTelemetry : this::storeWalTelemetryNoop;
         telemetry = engine.getTelemetry();
-        telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoop;
+        telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoOp;
         operationExecutor = new OperationExecutor(engine, workerCount, sharedWorkerCount);
         CairoConfiguration configuration = engine.getConfiguration();
         microClock = configuration.getMicrosecondClock();
@@ -657,7 +657,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         }
     }
 
-    private void storeTelemetryNoop(short event, short origin) {
+    private void storeTelemetryNoOp(short event, short origin) {
     }
 
     private void storeWalTelemetryNoop(short event, TableToken tableToken, int walId, long seqTxn, long rowCount, long physicalRowCount, long latencyUs) {

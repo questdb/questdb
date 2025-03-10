@@ -29,12 +29,17 @@ import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlOptimiser;
+import io.questdb.griffin.model.QueryModel;
 
 public interface CreateMatViewOperation extends TableStructure, Operation {
 
     CharSequence getBaseTableName();
 
     CreateTableOperation getCreateTableOperation();
+
+    int getRefreshType();
 
     CharSequence getSqlText();
 
@@ -45,6 +50,8 @@ public interface CreateMatViewOperation extends TableStructure, Operation {
     boolean ignoreIfExists();
 
     void updateOperationFutureTableToken(TableToken tableToken);
+
+    void validateAndUpdateMetadataFromModel(SqlExecutionContext sqlExecutionContext, SqlOptimiser optimiser, QueryModel queryModel) throws SqlException;
 
     void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, TableReaderMetadata baseTableMetadata) throws SqlException;
 }

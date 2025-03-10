@@ -621,8 +621,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ff.fsyncAndClose(openRO(ff, path.$(), LOG));
                 } catch (CairoException e) {
                     LOG.error().$("could not fsync after column added, non-critical [path=").$(path)
+                            .$(", msg=").$(e.getFlyweightMessage())
                             .$(", errno=").$(e.getErrno())
-                            .$(", error=").$(e.getFlyweightMessage()).$();
+                            .I$();
                 }
             }
 
@@ -917,7 +918,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean isSequential,
             SecurityContext securityContext
     ) {
-
         int existingColIndex = metadata.getColumnIndexQuiet(name);
         if (existingColIndex < 0) {
             throw CairoException.nonCritical().put("cannot change column type, column does not exist [table=")
@@ -1043,8 +1043,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LOG.critical().$("cannot lock last txn in scoreboard, partition purge will be scheduled [table=")
                     .utf8(tableToken.getTableName())
                     .$(", txn=").$(lastCommittedTxn)
-                    .$(", error=").$(ex.getFlyweightMessage())
-                    .$(", errno=").$(ex.getErrno()).I$();
+                    .$(", msg=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
         }
 
         return txnScoreboard.getMin() != lastCommittedTxn;
@@ -1651,7 +1652,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // (server.conf: cairo.sql.detached.root)
                     if (0 != ff.mkdirs(detachedPath, detachedMkDirMode)) {
                         LOG.error().$("could no create detached partition folder [errno=").$(ff.errno())
-                                .$(", path=").$(detachedPath).I$();
+                                .$(", path=").$(detachedPath)
+                                .I$();
                         return AttachDetachStatus.DETACH_ERR_MKDIR;
                     }
                 }
@@ -5387,8 +5389,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (e instanceof CairoException) {
             o3oomObserved = ((CairoException) e).isOutOfMemory();
             lastErrno = lastErrno == 0 ? ((CairoException) e).errno : lastErrno;
-            logRecord.$(", errno=").$(lastErrno)
-                    .$(", ex=").$(((CairoException) e).getFlyweightMessage())
+            logRecord
+                    .$(", msg=").$(((CairoException) e).getFlyweightMessage())
+                    .$(", errno=").$(lastErrno)
                     .I$();
         } else {
             lastErrno = O3_ERRNO_FATAL;
@@ -6859,7 +6862,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (!ff.unlinkOrRemove(other, LOG)) {
                         LOG.info()
                                 .$("could not purge partition version, async purge will be scheduled [path=").$substr(pathRootSize, other)
-                                .$(", errno=").$(ff.errno()).I$();
+                                .$(", errno=").$(ff.errno())
+                                .I$();
                         scheduleAsyncPurge = true;
                     }
                 } else {

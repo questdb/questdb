@@ -1830,6 +1830,20 @@ public final class TestUtils {
         }
     }
 
+    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual, boolean genericStringMatch) {
+        Assert.assertEquals("Column count must be same", metadataExpected.getColumnCount(), metadataActual.getColumnCount());
+        for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
+            Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
+            int columnType1 = metadataExpected.getColumnType(i);
+            columnType1 = genericStringMatch && (ColumnType.isSymbol(columnType1) || columnType1 == ColumnType.VARCHAR
+                    || columnType1 == ColumnType.CHAR) ? ColumnType.STRING : columnType1;
+            int columnType2 = metadataActual.getColumnType(i);
+            columnType2 = genericStringMatch && (ColumnType.isSymbol(columnType2) || columnType2 == ColumnType.VARCHAR
+                    || columnType2 == ColumnType.CHAR) ? ColumnType.STRING : columnType2;
+            Assert.assertEquals("Column type " + i, columnType1, columnType2);
+        }
+    }
+
     private static void assertEquals(Long256 expected, Long256 actual) {
         if (expected == actual) return;
         if (actual == null) {
@@ -1843,20 +1857,6 @@ public final class TestUtils {
                         || expected.getLong3() != actual.getLong3()
         ) {
             Assert.assertEquals(toHexString(expected), toHexString(actual));
-        }
-    }
-
-    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual, boolean genericStringMatch) {
-        Assert.assertEquals("Column count must be same", metadataExpected.getColumnCount(), metadataActual.getColumnCount());
-        for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
-            Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
-            int columnType1 = metadataExpected.getColumnType(i);
-            columnType1 = genericStringMatch && (ColumnType.isSymbol(columnType1) || columnType1 == ColumnType.VARCHAR
-                    || columnType1 == ColumnType.CHAR) ? ColumnType.STRING : columnType1;
-            int columnType2 = metadataActual.getColumnType(i);
-            columnType2 = genericStringMatch && (ColumnType.isSymbol(columnType2) || columnType2 == ColumnType.VARCHAR
-                    || columnType2 == ColumnType.CHAR) ? ColumnType.STRING : columnType2;
-            Assert.assertEquals("Column type " + i, columnType1, columnType2);
         }
     }
 
