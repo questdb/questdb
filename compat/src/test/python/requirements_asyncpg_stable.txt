@@ -1,5 +1,5 @@
 async-timeout==4.0.3
-asyncpg==0.29.0
+asyncpg==0.30.0
 DateTime==5.5
 pytz==2024.2
 PyYAML==6.0.2
