@@ -29,17 +29,18 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-import static io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoubleGroupByFunctionFactory.checkPercentile;
+import static io.questdb.griffin.engine.functions.groupby.ApproxPercentileLongGroupByDefaultFunctionFactory.DEFAULT_PRECISION;
 
-public class ApproxPercentileLongGroupByDefaultFunctionFactory implements FunctionFactory {
-    public static final int DEFAULT_PRECISION = 1;
+public class ApproxMedianDoubleGroupByDefaultFunctionFactory implements FunctionFactory {
+    private static final DoubleConstant percentileFunc = DoubleConstant.newInstance(0.5);
 
     @Override
     public String getSignature() {
-        return "approx_percentile(LD)";
+        return "approx_median(D)";
     }
 
     @Override
@@ -55,11 +56,8 @@ public class ApproxPercentileLongGroupByDefaultFunctionFactory implements Functi
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final Function exprFunc = args.getQuick(0);
-        final Function percentileFunc = args.getQuick(1);
-
-        checkPercentile(percentileFunc, argPositions.getQuick(1));
-
-        return new ApproxPercentileLongGroupByFunction(exprFunc, percentileFunc, DEFAULT_PRECISION, position);
+        return new ApproxPercentileDoubleGroupByFunction(args.getQuick(0), percentileFunc, DEFAULT_PRECISION, position);
     }
+
 }
+
