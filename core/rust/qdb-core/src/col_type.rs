@@ -21,25 +21,10 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+use crate::error::{CoreError, CoreErrorExt, fmt_err};
 use serde::{Deserialize, Deserializer, Serialize};
-use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::num::NonZeroI32;
-
-#[derive(Clone, Debug)]
-pub struct InvalidColumnType {
-    pub msg: String,
-}
-
-impl Error for InvalidColumnType {}
-
-impl Display for InvalidColumnType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.msg)
-    }
-}
-
-pub type ColumnTypeResult<T> = Result<T, InvalidColumnType>;
 
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -105,7 +90,7 @@ impl ColumnTypeTag {
 }
 
 impl TryFrom<u8> for ColumnTypeTag {
-    type Error = InvalidColumnType;
+    type Error = CoreError;
 
     fn try_from(col_tag_num: u8) -> Result<Self, Self::Error> {
         match col_tag_num {
@@ -132,9 +117,11 @@ impl TryFrom<u8> for ColumnTypeTag {
             24 => Ok(ColumnTypeTag::Long128),
             25 => Ok(ColumnTypeTag::IPv4),
             26 => Ok(ColumnTypeTag::Varchar),
-            _ => Err(InvalidColumnType {
-                msg: format!("unknown QuestDB column tag code: {}", col_tag_num),
-            }),
+            _ => Err(fmt_err!(
+                InvalidColumnType,
+                "unknown QuestDB column tag code: {}",
+                col_tag_num
+            )),
         }
     }
 }
@@ -184,37 +171,22 @@ impl Debug for ColumnType {
     }
 }
 
-fn with_context<F>(
-    res: ColumnTypeResult<ColumnTypeTag>,
-    context_fn: F,
-) -> ColumnTypeResult<ColumnTypeTag>
-where
-    F: FnOnce() -> String,
-{
-    match res {
-        Ok(col) => Ok(col),
-        Err(InvalidColumnType { msg }) => {
-            let context = context_fn();
-            let msg = format!("{context}: {msg}");
-            Err(InvalidColumnType { msg })
-        }
-    }
-}
-
 impl TryFrom<i32> for ColumnType {
-    type Error = InvalidColumnType;
+    type Error = CoreError;
 
     fn try_from(v: i32) -> Result<Self, Self::Error> {
         if v <= 0 {
-            return Err(InvalidColumnType {
-                msg: format!("invalid column type code <= 0: {}", v),
-            });
+            return Err(fmt_err!(
+                InvalidColumnType,
+                "invalid column type code <= 0: {}",
+                v
+            ));
         }
         // Start with removing geohash size bits. See ColumnType#tagOf().
         let col_tag_num = tag_of(v);
-        let _tag: ColumnTypeTag = with_context(col_tag_num.try_into(), || {
-            format!("could not parse {v} to a valid ColumnType")
-        })?;
+        let _tag: ColumnTypeTag = col_tag_num
+            .try_into()
+            .with_context(|_| format!("could not parse {v} to a valid ColumnType"))?;
         let code = NonZeroI32::new(v).expect("column type code should never be zero");
         Ok(Self { code })
     }
