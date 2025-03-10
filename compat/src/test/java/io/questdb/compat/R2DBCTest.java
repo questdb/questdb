@@ -165,7 +165,7 @@ public class R2DBCTest extends AbstractTest {
             serverMain.start();
             ConnectionFactory connectionFactory = new PostgresqlConnectionFactory(
                     PostgresqlConnectionConfiguration.builder()
-                            .host("localhost")
+                            .host("127.0.0.1")
                             .port(serverMain.getPgWireServerPort())
                             .database("qdb")
                             .username("admin")
