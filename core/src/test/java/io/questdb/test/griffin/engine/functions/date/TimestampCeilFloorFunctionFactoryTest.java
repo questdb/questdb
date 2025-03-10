@@ -38,7 +38,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
                 assertExceptionNoLeakCheck("select timestamp_ceil('o', null)");
             } catch (SqlException e) {
                 Assert.assertEquals(22, e.getPosition());
-                TestUtils.assertContains("invalid unit 'o'", e.getFlyweightMessage());
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid unit 'o'");
             }
         });
     }
@@ -50,7 +50,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
                 assertExceptionNoLeakCheck("select timestamp_ceil(null, null)");
             } catch (SqlException e) {
                 Assert.assertEquals(22, e.getPosition());
-                TestUtils.assertContains("invalid unit 'null'", e.getFlyweightMessage());
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid unit 'null'");
             }
         });
     }
@@ -62,7 +62,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
                 assertExceptionNoLeakCheck("select timestamp_floor('', null)");
             } catch (SqlException e) {
                 Assert.assertEquals(23, e.getPosition());
-                TestUtils.assertContains("invalid unit ''", e.getFlyweightMessage());
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid unit ''");
             }
         });
     }
@@ -74,7 +74,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
                 assertExceptionNoLeakCheck("select timestamp_floor('z', null)");
             } catch (SqlException e) {
                 Assert.assertEquals(23, e.getPosition());
-                TestUtils.assertContains("invalid unit 'z'", e.getFlyweightMessage());
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid unit 'z'");
             }
         });
     }
@@ -86,13 +86,13 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
                 assertExceptionNoLeakCheck("select timestamp_floor('-3m', null)");
             } catch (SqlException e) {
                 Assert.assertEquals(23, e.getPosition());
-                TestUtils.assertContains("invalid unit '-3m'", e.getFlyweightMessage());
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid unit '-3m'");
             }
             try {
                 assertExceptionNoLeakCheck("select timestamp_floor('0Y', null)");
             } catch (SqlException e) {
                 Assert.assertEquals(23, e.getPosition());
-                TestUtils.assertContains("invalid unit '0Y'", e.getFlyweightMessage());
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid unit '0Y'");
             }
         });
     }
@@ -104,7 +104,7 @@ public class TimestampCeilFloorFunctionFactoryTest extends AbstractCairoTest {
                 assertExceptionNoLeakCheck("select timestamp_floor(null, null)");
             } catch (SqlException e) {
                 Assert.assertEquals(23, e.getPosition());
-                TestUtils.assertContains("invalid unit 'null'", e.getFlyweightMessage());
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid unit 'null'");
             }
         });
     }

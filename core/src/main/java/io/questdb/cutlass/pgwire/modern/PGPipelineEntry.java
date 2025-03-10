@@ -1085,7 +1085,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             }
             // number of bits or chars for geohash
             final int bitFlags = Math.abs(pgResultSetColumnTypes.getQuick(2 * i + 1));
-            final int columnValueSize = calculateColumnBinSize(this, record, i, typeTag, bitFlags, maxBlobSize);
+            final int columnValueSize = calculateColumnBinSize(this, record, i, columnType, bitFlags, maxBlobSize);
 
             if (columnValueSize < 0) {
                 return -1; // unsupported type
@@ -1355,7 +1355,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             if (columnBinaryFlag == 0 && txtAndBinSizesCanBeDifferent(columnType)) {
                 columnValueSize = estimateColumnTxtSize(record, i, typeTag);
             } else {
-                columnValueSize = calculateColumnBinSize(this, record, i, typeTag, bitFlags, Long.MAX_VALUE);
+                columnValueSize = calculateColumnBinSize(this, record, i, columnType, bitFlags, Long.MAX_VALUE);
             }
 
             if (columnValueSize < 0) {
@@ -2147,6 +2147,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         } catch (NoSpaceLeftInResponseBufferException e) {
             throw e;
         } catch (Throwable th) {
+            LOG.debug().$("unexpected error in outCursor [ex=").$(th).I$();
             // We'll be sending an error to the client, so reset to the start of the last sent message.
             utf8Sink.resetToBookmark(recordStartAddress);
             if (th instanceof FlyweightMessageContainer) {
@@ -2605,7 +2606,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // todo: clarify the exact semantic of this flag; apparently python asyncpg client sends it as 0,
         // even when there are NULL elements in the array
 //        if (hasNull == 1) {
-            arrayView = transcodingBinaryArrayViews.next();
+        arrayView = transcodingBinaryArrayViews.next();
 //        } else {
 //            arrayView = pgNonNullBinaryArrayViewPool.next();
 //        }

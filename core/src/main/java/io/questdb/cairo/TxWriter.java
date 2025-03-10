@@ -135,6 +135,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     @Override
     public void clear() {
+        clearData();
         if (txMemBase != null) {
             // Never trim _txn file to size. Size of the file can only grow up.
             txMemBase.close(false);

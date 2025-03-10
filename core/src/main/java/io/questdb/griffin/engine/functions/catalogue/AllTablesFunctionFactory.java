@@ -123,7 +123,6 @@ public class AllTablesFunctionFactory implements FunctionFactory {
 
             @Override
             public void close() {
-
             }
 
             @Override
@@ -150,7 +149,6 @@ public class AllTablesFunctionFactory implements FunctionFactory {
             public void toTop() {
                 iteratorIdx = -1;
             }
-
 
             private static class AllTablesRecord implements Record {
                 private CairoTable table;

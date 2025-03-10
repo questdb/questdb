@@ -106,11 +106,11 @@ public:
         if (txn < last_min) {
             return -last_min - 1;
         }
-        auto countAfter = get_counter(txn).fetch_sub(1) - 1;
-        if (countAfter == 0 && last_min == txn) {
+        auto count_after = get_counter(txn).fetch_sub(1) - 1;
+        if (count_after == 0 && last_min == txn) {
             update_min(max);
         }
-        return countAfter;
+        return count_after;
     }
 
     // txn must be > 0
@@ -160,6 +160,15 @@ public:
         return -current_min - 2;
     }
 
+    // txn must be > 0
+    inline bool txn_increment(int64_t txn) {
+        auto count = get_counter(txn).load();
+        while (count > 0 && !get_counter(txn).compare_exchange_strong(count, count + 1)) {
+            count = get_counter(txn).load();
+        }
+        return count > 0;
+    }
+
     void init(uint32_t entry_count) {
         mask = entry_count - 1;
         size = entry_count;
@@ -186,6 +195,11 @@ extern "C" {
 JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_acquireTxn0
         (JAVA_STATIC, jlong p_txn_scoreboard, jlong txn) {
     return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->txn_acquire(txn);
+}
+
+JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_TxnScoreboard_incrementTxn0
+        (JAVA_STATIC, jlong p_txn_scoreboard, jlong txn) {
+    return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->txn_increment(txn);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_releaseTxn0

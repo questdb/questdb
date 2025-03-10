@@ -241,6 +241,15 @@ public class ColumnVersionReader implements Closeable, Mutable {
         version = -1;
     }
 
+    /**
+     * Copies column versions from the given reader.
+     */
+    public void readFrom(ColumnVersionReader columnVersionReader) {
+        this.version = columnVersionReader.version;
+        cachedColumnVersionList.clear();
+        cachedColumnVersionList.addAll(columnVersionReader.cachedColumnVersionList);
+    }
+
     public void readSafe(MillisecondClock microsecondClock, long spinLockTimeout) {
         final long tick = microsecondClock.getTicks();
         while (true) {

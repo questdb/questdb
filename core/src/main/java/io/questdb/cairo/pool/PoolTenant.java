@@ -67,6 +67,14 @@ public interface PoolTenant<T extends PoolTenant<T>> extends QuietCloseable {
     void refresh(@Nullable ResourcePoolSupervisor<T> supervisor);
 
     /**
+     * Pool informs the reader that the instance is being returned to the new owner and the new owner expects
+     * the reader to have the same state, e.g. txn number, as the given source tenant.
+     */
+    default void refreshAt(@Nullable ResourcePoolSupervisor<T> supervisor, T srcTenant) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
      * Refreshes value of the Table Token to the one it was created with.
      *
      * @param tableToken new value of the Table Token to update to

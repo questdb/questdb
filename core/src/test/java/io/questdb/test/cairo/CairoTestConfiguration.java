@@ -73,7 +73,9 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
 
     @Override
     public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
-        return AbstractCairoTest.staticOverrides.getCircuitBreakerConfiguration() != null ? AbstractCairoTest.staticOverrides.getCircuitBreakerConfiguration() : super.getCircuitBreakerConfiguration();
+        return AbstractCairoTest.staticOverrides.getCircuitBreakerConfiguration() != null
+                ? AbstractCairoTest.staticOverrides.getCircuitBreakerConfiguration()
+                : super.getCircuitBreakerConfiguration();
     }
 
     @Override

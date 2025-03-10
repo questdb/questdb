@@ -446,8 +446,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
             @Override
             public int getStrLen(int col) {
-                CharSequence s = getStrA(col);
-                return s != null ? s.length() : TableUtils.NULL_LEN;
+                return TableUtils.lengthOf(getStrA(col));
             }
 
             @Override
