@@ -92,7 +92,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
             final boolean current = executionContext.getCloneSymbolTables();
             executionContext.setCloneSymbolTables(true);
             try {
-                Function.init(perWorkerFilters, symbolTableSource, executionContext);
+                Function.init(perWorkerFilters, symbolTableSource, executionContext, filter);
             } finally {
                 executionContext.setCloneSymbolTables(current);
             }

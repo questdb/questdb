@@ -42,6 +42,13 @@ public interface UnaryFunction extends Function {
         getArg().cursorClosed();
     }
 
+    @Override
+    default void offerStateTo(Function that) {
+        if (that instanceof UnaryFunction) {
+            getArg().offerStateTo(((UnaryFunction) that).getArg());
+        }
+    }
+
     Function getArg();
 
     @Override

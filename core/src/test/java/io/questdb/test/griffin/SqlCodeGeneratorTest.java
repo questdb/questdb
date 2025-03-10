@@ -1068,13 +1068,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     "k",
                     "insert into x select * from (" +
                             "select" +
-                            " rnd_double(0)*100," +
+                            " 0.0992," +
                             " 'HYRX'," +
                             " to_timestamp('1971', 'yyyy') t" +
                             " from long_sequence(1)" +
                             ") timestamp(t)",
                     expected +
-                            "24.45295612285482\tHYRX\t1971-01-01T00:00:00.000000Z\n",
+                            "0.0992\tHYRX\t1971-01-01T00:00:00.000000Z\n",
                     true
             );
             Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));

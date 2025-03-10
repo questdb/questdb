@@ -118,6 +118,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         private final CharSequenceHashSet valueSetA = new CharSequenceHashSet();
         private final CharSequenceHashSet valueSetB = new CharSequenceHashSet();
         private CharSequenceHashSet valueSet;
+        private boolean stateInherited = false;
 
         public StrInCursorFunc(Function valueArg, Function cursorArg, Record.CharSequenceFunction func) {
             this.valueArg = valueArg;
@@ -145,6 +146,10 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             valueArg.init(symbolTableSource, executionContext);
             cursorArg.init(symbolTableSource, executionContext);
+
+            if (stateInherited) {
+                return;
+            }
 
             CharSequenceHashSet valueSet;
             if (this.valueSet == this.valueSetA) {
@@ -177,6 +182,18 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         @Override
         public boolean isThreadSafe() {
             return valueArg.isThreadSafe();
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof StrInCursorFunc) {
+                StrInCursorFunc thatF = (StrInCursorFunc) that;
+                thatF.valueSetB.clear();
+                thatF.valueSetB.addAll(valueSet);
+                thatF.valueSet = valueSetA;
+                thatF.stateInherited = true;
+            }
+            BinaryFunction.super.offerStateTo(that);
         }
 
         @Override
@@ -213,6 +230,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         private final Record.CharSequenceFunction func;
         private final IntHashSet symbolKeys = new IntHashSet();
         private final SymbolFunction valueArg;
+        private boolean stateInherited = false;
 
         public SymbolInCursorFunc(SymbolFunction valueArg, Function cursorArg, Record.CharSequenceFunction func) {
             this.valueArg = valueArg;
@@ -239,6 +257,9 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             valueArg.init(symbolTableSource, executionContext);
             cursorArg.init(symbolTableSource, executionContext);
+            if (stateInherited) {
+                return;
+            }
             symbolKeys.clear();
             RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
@@ -257,15 +278,24 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isThreadSafe() {
-            // we are using valueArg.getInt(), which can be used by multiple threads concurrently
-            return true;
+            return valueArg.isThreadSafe();
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof SymbolInCursorFunc) {
+                SymbolInCursorFunc thatF = (SymbolInCursorFunc) that;
+                thatF.symbolKeys.clear();
+                thatF.symbolKeys.addAll(symbolKeys);
+                thatF.stateInherited = true;
+            }
+            BinaryFunction.super.offerStateTo(that);
         }
 
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(valueArg).val(" in ").val(cursorArg);
         }
-
     }
 
     private static class SymbolInNullCursorFunc extends BooleanFunction implements UnaryFunction {
@@ -288,6 +318,11 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(valueArg).val(" in null");
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return valueArg.isThreadSafe();
         }
     }
 }

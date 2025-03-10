@@ -352,7 +352,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         }
         this.frameSequence = frameSequence;
         this.circuitBreaker = executionContext.getCircuitBreaker();
-        Function.init(recordFunctions, frameSequence.getSymbolTableSource(), executionContext);
+        Function.init(recordFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
         isDataMapBuilt = false;
         frameLimit = -1;
     }

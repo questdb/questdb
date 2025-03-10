@@ -44,6 +44,14 @@ public interface BinaryFunction extends Function {
         getRight().cursorClosed();
     }
 
+    @Override
+    default void offerStateTo(Function that) {
+        if (that instanceof BinaryFunction) {
+            getLeft().offerStateTo(((BinaryFunction) that).getLeft());
+            getRight().offerStateTo(((BinaryFunction) that).getRight());
+        }
+    }
+
     Function getLeft();
 
     Function getRight();

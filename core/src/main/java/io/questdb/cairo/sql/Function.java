@@ -46,8 +46,14 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     static void init(
             ObjList<? extends Function> args,
             SymbolTableSource symbolTableSource,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            @Nullable Function prototypeFunction
     ) throws SqlException {
+        if (prototypeFunction != null) {
+            for (int i = 0, n = args.size(); i < n; i++) {
+                prototypeFunction.offerStateTo(args.getQuick(i));
+            }
+        }
         for (int i = 0, n = args.size(); i < n; i++) {
             args.getQuick(i).init(symbolTableSource, executionContext);
         }
@@ -56,25 +62,11 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     static void initNc(
             ObjList<? extends Function> args,
             SymbolTableSource symbolTableSource,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            @Nullable Function prototypeFunction
     ) throws SqlException {
         if (args != null) {
-            init(args, symbolTableSource, executionContext);
-        }
-    }
-
-    static void initNcFunctions(
-            ObjList<? extends Function> args,
-            SymbolTableSource symbolTableSource,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        if (args != null) {
-            for (int i = 0, n = args.size(); i < n; i++) {
-                final Function arg = args.getQuiet(i);
-                if (arg != null) {
-                    arg.init(symbolTableSource, executionContext);
-                }
-            }
+            init(args, symbolTableSource, executionContext, prototypeFunction);
         }
     }
 
@@ -216,7 +208,7 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      * value is liable to change.
      * <p>
      * In practice this means that function arguments that are runtime constants can be
-     * evaluated in the functions {@link #init(ObjList, SymbolTableSource, SqlExecutionContext)} call.
+     * evaluated in the functions {@link #init(ObjList, SymbolTableSource, SqlExecutionContext, Function)} call.
      * <p>
      * It has be noted that the function cannot be both {@link #isConstant()} and runtime constant.
      *
@@ -248,6 +240,10 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     default boolean isUndefined() {
         return getType() == ColumnType.UNDEFINED;
+    }
+
+    default void offerStateTo(Function that) {
+//        throw new UnsupportedOperationException();
     }
 
     /**
