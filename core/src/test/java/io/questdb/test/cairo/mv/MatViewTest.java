@@ -674,6 +674,29 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullRefreshOfEmptyBaseTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute("refresh materialized view price_1h full");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
+                            "price_1h\tincremental\tbase_price\t\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t0\t0\n",
+                    "materialized_views",
+                    null,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testIncrementalRefresh() throws Exception {
         testIncrementalRefresh0("select sym, last(price) as price, ts from base_price sample by 1h");
     }
@@ -1104,9 +1127,8 @@ public class MatViewTest extends AbstractCairoTest {
                             "sym varchar, price double, amount int, ts timestamp" +
                             ") timestamp(ts) partition by DAY WAL"
             );
-            execute(
-                    "create table y (sym varchar)"
-            );
+            execute("create table y (sym varchar)");
+            execute("insert into x values ('foo', 3, 42, '2024-09-10T12:01')");
 
             execute(
                     "create materialized view x_1h with base x as ( " +

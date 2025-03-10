@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -50,7 +51,6 @@ import io.questdb.mp.Job;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
@@ -70,6 +70,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final MicrosecondClock microsecondClock;
     private final MatViewRefreshExecutionContext refreshExecutionContext;
     private final MatViewRefreshTask refreshTask = new MatViewRefreshTask();
+    private final SampleByRangeCursor sampleByCursor = new SampleByRangeCursor();
     private final WalTxnRangeLoader txnRangeLoader;
     private final MatViewGraph viewGraph;
     private final int workerId;
@@ -113,6 +114,35 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return processNotifications();
     }
 
+    private static long approxPartitionMicros(int partitionBy) {
+        switch (partitionBy) {
+            case PartitionBy.HOUR:
+                return Timestamps.HOUR_MICROS;
+            case PartitionBy.DAY:
+                return Timestamps.DAY_MICROS;
+            case PartitionBy.WEEK:
+                return Timestamps.WEEK_MICROS;
+            case PartitionBy.MONTH:
+                return 31 * Timestamps.DAY_MICROS;
+            case PartitionBy.YEAR:
+                return 365 * Timestamps.DAY_MICROS;
+            default:
+                throw new UnsupportedOperationException("unexpected partition by: " + partitionBy);
+        }
+    }
+
+    /**
+     * Estimates density of rows per SAMPLE BY bucket. The estimate is not very precise as
+     * it doesn't use exact min/max timestamps for each partition, but it should do the job
+     * of splitting large refresh table scans into multiple smaller scans.
+     */
+    private static long estimateRowsPerBucket(@NotNull TableReader baseTableReader, long bucketMicros) {
+        final long rows = baseTableReader.size();
+        final long partitionMicros = approxPartitionMicros(baseTableReader.getPartitionedBy());
+        final int partitionCount = baseTableReader.getPartitionCount();
+        return Math.max(1, (rows * bucketMicros) / (partitionMicros * partitionCount));
+    }
+
     private void enqueueInvalidateDependentViews(TableToken viewToken, String invalidationReason) {
         childViewSink2.clear();
         viewGraph.getDependentMatViews(viewToken, childViewSink2);
@@ -121,58 +151,56 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
-    private boolean findCommitTimestampRanges(
-            @NotNull MatViewRefreshExecutionContext executionContext,
+    private SampleByRangeCursor findSampleByRanges(
             @NotNull TableReader baseTableReader,
             @NotNull MatViewDefinition viewDefinition,
             long lastRefreshTxn
-    ) throws SqlException {
+    ) {
         final long lastTxn = baseTableReader.getSeqTxn();
 
+        long minTs;
+        long maxTs;
         if (lastRefreshTxn > 0) {
+            // Find min/max timestamps from WAL transactions.
             txnRangeLoader.load(engine, Path.PATH.get(), baseTableReader.getTableToken(), lastRefreshTxn, lastTxn);
-            long minTs = txnRangeLoader.getMinTimestamp();
-            long maxTs = txnRangeLoader.getMaxTimestamp();
-
-            if (minTs <= maxTs) {
-                // there are no concurrent accesses to the sampler at this point
-                final TimestampSampler sampler = viewDefinition.getTimestampSampler();
-                sampler.setStart(viewDefinition.getFixedOffset());
-                TimeZoneRules rules = viewDefinition.getTzRules();
-                // convert UTC timestamp into Time Zone timestamp
-                // round to the nearest sampling interval
-                // then convert back to UTC
-                long tzMinOffset = rules != null ? rules.getOffset(minTs) : 0;
-                long tzMaxOffset = rules != null ? rules.getOffset(maxTs) : 0;
-
-                final long tzMinTs = sampler.round(minTs + tzMinOffset);
-                minTs = rules != null ? Timestamps.toUTC(tzMinTs, rules) : tzMinTs - tzMinOffset;
-
-                final long tzMaxTs = sampler.nextTimestamp(sampler.round(maxTs + tzMaxOffset));
-                maxTs = rules != null ? Timestamps.toUTC(tzMaxTs, rules) : tzMaxTs - tzMaxOffset;
-
-                executionContext.setRange(minTs, maxTs);
-                LOG.info().$("refreshing materialized view [view=").$(viewDefinition.getMatViewToken())
-                        .$(", base=").$(baseTableReader.getTableToken())
-                        .$(", fromTxn=").$(lastRefreshTxn)
-                        .$(", toTxn=").$(lastTxn)
-                        .$(", ts>=").$ts(minTs)
-                        .$(", ts<").$ts(maxTs)
-                        .I$();
-
-                return true;
-            }
+            minTs = txnRangeLoader.getMinTimestamp();
+            maxTs = txnRangeLoader.getMaxTimestamp();
         } else {
-            executionContext.setRange(Long.MIN_VALUE + 1, Long.MAX_VALUE);
-
-            LOG.info().$("refreshing materialized view, full refresh [view=").$(viewDefinition.getMatViewToken())
-                    .$(", base=").$(baseTableReader.getTableToken())
-                    .$(", toTxn=").$(lastTxn)
-                    .I$();
-            return true;
+            // Full table scan.
+            // In case of an empty table min timestamp is set to Long.MAX_VALUE
+            // while max timestamp is Long.MIN_VALUE, so we end up skipping the refresh.
+            minTs = baseTableReader.getMinTimestamp();
+            maxTs = baseTableReader.getMaxTimestamp();
         }
 
-        return false;
+        if (minTs <= maxTs) {
+            final TimestampSampler timestampSampler = viewDefinition.getTimestampSampler();
+            final long rowsPerBucket = estimateRowsPerBucket(baseTableReader, timestampSampler.getApproxBucketSize());
+            final int rowsPerQuery = configuration.getMatViewRowsPerQueryEstimate();
+            final int step = Math.max(1, (int) (rowsPerQuery / rowsPerBucket));
+
+            // there are no concurrent accesses to the sampler at this point as we've locked the state
+            sampleByCursor.of(
+                    timestampSampler,
+                    viewDefinition.getTzRules(),
+                    viewDefinition.getFixedOffset(),
+                    minTs,
+                    maxTs,
+                    step
+            );
+
+            LOG.info().$("refreshing materialized view [view=").$(viewDefinition.getMatViewToken())
+                    .$(", base=").$(baseTableReader.getTableToken())
+                    .$(", fromTxn=").$(lastRefreshTxn)
+                    .$(", toTxn=").$(lastTxn)
+                    .$(", ts>=").$ts(sampleByCursor.getMinTimestamp())
+                    .$(", ts<").$ts(sampleByCursor.getMaxTimestamp())
+                    .I$();
+
+            return sampleByCursor;
+        }
+
+        return null;
     }
 
     private RecordToRowCopier getRecordToRowCopier(TableWriterAPI tableWriter, RecordCursorFactory factory, SqlCompiler compiler) throws SqlException {
@@ -189,6 +217,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             MatViewRefreshState state,
             MatViewDefinition viewDef,
             TableWriterAPI tableWriter,
+            SampleByRangeCursor sampleByCursor,
             long baseTableTxn,
             long refreshTriggeredTimestamp
     ) throws SqlException {
@@ -234,17 +263,21 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     final int cursorTimestampIndex = factory.getMetadata().getColumnIndex(timestampName);
                     assert cursorTimestampIndex > -1;
 
-                    try (RecordCursor cursor = factory.getCursor(refreshExecutionContext)) {
-                        final Record record = cursor.getRecord();
-                        long deadline = batchSize;
-                        rowCount = 0;
-                        while (cursor.hasNext()) {
-                            TableWriter.Row row = tableWriter.newRow(record.getTimestamp(cursorTimestampIndex));
-                            copier.copy(record, row);
-                            row.append();
-                            if (++rowCount >= deadline) {
-                                tableWriter.ic();
-                                deadline = rowCount + batchSize;
+                    sampleByCursor.toTop();
+                    while (sampleByCursor.next()) {
+                        refreshExecutionContext.setRange(sampleByCursor.getTimestampLo(), sampleByCursor.getTimestampHi());
+                        try (RecordCursor cursor = factory.getCursor(refreshExecutionContext)) {
+                            final Record record = cursor.getRecord();
+                            long deadline = batchSize;
+                            rowCount = 0;
+                            while (cursor.hasNext()) {
+                                TableWriter.Row row = tableWriter.newRow(record.getTimestamp(cursorTimestampIndex));
+                                copier.copy(record, row);
+                                row.append();
+                                if (++rowCount >= deadline) {
+                                    tableWriter.ic();
+                                    deadline = rowCount + batchSize;
+                                }
                             }
                         }
                     }
@@ -474,13 +507,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             refreshExecutionContext.of(baseTableReader);
             try {
                 final long toBaseTxn = baseTableReader.getSeqTxn();
-                // Make time interval filter no-op as we're querying all partitions.
-                refreshExecutionContext.setRange(Long.MIN_VALUE + 1, Long.MAX_VALUE);
-
+                final MatViewDefinition viewDef = state.getViewDefinition();
+                // Specify -1 as the last refresh txn, so that we scan all partitions.
                 try (TableWriterAPI commitWriter = engine.getTableWriterAPI(viewToken, "mat view full refresh")) {
                     commitWriter.truncateSoft();
-                    final MatViewDefinition viewDef = state.getViewDefinition();
-                    insertAsSelect(state, viewDef, commitWriter, toBaseTxn, refreshTriggeredTimestamp);
+                    final SampleByRangeCursor sampleByCursor = findSampleByRanges(baseTableReader, viewDef, -1);
+                    if (sampleByCursor != null) {
+                        insertAsSelect(state, viewDef, commitWriter, sampleByCursor, toBaseTxn, refreshTriggeredTimestamp);
+                    }
                     resetInvalidState(state);
                     writeLastRefreshBaseTableTxn(state, toBaseTxn);
                 }
@@ -561,11 +595,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             refreshExecutionContext.of(baseTableReader);
             try {
                 final MatViewDefinition viewDef = state.getViewDefinition();
-                if (findCommitTimestampRanges(refreshExecutionContext, baseTableReader, viewDef, fromBaseTxn)) {
+                final SampleByRangeCursor sampleByCursor = findSampleByRanges(baseTableReader, viewDef, fromBaseTxn);
+                if (sampleByCursor != null) {
                     toBaseTxn = baseTableReader.getSeqTxn();
-
                     try (TableWriterAPI tableWriter = engine.getTableWriterAPI(viewToken, "Mat View refresh")) {
-                        boolean changed = insertAsSelect(state, viewDef, tableWriter, toBaseTxn, refreshTriggeredTimestamp);
+                        boolean changed = insertAsSelect(state, viewDef, tableWriter, sampleByCursor, toBaseTxn, refreshTriggeredTimestamp);
                         if (changed) {
                             writeLastRefreshBaseTableTxn(state, toBaseTxn);
                         }

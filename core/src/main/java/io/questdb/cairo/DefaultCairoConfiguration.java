@@ -478,6 +478,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewRowsPerQueryEstimate() {
+        return 10_000_000;
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return 1;
     }

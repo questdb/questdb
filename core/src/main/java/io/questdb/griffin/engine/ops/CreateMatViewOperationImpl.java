@@ -334,15 +334,14 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         }
 
         // Find sampling interval.
-        CharSequence intervalExpr = null;
-        int intervalPos = 0;
+        ExpressionNode intervalExpr = null;
         final ExpressionNode sampleBy = queryModel.getSampleBy();
+        // Vanilla SAMPLE BY.
         if (sampleBy != null && sampleBy.type == ExpressionNode.CONSTANT) {
-            intervalExpr = sampleBy.token;
-            intervalPos = sampleBy.position;
+            intervalExpr = sampleBy;
         }
 
-        // GROUP BY timestamp_floor(ts) (optimized SAMPLE BY)
+        // GROUP BY timestamp_floor(ts) (optimized SAMPLE BY).
         if (intervalExpr == null) {
             final ObjList<QueryColumn> queryColumns = queryModel.getBottomUpColumns();
             for (int i = 0, n = queryColumns.size(); i < n; i++) {
@@ -350,11 +349,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 final ExpressionNode ast = queryColumn.getAst();
                 if (ast.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase("timestamp_floor", ast.token)) {
                     if (ast.paramCount == 3) {
-                        intervalExpr = ast.args.getQuick(2).token;
-                        intervalPos = ast.args.getQuick(2).position;
+                        intervalExpr = ast.args.getQuick(2);
                     } else {
-                        intervalExpr = ast.lhs.token;
-                        intervalPos = ast.lhs.position;
+                        intervalExpr = ast.lhs;
                     }
                     if (timestamp == null) {
                         createTableOperation.setTimestampColumnName(Chars.toString(queryColumn.getName()));
@@ -368,18 +365,20 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                     break;
                 }
             }
-        }
-        if (intervalExpr == null) {
-            throw SqlException.$(intervalPos, "materialized view query requires a sampling interval");
+
+            // We haven't found timestamp_floor() in SELECT.
+            if (intervalExpr == null) {
+                throw SqlException.$(0, "TIMESTAMP column is not present in select list");
+            }
         }
 
         // Parse sampling interval expression.
-        intervalExpr = GenericLexer.unquote(intervalExpr);
-        final int samplingIntervalEnd = TimestampSamplerFactory.findIntervalEndIndex(intervalExpr, intervalPos);
-        assert samplingIntervalEnd < intervalExpr.length();
-        samplingInterval = TimestampSamplerFactory.parseInterval(intervalExpr, samplingIntervalEnd, intervalPos);
+        final CharSequence interval = GenericLexer.unquote(intervalExpr.token);
+        final int samplingIntervalEnd = TimestampSamplerFactory.findIntervalEndIndex(interval, intervalExpr.position);
+        assert samplingIntervalEnd < interval.length();
+        samplingInterval = TimestampSamplerFactory.parseInterval(interval, samplingIntervalEnd, intervalExpr.position);
         assert samplingInterval > 0;
-        samplingIntervalUnit = intervalExpr.charAt(samplingIntervalEnd);
+        samplingIntervalUnit = interval.charAt(samplingIntervalEnd);
 
         // Mark key columns as dedup keys.
         baseKeyColumnNames.clear();

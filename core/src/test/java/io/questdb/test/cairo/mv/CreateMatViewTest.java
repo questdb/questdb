@@ -230,6 +230,21 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewGroupByNoTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            try {
+                execute("create materialized view test as (select avg(v) from " + TABLE1 + ") partition by day");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "TIMESTAMP column is not present in select list");
+            }
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
     public void testCreateMatViewGroupByTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -397,7 +412,22 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (select * from " + TABLE1 + " where v % 2 = 0) partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "materialized view query requires a sampling interval");
+                TestUtils.assertContains(e.getFlyweightMessage(), "TIMESTAMP column is not present in select list");
+            }
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
+    public void testCreateMatViewNoTimestampInSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            try {
+                execute("create materialized view test as (select k, max(v) as v_max from " + TABLE1 + " sample by 30s) partition by day");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "TIMESTAMP column is not present in select list");
             }
             assertNull(getMatViewDefinition("test"));
         });

@@ -122,8 +122,9 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
         intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(2, ColumnType.TIMESTAMP, 0));
     }
 
-    public void setRange(long minTs, long maxTs) throws SqlException {
-        getBindVariableService().setTimestamp(1, minTs);
-        getBindVariableService().setTimestamp(2, maxTs - 1);
+    // tsLo is inclusive, tsHi is exclusive
+    public void setRange(long tsLo, long tsHi) throws SqlException {
+        getBindVariableService().setTimestamp(1, tsLo);
+        getBindVariableService().setTimestamp(2, tsHi - 1);
     }
 }
