@@ -93,7 +93,7 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     }
 
     public void fill(int v) {
-        Vect.memset(address, capacity * Long.BYTES, v);
+        Vect.memset(address, capacity, v);
     }
 
     public long get(long p) {

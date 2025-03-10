@@ -185,6 +185,7 @@ public class DirectLongListTest {
                 Assert.assertEquals(i, list.get(i));
             }
             list.zero();
+            list.clear();
             Assert.assertEquals(0, list.size());
             for (long i = 0; i < list.getCapacity(); i++) {
                 Assert.assertEquals(0, list.get(i));
