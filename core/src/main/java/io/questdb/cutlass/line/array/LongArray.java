@@ -27,6 +27,10 @@ package io.questdb.cutlass.line.array;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.Unsafe;
 
+/**
+ * Used to accumulate the data of an N-dimensional array of {@code long} values.
+ * You must close the array when done with it because it uses native memory.
+ */
 public class LongArray extends AbstractArray {
 
     public LongArray(int... shape) {
@@ -37,6 +41,10 @@ public class LongArray extends AbstractArray {
      * Appends the value at the current append positions, and then advances it.
      * If the append position is currently beyond the last element, it first resets
      * the position to zero and then appends the new value.
+     * <p>
+     * The intention is for this array object to be reused for all the rows you are
+     * inserting, and this auto-wrapping behavior allows you to repeatedly fill the
+     * array without the need for other lifecycle calls like {@code clear()}.
      */
     public LongArray append(long value) {
         ensureLegalAppendPosition();
