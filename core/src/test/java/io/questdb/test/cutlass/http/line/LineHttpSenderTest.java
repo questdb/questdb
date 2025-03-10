@@ -354,10 +354,17 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
                         .retryTimeoutMillis(0)
                         .build();
-                     DoubleArray a1 = new DoubleArray(2, 2, 2).set(99.0, 0, 1, 0);
-                     DoubleArray a2 = new DoubleArray(2, 2, 2).set(100.0, 1, 1, 1);
+                     DoubleArray a1 = new DoubleArray(2, 2, 2);
+                     DoubleArray a2 = new DoubleArray(2, 2, 2).set(99.0, 0, 1, 0).set(100.0, 1, 1, 1);
                      DoubleArray a3 = new DoubleArray(2, 2, 2).setAll(101);
                 ) {
+                    // array.append() appends in a circular fashion, wrapping around to start from the end.
+                    // We deliberately append two more than the length of the array, to test this behavior.
+                    // The intended use is to fill it up exactly, then for the next row just continue
+                    // filling up with new data.
+                    for (int i = 0; i < 10; i++) {
+                        a1.append(i);
+                    }
                     double[] arr1d = createDoubleArray(5);
                     double[][] arr2d = createDoubleArray(2, 3);
                     double[][][] arr3d = createDoubleArray(1, 2, 3);
@@ -378,8 +385,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 serverMain.awaitTxn(tableName, 1);
                 serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta1\ta2\ta3\tb1\tb2\tb3\tts\n" +
                         "42i\t[6f1.0,2.5,3.0,4.5,5.0]\t23452345\t" +
-                        "[[[0.0,0.0],[99.0,0.0]],[[0.0,0.0],[0.0,0.0]]]\t" +
-                        "[[[0.0,0.0],[0.0,0.0]],[[0.0,0.0],[0.0,100.0]]]\t" +
+                        "[[[8.0,9.0],[2.0,3.0]],[[4.0,5.0],[6.0,7.0]]]\t" +
+                        "[[[0.0,0.0],[99.0,0.0]],[[0.0,0.0],[0.0,100.0]]]\t" +
                         "[[[101.0,101.0],[101.0,101.0]],[[101.0,101.0],[101.0,101.0]]]\t" +
                         "[1.0,2.0,3.0,4.0,5.0]\t" +
                         "[[1.0,2.0,3.0],[2.0,4.0,6.0]]\t" +
@@ -409,11 +416,16 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         .retryTimeoutMillis(0)
                         .build();
                      LongArray a1 = new LongArray(2, 2, 2);
-                     LongArray a2 = new LongArray(2, 2, 2);
+                     LongArray a2 = new LongArray(2, 2, 2).set(99L, 0, 1, 0).set(100L, 1, 1, 1);
                      LongArray a3 = new LongArray(2, 2, 2).setAll(101);
                 ) {
-                    a1.set(99L, 0, 1, 0);
-                    a2.set(100L, 1, 1, 1);
+                    // array.append() appends in a circular fashion, wrapping around to start from the end.
+                    // We deliberately append two more than the length of the array, to test this behavior.
+                    // The intended use is to fill it up exactly, then for the next row just continue
+                    // filling up with new data.
+                    for (int i = 0; i < 10; i++) {
+                        a1.append(i);
+                    }
 
                     long[] arr1d = createLongArray(5);
                     long[][] arr2d = createLongArray(2, 3);
@@ -436,8 +448,8 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta1\ta2\ta3\tb1\tb2\tb3\tts\n" +
                         "42i\t[6f1.0,2.5,3.0,4.5,5.0]\t23452345\t" +
-                        "[[[0,0],[99,0]],[[0,0],[0,0]]]\t" +
-                        "[[[0,0],[0,0]],[[0,0],[0,100]]]\t" +
+                        "[[[8,9],[2,3]],[[4,5],[6,7]]]\t" +
+                        "[[[0,0],[99,0]],[[0,0],[0,100]]]\t" +
                         "[[[101,101],[101,101]],[[101,101],[101,101]]]\t" +
                         "[1,2,3,4,5]\t" +
                         "[[1,2,3],[2,4,6]]\t" +
