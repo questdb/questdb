@@ -243,7 +243,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     }
 
     default void offerStateTo(Function that) {
-//        throw new UnsupportedOperationException();
     }
 
     /**
