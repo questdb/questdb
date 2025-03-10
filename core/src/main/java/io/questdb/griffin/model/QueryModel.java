@@ -36,8 +36,6 @@ import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.ObjectPool;
@@ -93,6 +91,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // types of set operations between this and union model
     public static final int SET_OPERATION_UNION_ALL = 0;
     public static final int SHOW_COLUMNS = 2;
+    public static final int SHOW_CREATE_MAT_VIEW = 15;
     public static final int SHOW_CREATE_TABLE = 14;
     public static final int SHOW_DATE_STYLE = 9;
     public static final int SHOW_MAX_IDENTIFIER_LENGTH = 6;
@@ -163,6 +162,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode fillStride;
     private ExpressionNode fillTo;
     private ObjList<ExpressionNode> fillValues;
+    private boolean forceBackwardScan;
     //simple flag to mark when limit x,y in current model (part of query) is already taken care of by existing factories e.g. LimitedSizeSortedLightRecordCursorFactory
     //and doesn't need to be enforced by LimitRecordCursor. We need it to detect whether current factory implements limit from this or inner query .
     private boolean isLimitImplemented;
@@ -189,6 +189,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int orderByAdviceMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
     // position of the order by clause token
     private int orderByPosition;
+    private boolean orderDescendingByDesignatedTimestampOnly;
     private IntList orderedJoinModels = orderedJoinModels2;
     // Expression clause that is actually part of left/outer join but not in join model.
     // Inner join expressions
@@ -473,6 +474,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         skipped = false;
         allowPropagationOfOrderByAdvice = true;
         decls.clear();
+        orderDescendingByDesignatedTimestampOnly = false;
+        forceBackwardScan = false;
     }
 
     public void clearColumnMapStructs() {
@@ -1065,6 +1068,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return explicitTimestamp;
     }
 
+    public boolean isForceBackwardScan() {
+        return forceBackwardScan;
+    }
+
     public boolean isLimitImplemented() {
         return isLimitImplemented;
     }
@@ -1077,20 +1084,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return nestedModelIsSubQuery;
     }
 
-    public boolean isOrderByTimestamp(CharSequence orderByToken) {
-        if (Chars.equalsIgnoreCase(orderByToken, timestamp.token)) {
-            return true;
-        }
-
-        try {
-            int columnIndex = Numbers.parseInt(orderByToken);
-            if (columnIndex < 1 && columnIndex > bottomUpColumns.size()) {
-                return false;
-            }
-            return Chars.equalsIgnoreCase(bottomUpColumnAliases.getQuick(columnIndex - 1), timestamp.token);
-        } catch (NumericException e) {
-            return false;
-        }
+    public boolean isOrderDescendingByDesignatedTimestampOnly() {
+        return orderDescendingByDesignatedTimestampOnly;
     }
 
     public boolean isSelectTranslation() {
@@ -1208,7 +1203,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
      * <p>
      * To facilitate this behaviour the function will always return non-current list.
      *
-     * @return non current order list.
+     * @return non-current order list.
      */
     public IntList nextOrderedJoinModels() {
         IntList ordered = orderedJoinModels == orderedJoinModels1 ? orderedJoinModels2 : orderedJoinModels1;
@@ -1312,6 +1307,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.fillValues = fillValues;
     }
 
+    public void setForceBackwardScan(boolean forceBackwardScan) {
+        this.forceBackwardScan = forceBackwardScan;
+    }
+
     public void setIsMatView(boolean isMatView) {
         this.isMatViewModel = isMatView;
     }
@@ -1380,6 +1379,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setOrderByPosition(int orderByPosition) {
         this.orderByPosition = orderByPosition;
+    }
+
+    public void setOrderDescendingByDesignatedTimestampOnly(boolean orderDescendingByDesignatedTimestampOnly) {
+        this.orderDescendingByDesignatedTimestampOnly = orderDescendingByDesignatedTimestampOnly;
     }
 
     public void setOrderedJoinModels(IntList that) {

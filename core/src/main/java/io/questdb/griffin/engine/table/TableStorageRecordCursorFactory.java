@@ -56,8 +56,8 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
     private static final int ROW_COUNT = 4;
     private static final int TABLE_NAME = 0;
     private static final int WAL_ENABLED = 1;
-    private final TableStorageRecordCursor cursor = new TableStorageRecordCursor();
     private final CairoConfiguration configuration;
+    private final TableStorageRecordCursor cursor = new TableStorageRecordCursor();
     private final CairoEngine engine;
     private final TxReader txReader;
 
@@ -187,14 +187,12 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
 
             @Override
             public @Nullable CharSequence getStrB(int col) {
-                switch (col) {
-                    case TABLE_NAME:
-                        return tableName;
-                    case PARTITION_BY:
-                        return PartitionBy.toString(partitionBy);
-                    default:
-                        throw new UnsupportedOperationException();
-                }
+                return getStrA(col);
+            }
+
+            @Override
+            public int getStrLen(int col) {
+                return TableUtils.lengthOf(getStrA(col));
             }
 
             private void getTableStats(@NotNull TableToken token) {

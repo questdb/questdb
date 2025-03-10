@@ -33,6 +33,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -140,7 +141,6 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
             @Override
             public boolean hasNext() {
-
                 do {
                     if (table == null && !nextTable()) {
                         return false;
@@ -223,8 +223,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
                 @Override
                 public int getStrLen(int col) {
-                    CharSequence str = getStrA(col);
-                    return str != null ? str.length() : -1;
+                    return TableUtils.lengthOf(getStrA(col));
                 }
 
                 private void of(CharSequence tableName, int ordinalPosition, CharSequence columnName, CharSequence dataType) {

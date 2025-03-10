@@ -91,7 +91,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         parallelGroupByEnabled = cairoConfiguration.isSqlParallelGroupByEnabled();
         parallelReadParquetEnabled = cairoConfiguration.isSqlParallelReadParquetEnabled();
         telemetry = cairoEngine.getTelemetry();
-        telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoop;
+        telemetryFacade = telemetry.isEnabled() ? this::doStoreTelemetry : this::storeTelemetryNoOp;
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
         this.simpleCircuitBreaker = new AtomicBooleanCircuitBreaker(cairoConfiguration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
@@ -286,6 +286,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void resetFlags() {
+        this.containsSecret = false;
+        this.useSimpleCircuitBreaker = false;
+        this.cacheHit = false;
+    }
+
+    @Override
     public void setCacheHit(boolean value) {
         cacheHit = value;
     }
@@ -396,13 +403,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         TelemetryTask.store(telemetry, origin, event);
     }
 
-    private void resetFlags() {
-        this.containsSecret = false;
-        this.useSimpleCircuitBreaker = false;
-        this.cacheHit = false;
-    }
-
-    private void storeTelemetryNoop(short event, short origin) {
+    private void storeTelemetryNoOp(short event, short origin) {
     }
 
     @FunctionalInterface

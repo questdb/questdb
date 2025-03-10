@@ -36,6 +36,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -136,7 +137,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
             this.rootPath = Misc.free(this.rootPath);
         }
 
-        private class TableListRecordCursor implements RecordCursor {
+        private class TableListRecordCursor implements NoRandomAccessRecordCursor {
             private final TableListRecord record = new TableListRecord();
             private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
             private final TxReader txReader = new TxReader(ff);
@@ -151,11 +152,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
             @Override
             public Record getRecord() {
                 return record;
-            }
-
-            @Override
-            public Record getRecordB() {
-                throw new UnsupportedOperationException();
             }
 
             @Override
@@ -174,11 +170,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                     }
                 }
                 return tableIndex < n;
-            }
-
-            @Override
-            public void recordAt(Record record, long atRowId) {
-                throw new UnsupportedOperationException();
             }
 
             @Override

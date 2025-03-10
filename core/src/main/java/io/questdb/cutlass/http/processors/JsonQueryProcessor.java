@@ -81,8 +81,7 @@ import static java.net.HttpURLConnection.*;
 public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private static final LocalValue<JsonQueryProcessorState> LV = new LocalValue<>();
-    @SuppressWarnings("FieldMayBeFinal")
-    private static Log LOG = LogFactory.getLog(JsonQueryProcessor.class);
+    private static final Log LOG = LogFactory.getLog(JsonQueryProcessor.class);
     protected final ObjList<QueryExecutor> queryExecutors = new ObjList<>();
     private final long asyncCommandTimeout;
     private final long asyncWriterStartTimeout;
