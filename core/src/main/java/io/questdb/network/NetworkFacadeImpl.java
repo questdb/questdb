@@ -70,7 +70,7 @@ public class NetworkFacadeImpl implements NetworkFacade {
     @Override
     public void close(long fd, Log logger) {
         if (close(fd) != 0) {
-            logger.error().$("could not close [fd=").$(fd).$(", errno=").$(errno()).$(']').$();
+            logger.error().$("could not close [fd=").$(fd).$(", errno=").$(errno()).I$();
         }
     }
 

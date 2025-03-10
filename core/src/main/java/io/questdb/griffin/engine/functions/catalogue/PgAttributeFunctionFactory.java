@@ -84,9 +84,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new CursorFunction(
-                new AttributeCatalogueCursorFactory()
-        ) {
+        return new CursorFunction(new AttributeCatalogueCursorFactory()) {
             @Override
             public boolean isRuntimeConstant() {
                 return true;
@@ -124,7 +122,6 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.type(SIGNATURE);
         }
-
     }
 
     private static class AttributeClassCatalogueCursor implements NoRandomAccessRecordCursor {
@@ -135,7 +132,6 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
         private CairoTable table;
         private int tableId;
 
-
         public AttributeClassCatalogueCursor(CharSequenceObjHashMap<CairoTable> tableCache) {
             super();
             this.tableCache = tableCache;
@@ -143,14 +139,12 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-
         }
 
         @Override
         public Record getRecord() {
             return record;
         }
-
 
         @Override
         public boolean hasNext() {

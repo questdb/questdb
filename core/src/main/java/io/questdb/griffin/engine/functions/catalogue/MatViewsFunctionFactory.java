@@ -31,6 +31,7 @@ import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshState;
 import io.questdb.cairo.sql.Function;
@@ -51,7 +52,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "mat_views()";
+        return "materialized_views()";
     }
 
     @Override
@@ -62,7 +63,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new CursorFunction(new ViewsCursorFactory()) {
+        return new CursorFunction(new MatViewsCursorFactory()) {
             @Override
             public boolean isRuntimeConstant() {
                 return true;
@@ -70,7 +71,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         };
     }
 
-    private static class ViewsCursorFactory implements RecordCursorFactory {
+    private static class MatViewsCursorFactory implements RecordCursorFactory {
         private static final int COLUMN_VIEW_NAME = 0;
         private static final int COLUMN_REFRESH_TYPE = COLUMN_VIEW_NAME + 1;
         private static final int COLUMN_BASE_TABLE_NAME = COLUMN_REFRESH_TYPE + 1;
@@ -102,11 +103,11 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("mat_views()");
+            sink.val("materialized_views()");
         }
 
         private static class ViewsListCursor implements NoRandomAccessRecordCursor {
-            private final ViewsListRecord record = new ViewsListRecord();
+            private final MatViewsRecord record = new MatViewsRecord();
             private final ObjList<TableToken> viewTokens = new ObjList<>();
             private CairoEngine engine;
             private int viewIndex = 0;
@@ -117,11 +118,6 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
             @Override
             public Record getRecord() {
-                return record;
-            }
-
-            @Override
-            public Record getRecordB() {
                 return record;
             }
 
@@ -173,7 +169,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 toTop();
             }
 
-            private static class ViewsListRecord implements Record {
+            private static class MatViewsRecord implements Record {
                 private boolean invalid;
                 private String invalidationReason;
                 private long lastAppliedBaseTxn;
@@ -201,8 +197,11 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_VIEW_NAME:
                             return viewDefinition.getMatViewToken().getTableName();
                         case COLUMN_REFRESH_TYPE:
-                            // For now, incremental refresh is the only supported strategy.
-                            return "incremental";
+                            // For now, incremental refresh is the only supported refresh type.
+                            if (viewDefinition.getRefreshType() == MatViewDefinition.INCREMENTAL_REFRESH_TYPE) {
+                                return "incremental";
+                            }
+                            return "unknown";
                         case COLUMN_BASE_TABLE_NAME:
                             return viewDefinition.getBaseTableName();
                         case COLUMN_VIEW_SQL:
@@ -221,6 +220,11 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 @Override
                 public CharSequence getStrB(int col) {
                     return getStrA(col);
+                }
+
+                @Override
+                public int getStrLen(int col) {
+                    return TableUtils.lengthOf(getStrA(col));
                 }
 
                 public void of(

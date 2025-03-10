@@ -152,7 +152,7 @@ public class Telemetry<T extends AbstractTelemetryTask> implements Closeable {
         } catch (CairoException ex) {
             LOG.error()
                     .$("could not open [table=`").utf8(tableToken.getTableName())
-                    .$("`, ex=").$(ex.getFlyweightMessage())
+                    .$("`, msg=").$(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .$(']').$();
         }

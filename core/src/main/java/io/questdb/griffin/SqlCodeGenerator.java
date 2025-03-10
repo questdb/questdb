@@ -530,8 +530,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     public RecordCursorFactory generateExplain(@Transient ExplainModel model, @Transient SqlExecutionContext executionContext) throws SqlException {
-        ExecutionModel innerModel = model.getInnerExecutionModel();
-        QueryModel queryModel = innerModel.getQueryModel();
+        final ExecutionModel innerModel = model.getInnerExecutionModel();
+        final QueryModel queryModel = innerModel.getQueryModel();
         RecordCursorFactory factory;
         if (queryModel != null) {
             factory = generate(queryModel, executionContext);
@@ -608,7 +608,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (symbolToken == null) {
                         symbolToken = node.token;
                     } else if (!Chars.equalsIgnoreCase(symbolToken, node.token)) {
-                        return false; //more than one key symbol column
+                        return false; // more than one key symbol column
                     }
                 } else {
                     return false;
@@ -5275,7 +5275,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             0,
                             metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag(),
                             metadata.getColumnMetadata(columnIndex).getSymbolCapacity()
-
                     ));
 
                     if (columnIndex == readerTimestampIndex) {
@@ -5350,10 +5349,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final IntrinsicModel intrinsicModel;
             if (withinExtracted != null) {
                 CharSequence preferredKeyColumn = null;
-
                 if (latestByColumnCount == 1) {
                     final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
-
                     if (ColumnType.isSymbol(myMeta.getColumnType(latestByIndex))) {
                         preferredKeyColumn = latestBy.getQuick(0).token;
                     }

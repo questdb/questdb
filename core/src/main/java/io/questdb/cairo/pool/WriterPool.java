@@ -394,12 +394,12 @@ public class WriterPool extends AbstractPool {
             e.ownershipReason = lockReason;
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {
-            LogRecord record = ex.isCritical() ? LOG.critical() : LOG.error();
+            final LogRecord record = ex.isCritical() ? LOG.critical() : LOG.error();
             record.$("could not open [table=`").utf8(tableToken.getTableName())
                     .$("`, thread=").$(e.owner)
-                    .$(", ex=").utf8(ex.getFlyweightMessage())
+                    .$(", msg=").utf8(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
-                    .$(']').$();
+                    .I$();
             e.ex = ex;
             e.ownershipReason = OWNERSHIP_REASON_WRITER_ERROR;
             e.owner = UNALLOCATED;

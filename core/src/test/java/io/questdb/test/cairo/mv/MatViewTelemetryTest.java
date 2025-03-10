@@ -80,7 +80,10 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                         "price_1h order by ts, sym"
                 );
 
-                dropMatView("2024-10-24T17:00:33.000000Z", telemetryJob);
+                currentMicros = parseFloorPartialTimestamp("2024-10-24T17:00:33.000000Z");
+                execute("drop materialized view price_1h");
+                assertNull(engine.getTableTokenIfExists("price_1h"));
+                telemetryJob.runSerially();
 
                 assertSql(
                         "created\tevent\tview_table_id\tbase_table_txn\tinvalidation_reason\tlatency\n" +
@@ -166,8 +169,8 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                         "created\tevent\tview_table_id\tbase_table_txn\tinvalidation_reason\tlatency\n" +
                                 "2024-10-24T17:00:15.000000Z\t200\t6\tnull\t\t0.0000\n" +
                                 "2024-10-24T17:00:25.000000Z\t204\t6\t1\t\t10000.0000\n" +
-                                "2024-10-24T17:00:33.000000Z\t202\t6\tnull\ttable does not exist [table=base_price]\t0.0000\n" +
-                                "2024-10-24T17:00:33.000000Z\t203\t6\tnull\ttable does not exist [table=base_price]\t0.0000\n",
+                                "2024-10-24T17:00:33.000000Z\t202\t6\tnull\t[-105] table does not exist [table=base_price]\t0.0000\n" +
+                                "2024-10-24T17:00:33.000000Z\t203\t6\tnull\t[-105] table does not exist [table=base_price]\t0.0000\n",
                         "sys.telemetry_mat_view"
                 );
             }
@@ -246,13 +249,6 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
                 + "select sym, last(price) as price, ts from " + "base_price" + " sample by 1h"
                 + ") partition by DAY");
         engine.verifyTableName("price_1h");
-        telemetryJob.runSerially();
-    }
-
-    private static void dropMatView(String currentTime, TelemetryJob telemetryJob) throws NumericException, SqlException {
-        currentMicros = parseFloorPartialTimestamp(currentTime);
-        execute("drop materialized view price_1h");
-        assertNull(engine.getTableTokenIfExists("price_1h"));
         telemetryJob.runSerially();
     }
 
