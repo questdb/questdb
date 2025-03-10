@@ -785,8 +785,6 @@ Java_io_questdb_std_Vect_mergeShuffleFixedColumnFromManyAddresses(
         jlong segmentAddressPtr,
         jlong segmentCount
 ) {
-    auto merge_index_address = reinterpret_cast<const index_l *>(mergeIndex);
-    auto row_count = read_row_count(indexFormat);
     auto column_size_bytes = (int32_t) columnSizeBytes;
     auto reverse_index_format_bytes = read_reverse_index_format_bytes(indexFormat);
     auto src_addresses = reinterpret_cast<const void **>(srcAddresses);
@@ -840,6 +838,7 @@ Java_io_questdb_std_Vect_mergeShuffleFixedColumnFromManyAddresses(
                     merge_index_format
             );
         default:
+            // Error, unsupported column size
             return -1;
     }
 }
@@ -870,6 +869,7 @@ Java_io_questdb_std_Vect_mergeShuffleStringColumnFromManyAddresses(
     auto dst_var_size = __JLONG_REINTERPRET_CAST__(int64_t, dstVarSize);
 
     if (format != shuffle_index_format && format != dedup_shuffle_index_format) {
+        // Error, invalid format
         return -2;
     }
 
@@ -881,7 +881,7 @@ Java_io_questdb_std_Vect_mergeShuffleStringColumnFromManyAddresses(
                     src_secondary, dst_primary, dst_secondary,
                     merge_index_address, row_count,
                     dst_var_offset,
-                    2u
+                    2u, dst_var_size
             );
             break;
         case 8:
@@ -890,10 +890,11 @@ Java_io_questdb_std_Vect_mergeShuffleStringColumnFromManyAddresses(
                     src_secondary, dst_primary, dst_secondary,
                     merge_index_address, row_count,
                     dst_var_offset,
-                    1u
+                    1u, dst_var_size
             );
             break;
         default:
+            // Error, invalid data length
             return -1;
     }
 
@@ -902,9 +903,6 @@ Java_io_questdb_std_Vect_mergeShuffleStringColumnFromManyAddresses(
         return dst_var_end_offset;
     }
 
-    if (dst_var_end_offset - dst_var_offset > dst_var_size) {
-        return -3;
-    }
     return row_count;
 }
 
@@ -934,6 +932,7 @@ Java_io_questdb_std_Vect_mergeShuffleVarcharColumnFromManyAddresses(
     auto format = read_format(indexFormat);
 
     if (format != shuffle_index_format && format != dedup_shuffle_index_format) {
+        // Error, invalid format
         return -2;
     }
 
@@ -942,16 +941,14 @@ Java_io_questdb_std_Vect_mergeShuffleVarcharColumnFromManyAddresses(
             dst_primary, dst_secondary,
             merge_index_address, row_count,
             dst_var_offset,
-            index_segment_encoding_bytes * 8u
+            index_segment_encoding_bytes * 8u,
+            dst_data_size
     );
     if (end_dst_var_offset < 0) {
         // Error occurred, this is error code
         return end_dst_var_offset;
     }
 
-    if (end_dst_var_offset - dst_var_offset > dst_data_size) {
-        return -3;
-    }
     return row_count;
 }
 
@@ -1020,6 +1017,7 @@ Java_io_questdb_std_Vect_mergeShuffleSymbolColumnFromManyAddresses(
             );
             break;
         default:
+            // Error, unsupported row index bytes
             return -1;
     }
 
@@ -1074,6 +1072,7 @@ Java_io_questdb_std_Vect_shuffleSymbolColumnByReverseIndex(
                     merge_format
             );
         default:
+            // Error, unsupported row index bytes
             return -1;
     }
 }

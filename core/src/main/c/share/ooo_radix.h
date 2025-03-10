@@ -451,7 +451,8 @@ inline int64_t merge_shuffle_string_column_from_many_addresses(
         const index_l *merge_index_address,
         int64_t row_count,
         int64_t dst_var_offset,
-        uint16_t mult
+        uint16_t mult,
+        int64_t dst_var_size
 ) {
     int64_t dstVarOffset = dst_var_offset;
     uint64_t segmentMask = (1ULL << index_segment_encoding_bits) - 1;
@@ -473,6 +474,8 @@ inline int64_t merge_shuffle_string_column_from_many_addresses(
         auto char_count = len > 0 ? len * mult : 0;
 
         reinterpret_cast<T *>(dst_primary + dstVarOffset)[0] = len;
+        assertm(dstVarOffset + char_count + sizeof(T) <= dst_var_size, "destination var buffer is too small");
+
         __MEMCPY(dst_primary + dstVarOffset + sizeof(T), srcVarPtr + sizeof(T), char_count);
         dstVarOffset += char_count + sizeof(T);
     }
@@ -491,7 +494,8 @@ int64_t merge_shuffle_varchar_column_from_many_addresses(
         const index_l *merge_index,
         int64_t row_count,
         int64_t dst_var_offset,
-        uint16_t segment_bits
+        uint16_t segment_bits,
+        int64_t dst_data_size
 ) {
     const uint64_t segment_mask = (1ULL << segment_bits) - 1;
 
@@ -510,6 +514,8 @@ int64_t merge_shuffle_varchar_column_from_many_addresses(
             auto original_offset = second_word >> 16;
             auto len = (first_word >> 4) & 0xffffff;
             auto data = src_primary[src_index] + original_offset;
+            assertm(dst_var_offset + len <= dst_data_size, "destination var buffer is too small");
+
             __MEMCPY(dst_primary + dst_var_offset, data, len);
             dst_var_offset += len;
         }
