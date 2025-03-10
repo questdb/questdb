@@ -1412,13 +1412,63 @@ public class PGJobContextTest extends BasePGTest {
         });
     }
 
+    private void assertPgWireQuery(Connection conn, String query, CharSequence expected) throws Exception {
+        try (PreparedStatement stmt = conn.prepareStatement(query)) {
+            sink.clear();
+            try (ResultSet rs = stmt.executeQuery()) {
+                assertResultSet(expected, sink, rs);
+            }
+        }
+    }
+
+    @Test
+    public void testSliceArray() throws Exception {
+        skipInLegacyMode();
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4], [5, 6]] arr FROM long_sequence(1))");
+            assertPgWireQuery(connection,
+                    "SELECT arr[0:1] slice FROM tango",
+                    "slice[ARRAY]\n" +
+                            "{{1.0,2.0}}\n");
+            assertPgWireQuery(connection,
+                    "SELECT arr[1:] slice FROM tango",
+                    "slice[ARRAY]\n" +
+                            "{{3.0,4.0},{5.0,6.0}}\n");
+            assertPgWireQuery(connection,
+                    "SELECT arr[2:, 0:1] slice FROM tango",
+                    "slice[ARRAY]\n" +
+                            "{{5.0}}\n");
+            assertPgWireQuery(connection,
+                    "SELECT arr[2:, 1] slice FROM tango",
+                    "slice[ARRAY]\n" +
+                            "{6.0}\n");
+            assertPgWireQuery(connection,
+                    "SELECT arr[0:2] slice FROM tango",
+                    "slice[ARRAY]\n" +
+                            "{{1.0,2.0},{3.0,4.0}}\n");
+            assertPgWireQuery(connection,
+                    "SELECT arr[0:2, 0:1] slice FROM tango",
+                    "slice[ARRAY]\n" +
+                            "{{1.0},{3.0}}\n");
+            assertPgWireQuery(connection,
+                    "SELECT arr[1, 1] element FROM tango",
+                    "element[DOUBLE]\n" +
+                            "4.0\n");
+        }, () -> {
+            sendBufferSize = 1000 * 1024; // use large enough buffer, otherwise we will get fragmented messages and this currently leads to non-deterministic results of rnd_double_array
+        });
+    }
+
     @Test
     public void testArrayResultSet() throws Exception {
         skipOnWalRun();
         skipInLegacyMode();
 
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            try (PreparedStatement statement = connection.prepareStatement("select rnd_double_array(2, 9) from long_sequence(5);")) {
+            execute("create table xd as (select rnd_double_array(2, 9) from long_sequence(5))");
+
+            try (PreparedStatement statement = connection.prepareStatement("select * from xd;")) {
                 sink.clear();
                 try (ResultSet rs = statement.executeQuery()) {
                     assertResultSet("rnd_double_array[ARRAY]\n" +
@@ -1431,7 +1481,8 @@ public class PGJobContextTest extends BasePGTest {
                 }
             }
 
-            try (PreparedStatement statement = connection.prepareStatement("select rnd_long_array(2) from long_sequence(5);")) {
+            execute("create table xl as (select rnd_long_array(2) from long_sequence(5))");
+            try (PreparedStatement statement = connection.prepareStatement("select * from xl")) {
                 sink.clear();
                 try (ResultSet rs = statement.executeQuery()) {
                     assertResultSet("rnd_long_array[ARRAY]\n" +

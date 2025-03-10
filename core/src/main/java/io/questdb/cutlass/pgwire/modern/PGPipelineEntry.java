@@ -1688,15 +1688,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             return;
         }
 
-        int indexOffset = arrayView.getFlatViewOffset();
         int nDims = arrayView.getDimCount();
-        int totalElements = 1;
-        for (int i = 0; i < nDims; i++) {
-            totalElements *= arrayView.getDimLen(i);
-        }
-
-        int typeTag = ColumnType.decodeArrayElementType(columnType);
-        int componentTypeOid = getTypeOid(typeTag);
+        short elemType = ColumnType.decodeArrayElementType(columnType);
+        int componentTypeOid = getTypeOid(elemType);
 
         // array header
         long sizePtr = utf8Sink.skipInt();
@@ -1710,41 +1704,53 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             utf8Sink.putNetworkInt(1); // lower bound, always 1 in PostgreSQL
         }
 
-        boolean hasNulls = false;
-        switch (ColumnType.decodeArrayElementType(columnType)) {
-            // we duplicate the loop to avoid the overhead of a switch statement inside the loop
-            // todo: check if JIT can hoist the switch out of the loop so we could avoid loop duplication
-            case ColumnType.DOUBLE:
-                // Write array elements in row-major order, which is native to both
-                // PostgreSQL wire protocol and our ArrayView
-                for (int i = 0; i < totalElements; i++) {
-                    double d = arrayView.flatView().getDouble(indexOffset + i);
-                    if (Numbers.isNull(d)) {
-                        hasNulls = true;
-                        utf8Sink.setNullValue();
-                    } else {
-                        utf8Sink.putNetworkInt(8);
-                        utf8Sink.putNetworkDouble(d);
-                    }
-                }
-                break;
-            case ColumnType.LONG:
-                for (int i = 0; i < totalElements; i++) {
-                    long l = arrayView.flatView().getLong(indexOffset + i);
-                    if (l == Numbers.LONG_NULL) {
-                        hasNulls = true;
-                        utf8Sink.setNullValue();
-                    } else {
-                        utf8Sink.putNetworkInt(8);
-                        utf8Sink.putNetworkLong(l);
-                    }
-                }
-                break;
-            default:
-                assert false;
-        }
+        // todo: optimize for vanilla arrays, vanilla arrays do not require recursive processing
+        boolean hasNulls = outColBinArrRecursive(utf8Sink, arrayView, elemType, 0, 0);
         Unsafe.getUnsafe().putInt(hasNullPtr, Numbers.bswap(hasNulls ? 1 : 0));
         utf8Sink.putLenEx(sizePtr);
+    }
+
+    private boolean outColBinArrRecursive(PGResponseSink utf8Sink, ArrayView array, short elemType, int dim, int flatIndex) {
+        final int count = array.getDimLen(dim);
+        final int stride = array.getStride(dim);
+        boolean hasNulls = false;
+        final boolean atDeepestDim = dim == array.getDimCount() - 1;
+        if (atDeepestDim) {
+            switch (elemType) {
+                case ColumnType.LONG:
+                    for (int i = 0; i < count; i++) {
+                        long val = array.flatView().getLong(array.getFlatViewOffset() + flatIndex);
+                        if (val == Numbers.LONG_NULL) {
+                            hasNulls = true;
+                            utf8Sink.setNullValue();
+                        } else {
+                            utf8Sink.putNetworkInt(Long.BYTES);
+                            utf8Sink.putNetworkLong(val);
+                        }
+                        flatIndex += stride;
+                    }
+                    break;
+                case ColumnType.DOUBLE:
+                    for (int i = 0; i < count; i++) {
+                        double val = array.flatView().getDouble(array.getFlatViewOffset() + flatIndex);
+                        if (Double.isNaN(val)) {
+                            hasNulls = true;
+                            utf8Sink.setNullValue();
+                        } else {
+                            utf8Sink.putNetworkInt(Double.BYTES);
+                            utf8Sink.putNetworkDouble(val);
+                        }
+                        flatIndex += stride;
+                    }
+                    break;
+            }
+        } else {
+            for (int i = 0; i < count; i++) {
+                hasNulls |= outColBinArrRecursive(utf8Sink, array, elemType, dim + 1, flatIndex);
+                flatIndex += stride;
+            }
+        }
+        return hasNulls;
     }
 
     private void outColBinBool(PGResponseSink utf8Sink, Record record, int columnIndex) {
