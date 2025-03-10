@@ -37,7 +37,8 @@ import io.questdb.std.Vect;
  * supporting up to 32 dimensions.
  * <p>It manages a contiguous block of memory to store the actual array data.
  * To prevent memory leaks, please ensure to invoke the {@link #close()}  method after usage.
- * <p>Additionally, the memory will also be released after calling {@link #appendToBufPtr(long, CapacityChecker, boolean)}.
+ * <p>Additionally, the memory will also be released after calling
+ * {@link #appendToBufPtr(long, CapacityChecker, boolean)}.
  * <p>Example of usage:
  * <pre>{@code
  *    // Creates a 2x3x2 matrix (of rank 3)
@@ -72,8 +73,8 @@ public abstract class AbstractArray implements QuietCloseable {
         flatLength = array.getFlatViewLength();
     }
 
-    /*
-     * append current array to request buffer.
+    /**
+     * Appends this array to the ILP request buffer, in the proper protocol format.
      */
     public long appendToBufPtr(long bufPtr, CapacityChecker checkCapacityFn, boolean move) {
         assert !closed;
@@ -86,11 +87,7 @@ public abstract class AbstractArray implements QuietCloseable {
             Unsafe.getUnsafe().putInt(bufPtr, array.getDimLen(i));
             bufPtr += Integer.BYTES;
         }
-
         Vect.memcpy(bufPtr, array.ptr(), size);
-        if (move) {
-            close();
-        }
         return bufPtr + size;
     }
 
@@ -112,18 +109,13 @@ public abstract class AbstractArray implements QuietCloseable {
      * Computes the flat array offset from the given coordinates.
      * NOTE: the passed coordinates must be valid for the array's shape.
      */
-    protected int toFlatOffset(int[] coords, boolean isValue) {
+    protected int toFlatOffset(int[] coords) {
         if (coords == null || coords.length == 0) {
             return 0;
         }
-        if (isValue) {
-            if (coords.length != array.getDimCount()) {
-                throw new LineSenderException("coordinates and array shape do not match");
-            }
-        } else if (coords.length >= array.getDimCount()) {
+        if (coords.length != array.getDimCount()) {
             throw new LineSenderException("coordinates and array shape do not match");
         }
-
         int flatOffset = 0;
         for (int dim = 0, n = coords.length; dim < n; dim++) {
             if (array.getDimLen(dim) <= coords[dim]) {
@@ -132,17 +124,5 @@ public abstract class AbstractArray implements QuietCloseable {
             flatOffset += array.getStride(dim) * coords[dim];
         }
         return flatOffset;
-    }
-
-    protected void validateSubarrayShape(AbstractArray value, int[] shape) {
-        if (value.array.getDimCount() + shape.length != array.getDimCount()) {
-            throw new LineSenderException("subArray do not match current array's shape");
-        }
-
-        for (int i = 0, size = value.array.getDimCount(); i < size; i++) {
-            if (value.array.getDimLen(i) != array.getDimLen(i + shape.length)) {
-                throw new LineSenderException("subArray do not match current array's shape");
-            }
-        }
     }
 }
