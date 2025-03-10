@@ -351,18 +351,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
     }
 
-    @Override
-    public void initCursor() {
-        if (ownerFilter != null) {
-            ownerFilter.initCursor();
-        }
-        if (perWorkerFilters != null) {
-            // Initialize all per-worker filters on the query owner thread to avoid
-            // DataUnavailableException thrown on worker threads when filtering.
-            Function.initCursor(perWorkerFilters);
-        }
-    }
-
     public boolean isSharded() {
         return sharded;
     }

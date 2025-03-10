@@ -246,18 +246,6 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
         }
     }
 
-    @Override
-    public void initCursor() {
-        if (ownerFilter != null) {
-            ownerFilter.initCursor();
-        }
-        if (perWorkerFilters != null) {
-            // Initialize all per-worker filters on the query owner thread to avoid
-            // DataUnavailableException thrown on worker threads when filtering.
-            Function.initCursor(perWorkerFilters);
-        }
-    }
-
     public int maybeAcquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
         if (workerId == -1 && owner) {
             // Owner thread is free to use its own private filter, function updaters, etc. anytime.

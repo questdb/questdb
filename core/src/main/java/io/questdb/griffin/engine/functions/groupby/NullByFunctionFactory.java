@@ -22,31 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.engine.functions.groupby;
 
-import io.questdb.griffin.SqlException;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Mutable;
-import io.questdb.std.QuietCloseable;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public interface StatefulAtom extends QuietCloseable, Mutable {
-
+public class NullByFunctionFactory implements FunctionFactory {
     @Override
-    default void clear() {
+    public String getSignature() {
+        return "null_l()";
     }
 
     @Override
-    default void close() {
+    public boolean isGroupBy() {
+        return true;
     }
 
-    /**
-     * Initializes state required for filtering, such as child atoms, symbol table sources,
-     * bind variable values, circuit breakers, etc.
-     *
-     * @param symbolTableSource symbol table source
-     * @param executionContext  execution context
-     * @throws SqlException when bind variable validation or any other kind of validation fails
-     */
-    default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new NullLongConstGroupByFunction();
     }
 }
