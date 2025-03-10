@@ -257,6 +257,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isThreadSafe() {
+            // we are using valueArg.getInt(), which can be used by multiple threads concurrently
             return true;
         }
 
