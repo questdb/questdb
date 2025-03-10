@@ -40,7 +40,7 @@ public class LongArray extends AbstractArray {
      */
     public LongArray append(long value) {
         ensureLegalAppendPosition();
-        memA.putDouble(value);
+        memA.putLong(value);
         return this;
     }
 
