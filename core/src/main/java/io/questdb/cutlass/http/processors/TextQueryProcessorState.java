@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpResponseArrayState;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Rnd;
@@ -39,7 +40,9 @@ import java.io.Closeable;
 public class TextQueryProcessorState implements Mutable, Closeable {
     final StringSink query = new StringSink();
     private final HttpConnectionContext httpConnectionContext;
+    HttpResponseArrayState arrayState = new HttpResponseArrayState();
     int columnIndex;
+    boolean columnValueFullySent = true;
     long count;
     boolean countRows = false;
     RecordCursor cursor;
@@ -88,6 +91,8 @@ public class TextQueryProcessorState implements Mutable, Closeable {
         noMeta = false;
         countRows = false;
         pausedQuery = false;
+        arrayState.clear();
+        columnValueFullySent = true;
     }
 
     @Override

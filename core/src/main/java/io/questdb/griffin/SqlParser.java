@@ -94,6 +94,7 @@ public class SqlParser {
     private final ExpressionParser expressionParser;
     private final ExpressionTreeBuilder expressionTreeBuilder;
     private final ObjectPool<InsertModel> insertModelPool;
+    private final SqlOptimiser optimiser;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final ObjectPool<RenameTableModel> renameTableModelPool;
@@ -113,6 +114,7 @@ public class SqlParser {
 
     SqlParser(
             CairoConfiguration configuration,
+            SqlOptimiser optimiser,
             CharacterStore characterStore,
             ObjectPool<ExpressionNode> expressionNodePool,
             ObjectPool<QueryColumn> queryColumnPool,
@@ -133,6 +135,7 @@ public class SqlParser {
         this.configuration = configuration;
         this.traversalAlgo = traversalAlgo;
         this.characterStore = characterStore;
+        this.optimiser = optimiser;
         boolean tempCairoSqlLegacyOperatorPrecedence = configuration.getCairoSqlLegacyOperatorPrecedence();
         if (tempCairoSqlLegacyOperatorPrecedence) {
             this.expressionParser = new ExpressionParser(
@@ -1172,6 +1175,11 @@ public class SqlParser {
                     } else if (model.isDedupKey() && isDirectCreate) {
                         throw SqlException.position(lexer.lastTokenPosition())
                                 .put("duplicate dedup column [column=").put(columnName).put(']');
+                    } else if (ColumnType.isArray(model.getColumnType())) {
+                        throw SqlException.position(lexer.lastTokenPosition())
+                                .put("dedup key columns cannot include ARRAY [column=")
+                                .put(columnName).put(", type=")
+                                .put(ColumnType.nameOf(model.getColumnType())).put(']');
                     }
                     model.setIsDedupKey();
                     int colIndex = builder.getColumnIndex(columnName);
@@ -1303,6 +1311,14 @@ public class SqlParser {
                 tok = parseCreateTableInlineIndexDef(lexer, model);
             } else {
                 tok = null;
+            }
+
+            // check for dodgy array syntax
+            CharSequence tempTok = optTok(lexer);
+            if (tempTok != null && Chars.equals(tempTok, ']')) {
+                throw SqlException.position(columnPosition).put(columnName).put(" has an unmatched `]` - were you trying to define an array?");
+            } else {
+                lexer.unparseLast();
             }
 
             if (tok == null) {
@@ -3426,9 +3442,21 @@ public class SqlParser {
         return tok;
     }
 
-    private int toColumnType(GenericLexer lexer, CharSequence tok) throws SqlException {
-        final short typeTag = SqlUtil.toPersistedTypeTag(tok, lexer.lastTokenPosition());
-        if (ColumnType.GEOHASH == typeTag) {
+    private int toColumnType(GenericLexer lexer, @NotNull CharSequence tok) throws SqlException {
+        int typePosition = lexer.lastTokenPosition();
+        final short typeTag = SqlUtil.toPersistedTypeTag(tok, typePosition);
+
+        int dim = SqlUtil.parseArrayDimensions(lexer);
+        if (dim > 0) {
+            if (ColumnType.isSupportedArrayElementType(typeTag)) {
+                if (dim <= ColumnType.ARRAY_NDIMS_LIMIT) {
+                    return ColumnType.encodeArrayType(typeTag, dim);
+                } else {
+                    throw SqlException.position(typePosition).put("array dimension limit is ").put(ColumnType.ARRAY_NDIMS_LIMIT);
+                }
+            }
+            throw SqlException.position(typePosition).put(ColumnType.nameOf(typeTag)).put(" array type is not supported");
+        } else if (typeTag == ColumnType.GEOHASH) {
             expectTok(lexer, '(');
             final int bits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, expectLiteral(lexer).token);
             expectTok(lexer, ')');

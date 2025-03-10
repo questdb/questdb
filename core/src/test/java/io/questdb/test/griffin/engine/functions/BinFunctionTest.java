@@ -51,6 +51,11 @@ public class BinFunctionTest {
     };
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetArray() {
+        function.getArray(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetBool() {
         function.getBool(null);
     }

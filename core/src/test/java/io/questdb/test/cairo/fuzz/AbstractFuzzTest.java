@@ -88,7 +88,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             long end,
             String tableName
     ) {
-        return fuzzer.generateSet(rnd, sequencerMetadata, readerMetadata, start, end, tableName);
+        return fuzzer.generateSet(configuration, rnd, sequencerMetadata, readerMetadata, start, end, tableName);
     }
 
     @Before
@@ -247,9 +247,21 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             double tableDropProb,
             double setTtlProb
     ) {
-        fuzzer.setFuzzProbabilities(cancelRowsProb, notSetProb, nullSetProb, rollbackProb,
-                colAddProb, colRemoveProb, colRenameProb, colTypeChangeProb, dataAddProb,
-                equalTsRowsProb, partitionDropProb, truncateProb, tableDropProb, setTtlProb
+        fuzzer.setFuzzProbabilities(
+                cancelRowsProb,
+                notSetProb,
+                nullSetProb,
+                rollbackProb,
+                colAddProb,
+                colRemoveProb,
+                colRenameProb,
+                colTypeChangeProb,
+                dataAddProb,
+                equalTsRowsProb,
+                partitionDropProb,
+                truncateProb,
+                tableDropProb,
+                setTtlProb
         );
     }
 

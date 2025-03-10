@@ -56,6 +56,33 @@ def convert_and_append_parameters(value, type, resolved_parameters):
         resolved_parameters.append(int(value))
     elif type == 'float4' or type == 'float8':
         resolved_parameters.append(float(value))
+    elif type == 'array_float8':
+        # Handle floating point arrays like {-1, 2, 3, 4, 5.42}
+        if isinstance(value, str):
+             # Strip curly braces and split by comma
+            value = value.strip('{}')
+            # Convert each element to float, handling null values
+            float_array = []
+            for item in value.split(','):
+                item = item.strip()
+                if not item:
+                    continue
+                if item.lower() == 'null':
+                    float_array.append(None)
+                else:
+                    float_array.append(float(item))
+            resolved_parameters.append(float_array)
+        # If already a list, ensure all elements are floats or None
+        elif isinstance(value, list):
+            float_array = []
+            for item in value:
+                if item is None:
+                    float_array.append(None)
+                else:
+                    float_array.append(float(item))
+            resolved_parameters.append(float_array)
+        else:
+            raise ValueError(f"Invalid array_float8 value: {value}")
     elif type == 'boolean':
         value = value.lower().strip()
         if value == 'true':
@@ -94,11 +121,26 @@ def convert_query_result(result):
             # convert timestamps to strings for comparison, format: '2021-09-01T12:34:56.123456Z'
             if isinstance(value, datetime.datetime):
                 row[i] = value.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
-            # convert bytes to char. why? asyncpg client uses binary codec for char type
-            # This means char columns are returned as bytes, but we want to compare them as chars
+            # convert bytes to char
             elif isinstance(value, bytes):
                 row[i] = value.decode()
-
+            # convert lists of floats to PostgreSQL array string representation
+            elif isinstance(value, list):
+                # Check if it's a list of numbers or None values
+                if all(isinstance(item, (int, float, type(None))) for item in value):
+                    # Format as {n1, n2, n3, ...} with proper float representation
+                    float_strs = []
+                    for item in value:
+                        if item is None:
+                            float_strs.append("NULL")
+                        else:
+                            float_val = float(item)
+                            # Check if it's an integer value and add .0 if needed
+                            if float_val.is_integer():
+                                float_strs.append(f"{float_val:.1f}")
+                            else:
+                                float_strs.append(str(float_val))
+                    row[i] = '{' + ','.join(float_strs) + '}'
 
     for row in result_converted:
         for i, value in enumerate(row):

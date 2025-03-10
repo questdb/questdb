@@ -38,6 +38,17 @@ import org.junit.Test;
 public class AlterTableRenameColumnTest extends AbstractCairoTest {
 
     @Test
+    public void testRenameArrayColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (arr int[]);");
+            execute("alter table x rename column arr to arr2;");
+            assertSql("column\ttype\n" +
+                            "arr2\tINT[]\n",
+                    "select \"column\", \"type\" from table_columns('x')");
+        });
+    }
+
+    @Test
     public void testBadSyntax() throws Exception {
         assertFailure("alter table x rename column l ,m", 30, "to' expected");
     }

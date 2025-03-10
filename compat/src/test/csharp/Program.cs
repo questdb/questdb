@@ -193,7 +193,16 @@ public class TestRunner
                 var row = new OrderedDictionary<string, object>();
                 for (var i = 0; i < reader.FieldCount; i++)
                 {
-                    row[reader.GetName(i)] = reader.GetValue(i);
+                    string fieldName = reader.GetName(i);
+                    var dataTypeName = reader.GetDataTypeName(i);
+                    if (dataTypeName == "double precision[]") // todo: this is ugly af
+                    {
+                        row[fieldName] = reader.GetFieldValue<double?[]>(i);
+                    }
+                    else
+                    {
+                        row[fieldName] = reader.GetValue(i);
+                    }
                 }
 
                 result.Add(row);
@@ -244,6 +253,7 @@ public class TestRunner
         "timestamp" => NpgsqlDbType.Timestamp,
         "date" => NpgsqlDbType.Date,
         "char" => NpgsqlDbType.Char,
+        "array_float8" => NpgsqlDbType.Double | NpgsqlDbType.Array,
         _ => throw new ArgumentException($"Unsupported type: {type}")
     };
 
@@ -258,8 +268,33 @@ public class TestRunner
             "date" => DateTime.Parse(value.ToString()!, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
             "char" => Convert.ToChar(value),
             "timestamp" => DateTime.Parse(value.ToString()!, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind),
+            "array_float8" =>  ParseFloatArray(value.ToString()),
             _ => value
         };
+    }
+    
+    private double?[] ParseFloatArray(string? arrayString)
+    {
+        if (string.IsNullOrEmpty(arrayString))
+            return Array.Empty<double?>();
+
+        // Remove the curly braces and split by comma
+        string trimmed = arrayString.Trim().TrimStart('{').TrimEnd('}');
+
+        // Handle empty array case
+        if (string.IsNullOrWhiteSpace(trimmed))
+            return Array.Empty<double?>();
+
+        // Split the string by commas and convert each element to nullable double
+        return trimmed.Split(',')
+            .Select(s => {
+                string value = s.Trim();
+                if (string.Equals(value, "NULL", StringComparison.OrdinalIgnoreCase))
+                    return (double?)null;  // Explicit cast to double?
+                else
+                    return Convert.ToDouble(value, CultureInfo.InvariantCulture);
+            })
+            .ToArray();
     }
 
     private void AssertResult(ExpectDefinition expect, object actual)
@@ -319,12 +354,29 @@ public class TestRunner
                     int i => i.ToString(CultureInfo.InvariantCulture),
                     short s => s.ToString(CultureInfo.InvariantCulture),
                     decimal dec => dec.ToString(CultureInfo.InvariantCulture),
+                    double?[] doubleArray => ConvertDoubleArrayToString(doubleArray),
                     _ => value.ToString() ?? ""
                 })
                 .ToList())
             .ToList();
     }
+    
+    private string ConvertDoubleArrayToString(double?[] doubleArray)
+    {
+        if (doubleArray == null || doubleArray.Length == 0)
+            return "{}";
 
+        // Convert each nullable double to string with at least one decimal place or NULL
+        string valuesString = string.Join(",", doubleArray.Select(d => 
+            d.HasValue 
+                ? d.Value.ToString("0.0########", CultureInfo.InvariantCulture) 
+                : "NULL"
+        ));
+
+        // Enclose in curly braces
+        return "{" + valuesString + "}";
+    }
+    
     private bool DeepEquals(object obj1, object obj2)
     {
         if (obj1 == null && obj2 == null) return true;

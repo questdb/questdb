@@ -27,6 +27,7 @@ package io.questdb.cutlass.line.http;
 import io.questdb.BuildInformationHolder;
 import io.questdb.ClientTlsConfiguration;
 import io.questdb.HttpClientConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.http.HttpConstants;
@@ -39,6 +40,12 @@ import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.json.JsonParser;
 import io.questdb.cutlass.line.LineSenderException;
+import io.questdb.cutlass.line.array.ArrayDataAppender;
+import io.questdb.cutlass.line.array.ArrayShapeAppender;
+import io.questdb.cutlass.line.array.DoubleArray;
+import io.questdb.cutlass.line.array.FlattenArrayUtils;
+import io.questdb.cutlass.line.array.LongArray;
+import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.NanosecondClockImpl;
@@ -49,6 +56,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -185,7 +193,7 @@ public final class LineHttpSender implements Sender {
 
     @Override
     public Sender boolColumn(CharSequence name, boolean value) {
-        writeFieldName(name);
+        writeFieldName(name, false);
         request.put(value ? 't' : 'f');
         return this;
     }
@@ -216,8 +224,41 @@ public final class LineHttpSender implements Sender {
     }
 
     @Override
+    public Sender doubleArray(@NotNull CharSequence name, double[] values) {
+        return arrayColumn(name, ColumnType.DOUBLE, (byte) 1, values,
+                FlattenArrayUtils::putShapeToBuf,
+                FlattenArrayUtils::putDataToBuf);
+    }
+
+    @Override
+    public Sender doubleArray(@NotNull CharSequence name, double[][] values) {
+        return arrayColumn(name, ColumnType.DOUBLE, (byte) 2, values,
+                FlattenArrayUtils::putShapeToBuf,
+                FlattenArrayUtils::putDataToBuf);
+    }
+
+    @Override
+    public Sender doubleArray(@NotNull CharSequence name, double[][][] values) {
+        return arrayColumn(name, ColumnType.DOUBLE, (byte) 3, values,
+                FlattenArrayUtils::putShapeToBuf,
+                FlattenArrayUtils::putDataToBuf);
+    }
+
+    @Override
+    public Sender doubleArray(CharSequence name, DoubleArray values) {
+        if (processNullArray(name, values)) {
+            return this;
+        }
+        writeFieldName(name, true)
+                .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ND_ARRAY binary format
+                .put((byte) ColumnType.DOUBLE); // element type
+        request.setPtr(values.appendToBufPtr(request.getPtr(), request::checkCapacity, true));
+        return this;
+    }
+
+    @Override
     public Sender doubleColumn(CharSequence name, double value) {
-        writeFieldName(name);
+        writeFieldName(name, false);
         request.put(value);
         return this;
     }
@@ -228,8 +269,41 @@ public final class LineHttpSender implements Sender {
     }
 
     @Override
+    public Sender longArray(@NotNull CharSequence name, long[] values) {
+        return arrayColumn(name, ColumnType.LONG, (byte) 1, values,
+                FlattenArrayUtils::putShapeToBuf,
+                FlattenArrayUtils::putDataToBuf);
+    }
+
+    @Override
+    public Sender longArray(@NotNull CharSequence name, long[][] values) {
+        return arrayColumn(name, ColumnType.LONG, (byte) 2, values,
+                FlattenArrayUtils::putShapeToBuf,
+                FlattenArrayUtils::putDataToBuf);
+    }
+
+    @Override
+    public Sender longArray(@NotNull CharSequence name, long[][][] values) {
+        return arrayColumn(name, ColumnType.LONG, (byte) 3, values,
+                FlattenArrayUtils::putShapeToBuf,
+                FlattenArrayUtils::putDataToBuf);
+    }
+
+    @Override
+    public Sender longArray(@NotNull CharSequence name, LongArray values) {
+        if (processNullArray(name, values)) {
+            return this;
+        }
+        writeFieldName(name, true)
+                .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ND_ARRAY binary format
+                .put((byte) ColumnType.LONG); // element type
+        request.setPtr(values.appendToBufPtr(request.getPtr(), request::checkCapacity, true));
+        return this;
+    }
+
+    @Override
     public Sender longColumn(CharSequence name, long value) {
-        writeFieldName(name);
+        writeFieldName(name, false);
         request.put(value);
         request.put('i');
         return this;
@@ -246,7 +320,7 @@ public final class LineHttpSender implements Sender {
 
     @Override
     public Sender stringColumn(CharSequence name, CharSequence value) {
-        writeFieldName(name);
+        writeFieldName(name, false);
         request.put('"');
         escapeString(value);
         request.put('"');
@@ -296,14 +370,14 @@ public final class LineHttpSender implements Sender {
     @Override
     public Sender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
         // micros
-        writeFieldName(name).put(Timestamps.toMicros(value, unit)).put('t');
+        writeFieldName(name, false).put(Timestamps.toMicros(value, unit)).put('t');
         return this;
     }
 
     @Override
     public Sender timestampColumn(CharSequence name, Instant value) {
         // micros
-        writeFieldName(name).put((value.getEpochSecond() * Timestamps.SECOND_MICROS + value.getNano() / 1000L)).put('t');
+        writeFieldName(name, false).put((value.getEpochSecond() * Timestamps.SECOND_MICROS + value.getNano() / 1000L)).put('t');
         return this;
     }
 
@@ -325,6 +399,28 @@ public final class LineHttpSender implements Sender {
     private static boolean keepAliveDisabled(HttpClient.ResponseHeaders response) {
         DirectUtf8Sequence connectionHeader = response.getHeader(HttpConstants.HEADER_CONNECTION);
         return connectionHeader != null && Utf8s.equalsAscii("close", connectionHeader);
+    }
+
+    private <T> Sender arrayColumn(CharSequence name,
+                                   short columnType,
+                                   byte nDims,
+                                   T array,
+                                   ArrayShapeAppender<T> shapeAppender,
+                                   ArrayDataAppender<T> dataAppender) {
+        if (processNullArray(name, array)) {
+            return this;
+        }
+        writeFieldName(name, true)
+                .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ND_ARRAY binary format
+                .put((byte) columnType) // element type
+                .put(nDims); // dims.
+        request.checkCapacity(Integer.BYTES * nDims);
+        long addr = request.getPtr();
+
+        shapeAppender.append(addr, array);
+        addr += Integer.BYTES * nDims;
+        request.setPtr(dataAppender.append(addr, request::checkCapacity, array));
+        return this;
     }
 
     private int backoff(int retryBackoff) {
@@ -494,6 +590,16 @@ public final class LineHttpSender implements Sender {
         return r;
     }
 
+    private boolean processNullArray(CharSequence name, Object value) {
+        if (value == null) {
+            writeFieldName(name, true);
+            request.put(LineTcpParser.ENTITY_TYPE_ARRAY) // ND_ARRAY binary format
+                    .put((byte) ColumnType.NULL); // element type
+            return true;
+        }
+        return false;
+    }
+
     /**
      * @return true if flush is required
      */
@@ -570,7 +676,7 @@ public final class LineHttpSender implements Sender {
         }
     }
 
-    private HttpClient.Request writeFieldName(CharSequence name) {
+    private HttpClient.Request writeFieldName(CharSequence name, boolean nativeFormat) {
         validateColumnName(name);
         switch (state) {
             case EMPTY:
@@ -586,7 +692,11 @@ public final class LineHttpSender implements Sender {
                 break;
         }
         escapeQuotedString(name);
-        request.put('=');
+        if (nativeFormat) {
+            request.put(':');
+        } else {
+            request.put('=');
+        }
         return request;
     }
 

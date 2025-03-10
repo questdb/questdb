@@ -214,7 +214,8 @@ public class WorkerPool implements Closeable {
 
     private void setupPathCleaner() {
         for (int i = 0; i < workerCount; i++) {
-            threadLocalCleaners.getQuick(i).add(Path.THREAD_LOCAL_CLEANER);
+            ObjList<Closeable> workerCleaners = threadLocalCleaners.getQuick(i);
+            workerCleaners.add(Path.THREAD_LOCAL_CLEANER);
         }
     }
 }

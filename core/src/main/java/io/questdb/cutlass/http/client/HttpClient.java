@@ -114,6 +114,13 @@ public abstract class HttpClient implements QuietCloseable {
         return responseHeaders;
     }
 
+    @TestOnly
+    public String getDebugBuffer() {
+        DirectUtf8String s = new DirectUtf8String();
+        s.of(bufLo, ptr);
+        return Utf8s.toString(s).replace('\0', '␀');
+    }
+
     public Request newRequest(CharSequence host, int port) {
         if (!Chars.equalsNc(host, this.host) || port != this.port) {
             // Can't reuse the existing connection, if any.
@@ -404,6 +411,18 @@ public abstract class HttpClient implements QuietCloseable {
         public Request putQuoted(@NotNull CharSequence cs) {
             putAsciiInternal('\"').put(cs).putAsciiInternal('\"');
             return this;
+        }
+
+        public void checkCapacity(long capacity) {
+            HttpClient.this.checkCapacity(capacity);
+        }
+
+        public long getPtr() {
+            return ptr;
+        }
+
+        public void setPtr(long ptr) {
+            HttpClient.this.ptr = ptr;
         }
 
         public Request query(CharSequence name, CharSequence value) {

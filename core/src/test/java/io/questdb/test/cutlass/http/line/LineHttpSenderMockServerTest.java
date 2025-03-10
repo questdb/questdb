@@ -25,6 +25,8 @@
 package io.questdb.test.cutlass.http.line;
 
 import io.questdb.BuildInformationHolder;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConstants;
@@ -502,7 +504,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     }
 
     @NotNull
-    private DefaultHttpServerConfiguration createHttpServerConfiguration() {
+    private DefaultHttpServerConfiguration createHttpServerConfiguration(CairoConfiguration cairoConfiguration) {
         return new HttpServerConfigurationBuilder()
                 .withBaseDir(root)
                 .withSendBufferSize(4096)
@@ -510,7 +512,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .withAllowDeflateBeforeSend(false)
                 .withServerKeepAlive(true)
                 .withHttpProtocolVersion("HTTP/1.1 ")
-                .build();
+                .build(cairoConfiguration);
     }
 
     private void testWithMock(MockHttpProcessor mockHttpProcessor, Consumer<Sender> senderConsumer) throws Exception {
@@ -523,7 +525,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
 
     private void testWithMock(MockHttpProcessor mockHttpProcessor, Consumer<Sender> senderConsumer, Function<Integer, Sender.LineSenderBuilder> senderBuilderFactory, boolean verifyBeforeClose) throws Exception {
         assertMemoryLeak(() -> {
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration();
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(new DefaultCairoConfiguration(root));
 
             try (WorkerPool workerPool = new TestWorkerPool(1);
                  HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {
