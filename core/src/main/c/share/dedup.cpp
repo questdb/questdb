@@ -294,84 +294,69 @@ inline IndexT *merge_sort(
     return dest;
 }
 
-template<uint16_t SegmentBits, typename TIdx>
+template<typename TIdx>
 int64_t dedup_sorted_timestamp_index_many_addresses(
         index_tr<TIdx> *index_out,
         const index_tr<TIdx> *index_in,
         const int64_t index_count,
         index_tr<TIdx> *index_temp,
         int32_t dedup_key_count,
-        const dedup_column *src_keys
+        const dedup_column *src_keys,
+        uint16_t segment_bits
 ) {
     if (dedup_key_count == 0) {
         return dedup_sorted_timestamp_index(index_in, index_count, index_out);
     }
+    const uint64_t segment_mask = (1ULL << segment_bits) - 1;
     const auto diff_l = [&](const index_tr_i<TIdx> l, const index_tr_i<TIdx> r) {
         for (int32_t c = 0; c < dedup_key_count; c++) {
             const dedup_column *col_key = &src_keys[c];
             int diff;
             switch (col_key->value_size_bytes) {
                 case 1: {
-                    const auto &comparer =
-                            *reinterpret_cast<const SortColumnComparerManyAddresses<int8_t, SegmentBits, TIdx> *>(col_key);
-                    diff = comparer(l, r);
+                    diff = compare_dedup_column_fixed<int8_t, TIdx>(col_key, l, r, segment_bits, segment_mask);
                     break;
                 }
                 case 2: {
-                    const auto &comparer =
-                            *reinterpret_cast<const SortColumnComparerManyAddresses<int16_t, SegmentBits, TIdx> *>(col_key);
-                    diff = comparer(l, r);
+                    diff = compare_dedup_column_fixed<int16_t, TIdx>(col_key, l, r, segment_bits, segment_mask);
                     break;
                 }
                 case 4: {
-                    const auto &comparer =
-                            *reinterpret_cast<const SortColumnComparerManyAddresses<int32_t, SegmentBits, TIdx> *>(col_key);
-                    diff = comparer(l, r);
+                    diff = compare_dedup_column_fixed<int32_t, TIdx>(col_key, l, r, segment_bits, segment_mask);
                     break;
                 }
                 case 8: {
-                    const auto &comparer =
-                            *reinterpret_cast<const SortColumnComparerManyAddresses<int64_t, SegmentBits, TIdx> *>(col_key);
-                    diff = comparer(l, r);
+                    diff = compare_dedup_column_fixed<int64_t, TIdx>(col_key, l, r, segment_bits, segment_mask);
                     break;
                 }
                 case 16: {
-                    const auto &comparer =
-                            *reinterpret_cast<const SortColumnComparerManyAddresses<__int128, SegmentBits, TIdx> *>(col_key);
-                    diff = comparer(l, r);
+                    diff = compare_dedup_column_fixed<__int128, TIdx>(col_key, l, r, segment_bits, segment_mask);
                     break;
                 }
                 case 32: {
-                    const auto &comparer =
-                            *reinterpret_cast<const SortColumnComparerManyAddresses<int256, SegmentBits, TIdx> *>(col_key);
-                    diff = comparer(l, r);
+                    diff = compare_dedup_column_fixed<int256, TIdx>(col_key, l, r, segment_bits, segment_mask);
                     break;
                 }
                 case -1: {
                     switch ((ColumnType) (col_key->column_type)) {
                         case ColumnType::VARCHAR: {
-                            const auto &comparer =
-                                    *reinterpret_cast<const SortVarcharColumnComparerManyAddresses<SegmentBits, TIdx> *>(col_key);
-                            diff = comparer(l, r);
+                            diff = compare_dedup_varchar_column<TIdx>(col_key, l, r, segment_bits, segment_mask);
                             break;
                         }
                         case ColumnType::STRING: {
-                            const auto &comparer =
-                                    *reinterpret_cast<const SortStrBinColumnComparerManyAddresses<int32_t, 2, SegmentBits, TIdx> *>(col_key);
-                            diff = comparer(l, r);
+                            diff = compare_str_bin_dedup_column<int32_t, 2, TIdx>(col_key, l, r, segment_bits,
+                                                                                  segment_mask);
                             break;
                         }
                         case ColumnType::BINARY: {
-                            const auto &comparer =
-                                    *reinterpret_cast<const SortStrBinColumnComparerManyAddresses<int64_t, 1, SegmentBits, TIdx> *>(col_key);
-                            diff = comparer(l, r);
+                            diff = compare_str_bin_dedup_column<int64_t, 1, TIdx>(col_key, l, r, segment_bits,
+                                                                                  segment_mask);
                             break;
                         }
                         case ColumnType::SYMBOL: {
                             // Very special case, it's the symbol that is re-mapped into a single buffer
                             // e.g. the values do not come from multiple segments but from a single buffer
-                            const auto &comparer = *reinterpret_cast<const SortRemappedSymbolComparer<TIdx> *>(col_key);
-                            diff = comparer(l, r);
+                            diff = compare_dedup_symbol_column<TIdx>(col_key, l, r);
                             break;
                         }
                         default: {
@@ -405,39 +390,13 @@ int64_t dedup_sorted_timestamp_index_many_addresses_segment_bits(
         int32_t dedup_key_count,
         const dedup_column *src_keys
 ) {
-
     auto index_out = reinterpret_cast<index_tr<TIdx> *>(indexOut);
     auto index_in = reinterpret_cast<const index_tr<TIdx> *>(indexIn);
     auto index_temp = reinterpret_cast<index_tr<TIdx> *>(indexTemp);
-
-    switch (segment_encoding_bytes) {
-        case 0:
-            return dedup_sorted_timestamp_index_many_addresses<0, TIdx>(index_out, index_in, index_count, index_temp,
-                                                                        dedup_key_count, src_keys);
-        case 1:
-            return dedup_sorted_timestamp_index_many_addresses<8, TIdx>(index_out, index_in, index_count, index_temp,
-                                                                        dedup_key_count, src_keys);
-        case 2:
-            return dedup_sorted_timestamp_index_many_addresses<16, TIdx>(index_out, index_in, index_count, index_temp,
-                                                                         dedup_key_count, src_keys);
-        case 3:
-            return dedup_sorted_timestamp_index_many_addresses<24, TIdx>(index_out, index_in, index_count, index_temp,
-                                                                         dedup_key_count, src_keys);
-        case 4:
-            return dedup_sorted_timestamp_index_many_addresses<32, TIdx>(index_out, index_in, index_count, index_temp,
-                                                                         dedup_key_count, src_keys);
-        case 5:
-            return dedup_sorted_timestamp_index_many_addresses<40, TIdx>(index_out, index_in, index_count, index_temp,
-                                                                         dedup_key_count, src_keys);
-        case 6:
-            return dedup_sorted_timestamp_index_many_addresses<48, TIdx>(index_out, index_in, index_count, index_temp,
-                                                                         dedup_key_count, src_keys);
-        case 7:
-            return dedup_sorted_timestamp_index_many_addresses<56, TIdx>(index_out, index_in, index_count, index_temp,
-                                                                         dedup_key_count, src_keys);
-        default:
-            return error_out_of_range;
-    }
+    return dedup_sorted_timestamp_index_many_addresses<TIdx>(
+            index_out, index_in, index_count, index_temp,
+            dedup_key_count, src_keys, segment_encoding_bytes
+    );
 }
 
 template<typename TIdx>

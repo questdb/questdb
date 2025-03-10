@@ -66,26 +66,23 @@ public:
     }
 };
 
-template<typename T, uint16_t SegmentBits, typename TIdx>
-class SortColumnComparerManyAddresses : dedup_column {
-public:
-    inline int operator()(index_tr_i<TIdx> l, index_tr_i<TIdx> r) const {
-        constexpr uint64_t segment_mask = (1ULL << SegmentBits) - 1;
+template<typename T, typename TIdx>
+inline int
+compare_dedup_column_fixed(const dedup_column *dedup_col, index_tr_i<TIdx> l, index_tr_i<TIdx> r, uint16_t segment_bits,
+                           uint64_t segment_mask) {
+    auto l_row_index = l.i >> segment_bits;
+    auto l_src_index = l.i & segment_mask;
 
-        auto l_row_index = l.i >> SegmentBits;
-        auto l_src_index = l.i & segment_mask;
+    auto r_row_index = r.i >> segment_bits;
+    auto r_src_index = r.i & segment_mask;
 
-        auto r_row_index = r.i >> SegmentBits;
-        auto r_src_index = r.i & segment_mask;
+    const T l_val = dedup_col->get_column_data_2d<T>()[l_src_index][l_row_index];
+    const T r_val = dedup_col->get_column_data_2d<T>()[r_src_index][r_row_index];
 
-        const T l_val = this->get_column_data_2d<T>()[l_src_index][l_row_index];
-        const T r_val = this->get_column_data_2d<T>()[r_src_index][r_row_index];
-
-        // One of the values can be MIN of the type (null value)
-        // and subtraction can result in type overflow
-        return (l_val > r_val) - (l_val < r_val);
-    }
-};
+    // One of the values can be MIN of the type (null value)
+    // and subtraction can result in type overflow
+    return (l_val > r_val) - (l_val < r_val);
+}
 
 const int32_t HEADER_FLAGS_WIDTH = 4;
 const int32_t MIN_INLINE_CHARS = 6;
@@ -170,7 +167,8 @@ inline int compare_varchar(
     }
 }
 
-inline int compare_varchar(const column_pointer *l_col, int64_t l_offset, const column_pointer *r_col, int64_t r_offset) {
+inline int
+compare_varchar(const column_pointer *l_col, int64_t l_offset, const column_pointer *r_col, int64_t r_offset) {
 
     return compare_varchar(
             l_col->aux_data, l_col->var_data, l_col->var_data_len, l_offset,
@@ -209,27 +207,23 @@ public:
 };
 
 
-template<uint16_t SegmentBits, typename TIdx>
-class SortVarcharColumnComparerManyAddresses : dedup_column {
+template<typename TIdx>
+inline int compare_dedup_varchar_column(const dedup_column *dedup_column, index_tr_i<TIdx> l, index_tr_i<TIdx> r,
+                                        uint16_t segment_bits, uint64_t segment_mask) {
+    auto column_aux = dedup_column->get_column_data_2d<uint8_t>();
+    auto column_var_data = dedup_column->get_column_var_data_2d<uint8_t>();
 
-public:
-    inline int operator()(index_tr_i<TIdx> l, index_tr_i<TIdx> r) const {
-        auto column_aux = this->get_column_data_2d<uint8_t>();
-        auto column_var_data = this->get_column_var_data_2d<uint8_t>();
-        constexpr uint64_t segment_mask = (1ULL << SegmentBits) - 1;
+    auto l_row_index = l.i >> segment_bits;
+    auto l_src_index = l.i & segment_mask;
 
-        auto l_row_index = l.i >> SegmentBits;
-        auto l_src_index = l.i & segment_mask;
+    auto r_row_index = r.i >> segment_bits;
+    auto r_src_index = r.i & segment_mask;
 
-        auto r_row_index = r.i >> SegmentBits;
-        auto r_src_index = r.i & segment_mask;
-
-        return compare_varchar(
-                column_aux[l_src_index], column_var_data[l_src_index], std::numeric_limits<int64_t>::max(), l_row_index,
-                column_aux[r_src_index], column_var_data[r_src_index], std::numeric_limits<int64_t>::max(), r_row_index
-        );
-    }
-};
+    return compare_varchar(
+            column_aux[l_src_index], column_var_data[l_src_index], std::numeric_limits<int64_t>::max(), l_row_index,
+            column_aux[r_src_index], column_var_data[r_src_index], std::numeric_limits<int64_t>::max(), r_row_index
+    );
+}
 
 
 template<typename T, int ItemSize>
@@ -273,48 +267,45 @@ public:
     }
 };
 
-template<typename T, int ItemSize, int SegmentBits, typename TIdx>
-class SortStrBinColumnComparerManyAddresses : dedup_column {
+template<typename T, int ItemSize, typename TIdx>
+inline int compare_str_bin_dedup_column(
+        const dedup_column *dedup_col,
+        index_tr_i<TIdx> l,
+        index_tr_i<TIdx> r,
+        int segment_bits,
+        uint64_t segment_mask
+) {
+    auto column_aux = dedup_col->get_column_data_2d<int64_t>();
+    auto column_var_data = dedup_col->get_column_var_data_2d<uint8_t>();
 
-public:
-    inline int operator()(index_tr_i<TIdx> l, index_tr_i<TIdx> r) const {
-        auto column_aux = this->get_column_data_2d<int64_t>();
-        auto column_var_data = this->get_column_var_data_2d<uint8_t>();
 
-        constexpr uint64_t segment_mask = (1ULL << SegmentBits) - 1;
+    auto l_row_index = l.i >> segment_bits;
+    auto l_src_index = l.i & segment_mask;
 
-        auto l_row_index = l.i >> SegmentBits;
-        auto l_src_index = l.i & segment_mask;
+    auto r_row_index = r.i >> segment_bits;
+    auto r_src_index = r.i & segment_mask;
 
-        auto r_row_index = r.i >> SegmentBits;
-        auto r_src_index = r.i & segment_mask;
+    const auto l_val_offset = column_aux[l_src_index][l_row_index];
+    assertm(l_val_offset >= 0, "ERROR: column aux data point beyond var data buffer");
 
-        const auto l_val_offset = column_aux[l_src_index][l_row_index];
-        assertm(l_val_offset >= 0, "ERROR: column aux data point beyond var data buffer");
+    const auto r_val_offset = column_aux[r_src_index][r_row_index];
+    assertm(r_val_offset >= 0, "ERROR: column aux data point beyond var data buffer");
 
-        const auto r_val_offset = column_aux[r_src_index][r_row_index];
-        assertm(r_val_offset >= 0, "ERROR: column aux data point beyond var data buffer");
-
-        return compare_str_bin<T, ItemSize>(
-                column_var_data[l_src_index] + l_val_offset,
-                column_var_data[r_src_index] + r_val_offset
-        );
-    }
-};
+    return compare_str_bin<T, ItemSize>(
+            column_var_data[l_src_index] + l_val_offset,
+            column_var_data[r_src_index] + r_val_offset
+    );
+}
 
 template<typename TIdx>
-class SortRemappedSymbolComparer : dedup_column {
+inline int compare_dedup_symbol_column(const dedup_column *this1, index_tr_i<TIdx> l, index_tr_i<TIdx> r) {
+    auto column_data = this1->get_column_data<int32_t>();
 
-public:
-    inline int operator()(index_tr_i<TIdx> l, index_tr_i<TIdx> r) const {
-        auto column_data = this->get_column_data<int32_t>();
+    auto l_val = column_data[l.ri];
+    auto r_val = column_data[r.ri];
 
-        auto l_val = column_data[l.ri];
-        auto r_val = column_data[r.ri];
-
-        return (l_val > r_val) - (l_val < r_val);
-    }
-};
+    return (l_val > r_val) - (l_val < r_val);
+}
 
 template<typename T, int ItemSize>
 class MergeStrBinColumnComparer : dedup_column {

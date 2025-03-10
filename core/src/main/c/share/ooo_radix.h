@@ -99,7 +99,7 @@ inline void radix_shuffle(uint64_t *counts, const T *src, T *dest, const uint64_
 }
 
 template<uint16_t n, typename TRevIdx>
-uint64_t
+int64_t
 radix_copy_segments_index_asc(
         const int64_t *lag_ts, const uint64_t lag_size,
         const index_l **segment_ts_maps,
@@ -118,29 +118,49 @@ radix_copy_segments_index_asc(
     static_assert(std::is_integral_v<TRevIdx> && std::is_unsigned_v<TRevIdx>, "TRevIdx must be a signed integer");
     assertm(n == (ts_bits + txn_bits + 7) >> 3, "n must be equal to (ts_bits + txn_bits + 7) >> 3");
 
-    // Some combinations of template pre-generated code is not valid, do nothing in that case
-    if constexpr (n <= 8 && n > 0) {
+    static_assert(n <= 8 && n > 0, "invalid byte range to sort");
 
-        uint64_t counts[n][256] = {{0}};
-        uint64_t o[n] = {0};
-        uint64_t x;
+    uint64_t counts[n][256] = {{0}};
+    uint64_t o[n] = {0};
+    uint64_t x;
 
-        index_tr<TRevIdx> *buff1;
-        index_tr<TRevIdx> *buff2;
-        if constexpr (n % 2 == 0) {
-            buff1 = (index_tr<TRevIdx> *) out;
-            buff2 = (index_tr<TRevIdx> *) cpy;
-        } else {
-            // invert out and copy, so that after n iterations data ends up in out
-            buff1 = (index_tr<TRevIdx> *) cpy;
-            buff2 = (index_tr<TRevIdx> *) out;
-        }
+    index_tr<TRevIdx> *buff1;
+    index_tr<TRevIdx> *buff2;
+    if constexpr (n % 2 == 0) {
+        buff1 = (index_tr<TRevIdx> *) out;
+        buff2 = (index_tr<TRevIdx> *) cpy;
+    } else {
+        // invert out and copy, so that after n iterations data ends up in out
+        buff1 = (index_tr<TRevIdx> *) cpy;
+        buff2 = (index_tr<TRevIdx> *) out;
+    }
 
-        // calculate counts
-        for (x = 0; x < lag_size; x++) {
-            buff1[x].ts = (lag_ts[x] - min_value) << txn_bits;
-            buff1[x].i.i = x << segment_bits | segment_count;
+    // calculate counts
+    for (x = 0; x < lag_size; x++) {
+        buff1[x].ts = (lag_ts[x] - min_value) << txn_bits;
+        buff1[x].i.i = x << segment_bits | segment_count;
+        buff1[x].i.ri = (TRevIdx) x;
+        constexpr_for<0, n, 1>(
+                [&](auto i) {
+                    constexpr uint64_t shift = 8u * (n - i - 1);
+                    const auto t0 = (buff1[x].ts >> shift) & 0xffu;
+                    counts[i][t0]++;
+                }
+        );
+        MM_PREFETCH_T2(lag_ts + x + 64);
+    }
+
+    for (uint64_t txn_index = 0; txn_index < txn_count; txn_index++) {
+        auto segment_index = segment_txns[txn_index].seg_info_index;
+        auto seq_txn = segment_txns[txn_index].seq_txn;
+
+        const uint64_t hi = segment_txns[txn_index].segment_row_offset + segment_txns[txn_index].row_count;
+        for (uint64_t seg_row = segment_txns[txn_index].segment_row_offset; seg_row < hi; seg_row++, x++) {
+            buff1[x].ts =
+                    (((uint64_t) (segment_ts_maps[segment_index][seg_row].ts - min_value)) << txn_bits) | seq_txn;
+            buff1[x].i.i = (seg_row << segment_bits) | segment_index;
             buff1[x].i.ri = (TRevIdx) x;
+
             constexpr_for<0, n, 1>(
                     [&](auto i) {
                         constexpr uint64_t shift = 8u * (n - i - 1);
@@ -148,96 +168,73 @@ radix_copy_segments_index_asc(
                         counts[i][t0]++;
                     }
             );
-            MM_PREFETCH_T2(lag_ts + x + 64);
         }
+    }
+    auto size = x;
 
-        for (uint64_t txn_index = 0; txn_index < txn_count; txn_index++) {
-            auto segment_index = segment_txns[txn_index].seg_info_index;
-            auto seq_txn = segment_txns[txn_index].seq_txn;
+    // convert counts to offsets
+    MM_PREFETCH_T0(&counts);
+    for (int xx = 0; xx < 256; xx++) {
+        // should be unrolled by compiler, n is a constexpr
+        constexpr_for<0, n, 1>(
+                [&](auto i) {
+                    auto t0 = o[i] + counts[i][xx];
+                    counts[i][xx] = o[i];
+                    o[i] = t0;
+                }
+        );
+    }
 
-            const uint64_t hi = segment_txns[txn_index].segment_row_offset + segment_txns[txn_index].row_count;
-            for (uint64_t seg_row = segment_txns[txn_index].segment_row_offset; seg_row < hi; seg_row++, x++) {
-                buff1[x].ts =
-                        (((uint64_t) (segment_ts_maps[segment_index][seg_row].ts - min_value)) << txn_bits) | seq_txn;
-                buff1[x].i.i = (seg_row << segment_bits) | segment_index;
-                buff1[x].i.ri = (TRevIdx) x;
-
-                constexpr_for<0, n, 1>(
-                        [&](auto i) {
-                            constexpr uint64_t shift = 8u * (n - i - 1);
-                            const auto t0 = (buff1[x].ts >> shift) & 0xffu;
-                            counts[i][t0]++;
-                        }
-                );
-            }
-        }
-        auto size = x;
-
-        // convert counts to offsets
-        MM_PREFETCH_T0(&counts);
-        for (int xx = 0; xx < 256; xx++) {
-            // should be unrolled by compiler, n is a constexpr
-            constexpr_for<0, n, 1>(
-                    [&](auto i) {
-                        auto t0 = o[i] + counts[i][xx];
-                        counts[i][xx] = o[i];
-                        o[i] = t0;
-                    }
-            );
-        }
-
-        if constexpr (n > 1) {
-            radix_shuffle(counts[n - 1], buff1, buff2, size, 0u);
-            if constexpr (n > 2) {
-                radix_shuffle(counts[n - 2], buff2, buff1, size, 8u);
-                if constexpr (n > 3) {
-                    radix_shuffle(counts[n - 3], buff1, buff2, size, 16u);
-                    if constexpr (n > 4) {
-                        radix_shuffle(counts[n - 4], buff2, buff1, size, 24u);
-                        if constexpr (n > 5) {
-                            radix_shuffle(counts[n - 5], buff1, buff2, size, 32u);
-                            if constexpr (n > 6) {
-                                radix_shuffle(counts[n - 6], buff2, buff1, size, 40u);
-                                if constexpr (n > 7) {
-                                    radix_shuffle(counts[n - 7], buff1, buff2, size, 48u);
-                                    radix_shuffle_clean<TRevIdx>(
-                                            counts[n - 8], buff2, out, size,
-                                            min_value, result_format, 56u, txn_bits);
-                                } else {
-                                    radix_shuffle_clean<TRevIdx>(
-                                            counts[n - 7], buff1, out, size,
-                                            min_value, result_format, 48u, txn_bits);
-                                }
+    if constexpr (n > 1) {
+        radix_shuffle(counts[n - 1], buff1, buff2, size, 0u);
+        if constexpr (n > 2) {
+            radix_shuffle(counts[n - 2], buff2, buff1, size, 8u);
+            if constexpr (n > 3) {
+                radix_shuffle(counts[n - 3], buff1, buff2, size, 16u);
+                if constexpr (n > 4) {
+                    radix_shuffle(counts[n - 4], buff2, buff1, size, 24u);
+                    if constexpr (n > 5) {
+                        radix_shuffle(counts[n - 5], buff1, buff2, size, 32u);
+                        if constexpr (n > 6) {
+                            radix_shuffle(counts[n - 6], buff2, buff1, size, 40u);
+                            if constexpr (n > 7) {
+                                radix_shuffle(counts[n - 7], buff1, buff2, size, 48u);
+                                radix_shuffle_clean<TRevIdx>(
+                                        counts[n - 8], buff2, out, size,
+                                        min_value, result_format, 56u, txn_bits);
                             } else {
                                 radix_shuffle_clean<TRevIdx>(
-                                        counts[n - 6], buff2, out, size, min_value, result_format, 40u, txn_bits);
+                                        counts[n - 7], buff1, out, size,
+                                        min_value, result_format, 48u, txn_bits);
                             }
                         } else {
                             radix_shuffle_clean<TRevIdx>(
-                                    counts[n - 5], buff1, out, size, min_value, result_format, 32u, txn_bits);
+                                    counts[n - 6], buff2, out, size, min_value, result_format, 40u, txn_bits);
                         }
                     } else {
                         radix_shuffle_clean<TRevIdx>(
-                                counts[n - 4], buff2, out, size, min_value, result_format, 24u, txn_bits);
+                                counts[n - 5], buff1, out, size, min_value, result_format, 32u, txn_bits);
                     }
                 } else {
                     radix_shuffle_clean<TRevIdx>(
-                            counts[n - 3], buff1, out, size, min_value, result_format, 16u, txn_bits);
+                            counts[n - 4], buff2, out, size, min_value, result_format, 24u, txn_bits);
                 }
             } else {
-                radix_shuffle_clean<TRevIdx>(counts[n - 2], buff2, out, size, min_value, result_format, 8u, txn_bits);
+                radix_shuffle_clean<TRevIdx>(
+                        counts[n - 3], buff1, out, size, min_value, result_format, 16u, txn_bits);
             }
         } else {
-            radix_shuffle_clean<TRevIdx>(counts[n - 1], buff1, out, size, min_value, result_format, 0u, txn_bits);
+            radix_shuffle_clean<TRevIdx>(counts[n - 2], buff2, out, size, min_value, result_format, 8u, txn_bits);
         }
-        return size;
+    } else {
+        radix_shuffle_clean<TRevIdx>(counts[n - 1], buff1, out, size, min_value, result_format, 0u, txn_bits);
     }
-    return 0;
+    return (int64_t) size;
 }
 
 
 template<uint16_t N>
-uint64_t radix_copy_segments_index_asc_rev(
+int64_t radix_copy_segments_index_asc_rev(
         const int64_t *lag_ts,
         const uint64_t lag_size,
         const index_l **segment_ts_maps,
@@ -255,6 +252,7 @@ uint64_t radix_copy_segments_index_asc_rev(
         uint16_t txn_bits
 ) {
     if (total_row_count_bytes != integral_type_bytes(range_bytes(total_row_count + 1))) {
+        // Error, invalid total row count bytes
         return -100;
     }
 
@@ -280,29 +278,24 @@ uint64_t radix_copy_segments_index_asc_rev(
                     min_value, result_format, segment_bits, ts_bits, txn_bits
             );
         default:
+            // Error, unsupported type
             return -1;
     }
 }
 
-inline uint64_t radix_copy_segments_index_asc_precompiled(uint16_t ts_bits, uint16_t txn_bits, uint16_t segment_bits,
-                                                          const int64_t *lag_ts, const uint64_t lag_size,
-                                                          const index_l **segment_ts, const txn_info *segment_txns,
-                                                          const uint64_t txn_count, index_l *out, index_l *cpy,
-                                                          const uint32_t segment_count,
-                                                          int64_t min_value,
-                                                          int32_t total_row_count_bytes,
-                                                          int64_t total_row_count,
-                                                          uint8_t result_format
+inline int64_t radix_copy_segments_index_asc_precompiled(
+        uint16_t ts_bits, uint16_t txn_bits, uint16_t segment_bits,
+        const int64_t *lag_ts, const uint64_t lag_size,
+        const index_l **segment_ts, const txn_info *segment_txns,
+        const uint64_t txn_count, index_l *out, index_l *cpy,
+        const uint32_t segment_count,
+        int64_t min_value,
+        int32_t total_row_count_bytes,
+        int64_t total_row_count,
+        uint8_t result_format
 ) {
     auto n = (ts_bits + txn_bits + 7) >> 3;
     switch (n) {
-        case 0:
-            return radix_copy_segments_index_asc_rev<0>(
-                    lag_ts, lag_size,
-                    segment_ts, segment_txns, txn_count, out, cpy,
-                    segment_count, min_value, total_row_count_bytes, total_row_count, result_format,
-                    segment_bits, ts_bits, txn_bits
-            );
         case 1:
             return radix_copy_segments_index_asc_rev<1>(
                     lag_ts, lag_size,
@@ -360,6 +353,7 @@ inline uint64_t radix_copy_segments_index_asc_precompiled(uint16_t ts_bits, uint
                     segment_bits, ts_bits, txn_bits
             );
         default:
+            // Error, total radix bytes should be 0-8
             return -1;
     }
 }
@@ -440,6 +434,7 @@ int64_t merge_shuffle_fixed_columns_by_rev_index_from_many_addresses(
                     merge_index_format
             );
         default:
+            // Error, unsupported index_format type
             return -1;
     }
 
