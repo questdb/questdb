@@ -891,14 +891,13 @@ public class PivotTest extends AbstractSqlParserTest {
                 true,
                 true,
                 false,
-                "Sort\n" +
-                        "  keys: [2000]\n" +
-                        "    Async Group By workers: 1\n" +
-                        "      values: [sum(case([population,null,year])),sum(case([population,null,year])),sum(case([population,null,year]))]\n" +
-                        "      filter: null\n" +
-                        "        PageFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: cities\n");
+                "Async Group By workers: 1\n" +
+                        "  keys: [side]\n" +
+                        "  values: [first_not_null(case([price,NaN,symbol])),max(case([price,NaN,symbol])),min(case([price,NaN,symbol])),last_not_null(case([price,NaN,symbol])),first_not_null(case([price,NaN,symbol])),max(case([price,NaN,symbol])),min(case([price,NaN,symbol])),last_not_null(case([price,NaN,symbol]))]\n" +
+                        "  filter: null\n" +
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: trades\n");
     }
 
 }
