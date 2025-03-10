@@ -26,6 +26,7 @@ package io.questdb.cutlass.line.array;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.DirectArray;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
@@ -58,7 +59,9 @@ import io.questdb.std.Vect;
 public abstract class AbstractArray implements QuietCloseable {
 
     protected final DirectArray array = new DirectArray();
+    protected final int flatLength;
     protected boolean closed = false;
+    protected MemoryA memA = array.startMemoryA();
 
     protected AbstractArray(int[] shape, short columnType) {
         array.setType(ColumnType.encodeArrayType(columnType, shape.length));
@@ -66,6 +69,7 @@ public abstract class AbstractArray implements QuietCloseable {
             array.setDimLen(dim, shape[dim]);
         }
         array.applyShape(-1);
+        flatLength = array.getFlatViewLength();
     }
 
     /*
@@ -96,6 +100,12 @@ public abstract class AbstractArray implements QuietCloseable {
             array.close();
         }
         closed = true;
+    }
+
+    protected void ensureLegalAppendPosition() {
+        if (memA.getAppendOffset() == flatLength) {
+            memA = array.startMemoryA();
+        }
     }
 
     /*
