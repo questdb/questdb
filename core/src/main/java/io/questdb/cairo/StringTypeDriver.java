@@ -175,6 +175,30 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public long mergeShuffleColumnFromManyAddresses(
+            long indexFormat,
+            long primaryAddressList,
+            long secondaryAddressList,
+            long outPrimaryAddress,
+            long outSecondaryAddress,
+            long mergeIndex,
+            long destVarOffset,
+            long destDataSize
+    ) {
+        return Vect.mergeShuffleStringColumnFromManyAddresses(
+                indexFormat,
+                (int) getDataVectorMinEntrySize(),
+                primaryAddressList,
+                secondaryAddressList,
+                outPrimaryAddress,
+                outSecondaryAddress,
+                mergeIndex,
+                destVarOffset,
+                destDataSize
+        );
+    }
+
+    @Override
     public void o3ColumnMerge(
             long timestampMergeIndexAddr,
             long timestampMergeIndexCount,

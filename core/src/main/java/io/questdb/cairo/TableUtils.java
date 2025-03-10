@@ -1705,6 +1705,7 @@ public final class TableUtils {
     }
 
     public static int toIndexKey(int symbolKey) {
+        assert symbolKey != Integer.MAX_VALUE;
         return symbolKey == SymbolTable.VALUE_IS_NULL ? 0 : symbolKey + 1;
     }
 

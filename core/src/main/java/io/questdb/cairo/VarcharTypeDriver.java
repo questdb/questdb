@@ -491,6 +491,29 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public long mergeShuffleColumnFromManyAddresses(
+            long indexFormat,
+            long primaryAddressList,
+            long secondaryAddressList,
+            long outPrimaryAddress,
+            long outSecondaryAddress,
+            long mergeIndex,
+            long destDataOffset,
+            long destDataSize
+    ) {
+        return Vect.mergeShuffleVarcharColumnFromManyAddresses(
+                indexFormat,
+                primaryAddressList,
+                secondaryAddressList,
+                outPrimaryAddress,
+                outSecondaryAddress,
+                mergeIndex,
+                destDataOffset,
+                destDataSize
+        );
+    }
+
+    @Override
     public void o3ColumnMerge(
             long timestampMergeIndexAddr,
             long timestampMergeIndexCount,

@@ -82,11 +82,6 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         pos = address;
     }
 
-    public void clear(long zeroValue) {
-        zero(zeroValue);
-        pos = address;
-    }
-
     @Override
     public void close() {
         if (address != 0) {
@@ -95,6 +90,10 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
             pos = 0;
             capacity = 0;
         }
+    }
+
+    public void fill(int v) {
+        Vect.memset(address, capacity, v);
     }
 
     public long get(long p) {
@@ -184,8 +183,8 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         return sb.toString();
     }
 
-    public void zero(long v) {
-        Vect.memset(address, pos - address, (int) v);
+    public void zero() {
+        fill(0);
     }
 
     // desired capacity in bytes (not count of LONG values)

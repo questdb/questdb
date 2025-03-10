@@ -145,6 +145,7 @@ else ()
             SOURCE_FILES ${SOURCE_FILES}
             src/main/c/share/files.c
             src/main/c/share/os.c
+            src/main/c/share/ooo.h
     )
 endif ()
 
@@ -344,13 +345,26 @@ else ()
     target_link_libraries(questdb rt -Wl,--gc-sections -Wl,--exclude-libs=ALL -static-libgcc _simdjson)
 endif ()
 
+# create output directory in case it does not exist, e.g. after mvn clean
+add_custom_command(TARGET _simdjson PRE_LINK
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${OUTPUT}
+)
+
 # Define the secondary output directory
 
 set(SECONDARY_OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/questdb/bin-local/)
+set(SECONDARY_OUTPUT2 ${CMAKE_CURRENT_SOURCE_DIR}/target/classes/io/questdb/bin-local/)
 
 add_custom_command(TARGET questdb POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${SECONDARY_OUTPUT}
         COMMAND ${CMAKE_COMMAND} -E copy_directory ${OUTPUT} ${SECONDARY_OUTPUT}
         COMMENT "Copying all build outputs from ${OUTPUT} to ${SECONDARY_OUTPUT}"
+)
+
+add_custom_command(TARGET questdb POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${SECONDARY_OUTPUT2}
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${OUTPUT} ${SECONDARY_OUTPUT2}
+        COMMENT "Copying all build outputs from ${OUTPUT} to ${SECONDARY_OUTPUT2}"
 )
 
 #jemalloc
