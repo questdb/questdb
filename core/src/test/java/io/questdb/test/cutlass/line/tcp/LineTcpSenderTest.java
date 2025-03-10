@@ -34,6 +34,8 @@ import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
+import io.questdb.cutlass.line.array.DoubleArray;
+import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.network.Net;
 import io.questdb.std.Chars;
@@ -51,6 +53,8 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.function.Consumer;
 
+import static io.questdb.test.cutlass.http.line.LineHttpSenderTest.createDoubleArray;
+import static io.questdb.test.cutlass.http.line.LineHttpSenderTest.createLongArray;
 import static io.questdb.test.tools.TestUtils.assertContains;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.Assert.*;
@@ -268,6 +272,37 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testDoubleArray() throws Exception {
+        runInContext(r -> {
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+                String table = "nd_test";
+                long ts = IntervalUtils.parseFloorPartialTimestamp("2025-02-22");
+                sender.table(table)
+                        .symbol("x", "42i")
+                        .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")  // ensuring no array parsing for symbol
+                        .longColumn("l1", 23452345)
+                        .doubleArray("a1", (double[]) createDoubleArray(new int[]{5}))
+                        .doubleArray("a2", (double[][]) createDoubleArray(new int[]{2, 3}))
+                        .doubleArray("a3", (double[][][]) createDoubleArray(new int[]{1, 2, 3}))
+                        .doubleArray("a4", DoubleArray.create(1, 1, 2, 1).setAll(4))
+                        .doubleArray("a5", DoubleArray.create(3, 2, 1, 4, 1).setAll(5))
+                        .doubleArray("a6", DoubleArray.create(1, 3, 4, 2, 1, 1).setAll(6))
+                        .at(ts, ChronoUnit.MICROS);
+                sender.flush();
+
+                assertTableSizeEventually(engine, table, 1);
+                // @todo getArray support in TestTableReadCursor
+/*                try (TableReader reader = getReader(table)) {
+                    TestUtils.assertReader("", reader, new StringSink());
+                }*/
+            }
+        });
+    }
+
+    @Test
     public void testDouble_edgeValues() throws Exception {
         runInContext(r -> {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
@@ -477,6 +512,34 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         reader,
                         new StringSink()
                 );
+            }
+        });
+    }
+
+    @Test
+    public void testLongArray() throws Exception {
+        runInContext(r -> {
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()) {
+                String table = "nd_test";
+                long ts = IntervalUtils.parseFloorPartialTimestamp("2025-02-22");
+                sender.table(table)
+                        .symbol("x", "42i")
+                        .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")  // ensuring no array parsing for symbol
+                        .longColumn("l1", 23452345)
+                        .longArray("a1", (long[]) createLongArray(new int[]{5}))
+                        .longArray("a2", (long[][]) createLongArray(new int[]{2, 3}))
+                        .longArray("a3", (long[][][]) createLongArray(new int[]{1, 2, 3}))
+                        .longArray("a4", LongArray.create(1, 2, 1, 1).setAll(4))
+                        .longArray("a5", LongArray.create(3, 2, 1, 4, 1).setAll(5))
+                        .longArray("a6", LongArray.create(1, 3, 4, 2, 1, 1).setAll(6))
+                        .at(ts, ChronoUnit.MICROS);
+                sender.flush();
+
+                assertTableSizeEventually(engine, table, 1);
+                // @todo getArray support in TestTableReadCursor
             }
         });
     }

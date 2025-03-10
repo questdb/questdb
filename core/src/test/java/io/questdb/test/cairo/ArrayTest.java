@@ -29,9 +29,12 @@ import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.NoopArrayState;
 import io.questdb.cairo.sql.TableMetadata;
-import io.questdb.cutlass.line.tcp.ArrayParser;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cutlass.line.tcp.ArrayNativeFormatParser;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8Sink;
-import io.questdb.std.str.DirectUtf8String;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -39,6 +42,24 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 
 public class ArrayTest extends AbstractCairoTest {
+
+    public static long arrayViewToBinaryFormat(DirectArray view, long addr) {
+        long size = 0;
+        Unsafe.getUnsafe().putByte(addr, (byte) ColumnType.decodeArrayElementType(view.getType()));
+        addr++;
+        size++;
+        Unsafe.getUnsafe().putByte(addr, (byte) ColumnType.decodeArrayDimensionality(view.getType()));
+        addr++;
+        size++;
+        for (int i = 0, dims = view.getDimCount(); i < dims; i++) {
+            Unsafe.getUnsafe().putInt(addr, view.getDimLen(i));
+            addr += 4;
+            size += 4;
+        }
+        Vect.memcpy(addr, view.ptr(), view.size());
+        size += view.size();
+        return size;
+    }
 
     @Test
     public void test2dArrayFrom1dArrays() throws Exception {
@@ -128,6 +149,50 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayNativeFormatParser() {
+        final long allocSize = 2048;
+        long mem = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
+        try (DirectArray array = new DirectArray(configuration);
+             ArrayNativeFormatParser parserNative = new ArrayNativeFormatParser();
+             DirectUtf8Sink sink = new DirectUtf8Sink(100)
+        ) {
+            // [[1, 2], [3, 4], [5, 6]]
+            array.setType(ColumnType.encodeArrayType(ColumnType.LONG, 2));
+            array.setDimLen(0, 3);
+            array.setDimLen(1, 2);
+            array.applyShape(-1);
+            MemoryA memA = array.startMemoryA();
+            memA.putLong(1);
+            memA.putLong(2);
+            memA.putLong(3);
+            memA.putLong(4);
+            memA.putLong(5);
+            memA.putLong(6);
+            sink.clear();
+            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayState.INSTANCE);
+            String textViewStr = sink.toString();
+
+            long start = mem;
+            sink.clear();
+            parserNative.reset();
+            arrayViewToBinaryFormat(array, mem);
+            boolean finish;
+            do {
+                long size = parserNative.getNextExpectSize();
+                finish = parserNative.processNextBinaryPart(start);
+                start += size;
+            } while (!finish);
+
+            ArrayTypeDriver.arrayToJson(parserNative.getArray(), sink, NoopArrayState.INSTANCE);
+            assertEquals(textViewStr, sink.toString());
+        } catch (ArrayNativeFormatParser.ParseException e) {
+            throw new RuntimeException(e);
+        } finally {
+            Unsafe.free(mem, allocSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testArrayOpComposition() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0,2.0],[3.0,4.0],[5.0,6.0]] arr FROM long_sequence(1))");
@@ -151,10 +216,11 @@ public class ArrayTest extends AbstractCairoTest {
             array.setDimLen(0, 2);
             array.setDimLen(1, 2);
             array.applyShape(1);
-            array.putDouble(0, 1.0);
-            array.putDouble(1, 2.0);
-            array.putDouble(2, 3.0);
-            array.putDouble(3, 4.0);
+            MemoryA memA = array.startMemoryA();
+            memA.putDouble(1.0);
+            memA.putDouble(2.0);
+            memA.putDouble(3.0);
+            memA.putDouble(4.0);
             sink.clear();
             ArrayTypeDriver.arrayToJson(array, sink, NoopArrayState.INSTANCE);
             assertEquals("[[1.0,2.0],[3.0,4.0]]", sink.toString());
@@ -170,31 +236,14 @@ public class ArrayTest extends AbstractCairoTest {
             array.setDimLen(0, 2);
             array.setDimLen(1, 2);
             array.applyShape(2);
-            array.putLong(0, 1);
-            array.putLong(1, 2);
-            array.putLong(2, 3);
-            array.putLong(3, 4);
+            MemoryA memA = array.startMemoryA();
+            memA.putLong(1);
+            memA.putLong(2);
+            memA.putLong(3);
+            memA.putLong(4);
             sink.clear();
             ArrayTypeDriver.arrayToJson(array, sink, NoopArrayState.INSTANCE);
             assertEquals("[[1,2],[3,4]]", sink.toString());
-        }
-    }
-
-    @Test
-    public void testArrayToJsonUsingParser() {
-        DirectUtf8String str = new DirectUtf8String();
-        try (ArrayParser parser = new ArrayParser(configuration);
-             DirectUtf8Sink sink = new DirectUtf8Sink(20)
-        ) {
-            String arrayExpr = "[[1.0,2.0],[3.0,4.0]]";
-            sink.clear();
-            sink.put("[6f").put(arrayExpr.substring(1));
-            parser.parse(str.of(sink.lo(), sink.hi()));
-            sink.clear();
-            ArrayTypeDriver.arrayToJson(parser.getArray(), sink, NoopArrayState.INSTANCE);
-            assertEquals(arrayExpr, sink.toString());
-        } catch (ArrayParser.ParseException e) {
-            throw new RuntimeException(e);
         }
     }
 

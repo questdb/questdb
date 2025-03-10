@@ -33,6 +33,7 @@ import io.questdb.cairo.arr.FunctionArray;
 import io.questdb.cairo.arr.NoopArrayState;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.str.StringSink;
 
@@ -52,9 +53,9 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
         }
         array.applyShape(-1);
         FlatArrayView flatViewIn = arrayIn.flatView();
-        int elemCount = arrayIn.getFlatViewLength();
-        for (int i = 0; i < elemCount; i++) {
-            array.putDouble(i, flatViewIn.getDouble(i));
+        MemoryA memA = array.startMemoryA();
+        for (int n = arrayIn.getFlatViewLength(), i = 0; i < n; i++) {
+            memA.putDouble(flatViewIn.getDouble(i));
         }
     }
 
@@ -63,8 +64,9 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
         array.setType(type);
         array.setDimLen(0, vals.length);
         array.applyShape(-1);
+        MemoryA memA = array.startMemoryA();
         for (int n = vals.length, i = 0; i < n; i++) {
-            array.putDouble(i, vals[i]);
+            memA.putDouble(vals[i]);
         }
     }
 
@@ -74,9 +76,10 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
         array.setDimLen(0, vals.length);
         array.setDimLen(1, vals[0].length);
         array.applyShape(-1);
+        MemoryA memA = array.startMemoryA();
         for (int n = vals.length, i = 0; i < n; i++) {
             for (int m = vals[0].length, j = 0; j < m; j++) {
-                array.putDouble(i * j, vals[i][j]);
+                memA.putDouble(vals[i][j]);
             }
         }
     }

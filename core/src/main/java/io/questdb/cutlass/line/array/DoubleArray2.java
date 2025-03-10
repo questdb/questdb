@@ -22,41 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.processors;
+package io.questdb.cutlass.line.array;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.cairo.ColumnType;
 
-public interface LineHttpProcessorConfiguration {
+public class DoubleArray2 extends AbstractArray {
 
-    boolean autoCreateNewColumns();
+    public DoubleArray2(int... shape) {
+        super(shape, ColumnType.DOUBLE);
+    }
 
-    boolean autoCreateNewTables();
-
-    CairoConfiguration getCairoConfiguration();
-
-    short getDefaultColumnTypeForFloat();
-
-    short getDefaultColumnTypeForInteger();
-
-    int getDefaultPartitionBy();
-
-    CharSequence getInfluxPingVersion();
-
-    long getMaxRecvBufferSize();
-
-    MicrosecondClock getMicrosecondClock();
-
-    long getSymbolCacheWaitUsBeforeReload();
-
-    LineTcpTimestampAdapter getTimestampAdapter();
-
-    boolean isEnabled();
-
-    boolean isStringToCharCastAllowed();
-
-    boolean isUseLegacyStringDefault();
-
-    boolean logMessageOnError();
+    public DoubleArray2 putDouble(double value) {
+        ensureLegalAppendPosition();
+        memA.putDouble(value);
+        return this;
+    }
 }

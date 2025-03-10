@@ -145,15 +145,26 @@ public abstract class ArrayView implements QuietCloseable {
     }
 
     private void appendToMemRecursive(int dim, int flatIndex, MemoryA mem) {
-        assert ColumnType.isDouble(ColumnType.decodeArrayElementType(this.type)) : "implemented only for double";
+        short elemType = ColumnType.decodeArrayElementType(this.type);
+        assert elemType == ColumnType.DOUBLE || elemType == ColumnType.LONG : "implemented only for long and double";
 
         final int count = getDimLen(dim);
         final int stride = getStride(dim);
         final boolean atDeepestDim = dim == getDimCount() - 1;
         if (atDeepestDim) {
-            for (int i = 0; i < count; i++) {
-                mem.putDouble(flatView.getDouble(flatViewOffset + flatIndex));
-                flatIndex += stride;
+            switch (elemType) {
+                case ColumnType.LONG:
+                    for (int i = 0; i < count; i++) {
+                        mem.putLong(flatView.getLong(flatViewOffset + flatIndex));
+                        flatIndex += stride;
+                    }
+                    break;
+                case ColumnType.DOUBLE:
+                    for (int i = 0; i < count; i++) {
+                        mem.putDouble(flatView.getDouble(flatViewOffset + flatIndex));
+                        flatIndex += stride;
+                    }
+                    break;
             }
         } else {
             for (int i = 0; i < count; i++) {

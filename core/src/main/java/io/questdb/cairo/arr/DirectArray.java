@@ -47,8 +47,8 @@ public final class DirectArray extends MutableArray implements Mutable {
     private static final int MEM_TAG = MemoryTag.NATIVE_ND_ARRAY;
     private final CairoConfiguration configuration;
     private final FlatViewMemory flatViewMemory = new FlatViewMemory();
-    private long capacity;
     private long ptr = 0;
+    private long size;
 
     public DirectArray(CairoConfiguration configuration) {
         this.flatView = new BorrowedFlatArrayView();
@@ -83,9 +83,9 @@ public final class DirectArray extends MutableArray implements Mutable {
     @Override
     public void close() {
         type = ColumnType.UNDEFINED;
-        ptr = Unsafe.free(ptr, capacity, MEM_TAG);
+        ptr = Unsafe.free(ptr, size, MEM_TAG);
         flatViewLength = 0;
-        capacity = 0;
+        size = 0;
         shape.clear();
         strides.clear();
         assert ptr == 0;
@@ -99,20 +99,39 @@ public final class DirectArray extends MutableArray implements Mutable {
         strides.clear();
     }
 
+    public long ptr() {
+        return ptr;
+    }
+
+    /**
+     * Puts a double to a randomly-accessed flat index of the array. If you're populating
+     * the whole array, prefer obtaining {@code MemoryA} via {@link #startMemoryA()},
+     * and then use {@link MemoryA#putDouble(double)} to append all values in row-major order.
+     */
     public void putDouble(int flatIndex, double value) {
         assert ColumnType.decodeArrayElementType(type) == ColumnType.DOUBLE : "putting DOUBLE to a non-DOUBLE array";
         assert flatIndex >= 0 : "negative flatIndex";
+        assert ptr > 0 : "ptr <= 0";
         long offset = flatIndex * DOUBLE_BYTES;
-        ensureCapacity(offset + DOUBLE_BYTES);
+        assert size >= offset + DOUBLE_BYTES : "size < offset + DOUBLE_BYTES";
         Unsafe.getUnsafe().putDouble(ptr + offset, value);
     }
 
+    /**
+     * Puts a long to a randomly-accessed flat index of the array. If you're populating
+     * the whole array, prefer obtaining {@code MemoryA} via {@link #startMemoryA()},
+     * and then use {@link MemoryA#putLong(long)} to append all values in row-major order.
+     */
     public void putLong(int flatIndex, long value) {
         assert ColumnType.decodeArrayElementType(type) == ColumnType.LONG : "putting LONG to a non-LONG array";
         assert flatIndex >= 0 : "negative flatIndex";
         long offset = flatIndex * LONG_BYTES;
-        ensureCapacity(offset + LONG_BYTES);
+        assert size >= offset + LONG_BYTES : "size < offset + LONG_BYTES";
         Unsafe.getUnsafe().putLong(ptr + offset, value);
+    }
+
+    public long size() {
+        return borrowedFlatView().size();
     }
 
     public MemoryA startMemoryA() {
@@ -123,17 +142,17 @@ public final class DirectArray extends MutableArray implements Mutable {
     private void ensureCapacity(long requiredCapacity) {
         if (ptr == 0) {
             ptr = Unsafe.malloc(requiredCapacity, MEM_TAG);
-            capacity = requiredCapacity;
-        } else if (capacity < requiredCapacity) {
-            long newCapacity = capacity;
+            size = requiredCapacity;
+        } else if (size < requiredCapacity) {
+            long newCapacity = size;
             while (newCapacity < requiredCapacity) {
                 newCapacity = newCapacity * 3 / 2;
                 if (newCapacity < 0) {
                     throw CairoException.nonCritical().put("array capacity overflow");
                 }
             }
-            ptr = Unsafe.realloc(ptr, capacity, newCapacity, MEM_TAG);
-            capacity = newCapacity;
+            ptr = Unsafe.realloc(ptr, size, newCapacity, MEM_TAG);
+            size = newCapacity;
         }
     }
 
@@ -192,7 +211,7 @@ public final class DirectArray extends MutableArray implements Mutable {
         @Override
         public void putDouble(double value) {
             assert ptr != 0 : "ptr == 0";
-            assert appendOffset <= capacity - Double.BYTES : "appending beyond limit";
+            assert appendOffset <= size - Double.BYTES : "appending beyond limit";
             Unsafe.getUnsafe().putDouble(ptr + appendOffset, value);
             appendOffset += Double.BYTES;
         }
@@ -210,7 +229,7 @@ public final class DirectArray extends MutableArray implements Mutable {
         @Override
         public void putLong(long value) {
             assert ptr != 0 : "ptr == 0";
-            assert appendOffset <= capacity - Long.BYTES : "appending beyond limit";
+            assert appendOffset <= size - Long.BYTES : "appending beyond limit";
             Unsafe.getUnsafe().putLong(ptr + appendOffset, value);
             appendOffset += Long.BYTES;
         }

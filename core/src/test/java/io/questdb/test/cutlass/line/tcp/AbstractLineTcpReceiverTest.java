@@ -107,7 +107,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected double commitIntervalFraction = 0.5;
     protected boolean disconnectOnError = false;
     protected long maintenanceInterval = 25;
-    protected int maxMeasurementSize = 256;
+    protected int maxMeasurementSize = 1024;
     protected long minIdleMsBeforeWriterRelease = 30000;
     protected int msgBufferSize = 256 * 1024;
     protected NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
