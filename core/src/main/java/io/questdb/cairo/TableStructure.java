@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.mv.MatViewDefinition;
+
 public interface TableStructure {
 
     int getColumnCount();
@@ -34,9 +36,11 @@ public interface TableStructure {
 
     int getIndexBlockCapacity(int columnIndex);
 
-    int getMaxUncommittedRows();
+    default MatViewDefinition getMatViewDefinition() {
+        return null;
+    }
 
-    long getMetadataVersion();
+    int getMaxUncommittedRows();
 
     long getO3MaxLag();
 
@@ -56,13 +60,19 @@ public interface TableStructure {
      * Zero means "no TTL".
      */
     default int getTtlHoursOrMonths() {
-        // TTL disabled by default
-        return 0;
+        return 0; // TTL disabled by default
+    }
+
+    default void init(TableToken tableToken) {
     }
 
     boolean isDedupKey(int columnIndex);
 
     boolean isIndexed(int columnIndex);
+
+    default boolean isMatView() {
+        return false;
+    }
 
     boolean isWalEnabled();
 }

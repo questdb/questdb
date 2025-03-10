@@ -28,6 +28,7 @@ import io.questdb.cairo.BinaryAlterSerializer;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.IDGeneratorFactory;
 import io.questdb.cairo.IDGenerator;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
@@ -91,9 +92,9 @@ public class TableSequencerImpl implements TableSequencer {
             path.concat(tableToken.getDirName()).concat(SEQ_DIR);
             rootLen = path.size();
 
-            metadata = new SequencerMetadata(ff);
+            metadata = new SequencerMetadata(ff, configuration.getCommitMode());
             metadataSvc = new SequencerMetadataService(metadata, tableToken);
-            walIdGenerator = new IDGenerator(configuration, WAL_INDEX_FILE_NAME);
+            walIdGenerator = IDGeneratorFactory.newIDGenerator(configuration, WAL_INDEX_FILE_NAME, configuration.getIdGenerateBatchStep() < 0 ? 512 : configuration.getIdGenerateBatchStep());
             tableTransactionLog = new TableTransactionLog(configuration);
             microClock = configuration.getMicrosecondClock();
             if (tableStruct != null) {

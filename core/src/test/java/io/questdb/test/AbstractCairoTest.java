@@ -449,6 +449,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     public static void println(RecordMetadata metadata, RecordCursor cursor) {
+        println(metadata, cursor, sink);
+    }
+
+    public static void println(RecordMetadata metadata, RecordCursor cursor, StringSink sink) {
         sink.clear();
         CursorPrinter.println(metadata, sink);
 
@@ -528,9 +532,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
         memoryUsage = -1;
         forEachNode(QuestDBTestNode::setUpGriffin);
         sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
+        sqlExecutionContext.setParallelGroupByEnabled(configuration.isSqlParallelGroupByEnabled());
+        sqlExecutionContext.setParallelReadParquetEnabled(configuration.isSqlParallelReadParquetEnabled());
         // 30% chance to enable paranoia checking FD mode
         Files.PARANOIA_FD_MODE = new Rnd(System.nanoTime(), System.currentTimeMillis()).nextInt(100) > 70;
         engine.getMetrics().clear();
+        engine.getMatViewGraph().clear();
     }
 
     @After
@@ -652,6 +659,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     case ColumnType.STRING:
                         CharSequence s = record.getStrA(i);
                         if (s != null) {
+                            Assert.assertEquals(s.length(), record.getStrLen(i));
                             CharSequence b = record.getStrB(i);
                             if (b instanceof AbstractCharSequence) {
                                 // AbstractCharSequence are usually mutable. We cannot have same mutable instance for A and B
@@ -665,7 +673,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     case ColumnType.BINARY:
                         BinarySequence bs = record.getBin(i);
                         if (bs != null) {
-                            Assert.assertEquals(record.getBin(i).length(), record.getBinLen(i));
+                            Assert.assertEquals(bs.length(), record.getBinLen(i));
                         } else {
                             Assert.assertEquals(TableUtils.NULL_LEN, record.getBinLen(i));
                         }
@@ -1257,6 +1265,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 expectAscendingOrder = tsDesc.substring(position + 3).equalsIgnoreCase("asc");
             }
 
+            if (expectAscendingOrder) {
+                Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_FORWARD, factory.getScanDirection());
+            } else {
+                Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_BACKWARD, factory.getScanDirection());
+            }
+
             int index = factory.getMetadata().getColumnIndexQuiet(expectedTimestamp);
             Assert.assertTrue("Column '" + expectedTimestamp + "' can't be found in metadata", index > -1);
             Assert.assertNotEquals("Expected non-negative value as timestamp index", -1, index);
@@ -1267,6 +1281,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void assertTimestampColumnValues(RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext, boolean isAscending) throws SqlException {
         int index = factory.getMetadata().getTimestampIndex();
+        Assert.assertEquals(ColumnType.TIMESTAMP, factory.getMetadata().getColumnType(index));
         long timestamp = isAscending ? Long.MIN_VALUE : Long.MAX_VALUE;
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             final Record record = cursor.getRecord();

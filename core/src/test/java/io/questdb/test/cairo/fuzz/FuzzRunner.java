@@ -201,7 +201,6 @@ public class FuzzRunner {
                 purgePartitionThread.start();
                 applyThreads.add(purgePartitionThread);
             }
-
         } finally {
             for (int i = 0; i < threads.size(); i++) {
                 int k = i;
@@ -390,6 +389,10 @@ public class FuzzRunner {
                 }
             }
         }
+    }
+
+    public void checkNoSuspendedTables() {
+        engine.getTableSequencerAPI().forAllWalTables(new ObjHashSet<>(), false, checkNoSuspendedTablesRef);
     }
 
     @Before
@@ -614,7 +617,7 @@ public class FuzzRunner {
         long randomRow = rnd.nextLong(recordCount);
         sink.clear();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            TestUtils.printSql(compiler, sqlExecutionContext, "select \"" + symbolColumnName + "\" as a from " + expectedTableName + " limit " + randomRow + ", 1", sink);
+            TestUtils.printSql(compiler, sqlExecutionContext, "select \"" + symbolColumnName + "\" as a from " + expectedTableName + " limit " + randomRow + ", " + (randomRow + 1), sink);
             String prefix = "a\n";
             String randomValue = sink.length() > prefix.length() + 2 ? sink.subSequence(prefix.length(), sink.length() - 1).toString() : null;
             String indexedWhereClause = " where \"" + symbolColumnName + "\" = " + (randomValue == null ? "null" : "'" + randomValue + "'");

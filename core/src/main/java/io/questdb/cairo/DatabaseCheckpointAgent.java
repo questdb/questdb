@@ -24,6 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.mv.MatViewGraph;
+import io.questdb.cairo.mv.MatViewRefreshState;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
@@ -45,6 +49,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.DateFormat;
@@ -189,12 +194,17 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     path.trimTo(checkpointDbLen).$();
 
                     ObjHashSet<TableToken> tables = new ObjHashSet<>();
+                    ObjList<TableToken> ordered = new ObjList<>();
                     engine.getTableTokens(tables, false);
+                    engine.getMatViewGraph().orderByDependentViews(tables, ordered);
 
-                    try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+                    try (
+                            MemoryCMARW mem = Vm.getCMARWInstance();
+                            BlockFileWriter writer = new BlockFileWriter(ff, configuration.getCommitMode())
+                    ) {
                         // Copy metadata files for all tables.
-                        for (int t = 0, n = tables.size(); t < n; t++) {
-                            TableToken tableToken = tables.get(t);
+                        for (int t = 0, n = ordered.size(); t < n; t++) {
+                            TableToken tableToken = ordered.get(t);
                             if (engine.isTableDropped(tableToken)) {
                                 LOG.info().$("skipping, table is dropped [table=").$(tableToken).I$();
                                 continue;
@@ -217,6 +227,26 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                 if (engine.isTableDropped(tableToken)) {
                                     LOG.info().$("skipping, table is concurrently dropped [table=").$(tableToken).I$();
                                     break;
+                                }
+
+                                // For mat views, copy view definition and state before copying the underlying table.
+                                // This way, the state copy will never hold a txn number that is newer than what's
+                                // in the table copy (otherwise, such situation may lead to lost view refresh data).
+                                if (tableToken.isMatView()) {
+                                    final MatViewGraph graph = engine.getMatViewGraph();
+                                    final MatViewRefreshState state = graph.getViewRefreshState(tableToken);
+                                    final MatViewDefinition matViewDefinition = (state != null)
+                                            ? state.getViewDefinition() : graph.getViewDefinition(tableToken);
+                                    if (matViewDefinition != null) {
+                                        writer.of(path.trimTo(rootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                                        MatViewRefreshState.append(state, writer);
+                                        writer.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                                        MatViewDefinition.append(matViewDefinition, writer);
+
+                                        LOG.info().$("materialized view definition and state included in the checkpoint [view=").$(tableToken).I$();
+                                    } else {
+                                        LOG.info().$("materialized view definition or state not found [view=").$(tableToken).I$();
+                                    }
                                 }
 
                                 TableReader reader = null;
@@ -269,6 +299,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         mem.putLong(lastTxn); // write lastTxn to checkpoint's "db/tableName/txn_seq/_txn"
                                         mem.close(true, Vm.TRUNCATE_TO_POINTER);
                                     }
+
                                     LOG.info().$("table included in the checkpoint [table=").$(tableToken).I$();
                                     break;
                                 } finally {
@@ -312,17 +343,16 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private void rebuildSymbolFiles(Path tablePath, AtomicInteger recoveredSymbolFiles, int pathTableLen) {
         tablePath.trimTo(pathTableLen);
         for (int i = 0; i < tableMetadata.getColumnCount(); i++) {
-
-            int columnType = tableMetadata.getColumnType(i);
+            final int columnType = tableMetadata.getColumnType(i);
             if (ColumnType.isSymbol(columnType)) {
-                int cleanSymbolCount = txWriter.getSymbolValueCount(tableMetadata.getDenseSymbolIndex(i));
-                String columnName = tableMetadata.getColumnName(i);
+                final int cleanSymbolCount = txWriter.getSymbolValueCount(tableMetadata.getDenseSymbolIndex(i));
+                final String columnName = tableMetadata.getColumnName(i);
                 LOG.info().$("rebuilding symbol files [table=").$(tablePath)
-                        .$(", column=").$(columnName)
+                        .$(", column=").utf8(columnName)
                         .$(", count=").$(cleanSymbolCount)
                         .I$();
 
-                int writerIndex = tableMetadata.getWriterIndex(i);
+                final int writerIndex = tableMetadata.getWriterIndex(i);
                 symbolMapUtil.rebuildSymbolFiles(
                         configuration,
                         tablePath,
@@ -409,7 +439,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 if (!ff.unlinkOrRemove(partitionCleanPath, LOG)) {
                     LOG.info()
                             .$("failed to purge unused partition version [path=").$(partitionCleanPath)
-                            .$(", errno=").$(ff.errno()).I$();
+                            .$(", errno=").$(ff.errno())
+                            .I$();
                 } else {
                     LOG.info().$("purged unused partition version [path=").$(partitionCleanPath).I$();
                 }
@@ -615,66 +646,68 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             AtomicInteger recoveredWalFiles = new AtomicInteger();
             AtomicInteger symbolFilesCount = new AtomicInteger();
             srcPath.trimTo(checkpointRootLen);
-            ff.iterateDir(srcPath.$(), (pUtf8NameZ, type) -> {
-                if (ff.isDirOrSoftLinkDirNoDots(srcPath, snapshotDbLen, pUtf8NameZ, type)) {
-                    dstPath.trimTo(rootLen).concat(pUtf8NameZ);
-                    int srcPathLen = srcPath.size();
-                    int dstPathLen = dstPath.size();
+            ff.iterateDir(
+                    srcPath.$(), (pUtf8NameZ, type) -> {
+                        if (ff.isDirOrSoftLinkDirNoDots(srcPath, snapshotDbLen, pUtf8NameZ, type)) {
+                            dstPath.trimTo(rootLen).concat(pUtf8NameZ);
+                            int srcPathLen = srcPath.size();
+                            int dstPathLen = dstPath.size();
 
-                    copyOrError(srcPath, dstPath, ff, recoveredMetaFiles, TableUtils.META_FILE_NAME);
-                    copyOrError(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), ff, recoveredTxnFiles, TableUtils.TXN_FILE_NAME);
-                    copyOrError(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), ff, recoveredCVFiles, TableUtils.COLUMN_VERSION_FILE_NAME);
-                    // Reset _todo_ file otherwise TableWriter will start restoring metadata on open.
-                    TableUtils.resetTodoLog(ff, dstPath, dstPathLen, memFile);
-                    rebuildTableFiles(dstPath.trimTo(dstPathLen), symbolFilesCount);
+                            copyOrError(srcPath, dstPath, ff, recoveredMetaFiles, TableUtils.META_FILE_NAME);
+                            copyOrError(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), ff, recoveredTxnFiles, TableUtils.TXN_FILE_NAME);
+                            copyOrError(srcPath.trimTo(srcPathLen), dstPath.trimTo(dstPathLen), ff, recoveredCVFiles, TableUtils.COLUMN_VERSION_FILE_NAME);
+                            // Reset _todo_ file otherwise TableWriter will start restoring metadata on open.
+                            TableUtils.resetTodoLog(ff, dstPath, dstPathLen, memFile);
+                            rebuildTableFiles(dstPath.trimTo(dstPathLen), symbolFilesCount);
 
-                    // Go inside SEQ_DIR
-                    srcPath.trimTo(srcPathLen).concat(WalUtils.SEQ_DIR);
-                    srcPathLen = srcPath.size();
-                    srcPath.concat(TableUtils.META_FILE_NAME);
+                            // Go inside SEQ_DIR
+                            srcPath.trimTo(srcPathLen).concat(WalUtils.SEQ_DIR);
+                            srcPathLen = srcPath.size();
+                            srcPath.concat(TableUtils.META_FILE_NAME);
 
-                    dstPath.trimTo(dstPathLen).concat(WalUtils.SEQ_DIR);
-                    dstPathLen = dstPath.size();
-                    dstPath.concat(TableUtils.META_FILE_NAME);
+                            dstPath.trimTo(dstPathLen).concat(WalUtils.SEQ_DIR);
+                            dstPathLen = dstPath.size();
+                            dstPath.concat(TableUtils.META_FILE_NAME);
 
-                    if (ff.exists(srcPath.$())) {
-                        if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
-                            throw CairoException.critical(ff.errno())
-                                    .put("Checkpoint recovery failed. Aborting QuestDB startup. Cause: Error could not copy meta file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
-                        } else {
-                            srcPath.trimTo(srcPathLen);
-                            openSmallFile(ff, srcPath, srcPathLen, memFile, TableUtils.TXN_FILE_NAME, MemoryTag.MMAP_TX_LOG);
-                            long newMaxTxn = memFile.getLong(0L); // snapshot/db/tableName/txn_seq/_txn
+                            if (ff.exists(srcPath.$())) {
+                                if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
+                                    throw CairoException.critical(ff.errno())
+                                            .put("Checkpoint recovery failed. Aborting QuestDB startup. Cause: Error could not copy meta file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
+                                } else {
+                                    srcPath.trimTo(srcPathLen);
+                                    openSmallFile(ff, srcPath, srcPathLen, memFile, TableUtils.TXN_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+                                    long newMaxTxn = memFile.getLong(0L); // snapshot/db/tableName/txn_seq/_txn
 
-                            memFile.smallFile(ff, dstPath.$(), MemoryTag.MMAP_SEQUENCER_METADATA);
-                            dstPath.trimTo(dstPathLen);
-                            openSmallFile(ff, dstPath, dstPathLen, memFile, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);
+                                    memFile.smallFile(ff, dstPath.$(), MemoryTag.MMAP_SEQUENCER_METADATA);
+                                    dstPath.trimTo(dstPathLen);
+                                    openSmallFile(ff, dstPath, dstPathLen, memFile, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);
 
-                            if (newMaxTxn >= 0) {
-                                dstPath.trimTo(dstPathLen);
-                                openSmallFile(ff, dstPath, dstPathLen, memFile, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
-                                // get oldMaxTxn from dbRoot/tableName/txn_seq/_txnlog
-                                long oldMaxTxn = memFile.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
-                                if (newMaxTxn < oldMaxTxn) {
-                                    // update header of dbRoot/tableName/txn_seq/_txnlog with new values
-                                    memFile.putLong(TableTransactionLogFile.MAX_TXN_OFFSET_64, newMaxTxn);
+                                    if (newMaxTxn >= 0) {
+                                        dstPath.trimTo(dstPathLen);
+                                        openSmallFile(ff, dstPath, dstPathLen, memFile, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+                                        // get oldMaxTxn from dbRoot/tableName/txn_seq/_txnlog
+                                        long oldMaxTxn = memFile.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
+                                        if (newMaxTxn < oldMaxTxn) {
+                                            // update header of dbRoot/tableName/txn_seq/_txnlog with new values
+                                            memFile.putLong(TableTransactionLogFile.MAX_TXN_OFFSET_64, newMaxTxn);
+                                            LOG.info()
+                                                    .$("updated ").$(TXNLOG_FILE_NAME).$(" file [path=").$(dstPath)
+                                                    .$(", oldMaxTxn=").$(oldMaxTxn)
+                                                    .$(", newMaxTxn=").$(newMaxTxn)
+                                                    .I$();
+                                        }
+                                    }
+
+                                    recoveredWalFiles.incrementAndGet();
                                     LOG.info()
-                                            .$("updated ").$(TXNLOG_FILE_NAME).$(" file [path=").$(dstPath)
-                                            .$(", oldMaxTxn=").$(oldMaxTxn)
-                                            .$(", newMaxTxn=").$(newMaxTxn)
+                                            .$("recovered ").$(TableUtils.META_FILE_NAME).$(" file [src=").$(srcPath)
+                                            .$(", dst=").$(dstPath)
                                             .I$();
                                 }
                             }
-
-                            recoveredWalFiles.incrementAndGet();
-                            LOG.info()
-                                    .$("recovered ").$(TableUtils.META_FILE_NAME).$(" file [src=").$(srcPath)
-                                    .$(", dst=").$(dstPath)
-                                    .I$();
                         }
                     }
-                }
-            });
+            );
             LOG.info()
                     .$("checkpoint recovered [metaFilesCount=").$(recoveredMetaFiles.get())
                     .$(", txnFilesCount=").$(recoveredTxnFiles.get())

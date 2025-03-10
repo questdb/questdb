@@ -24,14 +24,22 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.griffin.FunctionFactoryCacheBuilder;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.HashMap;
 import java.util.Map;
 
 public class MetadataFunctionTest extends AbstractCairoTest {
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        FunctionFactoryCacheBuilder.clearCache();
+        AbstractCairoTest.setUpStatic();
+    }
 
     @Test
     public void testInstanceName() throws SqlException {

@@ -116,7 +116,6 @@ import io.questdb.std.Rnd;
 import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.StationaryNanosClock;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Zip;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.AbstractCharSequence;
@@ -173,13 +172,10 @@ public class IODispatcherTest extends AbstractTest {
             "{\"ddl\":\"OK\"}\r\n" +
             "00\r\n" +
             "\r\n";
-    private static final RescheduleContext EmptyRescheduleContext = (retry) -> {
-    };
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
     private static final String QUERY_TIMEOUT_SELECT = "select i, avg(l), max(l) from t group by i order by i asc limit 3";
     private static final String QUERY_TIMEOUT_TABLE_DDL = "create table t as (select cast(x%10 as int) as i, x as l from long_sequence(100))";
-    private static TestHttpClient testHttpClient;
-    private final String ValidImportResponse = "HTTP/1.1 200 OK\r\n" +
+    private static final String VALID_IMPORT_RESPONSE = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
             "Transfer-Encoding: chunked\r\n" +
@@ -203,6 +199,9 @@ public class IODispatcherTest extends AbstractTest {
             "\r\n" +
             "00\r\n" +
             "\r\n";
+    private static final RescheduleContext emptyRescheduleContext = (retry) -> {
+    };
+    private static TestHttpClient testHttpClient;
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
@@ -1696,7 +1695,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testImportColumnMismatch() throws Exception {
         testImport(
-                ValidImportResponse,
+                VALID_IMPORT_RESPONSE,
                 "POST /upload HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
                         "User-Agent: curl/7.64.0\r\n" +
@@ -2298,7 +2297,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testImportMultipleOnSameConnection()
             throws Exception {
         testImport(
-                ValidImportResponse,
+                VALID_IMPORT_RESPONSE,
                 "POST /upload HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
                         "User-Agent: curl/7.64.0\r\n" +
@@ -2360,7 +2359,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testImportMultipleOnSameConnectionFragmented() throws Exception {
         testImport(
-                ValidImportResponse,
+                VALID_IMPORT_RESPONSE,
                 "POST /upload HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
                         "User-Agent: curl/7.64.0\r\n" +
@@ -2644,7 +2643,7 @@ public class IODispatcherTest extends AbstractTest {
                     sendAndReceive(
                             nf,
                             request,
-                            ValidImportResponse,
+                            VALID_IMPORT_RESPONSE,
                             3,
                             0,
                             false
@@ -5272,7 +5271,6 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     @Ignore("TODO: fix this test. the gzipped expected response makes it hard to change")
     public void testJsonQueryWithCompressedResults1() throws Exception {
-        Zip.init();
         assertMemoryLeak(() -> {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = root;
@@ -5320,7 +5318,6 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     @Ignore("TODO: fix this test. the gzipped expected response makes it hard to change")
     public void testJsonQueryWithCompressedResults2() throws Exception {
-        Zip.init();
         assertMemoryLeak(() -> {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = root;
@@ -5918,7 +5915,6 @@ public class IODispatcherTest extends AbstractTest {
     public void testOnAllocationExceptionDispatcherDoesNotLeakConnections() throws Exception {
         LOG.info().$("started maxConnections").$();
         assertMemoryLeak(() -> {
-            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
             final int activeConnectionLimit = 10;
 
             final IODispatcherConfiguration configuration = new DefaultIODispatcherConfiguration() {
@@ -8712,7 +8708,7 @@ public class IODispatcherTest extends AbstractTest {
         DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
 
         String telemetry = TelemetryTask.TABLE_NAME;
-        TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false, false, false, true);
+        TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false, false, false, false, true);
         try (
                 TableReader reader = new TableReader(configuration, telemetryTableName);
                 TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
@@ -8798,7 +8794,7 @@ public class IODispatcherTest extends AbstractTest {
             IODispatcher<HttpConnectionContext> dispatcher
     ) {
         try {
-            return context.handleClientOperation(operation, selector, IODispatcherTest.EmptyRescheduleContext);
+            return context.handleClientOperation(operation, selector, IODispatcherTest.emptyRescheduleContext);
         } catch (HeartBeatException e) {
             dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
         } catch (PeerIsSlowToReadException e) {

@@ -40,18 +40,18 @@ import static io.questdb.cairo.TableUtils.TABLE_DOES_NOT_EXIST;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 import static io.questdb.test.tools.TestUtils.getSystemTablesCount;
 
+/**
+ * DROP can be followed by:
+ * - TABLE name [;]
+ * - TABLES name(,name)* [;]
+ * - ALL [;] or legacy ALL TABLES [;]
+ * - MATERIALIZED VIEW name [;] (these are in MatViewTest)
+ */
 public class DropStatementTest extends AbstractCairoTest {
-    /* **
-     * DROP can be followed by:
-     * - TABLE name [;]
-     * - TABLES name(,name)* [;]
-     * - ALL TABLES [;]
-     */
-
     private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
 
     @Test
-    public void testDropDatabase() throws Exception {
+    public void testDropDatabase0() throws Exception {
         String tab0 = "public table";
         String tab1 = "shy table";
         String tab2 = "japanese table 向上";
@@ -61,6 +61,23 @@ public class DropStatementTest extends AbstractCairoTest {
             execute("CREATE TABLE \"" + tab2 + "\" (s string)");
 
             execute("DROP ALL TABLES");
+            tableBucket.clear();
+            engine.getTableTokens(tableBucket, true);
+            Assert.assertEquals(getSystemTablesCount(engine), tableBucket.size());
+        });
+    }
+
+    @Test
+    public void testDropDatabase1() throws Exception {
+        String tab0 = "public table";
+        String tab1 = "shy table";
+        String tab2 = "japanese table 向上";
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE \"" + tab0 + "\" (s string)");
+            execute("CREATE TABLE \"" + tab1 + "\" (s string)");
+            execute("CREATE TABLE \"" + tab2 + "\" (s string)");
+
+            execute("DROP ALL");
             tableBucket.clear();
             engine.getTableTokens(tableBucket, true);
             Assert.assertEquals(getSystemTablesCount(engine), tableBucket.size());
@@ -126,7 +143,7 @@ public class DropStatementTest extends AbstractCairoTest {
                 assertExceptionNoLeakCheck("drop i_am_missing");
             } catch (SqlException e) {
                 Assert.assertEquals(5, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "'table' or 'all tables' expected");
+                TestUtils.assertContains(e.getFlyweightMessage(), "'table' or 'materialized view' or 'all' expected");
             }
         });
     }
@@ -198,7 +215,7 @@ public class DropStatementTest extends AbstractCairoTest {
             } catch (CairoException expected) {
                 TestUtils.assertContains(
                         expected.getFlyweightMessage(),
-                        "failed to drop tables ['public table': [-1] could not lock 'public table' [reason='busyReader']]"
+                        "failed to drop tables and materialized views ['public table': [-1] could not lock 'public table' [reason='busyReader']]"
                 );
             }
             tableBucket.clear();
@@ -223,7 +240,7 @@ public class DropStatementTest extends AbstractCairoTest {
             } catch (CairoException expected) {
                 TestUtils.assertContains(
                         expected.getFlyweightMessage(),
-                        "failed to drop tables ['public table': [-1] could not lock 'public table' [reason='test']]"
+                        "failed to drop tables and materialized views ['public table': [-1] could not lock 'public table' [reason='test']]"
                 );
             }
             tableBucket.clear();

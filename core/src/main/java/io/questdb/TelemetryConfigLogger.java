@@ -32,7 +32,11 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.*;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
@@ -164,7 +168,7 @@ public class TelemetryConfigLogger implements Closeable {
         } catch (CairoException ex) {
             LOG.error()
                     .$("could not open [table=`").utf8(TELEMETRY_CONFIG_TABLE_NAME)
-                    .$("`, ex=").$(ex.getFlyweightMessage())
+                    .$("`, msg=").$(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
         }

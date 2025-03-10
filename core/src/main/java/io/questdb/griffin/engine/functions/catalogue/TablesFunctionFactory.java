@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -53,6 +54,7 @@ public class TablesFunctionFactory implements FunctionFactory {
     private static final int DESIGNATED_TIMESTAMP_COLUMN = 2;
     private static final int DIRECTORY_NAME_COLUMN = 7;
     private static final int ID_COLUMN = 0;
+    private static final int IS_MAT_VIEW_COLUMN = 11;
     private static final int MAX_UNCOMMITTED_ROWS_COLUMN = 4;
     private static final RecordMetadata METADATA;
     private static final int O3_MAX_LAG_COLUMN = 5;
@@ -172,6 +174,8 @@ public class TablesFunctionFactory implements FunctionFactory {
                             return table.getWalEnabled();
                         case DEDUP_NAME_COLUMN:
                             return table.getIsDedup();
+                        case IS_MAT_VIEW_COLUMN:
+                            return table.getTableToken().isMatView();
                         default:
                             return false;
                     }
@@ -228,8 +232,7 @@ public class TablesFunctionFactory implements FunctionFactory {
 
                 @Override
                 public int getStrLen(int col) {
-                    CharSequence str = getStrA(col);
-                    return str != null ? str.length() : -1;
+                    return TableUtils.lengthOf(getStrA(col));
                 }
 
                 private String getTtlUnit(int ttl) {
@@ -281,6 +284,7 @@ public class TablesFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("dedup", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("ttlValue", ColumnType.INT));
         metadata.add(new TableColumnMetadata("ttlUnit", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("matView", ColumnType.BOOLEAN));
         METADATA = metadata;
     }
 }

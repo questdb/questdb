@@ -35,7 +35,7 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
     @Override
     public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
         final NullCursor cursor = getCursor(cachedInstance);
-        // Cursor only returns records when key is for the NULL value
+        // Cursor only returns records when key is for the NULL value.
         cursor.maxValue = key == 0 ? maxValue - minValue + 1 : 0;
         cursor.value = 0;
         return cursor;

@@ -241,6 +241,15 @@ public class ColumnVersionReader implements Closeable, Mutable {
         version = -1;
     }
 
+    /**
+     * Copies column versions from the given reader.
+     */
+    public void readFrom(ColumnVersionReader columnVersionReader) {
+        this.version = columnVersionReader.version;
+        cachedColumnVersionList.clear();
+        cachedColumnVersionList.addAll(columnVersionReader.cachedColumnVersionList);
+    }
+
     public void readSafe(MillisecondClock microsecondClock, long spinLockTimeout) {
         final long tick = microsecondClock.getTicks();
         while (true) {
@@ -276,7 +285,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
             }
 
             if (microsecondClock.getTicks() - tick > spinLockTimeout) {
-                LOG.error().$("Column Version read timeout [timeout=").$(spinLockTimeout).utf8("ms]").$();
+                LOG.error().$("Column Version read timeout [timeout=").$(spinLockTimeout).$("ms]").$();
                 throw CairoException.critical(0).put("Column Version read timeout");
             }
             Os.pause();

@@ -41,6 +41,8 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
@@ -59,6 +61,58 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         this.tokenPosition = tokenPosition;
     }
 
+    public static void inVolumeToSink(CairoConfiguration configuration, CairoTable table, CharSink<?> sink) {
+        if (table.getIsSoftLink()) {
+            sink.putAscii(", IN VOLUME ");
+
+            Path.clearThreadLocals();
+            Path softLinkPath = Path.getThreadLocal(configuration.getDbRoot()).concat(table.getDirectoryName());
+            Path otherVolumePath = Path.getThreadLocal2("");
+
+            configuration.getFilesFacade().readLink(softLinkPath, otherVolumePath);
+            otherVolumePath.trimTo(otherVolumePath.size()
+                    - table.getDirectoryName().length() // look for directory
+                    - 1 // get rid of trailing slash
+            );
+
+            final CharSequence alias = configuration.getVolumeDefinitions().resolvePath(otherVolumePath.asAsciiCharSequence());
+            if (alias == null) {
+                throw CairoException.nonCritical().put("could not find volume alias for table [table=").put(table.getTableToken()).put(']');
+            } else {
+                sink.put(alias);
+            }
+        }
+    }
+
+    public static void ttlToSink(int ttl, CharSink<?> sink) {
+        if (ttl == 0) {
+            return;
+        }
+        String unit;
+        if (ttl > 0) {
+            unit = "HOUR";
+            if (ttl % 24 == 0) {
+                unit = "DAY";
+                ttl /= 24;
+                if (ttl % 7 == 0) {
+                    unit = "WEEK";
+                    ttl /= 7;
+                }
+            }
+        } else {
+            ttl = -ttl;
+            unit = "MONTH";
+            if (ttl % 12 == 0) {
+                unit = "YEAR";
+                ttl /= 12;
+            }
+        }
+        sink.putAscii(" TTL ").put(ttl).put(' ').putAscii(unit);
+        if (ttl > 1) {
+            sink.put('S');
+        }
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         return cursor.of(executionContext, tableToken, tokenPosition);
@@ -73,6 +127,12 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
     public void toPlan(PlanSink sink) {
         sink.type("show_create_table");
         sink.meta("of").val(tableToken.getTableName());
+    }
+
+    @Override
+    protected void _close() {
+        super._close();
+        Misc.free(cursor);
     }
 
     public static class ShowCreateTableCursor implements NoRandomAccessRecordCursor {
@@ -98,40 +158,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
             if (!hasRun) {
                 sink.clear();
                 final CairoConfiguration config = executionContext.getCairoEngine().getConfiguration();
-
-                // CREATE TABLE table_name
-                putCreateTable();
-
-                // column_name TYPE
-                putColumns(config);
-
-                // timestamp(ts)
-                if (table.getTimestampIndex() != -1) {
-                    putTimestamp();
-
-                    // PARTITION BY unit
-                    putPartitionBy();
-
-                    // TTL n unit
-                    putTtl();
-
-                    // (BYPASS) WAL
-                    putWal();
-                }
-
-                // WITH maxUncommittedRows=123, o3MaxLag=456s
-                putWith();
-
-                // IN VOLUME OTHER_VOLUME
-                putInVolume(config);
-
-                // DEDUP UPSERT(key1, key2)
-                putDedup();
-
-                // placeholder
-                putAdditional();
-
-                sink.putAscii(';');
+                showCreateTable(config);
 
                 hasRun = true;
                 return true;
@@ -139,7 +166,11 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
             return false;
         }
 
-        public ShowCreateTableCursor of(SqlExecutionContext executionContext, TableToken tableToken, int tokenPosition) throws SqlException {
+        public ShowCreateTableCursor of(
+                SqlExecutionContext executionContext,
+                TableToken tableToken,
+                int tokenPosition
+        ) throws SqlException {
             this.tableToken = tableToken;
             this.executionContext = executionContext;
             try (MetadataCacheReader metadataRO = executionContext.getCairoEngine().getMetadataCache().readLock()) {
@@ -151,6 +182,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                     throw TableReferenceOutOfDateException.of(this.tableToken);
                 }
             }
+
             toTop();
             return this;
         }
@@ -167,38 +199,37 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         }
 
         private void putTtl() {
-            int ttl = table.getTtlHoursOrMonths();
-            if (ttl == 0) {
-                return;
+            ttlToSink(table.getTtlHoursOrMonths(), sink);
+        }
+
+        private void showCreateTable(CairoConfiguration config) {
+            // CREATE TABLE table_name
+            putCreateTable();
+            // column_name TYPE
+            putColumns(config);
+            // timestamp(ts)
+            if (table.getTimestampIndex() != -1) {
+                putTimestamp();
+                // PARTITION BY unit
+                putPartitionBy();
+                // TTL n unit
+                putTtl();
+                // (BYPASS) WAL
+                putWal();
             }
-            String unit;
-            if (ttl > 0) {
-                unit = "HOUR";
-                if (ttl % 24 == 0) {
-                    unit = "DAY";
-                    ttl /= 24;
-                    if (ttl % 7 == 0) {
-                        unit = "WEEK";
-                        ttl /= 7;
-                    }
-                }
-            } else {
-                ttl = -ttl;
-                unit = "MONTH";
-                if (ttl % 12 == 0) {
-                    unit = "YEAR";
-                    ttl /= 12;
-                }
-            }
-            sink.putAscii(" TTL ").put(ttl).put(' ').putAscii(unit);
-            if (ttl > 1) {
-                sink.put('S');
-            }
+            // WITH maxUncommittedRows=123, o3MaxLag=456s
+            putWith();
+            // IN VOLUME OTHER_VOLUME
+            putInVolume(config);
+            // DEDUP UPSERT(key1, key2)
+            putDedup();
+            // placeholder
+            putAdditional();
+            sink.putAscii(';');
         }
 
         // placeholder, do not remove!
         protected void putAdditional() {
-
         }
 
         protected void putColumn(CairoConfiguration config, CairoColumn column) {
@@ -223,20 +254,17 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
 
                 if (column.getIsIndexed()) {
                     // INDEX CAPACITY value
-                    sink.putAscii(" INDEX CAPACITY ")
-                            .put(column.getIndexBlockCapacity());
+                    sink.putAscii(" INDEX CAPACITY ").put(column.getIndexBlockCapacity());
                 }
             }
         }
 
-        protected void putColumns(CairoConfiguration config) {
+        protected void putColumns(CairoConfiguration configuration) {
             for (int i = 0, n = table.getColumnCount(); i < n; i++) {
-                putColumn(config, table.getColumnQuiet(i));
-
+                putColumn(configuration, table.getColumnQuiet(i));
                 if (i < n - 1) {
                     sink.putAscii(',');
                 }
-
                 sink.putAscii('\n');
             }
             sink.putAscii(')');
@@ -269,28 +297,8 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
             }
         }
 
-        protected void putInVolume(CairoConfiguration config) {
-            if (table.getIsSoftLink()) {
-                sink.putAscii(", IN VOLUME ");
-
-                Path.clearThreadLocals();
-                Path softLinkPath = Path.getThreadLocal(config.getDbRoot()).concat(table.getDirectoryName());
-                Path otherVolumePath = Path.getThreadLocal2("");
-
-                config.getFilesFacade().readLink(softLinkPath, otherVolumePath);
-                otherVolumePath.trimTo(otherVolumePath.size()
-                        - table.getDirectoryName().length()  // look for directory
-                        - 1 // get rid of trailing slash
-                );
-
-                CharSequence alias = config.getVolumeDefinitions().resolvePath(otherVolumePath.asAsciiCharSequence());
-
-                if (alias == null) {
-                    throw CairoException.nonCritical().put("could not find volume alias for table [table=").put(tableToken).put(']');
-                } else {
-                    sink.put(alias);
-                }
-            }
+        protected void putInVolume(CairoConfiguration configuration) {
+            inVolumeToSink(configuration, table, sink);
         }
 
         protected void putPartitionBy() {

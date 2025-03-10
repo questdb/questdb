@@ -421,8 +421,8 @@ public class ColumnTypeConverter {
             }
         } catch (CairoException ex) {
             LOG.error().$("cannot read STRING column data vector size, column data is corrupt will fall back reading file sizes [srcFixFd=").$(srcFixFd)
+                    .$(", msg=").$(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
-                    .$(", error=").$(ex.getFlyweightMessage())
                     .I$();
             return false;
         }
@@ -1031,8 +1031,11 @@ public class ColumnTypeConverter {
 
     private static boolean stringFromChar(long srcAddr, CharSink<?> sink) {
         char value = Unsafe.getUnsafe().getChar(srcAddr);
-        sink.put(value);
-        return true;
+        if (value != 0) {
+            sink.put(value);
+            return true;
+        }
+        return false;
     }
 
     private static boolean stringFromDate(long srcAddr, CharSink<?> sink) {

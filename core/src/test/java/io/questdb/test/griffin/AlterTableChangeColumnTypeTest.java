@@ -853,7 +853,6 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     public void testSymbolToFixedConversions() throws Exception {
         assertMemoryLeak(() -> {
             assumeNonWal();
-
             testConvertFixedToVar("symbol");
         });
     }
@@ -972,13 +971,13 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         execute("alter table x alter column f64 type " + varTypeName, sqlExecutionContext);
         execute("alter table x alter column f32 type " + varTypeName, sqlExecutionContext);
         execute("alter table x alter column ch type " + varTypeName, sqlExecutionContext);
+        execute("alter table x alter column b type " + varTypeName, sqlExecutionContext);
         execute("alter table x alter column ts type " + varTypeName, sqlExecutionContext);
         execute("alter table x alter column dt type " + varTypeName, sqlExecutionContext);
-        execute("alter table x alter column b type " + varTypeName, sqlExecutionContext);
 
         assertSqlCursorsConvertedStrings(
-                "select * from x",
-                "select * from y"
+                "select * from y",
+                "select * from x"
         );
     }
 
@@ -1006,7 +1005,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         execute("insert into x(timestamp) values('2018-01-03T23:23')", sqlExecutionContext);
 
         execute("create table y as (" +
-                "select cast(guid as " + varType + ") as guid," +
+                "select" +
+                " cast(guid as " + varType + ") as guid," +
                 " cast(cast(rint as string) as " + varType + ") as rint," +
                 " cast(cast(ip as string) as " + varType + ") as ip," +
                 " cast(cast(i64 as string) as " + varType + ") as i64," +
@@ -1022,7 +1022,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                 "timestamp (timestamp) partition by DAY;", sqlExecutionContext);
 
         // Insert garbage data
-        execute("insert into y(guid, rint, ip, i64, i8, i16, f64, f32, ch, ts, dt, timestamp) values('abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', '2018-01-03T23:23:10')", sqlExecutionContext);
+        execute("insert into y(guid, rint, ip, i64, i8, i16, f64, f32, ch, ts, dt, timestamp) values('abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', '', 'abc', 'abc', '2018-01-03T23:23:10')", sqlExecutionContext);
         // Expect nulls
         execute("insert into x(timestamp) values('2018-01-03T23:23:10')", sqlExecutionContext);
 

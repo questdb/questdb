@@ -77,7 +77,7 @@ public class SqlUtilTest {
             SqlUtil.implicitCastCharAsGeoHash('c', ColumnType.getGeoHashTypeWithBits(bits));
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains("inconvertible value: c [CHAR -> GEOHASH(6b)]", e.getFlyweightMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: c [CHAR -> GEOHASH(6b)]");
         }
     }
 
@@ -693,7 +693,7 @@ public class SqlUtilTest {
             SqlUtil.implicitCastCharAsGeoHash(c, ColumnType.getGeoHashTypeWithBits(bits));
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains("inconvertible value: " + c + " [CHAR -> GEOHASH(1c)]", e.getFlyweightMessage());
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: " + c + " [CHAR -> GEOHASH(1c)]");
         }
     }
 

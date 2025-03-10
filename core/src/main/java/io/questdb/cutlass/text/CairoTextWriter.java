@@ -398,9 +398,15 @@ public class CairoTextWriter implements Closeable, Mutable {
                 break;
             case TableUtils.TABLE_EXISTS:
                 tableToken = engine.getTableTokenIfExists(tableName);
+                if (tableToken != null && tableToken.isMatView()) {
+                    throw CairoException.nonCritical()
+                            .put("cannot modify materialized view [view=")
+                            .put(tableToken.getTableName())
+                            .put(']');
+                }
                 if (overwrite) {
                     securityContext.authorizeTableDrop(tableToken);
-                    engine.dropTable(path, tableToken);
+                    engine.dropTableOrMatView(path, tableToken);
                     tableToken = createTable(names, detectedTypes, securityContext, path);
                     tableReCreated = true;
                     writer = engine.getTableWriterAPI(tableToken, WRITER_LOCK_REASON);
@@ -478,12 +484,6 @@ public class CairoTextWriter implements Closeable, Mutable {
         @Override
         public int getMaxUncommittedRows() {
             return maxUncommittedRows > -1 && PartitionBy.isPartitioned(partitionBy) ? maxUncommittedRows : configuration.getMaxUncommittedRows();
-        }
-
-        @Override
-        public long getMetadataVersion() {
-            // new table only
-            return 0;
         }
 
         @Override

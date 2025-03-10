@@ -72,8 +72,8 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
-    default boolean isThreadSafe() {
-        return getLeft().isThreadSafe() && getCenter().isThreadSafe() && getRight().isThreadSafe();
+    default boolean isNonDeterministic() {
+        return getLeft().isNonDeterministic() || getCenter().isNonDeterministic() || getRight().isNonDeterministic();
     }
 
     @Override
@@ -87,6 +87,11 @@ public interface TernaryFunction extends Function {
         boolean cc = getRight().isConstant();
 
         return (ac || arc) && (bc || brc) && (cc || crc) && (arc || brc || crc);
+    }
+
+    @Override
+    default boolean isThreadSafe() {
+        return getLeft().isThreadSafe() && getCenter().isThreadSafe() && getRight().isThreadSafe();
     }
 
     @Override

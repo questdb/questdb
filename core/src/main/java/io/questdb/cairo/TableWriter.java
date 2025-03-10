@@ -353,10 +353,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.engine = cairoEngine;
         this.lastWalCommitTimestampMicros = configuration.getMicrosecondClock().getTicks();
         try {
-            this.path = new Path().of(root);
+            this.path = new Path();
+            path.of(root);
             this.pathRootSize = path.size();
             path.concat(tableToken);
-            this.other = new Path().of(root).concat(tableToken);
+            this.other = new Path();
+            other.of(root).concat(tableToken);
             this.pathSize = path.size();
             if (lock) {
                 lock();
@@ -635,8 +637,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ff.fsyncAndClose(openRO(ff, path.$(), LOG));
                 } catch (CairoException e) {
                     LOG.error().$("could not fsync after column added, non-critical [path=").$(path)
+                            .$(", msg=").$(e.getFlyweightMessage())
                             .$(", errno=").$(e.getErrno())
-                            .$(", error=").$(e.getFlyweightMessage()).$();
+                            .I$();
                 }
             }
 
@@ -931,7 +934,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean isSequential,
             SecurityContext securityContext
     ) {
-
         int existingColIndex = metadata.getColumnIndexQuiet(name);
         if (existingColIndex < 0) {
             throw CairoException.nonCritical().put("cannot change column type, column does not exist [table=")
@@ -1057,8 +1059,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LOG.critical().$("cannot lock last txn in scoreboard, partition purge will be scheduled [table=")
                     .utf8(tableToken.getTableName())
                     .$(", txn=").$(lastCommittedTxn)
-                    .$(", error=").$(ex.getFlyweightMessage())
-                    .$(", errno=").$(ex.getErrno()).I$();
+                    .$(", msg=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
         }
 
         return txnScoreboard.getMin() != lastCommittedTxn;
@@ -1664,7 +1667,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // (server.conf: cairo.sql.detached.root)
                     if (0 != ff.mkdirs(detachedPath, detachedMkDirMode)) {
                         LOG.error().$("could no create detached partition folder [errno=").$(ff.errno())
-                                .$(", path=").$(detachedPath).I$();
+                                .$(", path=").$(detachedPath)
+                                .I$();
                         return AttachDetachStatus.DETACH_ERR_MKDIR;
                     }
                 }
@@ -1864,11 +1868,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+    public boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
         assert txWriter.getLagRowCount() == 0;
         checkDistressed();
         LogRecord logRec = LOG.info().$("enabling row deduplication [table=").utf8(tableToken.getTableName()).$(", columns=[");
 
+        boolean isSubsetOfOldKeys = true;
         try {
             int upsertKeyColumn = columnsIndexes.size();
             for (int i = 0; i < upsertKeyColumn; i++) {
@@ -1883,6 +1888,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     throw CairoException.critical(0).put("Invalid column used as deduplicate key, column is dropped [table=")
                             .put(tableToken.getTableName()).put(", columnIndex=").put(dedupColIndex);
                 }
+
+                isSubsetOfOldKeys &= metadata.isDedupKey(dedupColIndex);
+
                 if (i > 0) {
                     logRec.$(',');
                 }
@@ -1914,6 +1922,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
         }
+        return isSubsetOfOldKeys;
     }
 
     public void enforceTtl() {
@@ -5416,8 +5425,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (e instanceof CairoException) {
             o3oomObserved = ((CairoException) e).isOutOfMemory();
             lastErrno = lastErrno == 0 ? ((CairoException) e).errno : lastErrno;
-            logRecord.$(", errno=").$(lastErrno)
-                    .$(", ex=").$(((CairoException) e).getFlyweightMessage())
+            logRecord
+                    .$(", msg=").$(((CairoException) e).getFlyweightMessage())
+                    .$(", errno=").$(lastErrno)
                     .I$();
         } else {
             lastErrno = O3_ERRNO_FATAL;
@@ -6357,7 +6367,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             MemoryARW o3IndexMem = o3MemColumns1.get(getSecondaryColumnIndex(columnIndex));
 
             long size;
-            if (null == o3IndexMem) {
+            if (o3IndexMem == null) {
                 // Fixed size column
                 size = o3RowCount << ColumnType.pow2SizeOf(columnType);
             } else {
@@ -6986,7 +6996,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (!ff.unlinkOrRemove(other, LOG)) {
                         LOG.info()
                                 .$("could not purge partition version, async purge will be scheduled [path=").$substr(pathRootSize, other)
-                                .$(", errno=").$(ff.errno()).I$();
+                                .$(", errno=").$(ff.errno())
+                                .I$();
                         scheduleAsyncPurge = true;
                     }
                 } else {

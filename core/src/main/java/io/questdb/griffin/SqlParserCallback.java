@@ -28,7 +28,9 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
+import io.questdb.griffin.engine.table.ShowCreateMatViewRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
@@ -38,6 +40,17 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
 public interface SqlParserCallback {
+
+    default RecordCursorFactory generateShowCreateMatViewFactory(QueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
+        TableToken viewToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
+        if (executionContext.getTableStatus(path, viewToken) != TableUtils.TABLE_EXISTS) {
+            throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
+        }
+        if (!viewToken.isMatView()) {
+            throw SqlException.$(model.getTableNameExpr().position, "materialized view name expected, got table name");
+        }
+        return new ShowCreateMatViewRecordCursorFactory(viewToken, model.getTableNameExpr().position);
+    }
 
     default RecordCursorFactory generateShowCreateTableFactory(QueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
         TableToken tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
@@ -50,6 +63,18 @@ public interface SqlParserCallback {
     default RecordCursorFactory generateShowSqlFactory(QueryModel model) {
         assert false;
         return null;
+    }
+
+    default CreateMatViewOperationBuilder parseCreateMatViewExt(
+            GenericLexer lexer,
+            SecurityContext securityContext,
+            CreateMatViewOperationBuilder builder,
+            @Nullable CharSequence tok
+    ) throws SqlException {
+        if (tok != null) {
+            throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+        }
+        return builder;
     }
 
     default CreateTableOperationBuilder parseCreateTableExt(
@@ -72,5 +97,4 @@ public interface SqlParserCallback {
     ) throws SqlException {
         return -1;
     }
-
 }

@@ -32,6 +32,7 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Test;
 
 public class ShowTableStorageTest extends AbstractCairoTest {
+
     @Test
     public void testAllPartitionsStorageForMultipleTablesPartitionByHour() throws Exception {
         assertMemoryLeak(() -> {
@@ -59,11 +60,14 @@ public class ShowTableStorageTest extends AbstractCairoTest {
             engine.releaseAllWriters();
             final CharSequence size1 = Long.toString(getDirSize("trades_1"));
             final CharSequence size2 = Long.toString(getDirSize("trades_2"));
-            assertSql(
+            assertQueryNoLeakCheck(
                     "tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
                             "trades_2\tfalse\tHOUR\t4\t4\t" + size1 + "\n" +
                             "trades_1\tfalse\tHOUR\t4\t4\t" + size2 + "\n",
-                    "select * from table_storage()"
+                    "select * from table_storage()",
+                    null,
+                    false,
+                    true
             );
         });
     }
@@ -95,11 +99,14 @@ public class ShowTableStorageTest extends AbstractCairoTest {
             engine.releaseAllWriters();
             final CharSequence size1 = Long.toString(getDirSize("trades_1"));
             final CharSequence size2 = Long.toString(getDirSize("trades_2"));
-            assertSql(
+            assertQueryNoLeakCheck(
                     "tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
                             "trades_2\tfalse\tNONE\t1\t4\t" + size1 + "\n" +
                             "trades_1\tfalse\tNONE\t1\t4\t" + size2 + "\n",
-                    "select * from table_storage()"
+                    "select * from table_storage()",
+                    null,
+                    false,
+                    true
             );
         });
     }
@@ -121,9 +128,13 @@ public class ShowTableStorageTest extends AbstractCairoTest {
             engine.releaseAllWriters();
             engine.releaseAllWriters();
             final CharSequence size = Long.toString(getDirSize("trades_1"));
-            assertSql("tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
+            assertQueryNoLeakCheck(
+                    "tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
                             "trades_1\tfalse\tHOUR\t4\t4\t" + size + "\n",
-                    "select * from table_storage()"
+                    "select * from table_storage()",
+                    null,
+                    false,
+                    true
             );
         });
     }
@@ -144,9 +155,13 @@ public class ShowTableStorageTest extends AbstractCairoTest {
             drainWalQueue();
             engine.releaseAllWriters();
             final CharSequence size = Long.toString(getDirSize("trades_1"));
-            assertSql("tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
+            assertQueryNoLeakCheck(
+                    "tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
                             "trades_1\tfalse\tNONE\t1\t4\t" + size + "\n",
-                    "select * from table_storage()"
+                    "select * from table_storage()",
+                    null,
+                    false,
+                    true
             );
         });
     }

@@ -60,7 +60,6 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
         operation.withContext(sqlExecutionContext);
         boolean isDone = false;
         final TableToken tableToken = operation.getTableToken();
-        assert tableToken != null;
         try (TableWriterAPI writer = !operation.isForceWalBypass() ? engine.getTableWriterAPI(tableToken, lockReason) : engine.getWriter(tableToken, FORCE_OPERATION_APPLY_REASON)) {
             final long result = apply(operation, writer);
             isDone = true;

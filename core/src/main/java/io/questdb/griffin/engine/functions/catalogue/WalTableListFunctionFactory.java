@@ -24,8 +24,19 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -37,23 +48,29 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cairo.wal.WalUtils.*;
+import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
+import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
 
 public class WalTableListFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(WalTableListFunctionFactory.class);
     private static final RecordMetadata METADATA;
     private static final String SIGNATURE = "wal_tables()";
+    private static final int bufferedTxnSizeColumn;
     private static final int errorMessageColumn;
     private static final int errorTagColumn;
     private static final int memoryPressureLevelColumn;
     private static final int nameColumn;
     private static final int sequencerTxnColumn;
     private static final int suspendedColumn;
-    private static final int bufferedTxnSizeColumn;
     private static final int writerTxnColumn;
 
     @Override
@@ -92,7 +109,8 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         public WalTableListCursorFactory(CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
             super(METADATA);
             this.ff = configuration.getFilesFacade();
-            this.rootPath = new Path().of(configuration.getDbRoot());
+            this.rootPath = new Path();
+            rootPath.of(configuration.getDbRoot());
             this.sqlExecutionContext = sqlExecutionContext;
             this.cursor = new TableListRecordCursor();
         }
@@ -119,7 +137,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
             this.rootPath = Misc.free(this.rootPath);
         }
 
-        private class TableListRecordCursor implements RecordCursor {
+        private class TableListRecordCursor implements NoRandomAccessRecordCursor {
             private final TableListRecord record = new TableListRecord();
             private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
             private final TxReader txReader = new TxReader(ff);
@@ -134,11 +152,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
             @Override
             public Record getRecord() {
                 return record;
-            }
-
-            @Override
-            public Record getRecordB() {
-                throw new UnsupportedOperationException();
             }
 
             @Override
@@ -160,11 +173,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public void recordAt(Record record, long atRowId) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
             public long size() {
                 return -1;
             }
@@ -175,13 +183,13 @@ public class WalTableListFunctionFactory implements FunctionFactory {
             }
 
             public class TableListRecord implements Record {
+                private long bufferedTxnSize;
                 private String errorMessage;
                 private String errorTag;
                 private int memoryPressureLevel;
                 private long sequencerTxn;
                 private boolean suspendedFlag;
                 private String tableName;
-                private long bufferedTxnSize;
                 private long writerTxn;
 
                 @Override

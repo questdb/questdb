@@ -222,6 +222,8 @@ public interface CairoConfiguration {
         return IOURingFacadeImpl.INSTANCE;
     }
 
+    int getIdGenerateBatchStep();
+
     long getIdleCheckInterval();
 
     int getInactiveReaderMaxOpenPartitions();
@@ -260,6 +262,10 @@ public interface CairoConfiguration {
     DateLocale getLogTimestampTimezoneLocale();
 
     TimeZoneRules getLogTimestampTimezoneRules();
+
+    long getMatViewInsertAsSelectBatchSize();
+
+    int getMatViewMaxRecompileAttempts();
 
     int getMaxCrashFiles();
 
@@ -639,6 +645,10 @@ public interface CairoConfiguration {
 
     boolean isIOURingEnabled();
 
+    boolean isMatViewEnabled();
+
+    boolean isMatViewParallelSqlEnabled();
+
     boolean isMultiKeyDedupEnabled();
 
     boolean isO3QuickSortEnabled();
@@ -692,6 +702,8 @@ public interface CairoConfiguration {
     }
 
     boolean isWalApplyEnabled();
+
+    boolean isWalApplyParallelSqlEnabled();
 
     boolean isWalSupported();
 

@@ -52,6 +52,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -149,8 +150,10 @@ public final class TestUtils {
             Utf8StringSink sink = new Utf8StringSink();
             sink.put("ascii flag set to '").put(utf8Sequence == null || utf8Sequence.isAscii())
                     .put("' for value '").put(utf8Sequence).put("'. ");
-            Assert.assertEquals(sink.toString(),
-                    Utf8s.isAscii(utf8Sequence), utf8Sequence == null || utf8Sequence.isAscii());
+            Assert.assertEquals(
+                    sink.toString(),
+                    Utf8s.isAscii(utf8Sequence), utf8Sequence == null || utf8Sequence.isAscii()
+            );
         }
     }
 
@@ -191,23 +194,34 @@ public final class TestUtils {
     }
 
     public static void assertCursor(
-            CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header, MutableUtf16Sink sink
+            CharSequence expected,
+            RecordCursor cursor,
+            RecordMetadata metadata,
+            boolean header,
+            MutableUtf16Sink sink
     ) {
         CursorPrinter.println(cursor, metadata, sink, header, false);
         assertEquals(expected, sink);
     }
 
     public static void assertCursor(
-            CharSequence expected, RecordCursor cursor, RecordMetadata metadata,
-            boolean header, boolean printTypes, MutableUtf16Sink sink
+            CharSequence expected,
+            RecordCursor cursor,
+            RecordMetadata metadata,
+            boolean header,
+            boolean printTypes,
+            MutableUtf16Sink sink
     ) {
         CursorPrinter.println(cursor, metadata, sink, header, printTypes);
         assertEquals(expected, sink);
     }
 
     public static void assertEquals(
-            RecordCursor cursorExpected, RecordMetadata metadataExpected,
-            RecordCursor cursorActual, RecordMetadata metadataActual, boolean genericStringMatch
+            RecordCursor cursorExpected,
+            RecordMetadata metadataExpected,
+            RecordCursor cursorActual,
+            RecordMetadata metadataActual,
+            boolean genericStringMatch
     ) {
         StringSink sink = getTlSink();
         assertEquals(metadataExpected, metadataActual, genericStringMatch);
@@ -240,9 +254,11 @@ public final class TestUtils {
 
                 // check if we can bail out early because current record timestamps do not match
                 if (tsL != tsR) {
-                    throw new AssertionError(String.format("Row %d column %s[%s] %s. Expected %s but found %s",
+                    throw new AssertionError(String.format(
+                            "Row %d column %s[%s] %s. Expected %s but found %s",
                             rowIndex, metadataActual.getColumnName(timestampIndex), ColumnType.TIMESTAMP,
-                            "timestamp mismatch", Timestamps.toUSecString(tsL), Timestamps.toUSecString(tsR)));
+                            "timestamp mismatch", Timestamps.toUSecString(tsL), Timestamps.toUSecString(tsR)
+                    ));
                 }
 
                 // compare accumulated records
@@ -254,6 +270,7 @@ public final class TestUtils {
 
                 // something changed, reset the store
                 timestampValue = -1;
+                deferred = null;
 
                 mapL.clear();
                 mapR.clear();
@@ -293,6 +310,15 @@ public final class TestUtils {
             }
         }
 
+        if (deferred != null) {
+            // looks like there was no more rows to do the comparison, so do it now
+            try {
+                Assert.assertEquals(mapL, mapR);
+            } catch (AssertionError ignore) {
+                throw deferred;
+            }
+        }
+
         Assert.assertFalse("Expected cursor misses record " + rowIndex, cursorActual.hasNext());
     }
 
@@ -328,8 +354,10 @@ public final class TestUtils {
                             offset += reada;
 
                             for (int i = 0; i < reada; i++) {
-                                Assert.assertEquals(Unsafe.getUnsafe().getByte(bufa + i),
-                                        Unsafe.getUnsafe().getByte(bufb + i));
+                                Assert.assertEquals(
+                                        Unsafe.getUnsafe().getByte(bufa + i),
+                                        Unsafe.getUnsafe().getByte(bufb + i)
+                                );
                             }
                         }
                     } finally {
@@ -530,10 +558,11 @@ public final class TestUtils {
             SqlCompiler compiler, SqlExecutionContext sqlExecutionContext,
             String expectedSql, String actualSql
     ) throws SqlException {
-        try (RecordCursorFactory f1 = compiler.compile(expectedSql, sqlExecutionContext).getRecordCursorFactory();
-             RecordCursorFactory f2 = compiler.compile(actualSql, sqlExecutionContext).getRecordCursorFactory();
-             RecordCursor c1 = f1.getCursor(sqlExecutionContext);
-             RecordCursor c2 = f2.getCursor(sqlExecutionContext)
+        try (
+                RecordCursorFactory f1 = compiler.compile(expectedSql, sqlExecutionContext).getRecordCursorFactory();
+                RecordCursorFactory f2 = compiler.compile(actualSql, sqlExecutionContext).getRecordCursorFactory();
+                RecordCursor c1 = f1.getCursor(sqlExecutionContext);
+                RecordCursor c2 = f2.getCursor(sqlExecutionContext)
         ) {
             assertEquals(c1, f1.getMetadata(), c2, f2.getMetadata(), true);
         }
@@ -700,8 +729,11 @@ public final class TestUtils {
     }
 
     public static void assertSqlCursors(
-            CairoEngine engine, SqlExecutionContext sqlExecutionContext, CharSequence expected,
-            CharSequence actual, Log log
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence expected,
+            CharSequence actual,
+            Log log
     ) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             assertSqlCursors(compiler, sqlExecutionContext, expected, actual, log);
@@ -709,8 +741,12 @@ public final class TestUtils {
     }
 
     public static void assertSqlCursors(
-            CairoEngine engine, SqlExecutionContext sqlExecutionContext,
-            CharSequence expected, CharSequence actual, Log log, boolean genericStringMatch
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence expected,
+            CharSequence actual,
+            Log log,
+            boolean genericStringMatch
     ) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             assertSqlCursors(compiler, sqlExecutionContext, expected, actual, log, genericStringMatch);
@@ -718,27 +754,37 @@ public final class TestUtils {
     }
 
     public static void assertSqlCursors(
-            SqlCompiler compiler, SqlExecutionContext sqlExecutionContext,
-            CharSequence expected, CharSequence actual, Log log
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence expected,
+            CharSequence actual,
+            Log log
     ) throws SqlException {
         assertSqlCursors(compiler, sqlExecutionContext, expected, actual, log, false);
     }
 
     public static void assertSqlCursors(
-            SqlCompiler compiler, SqlExecutionContext sqlExecutionContext,
-            CharSequence expected, CharSequence actual, Log log, boolean genericStringMatch
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence expected,
+            CharSequence actual,
+            Log log,
+            boolean genericStringMatch
     ) throws SqlException {
-        try (RecordCursorFactory factory = compiler.compile(expected, sqlExecutionContext).getRecordCursorFactory();
-             RecordCursorFactory factory2 = compiler.compile(actual, sqlExecutionContext).getRecordCursorFactory()
+        try (
+                RecordCursorFactory factory = compiler.compile(expected, sqlExecutionContext).getRecordCursorFactory();
+                RecordCursorFactory factory2 = compiler.compile(actual, sqlExecutionContext).getRecordCursorFactory()
         ) {
-            try (RecordCursor cursor1 = factory.getCursor(sqlExecutionContext);
-                 RecordCursor cursor2 = factory2.getCursor(sqlExecutionContext)
+            try (
+                    RecordCursor cursor1 = factory.getCursor(sqlExecutionContext);
+                    RecordCursor cursor2 = factory2.getCursor(sqlExecutionContext)
             ) {
                 assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata(), genericStringMatch);
             } catch (AssertionError e) {
                 log.error().$(e).$();
-                try (RecordCursor expectedCursor = factory.getCursor(sqlExecutionContext);
-                     RecordCursor actualCursor = factory2.getCursor(sqlExecutionContext)
+                try (
+                        RecordCursor expectedCursor = factory.getCursor(sqlExecutionContext);
+                        RecordCursor actualCursor = factory2.getCursor(sqlExecutionContext)
                 ) {
                     log.xDebugW().$();
 
@@ -761,27 +807,33 @@ public final class TestUtils {
     }
 
     public static void assertSqlCursors(
-            QuestDBTestNode node, ObjList<QuestDBTestNode> nodes, String expected, String actual,
-            Log log, boolean genericStringMatch
+            QuestDBTestNode node,
+            ObjList<QuestDBTestNode> nodes,
+            String expected,
+            String actual,
+            Log log,
+            boolean genericStringMatch
     ) throws SqlException {
-        try (SqlCompiler compiler = node.getEngine().getSqlCompiler();
-             RecordCursorFactory factory = compiler.compile(expected, node.getSqlExecutionContext())
-                     .getRecordCursorFactory()
+        try (
+                SqlCompiler compiler = node.getEngine().getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile(expected, node.getSqlExecutionContext()).getRecordCursorFactory()
         ) {
             for (int i = 0, n = nodes.size(); i < n; i++) {
                 final QuestDBTestNode dbNode = nodes.get(i);
-                try (SqlCompiler compiler2 = dbNode.getEngine().getSqlCompiler();
-                     RecordCursorFactory factory2 = compiler2.compile(actual, dbNode.getSqlExecutionContext())
-                             .getRecordCursorFactory()
+                try (
+                        SqlCompiler compiler2 = dbNode.getEngine().getSqlCompiler();
+                        RecordCursorFactory factory2 = compiler2.compile(actual, dbNode.getSqlExecutionContext()).getRecordCursorFactory()
                 ) {
-                    try (RecordCursor cursor1 = factory.getCursor(node.getSqlExecutionContext());
-                         RecordCursor cursor2 = factory2.getCursor(dbNode.getSqlExecutionContext())
+                    try (
+                            RecordCursor cursor1 = factory.getCursor(node.getSqlExecutionContext());
+                            RecordCursor cursor2 = factory2.getCursor(dbNode.getSqlExecutionContext())
                     ) {
                         assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata(), genericStringMatch);
                     } catch (AssertionError e) {
                         log.error().$(e).$();
-                        try (RecordCursor expectedCursor = factory.getCursor(node.getSqlExecutionContext());
-                             RecordCursor actualCursor = factory2.getCursor(dbNode.getSqlExecutionContext())
+                        try (
+                                RecordCursor expectedCursor = factory.getCursor(node.getSqlExecutionContext());
+                                RecordCursor actualCursor = factory2.getCursor(dbNode.getSqlExecutionContext())
                         ) {
                             log.xDebugW().$();
 
@@ -997,8 +1049,10 @@ public final class TestUtils {
 
     public static SqlExecutionContext createSqlExecutionCtx(CairoEngine engine, BindVariableService bindVariableService) {
         SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1);
-        ctx.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
-                bindVariableService);
+        ctx.with(
+                engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                bindVariableService
+        );
         return ctx;
     }
 
@@ -1050,7 +1104,7 @@ public final class TestUtils {
             int tableId,
             CharSequence tableName
     ) {
-        TableToken token = engine.lockTableName(tableName, tableId, structure.isWalEnabled());
+        TableToken token = engine.lockTableName(tableName, tableId, structure.isMatView(), structure.isWalEnabled());
         if (token == null) {
             throw new RuntimeException("table already exists: " + tableName);
         }
@@ -1083,6 +1137,17 @@ public final class TestUtils {
     @SuppressWarnings("StatementWithEmptyBody")
     public static void drainCursor(RecordCursor cursor) {
         while (cursor.hasNext()) {
+        }
+    }
+
+    public static void drainPurgeJob(CairoEngine engine) {
+        try (WalPurgeJob job = new WalPurgeJob(
+                engine,
+                engine.getConfiguration().getFilesFacade(),
+                engine.getConfiguration().getMicrosecondClock()
+        )) {
+            engine.setWalPurgeJobRunLock(job.getRunLock());
+            job.drain(0);
         }
     }
 
@@ -1378,8 +1443,10 @@ public final class TestUtils {
 
     public static void messTxnUnallocated(FilesFacade ff, Path path, Rnd rnd, TableToken tableToken) {
         path.concat(tableToken).concat(TableUtils.TXN_FILE_NAME);
-        try (MemoryMARW txFile = Vm.getCMARWInstance(ff, path.$(), Files.PAGE_SIZE, -1,
-                MemoryTag.NATIVE_MIG_MMAP, CairoConfiguration.O_NONE)
+        try (MemoryMARW txFile = Vm.getCMARWInstance(
+                ff, path.$(), Files.PAGE_SIZE, -1,
+                MemoryTag.NATIVE_MIG_MMAP, CairoConfiguration.O_NONE
+        )
         ) {
             long version = txFile.getLong(TableUtils.TX_BASE_OFFSET_VERSION_64);
             boolean isA = (version & 1L) == 0L;
@@ -1562,8 +1629,13 @@ public final class TestUtils {
         }
     }
 
-    public static String replaceSizeToMatchOS(String expected, String tableName,
-                                              CairoConfiguration configuration, CairoEngine engine, StringSink sink) {
+    public static String replaceSizeToMatchOS(
+            String expected,
+            String tableName,
+            CairoConfiguration configuration,
+            CairoEngine engine,
+            StringSink sink
+    ) {
         return replaceSizeToMatchOS(expected, new Utf8String(configuration.getDbRoot()), tableName, engine, sink);
     }
 
@@ -1743,12 +1815,32 @@ public final class TestUtils {
             } catch (AssertionError e) {
                 String expected = recordToString(rr, metadataExpected, genericStringMatch);
                 String actual = recordToString(lr, metadataActual, genericStringMatch);
-                Assert.assertEquals(String.format(String.format("Row %d column %s[%s]",
-                        rowIndex, columnName, ColumnType.nameOf(columnType))), expected, actual);
+                Assert.assertEquals(
+                        String.format(String.format(
+                                "Row %d column %s[%s]",
+                                rowIndex, columnName, ColumnType.nameOf(columnType)
+                        )), expected, actual
+                );
                 // If above didn't fail because of types not included or double precision not enough, throw here anyway
-                throw new AssertionError(String.format("Row %d column %s[%s] %s", rowIndex, columnName,
-                        ColumnType.nameOf(columnType), e.getMessage()));
+                throw new AssertionError(String.format(
+                        "Row %d column %s[%s] %s", rowIndex, columnName,
+                        ColumnType.nameOf(columnType), e.getMessage()
+                ));
             }
+        }
+    }
+
+    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual, boolean genericStringMatch) {
+        Assert.assertEquals("Column count must be same", metadataExpected.getColumnCount(), metadataActual.getColumnCount());
+        for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
+            Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
+            int columnType1 = metadataExpected.getColumnType(i);
+            columnType1 = genericStringMatch && (ColumnType.isSymbol(columnType1) || columnType1 == ColumnType.VARCHAR
+                    || columnType1 == ColumnType.CHAR) ? ColumnType.STRING : columnType1;
+            int columnType2 = metadataActual.getColumnType(i);
+            columnType2 = genericStringMatch && (ColumnType.isSymbol(columnType2) || columnType2 == ColumnType.VARCHAR
+                    || columnType2 == ColumnType.CHAR) ? ColumnType.STRING : columnType2;
+            Assert.assertEquals("Column type " + i, columnType1, columnType2);
         }
     }
 
@@ -1765,20 +1857,6 @@ public final class TestUtils {
                         || expected.getLong3() != actual.getLong3()
         ) {
             Assert.assertEquals(toHexString(expected), toHexString(actual));
-        }
-    }
-
-    private static void assertEquals(RecordMetadata metadataExpected, RecordMetadata metadataActual, boolean genericStringMatch) {
-        Assert.assertEquals("Column count must be same", metadataExpected.getColumnCount(), metadataActual.getColumnCount());
-        for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
-            Assert.assertEquals("Column name " + i, metadataExpected.getColumnName(i), metadataActual.getColumnName(i));
-            int columnType1 = metadataExpected.getColumnType(i);
-            columnType1 = genericStringMatch && (ColumnType.isSymbol(columnType1) || columnType1 == ColumnType.VARCHAR
-                    || columnType1 == ColumnType.CHAR) ? ColumnType.STRING : columnType1;
-            int columnType2 = metadataActual.getColumnType(i);
-            columnType2 = genericStringMatch && (ColumnType.isSymbol(columnType2) || columnType2 == ColumnType.VARCHAR
-                    || columnType2 == ColumnType.CHAR) ? ColumnType.STRING : columnType2;
-            Assert.assertEquals("Column type " + i, columnType1, columnType2);
         }
     }
 
@@ -1952,12 +2030,14 @@ public final class TestUtils {
             CursorPrinter.printColumn(record, metadata, i, sink, genericStringMatch, true, "<null>");
         }
         String printed = sink.toString();
-        map.compute(printed, (s, i) -> {
-            if (i == null) {
-                return 1;
-            }
-            return i + 1;
-        });
+        map.compute(
+                printed, (s, i) -> {
+                    if (i == null) {
+                        return 1;
+                    }
+                    return i + 1;
+                }
+        );
     }
 
     public interface CheckedIntFunction {
@@ -2014,8 +2094,10 @@ public final class TestUtils {
 
             Path.clearThreadLocals();
             if (fileCount != Files.getOpenFileCount()) {
-                Assert.assertEquals("file descriptors, expected: " + fileDebugInfo + ", actual: "
-                        + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
+                Assert.assertEquals(
+                        "file descriptors, expected: " + fileDebugInfo + ", actual: "
+                                + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount()
+                );
             }
 
             // Checks that the same tag used for allocation and freeing native memory
@@ -2027,9 +2109,11 @@ public final class TestUtils {
                     long actualMemByTag = Unsafe.getMemUsedByTag(i);
                     if (memoryUsageByTag[i] != actualMemByTag) {
                         if (i != MemoryTag.NATIVE_SQL_COMPILER) {
-                            Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i)
+                            Assert.assertEquals(
+                                    "Memory usage by tag: " + MemoryTag.nameOf(i)
                                             + ", difference: " + (actualMemByTag - memoryUsageByTag[i]),
-                                    memoryUsageByTag[i], actualMemByTag);
+                                    memoryUsageByTag[i], actualMemByTag
+                            );
                             Assert.assertTrue(actualMemByTag > -1);
                         } else {
                             // SqlCompiler memory is not released immediately as compilers are pooled

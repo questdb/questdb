@@ -44,8 +44,9 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
-import io.questdb.griffin.engine.ops.DropTableOperationBuilder;
+import io.questdb.griffin.engine.ops.GenericDropOperationBuilder;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
@@ -70,6 +71,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -106,6 +108,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAX_RECURSION, 512);
+        node1.setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
         super.setUp();
     }
 
@@ -3907,9 +3910,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                                     "limit 10")
             ) {
                 String expected = "id\n" +
-                        "9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
                         "0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
-                        "7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n";
+                        "7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n" +
+                        "9f9b2131-d49f-4d1d-ab81-39815c50d341\n";
 
                 assertCursor(expected, factory, true, true, false);
                 assertCursor(expected, factory, true, true, false);
@@ -4813,8 +4816,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "0xc78d67954cb7866695b5e08df69df8819fc909a43f149089c143a3bb982af031\n" +
                     "0x6ddedcf7415306f799ce31489578cac77b0ec57771d6e9f27c517f53d504487d\n" +
                     "0xa38b2ad7fbc79d366f9b5d1b162ba472613f1eb5f98a2df86a7f0ebbd1d28a95\n";
-            printSqlResult(expected, "t limit -5", null, true, false);
-            printSqlResult(expected, "l256 limit -5", null, true, false);
+            printSqlResult(expected, "t limit -5", null, true, true);
+            printSqlResult(expected, "l256 limit -5", null, true, true);
         });
     }
 
@@ -5237,7 +5240,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "        Filter filter: T2.created in [now(),now()]\n" +
                             "            Nested Loop Left Join\n" +
                             "              filter: T1.created<T2.created\n" +
-                            "                Limit lo: 0\n" +
+                            "                Limit lo: 0 skip-over-rows: 0 limit: 0\n" +
                             "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: tab\n" +
@@ -5280,10 +5283,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "    Filter filter: (null=T2.created or 0<T2.created::long)\n" +
                             "        Nested Loop Left Join\n" +
                             "          filter: T1.created<T2.created\n" +
-                            "            Limit lo: 1\n" +
+                            "            Limit lo: -1 skip-over-rows: 2 limit: 1\n" +
                             "                PageFrame\n" +
-                            "                    Row backward scan\n" +
-                            "                    Frame backward scan on: tab\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tab\n"
@@ -5436,7 +5439,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "              condition: T3.created=T2.created\n" +
                             "                Nested Loop Left Join\n" +
                             "                  filter: T1.created<T2.created\n" +
-                            "                    Limit lo: 2\n" +
+                            "                    Limit lo: 2 skip-over-rows: 0 limit: 2\n" +
                             "                        PageFrame\n" +
                             "                            Row forward scan\n" +
                             "                            Frame forward scan on: tab\n" +
@@ -5444,11 +5447,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: tab\n" +
                             "                Hash\n" +
-                            "                    Limit lo: 3\n" +
+                            "                    Limit lo: 3 skip-over-rows: 0 limit: 3\n" +
                             "                        PageFrame\n" +
                             "                            Row forward scan\n" +
                             "                            Frame forward scan on: tab\n" +
-                            "            Limit lo: 4\n" +
+                            "            Limit lo: 4 skip-over-rows: 0 limit: 3\n" +
                             "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab\n"
@@ -5670,7 +5673,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}", sink);
                     }
                 }
-                engine.dropTable(path, tt);
+                engine.dropTableOrMatView(path, tt);
             }
         });
     }
@@ -5926,7 +5929,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     }
                 } catch (Exception e) {
                     ddlError.set(true);
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                 } finally {
                     Path.clearThreadLocals();
                     TestUtils.await(barrier);
@@ -6508,6 +6511,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 } catch (Exception e) {
                     Assert.assertTrue(compiler.createTableSuffixCalled);
                 }
+
+                try {
+                    execute(compiler, "create table base_price (sym varchar, price double, ts timestamp) timestamp(ts) partition by DAY WAL", sqlExecutionContext);
+                    execute(compiler, "create materialized view price_1h as (select sym, last(price) as price, ts from base_price sample by 1h) partition by DAY foobar", sqlExecutionContext);
+                    Assert.fail();
+                } catch (Exception e) {
+                    Assert.assertTrue(compiler.createMatViewSuffixCalled);
+                }
             }
         });
     }
@@ -6539,7 +6550,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table y as (" +
                         "select * from (select rnd_byte(2,50) a from long_sequence(20))" +
                         "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                94,
+                89,
                 "unsupported cast"
         );
     }
@@ -6569,7 +6580,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table y as (" +
                         "select * from (select rnd_double(2) a from long_sequence(20))" +
                         "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                93,
+                88,
                 "unsupported cast"
         );
     }
@@ -6589,7 +6600,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table y as (" +
                         "select * from (select rnd_float(2) a from long_sequence(20))" +
                         "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                92,
+                87,
                 "unsupported cast"
         );
     }
@@ -6613,7 +6624,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table y as (" +
                         "select * from (select rnd_int(0, 30, 2) a from long_sequence(20))" +
                         "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                97,
+                92,
                 "unsupported cast"
         );
     }
@@ -6637,7 +6648,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table y as (" +
                         "select * from (select rnd_long(0, 30, 2) a from long_sequence(20))" +
                         "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                98,
+                93,
                 "unsupported cast"
         );
     }
@@ -6660,7 +6671,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table y as (" +
                         "select * from (select rnd_short(2,10) a from long_sequence(20))" +
                         "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                95,
+                90,
                 "unsupported cast"
         );
     }
@@ -6670,7 +6681,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table y as (" +
                         "select * from (select rnd_str(5,10,2) a from long_sequence(20))" +
                         "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                95,
+                90,
                 "unsupported cast"
         );
     }
@@ -6680,7 +6691,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "create table y as (" +
                         "select rnd_symbol(4,6,10,2) a from long_sequence(20)" +
                         "), cast(a as " + ColumnType.nameOf(castTo) + ")",
-                84,
+                79,
                 "unsupported cast"
         );
     }
@@ -6845,6 +6856,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         boolean addColumnSuffixCalled;
         boolean compileDropOtherCalled;
         boolean compileDropTableExtCalled;
+        boolean createMatViewSuffixCalled;
         boolean createTableSuffixCalled;
         boolean dropTableCalled;
         boolean parseShowSqlCalled;
@@ -6856,11 +6868,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
+        public CreateMatViewOperationBuilder parseCreateMatViewExt(
+                GenericLexer lexer,
+                SecurityContext securityContext,
+                CreateMatViewOperationBuilder builder,
+                @Nullable CharSequence tok
+        ) throws SqlException {
+            createMatViewSuffixCalled = true;
+            return super.parseCreateMatViewExt(lexer, securityContext, builder, tok);
+        }
+
+        @Override
         public CreateTableOperationBuilder parseCreateTableExt(
                 GenericLexer lexer,
                 SecurityContext securityContext,
                 CreateTableOperationBuilder builder,
-                CharSequence tok
+                @Nullable CharSequence tok
         ) throws SqlException {
             createTableSuffixCalled = true;
             return super.parseCreateTableExt(lexer, securityContext, builder, tok);
@@ -6890,20 +6913,20 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
-        protected void compileDropOther(@NotNull SqlExecutionContext executionContext, @NotNull CharSequence tok, int position) throws SqlException {
-            compileDropOtherCalled = true;
-            super.compileDropOther(executionContext, tok, position);
-        }
-
-        @Override
-        protected void compileDropTableExt(
+        protected void compileDropExt(
                 @NotNull SqlExecutionContext executionContext,
-                @NotNull DropTableOperationBuilder opBuilder,
+                @NotNull GenericDropOperationBuilder opBuilder,
                 @NotNull CharSequence tok,
                 int position
         ) throws SqlException {
             compileDropTableExtCalled = true;
-            super.compileDropTableExt(executionContext, opBuilder, tok, position);
+            super.compileDropExt(executionContext, opBuilder, tok, position);
+        }
+
+        @Override
+        protected void compileDropOther(@NotNull SqlExecutionContext executionContext, @NotNull CharSequence tok, int position) throws SqlException {
+            compileDropOtherCalled = true;
+            super.compileDropOther(executionContext, tok, position);
         }
 
         @Override

@@ -56,6 +56,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.QueryPausedException;
@@ -102,6 +104,8 @@ import static io.questdb.cutlass.pgwire.modern.PGUtils.estimateColumnTxtSize;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
 
 public class PGPipelineEntry implements QuietCloseable, Mutable {
+    private static final Log LOG = LogFactory.getLog(PGPipelineEntry.class);
+
     // SYNC_DESC_ constants describe the state of the "describe" message
     // they have no relation to the state of SYNC message processing as such
     public static final int SYNC_DESC_NONE = 0;
@@ -244,7 +248,17 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     @Override
     public void clear() {
-        // no-op, we clear entries before returning them to the pool
+        // this is expected to be called from a pool only
+
+        // Paranoia mode: Safety check before returning this entry from the object pool.
+        // While entries should already be clean when returned to the pool,
+        // this serves as a safeguard against potential bugs where an entry
+        // wasn't properly cleaned up. If a dirty entry is detected (sqlType != NONE),
+        // we clear it to prevent unexpected behaviour.
+        if (sqlType != CompiledQuery.NONE) {
+            LOG.error().$("Object Pool contains dirty PGPipeline entries. This is likely a bug, please report it to https://github.com/questdb/questdb/issues/new?template=bug_report.yaml").$();
+            close();
+        }
     }
 
     @Override
@@ -343,11 +357,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             CharSequence sqlText,
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
-            WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
+            WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool,
+            boolean recompile
     ) throws BadProtocolException {
         // pipeline entries begin life as anonymous, typical pipeline length is 1-3 entries
         // we do not need to create new objects until we know we're caching the entry
         this.sqlText = sqlText;
+        if (!recompile) {
+            sqlExecutionContext.resetFlags();
+        }
         this.empty = sqlText == null || sqlText.length() == 0;
         if (empty) {
             sqlExecutionContext.setCacheHit(cacheHit = true);
@@ -358,10 +376,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         try {
             sqlExecutionContext.setCacheHit(cacheHit = false);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                // Define the provided PostgresSQL types on the BindVariableService. The compilation
-                // below will use these types to build the plan, and it will also define any missing bind
-                // variables.
-                msgParseDefineBindVariableTypes(sqlExecutionContext.getBindVariableService());
+                // When recompiling, we would already have bind variable values in the bind variable
+                // service. This is because re-compilation is typically triggered from "sync" message.
+                // Types and values would already be richly defined.
+                if (!recompile) {
+                    // Define the provided PostgresSQL types on the BindVariableService. The compilation
+                    // below will use these types to build the plan, and it will also define any missing bind
+                    // variables.
+                    msgParseDefineBindVariableTypes(sqlExecutionContext.getBindVariableService());
+                }
                 CompiledQuery cq = compiler.compile(this.sqlText, sqlExecutionContext);
                 // copy actual bind variable types as supplied by the client + defined by the SQL compiler
                 msgParseCopyOutTypeDescriptionTypeOIDs(sqlExecutionContext.getBindVariableService());
@@ -638,6 +661,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     }
                     break;
                 case CompiledQuery.CREATE_TABLE:
+                    // fall-through
+                case CompiledQuery.CREATE_MAT_VIEW:
                     // fall-through
                 case CompiledQuery.DROP:
                     engine.getMetrics().pgWireMetrics().markStart();
@@ -1390,7 +1415,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         if (attempt == maxRecompileAttempts) {
                             throw e;
                         }
-                        compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
+                        compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
                     }
                 }
             } finally {
@@ -1444,7 +1469,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             if (attempt == maxRecompileAttempts) {
                                 throw e;
                             }
-                            compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
+                            compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
                         }
                     }
                 } finally {
@@ -1518,7 +1543,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         }
                         factory = Misc.free(factory);
                     }
-                    compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
+                    compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
                 }
             } catch (Throwable e) {
                 // un-cache the erroneous SQL
@@ -1574,7 +1599,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         if (attempt == maxRecompileAttempts) {
                             throw e;
                         }
-                        compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
+                        compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);
                     }
                 }
             } finally {
@@ -2021,6 +2046,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         } catch (NoSpaceLeftInResponseBufferException e) {
             throw e;
         } catch (Throwable th) {
+            LOG.debug().$("unexpected error in outCursor [ex=").$(th).I$();
             // We'll be sending an error to the client, so reset to the start of the last sent message.
             utf8Sink.resetToBookmark(recordStartAddress);
             if (th instanceof FlyweightMessageContainer) {
@@ -2549,6 +2575,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case CompiledQuery.CREATE_TABLE_AS_SELECT:
                 // fall-through
             case CompiledQuery.DROP:
+                // fall-through
+            case CompiledQuery.CREATE_MAT_VIEW:
                 // fall-through
             case CompiledQuery.CREATE_TABLE:
                 operation = cq.getOperation();

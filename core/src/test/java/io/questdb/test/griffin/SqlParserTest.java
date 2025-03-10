@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -46,6 +47,8 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
+import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -56,8 +59,19 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.test.tools.TestUtils.getSystemTablesCount;
 
 public class SqlParserTest extends AbstractSqlParserTest {
-
     private static final List<String> frameTypes = Arrays.asList("rows  ", "groups", "range ");
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
+        AbstractCairoTest.setUpStatic();
+    }
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
+    }
 
     @Test
     public void test2Between() throws Exception {
@@ -1588,7 +1602,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create table X as ( select a, b, c from tab ), index(x)",
                 53,
-                "Invalid column",
+                "INDEX column doesn't exist",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.DOUBLE)
@@ -1608,7 +1622,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateAsSelectTimestampNotRequired() throws SqlException {
         assertCreateTable(
-                "create batch 1000000 table tst as (select-choose a, b, t from (select-virtual [rnd_int() a, rnd_double() b, timestamp_sequence(0,100000000000l) t] rnd_int() a, rnd_double() b, timestamp_sequence(0,100000000000l) t from (long_sequence(100000))))",
+                "create batch 1000000 table tst as (select-choose * from ((select-choose rnd_int() a, rnd_double() b, timestamp_sequence(0,100000000000l) t from (long_sequence(100000)))))",
                 "create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 100000000000l) t from long_sequence(100000)))"
         );
     }
@@ -1616,7 +1630,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateAsSelectWithBatching() throws Exception {
         assertCreateTable(
-                "create batch 10000 table tst as (select-choose a, b, t from (select-virtual [rnd_int() a, rnd_double() b, timestamp_sequence(0,100000000000l) t] rnd_int() a, rnd_double() b, timestamp_sequence(0,100000000000l) t from (long_sequence(100000))))",
+                "create batch 10000 table tst as (select-choose * from ((select-choose rnd_int() a, rnd_double() b, timestamp_sequence(0,100000000000l) t from (long_sequence(100000)))))",
                 "create batch 10000 table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 100000000000l) t from long_sequence(100000)))"
         );
     }
@@ -1624,7 +1638,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateAsSelectWithBatchingAndLag() throws Exception {
         assertCreateTable(
-                "create batch 10000 o3MaxLag 1000000 table tst as (select-choose a, b, t from (select-virtual [rnd_int() a, rnd_double() b, timestamp_sequence(0,100000000000l) t] rnd_int() a, rnd_double() b, timestamp_sequence(0,100000000000l) t from (long_sequence(100000))))",
+                "create batch 10000 o3MaxLag 1000000 table tst as (select-choose * from ((select-choose rnd_int() a, rnd_double() b, timestamp_sequence(0,100000000000l) t from (long_sequence(100000)))))",
                 "create batch 10000 o3MaxLag 1s table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 100000000000l) t from long_sequence(100000)))"
         );
     }
@@ -1662,6 +1676,114 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create table x (like Y.z)",
                 22,
                 "unexpected token [.]"
+        );
+    }
+
+    @Test
+    public void testCreateMatView0() throws Exception {
+        assertSyntaxError(
+                "create",
+                6,
+                "'atomic' or 'table' or 'batch' or 'materialized' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView1() throws Exception {
+        assertSyntaxError(
+                "create foobar",
+                7,
+                "'atomic' or 'table' or 'batch' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView10() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW 'myview' REFRESH INCREMENTAL refresh",
+                61,
+                "'as' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView11() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW 'myview' with base 'mytable1' with base 'mytable2'",
+                60,
+                "'as' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView2() throws Exception {
+        assertSyntaxError(
+                "create materialized",
+                19,
+                "'view' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView3() throws Exception {
+        assertSyntaxError(
+                "create materialized foobar",
+                20,
+                "'view' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView4() throws Exception {
+        assertSyntaxError(
+                "create materialized view 'myview' foobar",
+                40,
+                "'as' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView5() throws Exception {
+        assertSyntaxError(
+                "create materialized view 'myview' refresh with",
+                42,
+                "'incremental' or 'manual' or 'interval' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView6() throws Exception {
+        assertSyntaxError(
+                "create materialized view 'myview' with refresh",
+                39,
+                "'base' expected"
+        );
+    }
+
+    @Test
+    public void testCreateMatView7() throws Exception {
+        assertSyntaxError(
+                "create materialized view 'myview' refresh manual",
+                42,
+                "manual refresh is not yet supported"
+        );
+    }
+
+    @Test
+    public void testCreateMatView8() throws Exception {
+        assertSyntaxError(
+                "create materialized view 'myview' refresh interval",
+                42,
+                "interval refresh is not yet supported"
+        );
+    }
+
+    @Test
+    public void testCreateMatView9() throws Exception {
+        assertSyntaxError(
+                "CREATE MATERIALIZED VIEW 'myview' WITH BASE 'mytable' REFRESH INCREMENTAL",
+                73,
+                "'as' expected"
         );
     }
 
@@ -1741,7 +1863,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableAsSelect() throws SqlException {
         assertCreateTable(
-                "create batch 1000000 table X as (select-choose a, b, c from (select [a, b, c] from tab))",
+                "create batch 1000000 table X as (select-choose a, b, c from (tab))",
                 "create table X as ( select a, b, c from tab )",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -1753,7 +1875,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableAsSelectIndex() throws SqlException {
         assertCreateTable(
-                "create batch 1000000 table X as (select-choose a, b, c from (select [a, b, c] from tab)), index(b capacity 256)",
+                "create batch 1000000 table X as (select-choose a, b, c from (tab)), index(b capacity 256)",
                 "create table X as ( select a, b, c from tab ), index(b)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -1766,26 +1888,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableAsSelectIndexCapacity() throws SqlException {
         assertCreateTable(
-                "create batch 1000000 table X as (select-choose a, b, c from (select [a, b, c] from tab)), index(b capacity 64)",
+                "create batch 1000000 table X as (select-choose a, b, c from (tab)), index(b capacity 64)",
                 "create table X as ( select a, b, c from tab ), index(b capacity 64)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.DOUBLE)
                         .col("c", ColumnType.STRING)
-
         );
     }
 
     @Test
     public void testCreateTableAsSelectTimestamp() throws SqlException {
         assertCreateTable(
-                "create batch 1000000 table X as (select-choose a, b, c from (select [a, b, c] from tab)) timestamp(b)",
+                "create batch 1000000 table X as (select-choose a, b, c from (tab)) timestamp(b)",
                 "create table X as ( select a, b, c from tab ) timestamp(b)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.DOUBLE)
                         .col("c", ColumnType.STRING)
-
         );
     }
 
@@ -1847,13 +1967,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableCastCapacityDef() throws SqlException {
         assertCreateTable(
-                "create batch 1000000 table x as (select-choose a, b, c from (select [a, b, c] from tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 16 cache)",
+                "create batch 1000000 table x as (select-choose * from (tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 16 cache)",
                 "create table x as (tab), cast(a as double), cast(c as symbol capacity 16)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.LONG)
                         .col("c", ColumnType.STRING)
-
         );
     }
 
@@ -1861,13 +1980,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableCastDef() throws SqlException {
         // these numbers in expected string are position of type keyword
         assertCreateTable(
-                "create batch 1000000 table x as (select-choose a, b, c from (select [a, b, c] from tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 128 cache)",
+                "create batch 1000000 table x as (select-choose * from (tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 128 cache)",
                 "create table x as (tab), cast(a as double), cast(c as symbol)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.LONG)
                         .col("c", ColumnType.STRING)
-
         );
     }
 
@@ -1881,7 +1999,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.LONG)
                         .col("c", ColumnType.STRING)
-
         );
     }
 
@@ -1895,7 +2012,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.LONG)
                         .col("c", ColumnType.STRING)
-
         );
     }
 
@@ -1909,7 +2025,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.LONG)
                         .col("c", ColumnType.STRING)
-
         );
     }
 
@@ -1923,20 +2038,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.LONG)
                         .col("c", ColumnType.STRING)
-
         );
     }
 
     @Test
     public void testCreateTableCastIndexDef() throws SqlException {
         assertCreateTable(
-                "create batch 1000000 table x as (select-choose a, b, c from (select [a, b, c] from tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 32 nocache index capacity 512)",
+                "create batch 1000000 table x as (select-choose * from (tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 32 nocache index capacity 512)",
                 "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache), index(c capacity 300)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.LONG)
                         .col("c", ColumnType.STRING)
-
         );
     }
 
@@ -1950,7 +2063,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.LONG)
                         .col("c", ColumnType.STRING)
-
         );
     }
 
@@ -1964,20 +2076,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.LONG)
                         .col("c", ColumnType.STRING)
-
         );
     }
 
     @Test
     public void testCreateTableCastMultiSpaceMultiNewlineAndComment() throws SqlException {
         assertCreateTable(
-                "create batch 1000000 table x as (select-choose a, b, c from (select [a, b, c] from tab)), cast(a as DOUBLE:38), cast(c as SYMBOL:83 capacity 16 cache)",
+                "create batch 1000000 table x as (select-choose * from (tab)), cast(a as DOUBLE:38), cast(c as SYMBOL:83 capacity 16 cache)",
                 "create table x as (tab), cast   (a as double  ), cast\n--- this is a comment\n\n(c as symbol capacity 16\n)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.LONG)
                         .col("c", ColumnType.STRING)
-
         );
     }
 
@@ -1985,13 +2095,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableCastRoundedSymbolCapacityDef() throws SqlException {
         // 20 is rounded to next power of 2, which is 32
         assertCreateTable(
-                "create batch 1000000 table x as (select-choose a, b, c from (select [a, b, c] from tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 32 cache)",
+                "create batch 1000000 table x as (select-choose * from (tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 32 cache)",
                 "create table x as (tab), cast(a as double), cast(c as symbol capacity 20)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.LONG)
                         .col("c", ColumnType.STRING)
-
         );
     }
 
@@ -2558,7 +2667,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "timestamp(t) " +
                         "partition by EPOCH",
                 128,
-                "'NONE', 'HOUR', 'DAY', 'MONTH' or 'YEAR' expected"
+                "'NONE', 'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected"
         );
     }
 
@@ -2762,38 +2871,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableOutOfPlaceIndexAndCapacity() throws SqlException {
         assertCreateTable(
-                "create atomic table x (" +
-                        "a SYMBOL capacity 128 cache index capacity 16," +
-                        " b BYTE," +
-                        " c SHORT," +
-                        " t TIMESTAMP," +
-                        " d LONG," +
-                        " e FLOAT," +
-                        " f DOUBLE," +
-                        " g DATE," +
-                        " h BINARY," +
-                        " x SYMBOL capacity 128 cache index capacity 32," +
-                        " z STRING," +
-                        " y BOOLEAN)" +
-                        " timestamp(t)" +
-                        " partition by MONTH",
-                "create table x (" +
-                        "a SYMBOL, " +
-                        "b BYTE, " +
-                        "c SHORT, " +
-                        "t TIMESTAMP, " +
-                        "d LONG, " +
-                        "e FLOAT, " +
-                        "f DOUBLE, " +
-                        "g DATE, " +
-                        "h BINARY, " +
-                        "x SYMBOL, " +
-                        "z STRING, " +
-                        "y BOOLEAN) " +
-                        ", index (a capacity 16) " +
-                        ", index (x capacity 24) " +
-                        "timestamp(t) " +
-                        "partition by MONTH"
+                "create atomic table x (a SYMBOL capacity 128 cache index capacity 16, b BYTE, c SHORT, t TIMESTAMP, d LONG, e FLOAT, g DATE, h BINARY, x SYMBOL capacity 128 cache index capacity 32, z STRING, y BOOLEAN) timestamp(t) partition by MONTH",
+                "create table x (a SYMBOL, b BYTE, c SHORT, t TIMESTAMP, d LONG, e FLOAT, g DATE, h BINARY, x SYMBOL, z STRING, y BOOLEAN) , index (a capacity 16) , index (x capacity 24) timestamp(t) partition by MONTH"
         );
     }
 
@@ -3538,11 +3617,65 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDropAll0() throws Exception {
+        assertSyntaxError(
+                "drop foobar",
+                5,
+                "'table' or 'materialized view' or 'all' expected"
+        );
+    }
+
+    @Test
+    public void testDropAll1() throws Exception {
+        assertSyntaxError(
+                "drop all foobar",
+                9,
+                "';' or 'tables' expected"
+        );
+    }
+
+    @Test
+    public void testDropAll2() throws Exception {
+        assertSyntaxError(
+                "drop all tables foobar",
+                16,
+                "';' or 'tables' expected"
+        );
+    }
+
+    @Test
+    public void testDropMatViewIfExistsMissingName() throws Exception {
+        assertSyntaxError(
+                "drop materialized view if exists",
+                32,
+                "view name expected"
+        );
+    }
+
+    @Test
+    public void testDropMatViewMissingName() throws Exception {
+        assertSyntaxError(
+                "drop materialized view",
+                18,
+                "expected IF EXISTS mat-view-name"
+        );
+    }
+
+    @Test
+    public void testDropMatViewMissingView() throws Exception {
+        assertSyntaxError(
+                "drop materialized tab1",
+                18,
+                "expected VIEW"
+        );
+    }
+
+    @Test
     public void testDropTablesMissingComma() throws Exception {
         assertSyntaxError(
                 "drop tables tab1 tab2",
                 5,
-                "'table' or 'all tables' expected",
+                "'table' or 'materialized view' or 'all' expected",
                 modelOf("tab1").col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("tab2").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -3553,7 +3686,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "drop tables tab1, ",
                 5,
-                "'table' or 'all tables' expected",
+                "'table' or 'materialized view' or 'all' expected",
                 modelOf("tab1").col("a", ColumnType.INT).col("b", ColumnType.INT),
                 modelOf("tab2").col("a", ColumnType.INT).col("b", ColumnType.INT)
         );
@@ -7512,6 +7645,90 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testRefreshMatView0() throws Exception {
+        assertSyntaxError(
+                "refresh",
+                7,
+                "'materialized' expected"
+        );
+    }
+
+    @Test
+    public void testRefreshMatView1() throws Exception {
+        assertSyntaxError(
+                "refresh materialized foobar",
+                21,
+                "'view' expected"
+        );
+    }
+
+    @Test
+    public void testRefreshMatView2() throws Exception {
+        assertSyntaxError(
+                "REFRESH MATERIALIZED VIEW",
+                25,
+                "materialized view name expected"
+        );
+        assertSyntaxError(
+                "REFRESH MATERIALIZED VIEW",
+                25,
+                "materialized view name expected"
+        );
+    }
+
+    @Test
+    public void testRefreshMatView3() throws Exception {
+        assertSyntaxError(
+                "REFRESH MATERIALIZED VIEW 'myview'",
+                26,
+                "materialized view does not exist [view=myview]"
+        );
+        assertSyntaxError(
+                "REFRESH MATERIALIZED VIEW 'myview';",
+                26,
+                "materialized view does not exist [view=myview]"
+        );
+    }
+
+    @Test
+    public void testRefreshMatView4() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_table (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            assertException(
+                    "REFRESH MATERIALIZED VIEW base_table",
+                    26,
+                    "materialized view name expected, got table name"
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshMatView5() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertException(
+                    "REFRESH MATERIALIZED VIEW 'x_view' foobar",
+                    35,
+                    "'full' or 'incremental' expected"
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshMatView6() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertException(
+                    "REFRESH MATERIALIZED VIEW 'x_view' INCREMENTAL foobar",
+                    47,
+                    "unexpected token"
+            );
+        });
+    }
+
+    @Test
     public void testRegexOnFunction() throws SqlException {
         assertQuery(
                 "select-choose a from (select-virtual [rnd_str() a] rnd_str() a from (long_sequence(100)) where a ~ '^W')",
@@ -8919,7 +9136,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectSingleTimestampColumn() throws SqlException {
         assertQuery(
-                "select-choose t3 from (select-choose [t3] t, tt, t3 from (select [t3] from x timestamp (t3)) order by t3 desc limit 1)",
+                "select-choose t3 from (select [t3] from x timestamp (t3)) limit -(1)",
                 "select t3 from x limit -1",
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP).timestamp("t3")
         );

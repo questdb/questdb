@@ -50,6 +50,7 @@ import org.jetbrains.annotations.TestOnly;
 import java.util.Map;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
+import static io.questdb.cairo.TableUtils.isMatViewDefinitionFileExists;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.std.Files.DT_FILE;
 
@@ -374,7 +375,8 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                             boolean isProtected = tableFlagResolver.isProtected(tableName);
                             boolean isSystem = tableFlagResolver.isSystem(tableName);
                             boolean isPublic = tableFlagResolver.isPublic(tableName);
-                            TableToken token = new TableToken(tableName, dirName, tableId, isWal, isSystem, isProtected, isPublic);
+                            boolean isMatView = isMatViewDefinitionFileExists(configuration, path, dirName);
+                            TableToken token = new TableToken(tableName, dirName, tableId, isMatView, isWal, isSystem, isProtected, isPublic);
                             TableToken existingTableToken = tableNameToTableTokenMap.get(tableName);
 
                             if (existingTableToken != null) {
@@ -470,7 +472,9 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                         boolean isProtected = tableFlagResolver.isProtected(tableName);
                         boolean isSystem = tableFlagResolver.isSystem(tableName);
                         boolean isPublic = tableFlagResolver.isPublic(tableName);
-                        token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_WAL, isSystem, isProtected, isPublic);
+                        boolean isMatView = tableType == TableUtils.TABLE_TYPE_MAT;
+                        boolean isWal = tableType == TableUtils.TABLE_TYPE_WAL || isMatView;
+                        token = new TableToken(tableName, dirName, tableId, isMatView, isWal, isSystem, isProtected, isPublic);
                     }
                     dirNameToTableTokenMap.put(dirName, ReverseTableMapItem.ofDropped(token));
                 }
@@ -480,12 +484,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                     // This can be BAU, remove record will follow
                     tableToCompact++;
                 } else {
-                    boolean isProtected = tableFlagResolver.isProtected(tableName);
-                    boolean isSystem = tableFlagResolver.isSystem(tableName);
-                    boolean isPublic = tableFlagResolver.isPublic(tableName);
-                    final TableToken token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_WAL, isSystem, isProtected, isPublic);
-                    TableToken existing = tableNameToTableTokenMap.get(tableName);
-
+                    final TableToken existing = tableNameToTableTokenMap.get(tableName);
                     if (existing != null) {
                         clearRegistryToReloadFromFileSystem(
                                 tableNameToTableTokenMap,
@@ -497,6 +496,13 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                         );
                         return false;
                     }
+
+                    boolean isProtected = tableFlagResolver.isProtected(tableName);
+                    boolean isSystem = tableFlagResolver.isSystem(tableName);
+                    boolean isPublic = tableFlagResolver.isPublic(tableName);
+                    boolean isMatView = tableType == TableUtils.TABLE_TYPE_MAT;
+                    boolean isWal = tableType == TableUtils.TABLE_TYPE_WAL || isMatView;
+                    final TableToken token = new TableToken(tableName, dirName, tableId, isMatView, isWal, isSystem, isProtected, isPublic);
                     tableNameToTableTokenMap.put(tableName, token);
                     if (!Chars.startsWith(token.getDirName(), token.getTableName())) {
                         // This table is renamed, log system to real table name mapping
@@ -541,7 +547,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                 }
             }
 
-            int tableRegistryCompactionThreshold = configuration.getTableRegistryCompactionThreshold();
+            final int tableRegistryCompactionThreshold = configuration.getTableRegistryCompactionThreshold();
             if ((tableRegistryCompactionThreshold > -1 && tableToCompact > tableRegistryCompactionThreshold) || tableToCompact >= forceCompact) {
                 path.trimTo(plimit);
                 LOG.info().$("compacting tables file").$();

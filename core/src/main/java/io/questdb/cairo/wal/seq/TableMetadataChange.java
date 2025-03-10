@@ -27,7 +27,14 @@ package io.questdb.cairo.wal.seq;
 import io.questdb.cairo.AlterTableContextException;
 import io.questdb.cairo.wal.MetadataService;
 
-@FunctionalInterface
 public interface TableMetadataChange {
+
     long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException;
+
+    /**
+     * Should return a non-null string in case when the operation on the base table leaves dependent mat views in invalid state.
+     */
+    default String matViewInvalidationReason() {
+        return null;
+    }
 }

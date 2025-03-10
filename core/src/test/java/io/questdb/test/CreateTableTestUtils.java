@@ -56,7 +56,7 @@ public class CreateTableTestUtils {
     }
 
     public static void createTableWithVersionAndId(TableModel model, CairoEngine engine, int version, int tableId) {
-        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, false);
+        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, false, false);
         if (tableToken == null) {
             throw CairoException.critical(0).put("table already exists: ").put(model.getTableName());
         }
@@ -87,7 +87,6 @@ public class CreateTableTestUtils {
                     .col("m", ColumnType.UUID)
                     .col("n", ColumnType.VARCHAR);
             TestUtils.createTable(engine, model);
-
         } catch (RuntimeException e) {
             if ("table already exists: x".equals(e.getMessage())) {
                 try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("x"), engine)) {
@@ -223,10 +222,14 @@ public class CreateTableTestUtils {
                 .col("ipv4", ColumnType.IPv4)
                 .col("varchar", ColumnType.VARCHAR)
                 .timestamp();
-
     }
 
     public static TableModel getGeoHashTypesModelWithNewTypes(CairoConfiguration configuration, int partitionBy) {
-        return new TableModel(configuration, "allgeo", partitionBy).col("hb", ColumnType.getGeoHashTypeWithBits(6)).col("hs", ColumnType.getGeoHashTypeWithBits(12)).col("hi", ColumnType.getGeoHashTypeWithBits(27)).col("hl", ColumnType.getGeoHashTypeWithBits(44)).timestamp();
+        return new TableModel(configuration, "allgeo", partitionBy)
+                .col("hb", ColumnType.getGeoHashTypeWithBits(6))
+                .col("hs", ColumnType.getGeoHashTypeWithBits(12))
+                .col("hi", ColumnType.getGeoHashTypeWithBits(27))
+                .col("hl", ColumnType.getGeoHashTypeWithBits(44))
+                .timestamp();
     }
 }

@@ -115,11 +115,15 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "  from long_sequence(10);"
         );
 
-        assertQuery("l\ts\tts\n" +
+        assertQuery(
+                "l\ts\tts\n" +
                         "7\tDEF\t2022-01-09T22:40:00.000000Z\n" +
                         "6\tDEF\t2022-01-08T18:53:20.000000Z\n",
                 "select l, s, ts from trips where s = 'DEF' order by ts desc",
-                null, "ts###DESC", true, false
+                null,
+                "ts###DESC",
+                true,
+                false
         );
     }
 
@@ -697,7 +701,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                 "select l, ts from trips " +
                         "where l <=5 and ts < to_timestamp('2022-01-08T00:00:00', 'yyyy-MM-ddTHH:mm:ss') " +
                         "order by ts desc limit 3, 5",
-                null, "ts###DESC", true, false
+                null, "ts###DESC", true, true
         );
     }
 

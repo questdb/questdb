@@ -58,7 +58,7 @@ import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
  * Header: 76 bytes
  * Transaction record: 28 bytes
  * <p>
- * See the format of the header and transaction record in @link TableTransactionLogFile
+ * See the format of the header and transaction record in {@link TableTransactionLogFile}
  */
 public class TableTransactionLogV1 implements TableTransactionLogFile {
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV1.class);
@@ -229,6 +229,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         public void close() {
             if (fd > 0) {
                 ff.close(fd);
+                fd = 0;
             }
             if (txnCount > -1 && address > 0) {
                 ff.munmap(address, getMappedLen(), MemoryTag.MMAP_TX_LOG_CURSOR);
@@ -363,6 +364,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         @NotNull
         private TransactionLogCursorImpl of(FilesFacade ff, long txnLo, Path path) {
             this.ff = ff;
+            close();
             this.fd = openFileRO(ff, path);
             long newTxnCount = ff.readNonNegativeLong(fd, MAX_TXN_OFFSET_64);
             if (newTxnCount > -1L) {
