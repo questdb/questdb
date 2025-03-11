@@ -183,7 +183,8 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
 
     @Override
     public final AbstractLineSender doubleColumn(CharSequence name, double value) {
-        writeFieldName(name, true);
+        writeFieldName(name, true).
+                put(LineTcpParser.ENTITY_TYPE_DOUBLE);
         Unsafe.getUnsafe().putDouble(ptr, value);
         ptr += Double.BYTES;
         return field(name, value);
