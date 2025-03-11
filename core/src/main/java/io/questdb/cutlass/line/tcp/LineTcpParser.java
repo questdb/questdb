@@ -26,7 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.arr.MmappedArray;
-import io.questdb.cutlass.line.tcp.ArrayNativeFormatParser.ParseException;
+import io.questdb.cutlass.line.tcp.ArrayBinaryFormatParser.ParseException;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -84,14 +84,14 @@ public class LineTcpParser implements QuietCloseable {
     private static final byte ENTITY_HANDLER_VALUE = 2;
 
     private static final Log LOG = LogFactory.getLog(LineTcpParser.class);
-
+    private static final IntHashSet binaryFormatSupportType = new IntHashSet();
     private static final boolean[] controlBytes;
-    private static final IntHashSet nativeFormatSupportType = new IntHashSet();
     private final CairoConfiguration cairoConfiguration;
     private final DirectUtf8String charSeq = new DirectUtf8String();
     private final ObjList<ProtoEntity> entityCache = new ObjList<>();
     private final DirectUtf8String measurementName = new DirectUtf8String();
     private boolean asciiSegment;
+    private BinaryFormatStreamStep binaryFormatStreamStep = BinaryFormatStreamStep.NotINBinaryFormat;
     private long bufAt;
     private ProtoEntity currentEntity;
     private byte entityHandler = -1;
@@ -101,7 +101,6 @@ public class LineTcpParser implements QuietCloseable {
     private int nEntities;
     private int nEscapedChars;
     private int nQuoteCharacters;
-    private NativeFormatStreamStep nativeFormatStreamStep = NativeFormatStreamStep.NotINNativeFormat;
     private boolean nextValueCanBeOpenQuote;
     private boolean scape;
     private boolean tagsComplete;
@@ -193,15 +192,15 @@ public class LineTcpParser implements QuietCloseable {
             }
             nQuoteCharacters = 0;
             bufAt++;
-        } else if (nativeFormatStreamStep != NativeFormatStreamStep.NotINNativeFormat) {
-            if (!expectNativeFormat(bufHi)) {
+        } else if (binaryFormatStreamStep != BinaryFormatStreamStep.NotINBinaryFormat) {
+            if (!expectBinaryFormat(bufHi)) {
                 if (errorCode == ErrorCode.INVALID_FIELD_VALUE_STR_UNDERFLOW) {
                     return ParseResult.BUFFER_UNDERFLOW;
                 }
                 return ParseResult.ERROR;
             }
             bufAt++;
-            nativeFormatStreamStep = NativeFormatStreamStep.NotINNativeFormat;
+            binaryFormatStreamStep = BinaryFormatStreamStep.NotINBinaryFormat;
         }
 
         // Main parsing loop
@@ -370,7 +369,7 @@ public class LineTcpParser implements QuietCloseable {
         scape = false;
         nextValueCanBeOpenQuote = false;
         asciiSegment = true;
-        nativeFormatStreamStep = NativeFormatStreamStep.NotINNativeFormat;
+        binaryFormatStreamStep = BinaryFormatStreamStep.NotINBinaryFormat;
     }
 
     private boolean completeEntity(byte endOfEntityByte, long bufHi) {
@@ -386,6 +385,36 @@ public class LineTcpParser implements QuietCloseable {
             case ENTITY_HANDLER_NEW_LINE:
                 return expectEndOfLine(endOfEntityByte);
         }
+        return false;
+    }
+
+    private boolean expectBinaryFormat(long bufHi) {
+        assert binaryFormatStreamStep != BinaryFormatStreamStep.NotINBinaryFormat;
+        if (binaryFormatStreamStep == BinaryFormatStreamStep.INBinaryFormat) {
+            if (!currentEntity.parseBinaryFormat(bufHi)) {
+                return false;
+            }
+            binaryFormatStreamStep = BinaryFormatStreamStep.ExpectFieldSeparator;
+        }
+
+        if (bufAt + 1 < bufHi) {
+            bufAt++;
+            byte expectSeparator = Unsafe.getUnsafe().getByte(bufAt);
+            if (expectSeparator == (byte) ' ') {
+                entityHandler = ENTITY_HANDLER_TIMESTAMP;
+                entityLo = bufAt + 1;
+                return true;
+            } else if (expectSeparator == (byte) ',' || expectSeparator == (byte) '\n' || expectSeparator == (byte) '\r') {
+                entityHandler = ENTITY_HANDLER_NAME;
+                entityLo = bufAt + 1;
+                return true;
+            } else {
+                entityLo = bufAt;
+                errorCode = ErrorCode.INVALID_FIELD_SEPARATOR;
+                return false;
+            }
+        }
+        errorCode = ErrorCode.INVALID_FIELD_VALUE_STR_UNDERFLOW;
         return false;
     }
 
@@ -479,47 +508,18 @@ public class LineTcpParser implements QuietCloseable {
 
             errorCode = tagsComplete ? ErrorCode.INVALID_FIELD_VALUE : ErrorCode.INVALID_TAG_VALUE;
             return false;
-        } else if (endOfEntityByte == (byte) '=' && bufAt == entityLo && tagsComplete) { // '==' represents native byte value format following, which only supported in fieldValue
-            nativeFormatStreamStep = NativeFormatStreamStep.INNativeFormat;
+        } else if (endOfEntityByte == (byte) '=' && bufAt == entityLo && tagsComplete) {
+            // '==' announces a value in binary format, only supported in fieldValue
+            binaryFormatStreamStep = BinaryFormatStreamStep.INBinaryFormat;
             bufAt++;
-            if (expectNativeFormat(bufHi)) {
-                nativeFormatStreamStep = NativeFormatStreamStep.NotINNativeFormat;
+            if (expectBinaryFormat(bufHi)) {
+                binaryFormatStreamStep = BinaryFormatStreamStep.NotINBinaryFormat;
                 return true;
             }
             return false;
         }
 
         errorCode = ErrorCode.INVALID_FIELD_SEPARATOR;
-        return false;
-    }
-
-    private boolean expectNativeFormat(long bufHi) {
-        assert nativeFormatStreamStep != NativeFormatStreamStep.NotINNativeFormat;
-        if (nativeFormatStreamStep == NativeFormatStreamStep.INNativeFormat) {
-            if (!currentEntity.parseNativeFormat(bufHi)) {
-                return false;
-            }
-            nativeFormatStreamStep = NativeFormatStreamStep.ExpectFieldSeparator;
-        }
-
-        if (bufAt + 1 < bufHi) {
-            bufAt++;
-            byte expectSeparator = Unsafe.getUnsafe().getByte(bufAt);
-            if (expectSeparator == (byte) ' ') {
-                entityHandler = ENTITY_HANDLER_TIMESTAMP;
-                entityLo = bufAt + 1;
-                return true;
-            } else if (expectSeparator == (byte) ',' || expectSeparator == (byte) '\n' || expectSeparator == (byte) '\r') {
-                entityHandler = ENTITY_HANDLER_NAME;
-                entityLo = bufAt + 1;
-                return true;
-            } else {
-                entityLo = bufAt;
-                errorCode = ErrorCode.INVALID_FIELD_SEPARATOR;
-                return false;
-            }
-        }
-        errorCode = ErrorCode.INVALID_FIELD_VALUE_STR_UNDERFLOW;
         return false;
     }
 
@@ -663,6 +663,12 @@ public class LineTcpParser implements QuietCloseable {
         return false; // missing tail quote as the string extends past the max allowed size
     }
 
+    private enum BinaryFormatStreamStep {
+        NotINBinaryFormat,
+        ExpectFieldSeparator,
+        INBinaryFormat,
+    }
+
     public enum ErrorCode {
         EMPTY_LINE,
         NO_FIELDS,
@@ -677,7 +683,7 @@ public class LineTcpParser implements QuietCloseable {
         INVALID_COLUMN_NAME,
         MISSING_FIELD_VALUE,
         MISSING_TAG_VALUE,
-        UNSUPPORTED_NATIVE_FORMAT,
+        UNSUPPORTED_BINARY_FORMAT,
 
         /**
          * Array literal specifies an irregular (jagged) array shape. E.g. {{1, 2}, {1, 2, 3}}
@@ -692,18 +698,12 @@ public class LineTcpParser implements QuietCloseable {
         NONE
     }
 
-    private enum NativeFormatStreamStep {
-        NotINNativeFormat,
-        ExpectFieldSeparator,
-        INNativeFormat,
-    }
-
     public enum ParseResult {
         MEASUREMENT_COMPLETE, BUFFER_UNDERFLOW, ERROR
     }
 
     public class ProtoEntity implements QuietCloseable {
-        private final ArrayNativeFormatParser arrayNativeParser = new ArrayNativeFormatParser();
+        private final ArrayBinaryFormatParser arrayBinaryParser = new ArrayBinaryFormatParser();
         private final DirectUtf8String name = new DirectUtf8String();
         private final DirectUtf8String value = new DirectUtf8String();
         private boolean booleanValue;
@@ -714,11 +714,11 @@ public class LineTcpParser implements QuietCloseable {
 
         @Override
         public void close() {
-            Misc.free(arrayNativeParser);
+            Misc.free(arrayBinaryParser);
         }
 
         public @NotNull MmappedArray getArray() {
-            return arrayNativeParser.getArray();
+            return arrayBinaryParser.getArray();
         }
 
         public boolean getBooleanValue() {
@@ -752,7 +752,7 @@ public class LineTcpParser implements QuietCloseable {
         public void shl(long shl) {
             name.shl(shl);
             value.shl(shl);
-            arrayNativeParser.shl(shl);
+            arrayBinaryParser.shl(shl);
         }
 
         private void clear() {
@@ -850,31 +850,17 @@ public class LineTcpParser implements QuietCloseable {
             }
         }
 
-        private boolean parseLong(byte entityType) {
-            try {
-                charSeq.of(value.lo(), value.hi() - 1, true);
-                longValue = Numbers.parseLong(charSeq);
-                value.decHi(); // remove the suffix ('i', 'n', 't', 'm')
-                type = entityType;
-            } catch (NumericException notANumber) {
-                unit = ENTITY_UNIT_NONE;
-                type = ENTITY_TYPE_SYMBOL;
-                return false;
-            }
-            return true;
-        }
-
-        private boolean parseNativeFormat(long bufHi) {
+        private boolean parseBinaryFormat(long bufHi) {
             try {
                 while (bufAt < bufHi) {
                     if (type == ENTITY_TYPE_NONE) {
                         type = Unsafe.getUnsafe().getByte(bufAt);
-                        if (!nativeFormatSupportType.contains(type)) {
-                            errorCode = ErrorCode.UNSUPPORTED_NATIVE_FORMAT;
+                        if (!binaryFormatSupportType.contains(type)) {
+                            errorCode = ErrorCode.UNSUPPORTED_BINARY_FORMAT;
                             return false;
                         }
                         if (type == ENTITY_TYPE_ARRAY) {
-                            arrayNativeParser.reset();
+                            arrayBinaryParser.reset();
                         }
                         bufAt++;
                         entityLo = bufAt;
@@ -928,8 +914,8 @@ public class LineTcpParser implements QuietCloseable {
                             bufAt++;
                             break;
                         case ENTITY_TYPE_ARRAY:
-                            if (bufAt - entityLo + 1 == arrayNativeParser.getNextExpectSize()) {
-                                if (arrayNativeParser.processNextBinaryPart(entityLo)) {
+                            if (bufAt - entityLo + 1 == arrayBinaryParser.getNextExpectSize()) {
+                                if (arrayBinaryParser.processNextBinaryPart(entityLo)) {
                                     return true;
                                 }
                                 entityLo = bufAt + 1;
@@ -944,6 +930,20 @@ public class LineTcpParser implements QuietCloseable {
                 errorCode = e.errorCode();
                 return false;
             }
+        }
+
+        private boolean parseLong(byte entityType) {
+            try {
+                charSeq.of(value.lo(), value.hi() - 1, true);
+                longValue = Numbers.parseLong(charSeq);
+                value.decHi(); // remove the suffix ('i', 'n', 't', 'm')
+                type = entityType;
+            } catch (NumericException notANumber) {
+                unit = ENTITY_UNIT_NONE;
+                type = ENTITY_TYPE_SYMBOL;
+                return false;
+            }
+            return true;
         }
 
         private void setName() {
@@ -987,12 +987,12 @@ public class LineTcpParser implements QuietCloseable {
         }
 
         // todo, client only support ND_ARRAY
-        nativeFormatSupportType.add(ENTITY_TYPE_BOOLEAN);
-        nativeFormatSupportType.add(ENTITY_TYPE_FLOAT);
-        nativeFormatSupportType.add(ENTITY_TYPE_DOUBLE);
-        nativeFormatSupportType.add(ENTITY_TYPE_INTEGER);
-        nativeFormatSupportType.add(ENTITY_TYPE_LONG);
-        nativeFormatSupportType.add(ENTITY_TYPE_TIMESTAMP);
-        nativeFormatSupportType.add(ENTITY_TYPE_ARRAY);
+        binaryFormatSupportType.add(ENTITY_TYPE_BOOLEAN);
+        binaryFormatSupportType.add(ENTITY_TYPE_FLOAT);
+        binaryFormatSupportType.add(ENTITY_TYPE_DOUBLE);
+        binaryFormatSupportType.add(ENTITY_TYPE_INTEGER);
+        binaryFormatSupportType.add(ENTITY_TYPE_LONG);
+        binaryFormatSupportType.add(ENTITY_TYPE_TIMESTAMP);
+        binaryFormatSupportType.add(ENTITY_TYPE_ARRAY);
     }
 }

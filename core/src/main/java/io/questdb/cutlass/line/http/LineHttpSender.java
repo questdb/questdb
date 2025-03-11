@@ -676,7 +676,7 @@ public final class LineHttpSender implements Sender {
         }
     }
 
-    private HttpClient.Request writeFieldName(CharSequence name, boolean nativeFormat) {
+    private HttpClient.Request writeFieldName(CharSequence name, boolean binaryFormat) {
         validateColumnName(name);
         switch (state) {
             case EMPTY:
@@ -693,7 +693,7 @@ public final class LineHttpSender implements Sender {
         }
         escapeQuotedString(name);
         request.put('=');
-        if (nativeFormat) {
+        if (binaryFormat) {
             request.put('=');
         }
         return request;
