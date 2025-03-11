@@ -251,7 +251,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                         long txnFd = -1;
                         int rootLen = -1;
                         SeqTxnTracker seqTxnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-                        memoryPressureLevel = seqTxnTracker.getMemoryPressureLevel();
+                        memoryPressureLevel = seqTxnTracker.getMemPressureControl().getMemoryPressureLevel();
                         tableName = tableToken.getTableName();
 
                         if (seqTxnTracker.isInitialised()) {

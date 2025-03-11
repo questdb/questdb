@@ -68,7 +68,7 @@ public class ArrayFillBenchmark {
 
     @Benchmark
     public long testFillNeg() {
-        list.zero(-1);
+        list.fill(-1);
         long sum = 0;
         for (long i = 0, n = list.size(); i < n; i++) {
             sum += list.get(i);
@@ -78,7 +78,7 @@ public class ArrayFillBenchmark {
 
     @Benchmark
     public long testFillZero() {
-        list.zero(0);
+        list.fill(0);
         long sum = 0;
         for (long i = 0, n = ArrayFillBenchmark.list.size(); i < n; i++) {
             sum += list.get(i);

@@ -174,7 +174,7 @@ class WalEventWriter implements Closeable {
     private void appendIndex(long value) {
         Unsafe.getUnsafe().putLong(longBuffer, value);
         if (ff.append(indexFd, longBuffer, Long.BYTES) != Long.BYTES) {
-            throw CairoException.critical(ff.errno()).put("could not append WAL invent index value [value=").put(value).put(']');
+            throw CairoException.critical(ff.errno()).put("could not append WAL event index value [value=").put(value).put(']');
         }
     }
 
@@ -189,13 +189,13 @@ class WalEventWriter implements Closeable {
 
     private void writeSymbolMapDiffs() {
         final int columns = txnSymbolMaps.size();
-        for (int i = 0; i < columns; i++) {
-            final CharSequenceIntHashMap symbolMap = txnSymbolMaps.getQuick(i);
+        for (int columnIndex = 0; columnIndex < columns; columnIndex++) {
+            final CharSequenceIntHashMap symbolMap = txnSymbolMaps.getQuick(columnIndex);
             if (symbolMap != null) {
-                final int initialCount = initialSymbolCounts.get(i);
+                final int initialCount = initialSymbolCounts.get(columnIndex);
                 if (initialCount > 0 || (initialCount == 0 && symbolMap.size() > 0)) {
-                    eventMem.putInt(i);
-                    eventMem.putBool(symbolMapNullFlags.get(i));
+                    eventMem.putInt(columnIndex);
+                    eventMem.putBool(symbolMapNullFlags.get(columnIndex));
                     eventMem.putInt(initialCount);
 
                     final int size = symbolMap.size();
@@ -211,7 +211,7 @@ class WalEventWriter implements Closeable {
                         if (value >= initialCount) {
                             eventMem.putInt(value);
                             eventMem.putStr(symbol);
-                            symbolCount += 1;
+                            symbolCount++;
                         }
                     }
                     // Update the size with the exact symbolCount
