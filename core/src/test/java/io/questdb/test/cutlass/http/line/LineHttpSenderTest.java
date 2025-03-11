@@ -496,6 +496,39 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testInsertSimpleDouble() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512"
+            )) {
+                String tableName = "simple_double_test";
+                serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, y SYMBOL, l1 LONG, " +
+                        "a double, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.awaitTxn(tableName, 0);
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
+                        .retryTimeoutMillis(0)
+                        .build();
+                ) {
+                    sender.table(tableName)
+                            .symbol("x", "42i")
+                            .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")
+                            .longColumn("l1", 23452345)
+                            .doubleColumn("a", 1.0)
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+                serverMain.awaitTxn(tableName, 1);
+                serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta\tts\n" +
+                        "42i\t[6f1.0,2.5,3.0,4.5,5.0]\t23452345\t1.0\t1970-01-02T03:46:40.000000Z\n");
+            }
+        });
+    }
+
+    @Test
     public void testInsertWithIlpHttp() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(

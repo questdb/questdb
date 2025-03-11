@@ -870,45 +870,41 @@ public class LineTcpParser implements QuietCloseable {
                     switch (type) {
                         case ENTITY_TYPE_BOOLEAN:
                             booleanValue = Unsafe.getUnsafe().getByte(entityLo) == 1;
-                            bufAt++;
                             return true;
                         case ENTITY_TYPE_FLOAT:
-                            bufAt++;
-                            if (bufAt - entityLo == 4) {
+                            if (bufAt - entityLo + 1 == 4) {
                                 floatValue = Unsafe.getUnsafe().getFloat(entityLo);
                                 return true;
                             }
+                            bufAt++;
                             break;
                         case ENTITY_TYPE_DOUBLE:
-                            bufAt++;
-                            if (bufAt - entityLo == 8) {
+                            if (bufAt - entityLo + 1 == 8) {
                                 type = ENTITY_TYPE_FLOAT;
                                 floatValue = Unsafe.getUnsafe().getDouble(entityLo);
                                 return true;
                             }
+                            bufAt++;
                             break;
                         case ENTITY_TYPE_INTEGER:
-                            if (bufAt - entityLo == 4) {
+                            if (bufAt - entityLo + 1 == 4) {
                                 longValue = Unsafe.getUnsafe().getInt(entityLo);
-                                bufAt++;
                                 return true;
                             }
                             bufAt++;
                             break;
                         case ENTITY_TYPE_LONG:
-                            if (bufAt - entityLo == 8) {
+                            if (bufAt - entityLo + 1 == 8) {
                                 type = ENTITY_TYPE_INTEGER;
                                 longValue = Unsafe.getUnsafe().getLong(entityLo);
-                                bufAt++;
                                 return true;
                             }
                             bufAt++;
                             break;
                         case ENTITY_TYPE_TIMESTAMP:
-                            if (bufAt - entityLo == 9) {
+                            if (bufAt - entityLo + 1 == 9) {
                                 unit = Unsafe.getUnsafe().getByte(entityLo);
                                 longValue = Unsafe.getUnsafe().getLong(entityLo + 1);
-                                bufAt++;
                                 return true;
                             }
                             bufAt++;
