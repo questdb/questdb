@@ -43,8 +43,8 @@ import java.util.stream.IntStream;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
 public class IlpArrayBenchmark {
-    private static final int ELEM_COUNT = 20;
-    private static final int INSERT_BATCH_SIZE = 100;
+    private static final int ELEM_COUNT = 100;
+    private static final int INSERT_BATCH_SIZE = 80;
     private static final int N_INSERTERS = 1;
     private static final int N_SELECTORS = 1;
     private static final long RUNTIME_SECONDS = 10;
@@ -87,11 +87,11 @@ public class IlpArrayBenchmark {
         long insertsPerSecond = doneInserts * nsPerSecond / tookNs;
         long selectsPerSecond = doneSelects * nsPerSecond / tookNs;
 
-        System.out.printf("\nUsing array? %s. %d ILP senders, %d selectors combined performance:\n" +
+        System.out.printf("\nUsing array? %s. Element count %d. %d ILP senders, %d selectors combined performance:\n" +
                         "%,d inserts per second, %,d selects per second\n" +
                         "Per-thread performance:\n" +
                         "%,d inserts per second, %,d selects per second\n\n",
-                USE_ARRAY,
+                USE_ARRAY, ELEM_COUNT,
                 N_INSERTERS, N_SELECTORS, insertsPerSecond, selectsPerSecond,
                 N_INSERTERS != 0 ? insertsPerSecond / N_INSERTERS : 0,
                 N_SELECTORS != 0 ? selectsPerSecond / N_SELECTORS : 0);
