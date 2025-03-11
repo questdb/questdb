@@ -660,8 +660,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.context.warnings\tQDB_HTTP_CONTEXT_WARNINGS\t\tdefault\tfalse\tfalse\n" +
                                     "telemetry.db.size.estimate.timeout\tQDB_TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT\t1000\tdefault\tfalse\tfalse\n" +
                                     "cairo.txn.scoreboard.format\tQDB_CAIRO_TXN_SCOREBOARD_FORMAT\t2\tdefault\tfalse\tfalse"
-                            )
-                                    .split("\n");
+                    ).split("\n");
 
                     final Set<String> missingProps = new HashSet<>();
                     for (String property : expectedProps) {
