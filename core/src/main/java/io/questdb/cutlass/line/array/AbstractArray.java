@@ -79,7 +79,7 @@ public abstract class AbstractArray implements QuietCloseable {
         assert !closed;
         byte nDims = (byte) array.getDimCount();
         long size = array.size();
-        CapacityChecker.check(checkCapacityFn, Byte.BYTES + nDims * Integer.BYTES + size);
+        CapacityChecker.check(checkCapacityFn, bufPtr, Byte.BYTES + nDims * Integer.BYTES + size);
         Unsafe.getUnsafe().putByte(bufPtr, nDims);
         bufPtr += Byte.BYTES;
         for (byte i = 0; i < nDims; i++) {

@@ -110,15 +110,15 @@ public abstract class HttpClient implements QuietCloseable {
     }
 
     @TestOnly
-    public ResponseHeaders getResponseHeaders() {
-        return responseHeaders;
-    }
-
-    @TestOnly
     public String getDebugBuffer() {
         DirectUtf8String s = new DirectUtf8String();
         s.of(bufLo, ptr);
         return Utf8s.toString(s).replace('\0', '␀');
+    }
+
+    @TestOnly
+    public ResponseHeaders getResponseHeaders() {
+        return responseHeaders;
     }
 
     public Request newRequest(CharSequence host, int port) {
@@ -331,12 +331,21 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
+        public void checkCapacity(long bufPtr, long capacity) {
+            ptr = bufPtr;
+            HttpClient.this.checkCapacity(capacity);
+        }
+
         public int getContentLength() {
             if (contentStart > -1) {
                 return (int) (ptr - contentStart);
             } else {
                 return 0;
             }
+        }
+
+        public long getPtr() {
+            return ptr;
         }
 
         public Request header(CharSequence name, CharSequence value) {
@@ -349,7 +358,7 @@ public abstract class HttpClient implements QuietCloseable {
         public Request put(@Nullable Utf8Sequence us) {
             if (us != null) {
                 int size = us.size();
-                checkCapacity(size);
+                HttpClient.this.checkCapacity(size);
                 Utf8s.strCpy(us, size, ptr);
                 ptr += size;
             }
@@ -358,7 +367,7 @@ public abstract class HttpClient implements QuietCloseable {
 
         @Override
         public Request put(byte b) {
-            checkCapacity(1);
+            HttpClient.this.checkCapacity(1);
             Unsafe.getUnsafe().putByte(ptr, b);
             ptr++;
             return this;
@@ -401,7 +410,7 @@ public abstract class HttpClient implements QuietCloseable {
         @Override
         public Request putNonAscii(long lo, long hi) {
             final long size = hi - lo;
-            checkCapacity(size);
+            HttpClient.this.checkCapacity(size);
             Vect.memcpy(ptr, lo, size);
             ptr += size;
             return this;
@@ -411,18 +420,6 @@ public abstract class HttpClient implements QuietCloseable {
         public Request putQuoted(@NotNull CharSequence cs) {
             putAsciiInternal('\"').put(cs).putAsciiInternal('\"');
             return this;
-        }
-
-        public void checkCapacity(long capacity) {
-            HttpClient.this.checkCapacity(capacity);
-        }
-
-        public long getPtr() {
-            return ptr;
-        }
-
-        public void setPtr(long ptr) {
-            HttpClient.this.ptr = ptr;
         }
 
         public Request query(CharSequence name, CharSequence value) {
@@ -492,6 +489,10 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
+        public void setPtr(long ptr) {
+            HttpClient.this.ptr = ptr;
+        }
+
         public void trimContentToLen(int contentLen) {
             ptr = contentStart + contentLen;
         }
@@ -519,7 +520,7 @@ public abstract class HttpClient implements QuietCloseable {
 
             putAscii(HEADER_CONTENT_LENGTH);
             contentLengthHeaderReserved = ((int) Math.log10(maxBufferSize) + 2) + 4; // length + 2 x EOL
-            checkCapacity(contentLengthHeaderReserved);
+            HttpClient.this.checkCapacity(contentLengthHeaderReserved);
             ptr += contentLengthHeaderReserved;
             contentStart = ptr;
             state = STATE_CONTENT;
