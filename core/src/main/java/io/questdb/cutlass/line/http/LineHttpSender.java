@@ -414,7 +414,7 @@ public final class LineHttpSender implements Sender {
                 .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ND_ARRAY binary format
                 .put((byte) columnType) // element type
                 .put(nDims); // dims.
-        request.checkCapacity(Integer.BYTES * nDims);
+        request.checkCapacity(request.getPtr(), Integer.BYTES * nDims);
         long addr = request.getPtr();
 
         shapeAppender.append(addr, array);
