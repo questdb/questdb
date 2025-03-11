@@ -100,7 +100,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
 
             assertThat(
                     "measurement,tag=value field=" + array1 + ",field2=" + array2 + ",field3=10 100000\n",
-                    "measurement,tag=value field:,field2:,field3=10 100000\n",
+                    "measurement,tag=value field==,field2==,field3=10 100000\n",
                     1,
                     new long[]{mem, array2Addr},
                     new long[]{array1Size + 1, array2Size + 1}
@@ -365,6 +365,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
         );
     }
 
+    @Override
     @Test
     public void testTrailingSpace() {
         assertThat("measurement,a=10\n", "measurement,a=10 \n"); // Trailing space
@@ -648,14 +649,16 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
         long mem = Unsafe.malloc(fullLen, MemoryTag.NATIVE_DEFAULT);
         int binaryValueIndex = 0;
         long memStart = memFull;
+        byte lastByte = 0;
         for (byte b : line) {
             Unsafe.getUnsafe().putByte(memStart, b);
             memStart++;
-            if (b == ':') {
+            if (b == '=' && lastByte == '=') {
                 Vect.memcpy(memStart, binaryValuesPtr[binaryValueIndex], binaryValuesSize[binaryValueIndex]);
                 memStart += binaryValuesSize[binaryValueIndex];
                 binaryValueIndex++;
             }
+            lastByte = b;
         }
         if (!endWithEOL) {
             Unsafe.getUnsafe().putByte(memStart, (byte) '\n');

@@ -414,7 +414,7 @@ public final class LineHttpSender implements Sender {
                 .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ND_ARRAY binary format
                 .put((byte) columnType) // element type
                 .put(nDims); // dims.
-        request.checkCapacity(Integer.BYTES * nDims);
+        request.checkCapacity(request.getPtr(), Integer.BYTES * nDims);
         long addr = request.getPtr();
 
         shapeAppender.append(addr, array);
@@ -676,7 +676,7 @@ public final class LineHttpSender implements Sender {
         }
     }
 
-    private HttpClient.Request writeFieldName(CharSequence name, boolean nativeFormat) {
+    private HttpClient.Request writeFieldName(CharSequence name, boolean binaryFormat) {
         validateColumnName(name);
         switch (state) {
             case EMPTY:
@@ -692,9 +692,8 @@ public final class LineHttpSender implements Sender {
                 break;
         }
         escapeQuotedString(name);
-        if (nativeFormat) {
-            request.put(':');
-        } else {
+        request.put('=');
+        if (binaryFormat) {
             request.put('=');
         }
         return request;

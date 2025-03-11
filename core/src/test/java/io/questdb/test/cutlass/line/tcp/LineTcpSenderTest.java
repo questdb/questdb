@@ -69,6 +69,79 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     private final static PrivateKey AUTH_PRIVATE_KEY1 = AuthUtils.toPrivateKey(TOKEN);
 
     @Test
+    public void testArrayDouble() throws Exception {
+        runInContext(r -> {
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build();
+                 DoubleArray a4 = new DoubleArray(1, 1, 2, 1).setAll(4);
+                 DoubleArray a5 = new DoubleArray(3, 2, 1, 4, 1).setAll(5);
+                 DoubleArray a6 = new DoubleArray(1, 3, 4, 2, 1, 1).setAll(6);
+            ) {
+                String table = "array_test";
+                long ts = IntervalUtils.parseFloorPartialTimestamp("2025-02-22");
+                double[] arr1d = createDoubleArray(5);
+                double[][] arr2d = createDoubleArray(2, 3);
+                double[][][] arr3d = createDoubleArray(1, 2, 3);
+                sender.table(table)
+                        .symbol("x", "42i")
+                        .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")  // ensuring no array parsing for symbol
+                        .longColumn("l1", 23452345)
+                        .doubleArray("a1", arr1d)
+                        .doubleArray("a2", arr2d)
+                        .doubleArray("a3", arr3d)
+                        .doubleArray("a4", a4)
+                        .doubleArray("a5", a5)
+                        .doubleArray("a6", a6)
+                        .at(ts, ChronoUnit.MICROS);
+                sender.flush();
+
+                assertTableSizeEventually(engine, table, 1);
+                // @todo getArray support in TestTableReadCursor
+/*                try (TableReader reader = getReader(table)) {
+                    TestUtils.assertReader("", reader, new StringSink());
+                }*/
+            }
+        });
+    }
+
+    @Test
+    public void testArrayLong() throws Exception {
+        runInContext(r -> {
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build();
+                 LongArray a4 = new LongArray(1, 2, 1, 1).setAll(4);
+                 LongArray a5 = new LongArray(3, 2, 1, 4, 1).setAll(5);
+                 LongArray a6 = new LongArray(1, 3, 4, 2, 1, 1).setAll(6);
+            ) {
+                String table = "nd_test";
+                long ts = IntervalUtils.parseFloorPartialTimestamp("2025-02-22");
+                long[] arr1d = createLongArray(5);
+                long[][] arr2d = createLongArray(2, 3);
+                long[][][] arr3d = createLongArray(1, 2, 3);
+                sender.table(table)
+                        .symbol("x", "42i")
+                        .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")  // ensuring no array parsing for symbol
+                        .longColumn("l1", 23452345)
+                        .longArray("a1", arr1d)
+                        .longArray("a2", arr2d)
+                        .longArray("a3", arr3d)
+                        .longArray("a4", a4)
+                        .longArray("a5", a5)
+                        .longArray("a6", a6)
+                        .at(ts, ChronoUnit.MICROS);
+                sender.flush();
+
+                assertTableSizeEventually(engine, table, 1);
+                // @todo getArray support in TestTableReadCursor
+            }
+        });
+    }
+
+    @Test
     public void testAuthSuccess() throws Exception {
         authKeyId = AUTH_KEY_ID1;
         runInContext(r -> {
@@ -269,37 +342,6 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testControlCharInTableName() {
         assertControlCharacterException();
-    }
-
-    @Test
-    public void testDoubleArray() throws Exception {
-        runInContext(r -> {
-            try (Sender sender = Sender.builder(Sender.Transport.TCP)
-                    .address("127.0.0.1")
-                    .port(bindPort)
-                    .build()) {
-                String table = "nd_test";
-                long ts = IntervalUtils.parseFloorPartialTimestamp("2025-02-22");
-                sender.table(table)
-                        .symbol("x", "42i")
-                        .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")  // ensuring no array parsing for symbol
-                        .longColumn("l1", 23452345)
-                        .doubleArray("a1", (double[]) createDoubleArray(new int[]{5}))
-                        .doubleArray("a2", (double[][]) createDoubleArray(new int[]{2, 3}))
-                        .doubleArray("a3", (double[][][]) createDoubleArray(new int[]{1, 2, 3}))
-                        .doubleArray("a4", DoubleArray.create(1, 1, 2, 1).setAll(4))
-                        .doubleArray("a5", DoubleArray.create(3, 2, 1, 4, 1).setAll(5))
-                        .doubleArray("a6", DoubleArray.create(1, 3, 4, 2, 1, 1).setAll(6))
-                        .at(ts, ChronoUnit.MICROS);
-                sender.flush();
-
-                assertTableSizeEventually(engine, table, 1);
-                // @todo getArray support in TestTableReadCursor
-/*                try (TableReader reader = getReader(table)) {
-                    TestUtils.assertReader("", reader, new StringSink());
-                }*/
-            }
-        });
     }
 
     @Test
@@ -512,34 +554,6 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         reader,
                         new StringSink()
                 );
-            }
-        });
-    }
-
-    @Test
-    public void testLongArray() throws Exception {
-        runInContext(r -> {
-            try (Sender sender = Sender.builder(Sender.Transport.TCP)
-                    .address("127.0.0.1")
-                    .port(bindPort)
-                    .build()) {
-                String table = "nd_test";
-                long ts = IntervalUtils.parseFloorPartialTimestamp("2025-02-22");
-                sender.table(table)
-                        .symbol("x", "42i")
-                        .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")  // ensuring no array parsing for symbol
-                        .longColumn("l1", 23452345)
-                        .longArray("a1", (long[]) createLongArray(new int[]{5}))
-                        .longArray("a2", (long[][]) createLongArray(new int[]{2, 3}))
-                        .longArray("a3", (long[][][]) createLongArray(new int[]{1, 2, 3}))
-                        .longArray("a4", LongArray.create(1, 2, 1, 1).setAll(4))
-                        .longArray("a5", LongArray.create(3, 2, 1, 4, 1).setAll(5))
-                        .longArray("a6", LongArray.create(1, 3, 4, 2, 1, 1).setAll(6))
-                        .at(ts, ChronoUnit.MICROS);
-                sender.flush();
-
-                assertTableSizeEventually(engine, table, 1);
-                // @todo getArray support in TestTableReadCursor
             }
         });
     }

@@ -30,7 +30,7 @@ import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.NoopArrayState;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cutlass.line.tcp.ArrayNativeFormatParser;
+import io.questdb.cutlass.line.tcp.ArrayBinaryFormatParser;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -153,7 +153,7 @@ public class ArrayTest extends AbstractCairoTest {
         final long allocSize = 2048;
         long mem = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
         try (DirectArray array = new DirectArray(configuration);
-             ArrayNativeFormatParser parserNative = new ArrayNativeFormatParser();
+             ArrayBinaryFormatParser parserNative = new ArrayBinaryFormatParser();
              DirectUtf8Sink sink = new DirectUtf8Sink(100)
         ) {
             // [[1, 2], [3, 4], [5, 6]]
@@ -185,7 +185,7 @@ public class ArrayTest extends AbstractCairoTest {
 
             ArrayTypeDriver.arrayToJson(parserNative.getArray(), sink, NoopArrayState.INSTANCE);
             assertEquals(textViewStr, sink.toString());
-        } catch (ArrayNativeFormatParser.ParseException e) {
+        } catch (ArrayBinaryFormatParser.ParseException e) {
             throw new RuntimeException(e);
         } finally {
             Unsafe.free(mem, allocSize, MemoryTag.NATIVE_DEFAULT);

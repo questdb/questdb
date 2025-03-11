@@ -48,7 +48,7 @@ import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.ND_ARR_LARGE_D
  *
  * <strong>Won't validate length of flat values for performance reason</strong>
  */
-public class ArrayNativeFormatParser implements QuietCloseable {
+public class ArrayBinaryFormatParser implements QuietCloseable {
 
     private final MmappedArray view = new MmappedArray();
     private int dims;

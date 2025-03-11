@@ -32,6 +32,7 @@ import io.r2dbc.spi.ConnectionFactory;
 import io.r2dbc.spi.Result;
 import io.r2dbc.spi.Statement;
 import org.junit.AfterClass;
+import org.junit.Assert;
 import org.junit.Test;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
@@ -52,7 +53,7 @@ public class R2DBCTest extends AbstractTest {
 
     @Test
     public void testCachedAsyncFilterAfterTableTruncate() {
-        assertWithR2RDBC(conn -> {
+        assertWithR2DBC(conn -> {
             String createTableSQL = "CREATE TABLE tab (" +
                     "timestamp TIMESTAMP, " +
                     "status SYMBOL " +
@@ -91,20 +92,20 @@ public class R2DBCTest extends AbstractTest {
                     .expectComplete()
                     .verify(Duration.ofSeconds(10));
 
-
             // async filter which stops before consuming all page frames
-            String query = "SELECT * FROM tab WHERE status != 'PURGED' LIMIT 8";
-
-            Mono<Long> tableSize = Mono.from(conn)
-                    .flatMap(connection -> Mono.from(connection.createStatement(query).execute())
-                            .flatMapMany(result -> result.map((row, metadata) -> 1))
-                            .count());
+            final String query = "SELECT * FROM tab WHERE status != 'PURGED' LIMIT 8";
 
             // all rows are matching the filter, but LIMIT makes us stop before consuming all page frames
-            StepVerifier.create(tableSize)
-                    .expectNext(8L)
-                    .expectComplete()
-                    .verify(Duration.ofSeconds(10));
+            assertEventually(() -> {
+                long tableSize = Mono.from(conn)
+                        .flatMap(connection -> Mono.from(connection.createStatement(query).execute())
+                                .flatMapMany(result -> result.map((row, metadata) -> 1))
+                                .count()
+                        )
+                        .blockOptional()
+                        .orElse(-1L);
+                Assert.assertEquals(8, tableSize);
+            });
 
             // now empty the backing table
             Mono<Long> truncateTableMono = Mono.from(conn)
@@ -118,22 +119,24 @@ public class R2DBCTest extends AbstractTest {
                     .verify(Duration.ofSeconds(10));
 
             // verify the filter still works and return correct results, even it's been cached by PGWire
-            tableSize = Mono.from(conn)
-                    .flatMap(connection -> Mono.from(connection.createStatement(query).execute())
-                            .flatMapMany(result -> result.map((row, metadata) -> 1))
-                            .count());
-
-            StepVerifier.create(tableSize)
-                    .expectNext(0L)
-                    .expectComplete()
-                    .verify(Duration.ofSeconds(10));
+            assertEventually(() -> {
+                // all rows are matching the filter, but LIMIT makes us stop before consuming all page frames
+                long tableSize = Mono.from(conn)
+                        .flatMap(connection -> Mono.from(connection.createStatement(query).execute())
+                                .flatMapMany(result -> result.map((row, metadata) -> 1))
+                                .count()
+                        )
+                        .blockOptional()
+                        .orElse(-1L);
+                Assert.assertEquals(0, tableSize);
+            });
         });
     }
 
 
     @Test
     public void testSmoke() {
-        assertWithR2RDBC(conn -> {
+        assertWithR2DBC(conn -> {
             String name = "QuestDB";
             String verb = "Rocks";
 
@@ -149,11 +152,6 @@ public class R2DBCTest extends AbstractTest {
         });
     }
 
-    @FunctionalInterface
-    private interface SQLStatement {
-        Statement prepare(Connection connection);
-    }
-
     private static Mono<String> executeQuery(Publisher<? extends Connection> connectionPublisher, SQLStatement statementPrep) {
         return Mono.from(connectionPublisher)
                 .flatMap(conn -> Mono.from(statementPrep.prepare(conn).execute())
@@ -162,17 +160,12 @@ public class R2DBCTest extends AbstractTest {
                         .doFinally(signalType -> conn.close()));
     }
 
-    @FunctionalInterface
-    private interface AsyncConnectionAwareRunnable {
-        void run(Publisher<? extends Connection> connection);
-    }
-
-    private void assertWithR2RDBC(AsyncConnectionAwareRunnable runnable) {
+    private void assertWithR2DBC(AsyncConnectionAwareRunnable runnable) {
         try (final ServerMain serverMain = ServerMain.create(root)) {
             serverMain.start();
             ConnectionFactory connectionFactory = new PostgresqlConnectionFactory(
                     PostgresqlConnectionConfiguration.builder()
-                            .host("localhost")
+                            .host("127.0.0.1")
                             .port(serverMain.getPgWireServerPort())
                             .database("qdb")
                             .username("admin")
@@ -181,5 +174,15 @@ public class R2DBCTest extends AbstractTest {
             );
             runnable.run(connectionFactory.create());
         }
+    }
+
+    @FunctionalInterface
+    private interface AsyncConnectionAwareRunnable {
+        void run(Publisher<? extends Connection> connection);
+    }
+
+    @FunctionalInterface
+    private interface SQLStatement {
+        Statement prepare(Connection connection);
     }
 }

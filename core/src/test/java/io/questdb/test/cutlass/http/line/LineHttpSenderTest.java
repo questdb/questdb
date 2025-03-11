@@ -60,12 +60,12 @@ import static io.questdb.PropertyKey.LINE_HTTP_ENABLED;
 
 public class LineHttpSenderTest extends AbstractBootstrapTest {
 
-    public static Object createDoubleArray(int[] shape) {
+    public static <T> T createDoubleArray(int... shape) {
         int[] indices = new int[shape.length];
         return buildNestedArray(ArrayDataType.DOUBLE, shape, 0, indices);
     }
 
-    public static Object createLongArray(int[] shape) {
+    public static <T> T createLongArray(int... shape) {
         int[] indices = new int[shape.length];
         return buildNestedArray(ArrayDataType.LONG, shape, 0, indices);
     }
@@ -234,57 +234,6 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testDoubleArray() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512"
-            )) {
-                String tableName = "ndarr_double_test";
-                serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, y SYMBOL, l1 LONG, a1 DOUBLE[][][], " +
-                        "a2 DOUBLE[][][], a3 DOUBLE[][][], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                serverMain.awaitTxn(tableName, 0);
-
-                int port = serverMain.getHttpServerPort();
-                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
-                        .address("localhost:" + port)
-                        .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
-                        .retryTimeoutMillis(0)
-                        .build();
-                     DoubleArray a1 = DoubleArray.create(2, 2, 2);
-                     DoubleArray a2 = DoubleArray.create(2, 2, 2);
-                     DoubleArray a3 = DoubleArray.create(2, 2, 2).setAll(101);
-                     DoubleArray a4 = DoubleArray.create(new double[][]{{10, 11}, {12, 13}});
-                     DoubleArray a5 = DoubleArray.create(2).setAll(9);
-                ) {
-                    a1.setValue(99.0, 0, 1, 0);
-                    a1.setSubArray(a4, false, 1);
-                    a2.setValue(100.0, 1, 1, 1);
-                    a2.setSubArray(a5, false, 0, 0);
-
-                    sender.table(tableName)
-                            .symbol("x", "42i")
-                            .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")  // ensuring no array parsing for symbol
-                            .longColumn("l1", 23452345)
-                            .doubleArray("a1", a1)
-                            .doubleArray("a2", a2)
-                            .doubleArray("a3", a3)
-                            .at(100000000000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-
-                serverMain.awaitTxn(tableName, 1);
-
-                serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta1\ta2\ta3\tts\n" +
-                        "42i\t[6f1.0,2.5,3.0,4.5,5.0]\t23452345\t" +
-                        "[[[0.0,0.0],[99.0,0.0]],[[10.0,11.0],[12.0,13.0]]]\t" +
-                        "[[[9.0,9.0],[0.0,0.0]],[[0.0,0.0],[0.0,100.0]]]\t" +
-                        "[[[101.0,101.0],[101.0,101.0]],[[101.0,101.0],[101.0,101.0]]]\t" +
-                        "1970-01-02T03:46:40.000000Z\n");
-            }
-        });
-    }
-
-    @Test
     public void testFlushAfterTimeout() throws Exception {
         // this is a regression test
         // there was a bug that flushes due to interval did not increase row count
@@ -393,8 +342,9 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512"
             )) {
                 String tableName = "arr_double_test";
-                serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, y SYMBOL, l1 LONG, a1 DOUBLE[], " +
-                        "a2 DOUBLE[][], a3 DOUBLE[][][], a4 DOUBLE[][][][], a5 DOUBLE[][][][][], a6 DOUBLE[][][][][][]," +
+                serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, y SYMBOL, l1 LONG, " +
+                        "a1 DOUBLE[][][], a2 DOUBLE[][][], a3 DOUBLE[][][], " +
+                        "b1 DOUBLE[], b2 DOUBLE[][], b3 DOUBLE[][][], " +
                         "ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
@@ -403,32 +353,44 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         .address("localhost:" + port)
                         .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
                         .retryTimeoutMillis(0)
-                        .build()
+                        .build();
+                     DoubleArray a1 = new DoubleArray(2, 2, 2);
+                     DoubleArray a2 = new DoubleArray(2, 2, 2).set(99.0, 0, 1, 0).set(100.0, 1, 1, 1);
+                     DoubleArray a3 = new DoubleArray(2, 2, 2).setAll(101);
                 ) {
+                    // array.append() appends in a circular fashion, wrapping around to start from the end.
+                    // We deliberately append two more than the length of the array, to test this behavior.
+                    // The intended use is to fill it up exactly, then for the next row just continue
+                    // filling up with new data.
+                    for (int i = 0; i < 10; i++) {
+                        a1.append(i);
+                    }
+                    double[] arr1d = createDoubleArray(5);
+                    double[][] arr2d = createDoubleArray(2, 3);
+                    double[][][] arr3d = createDoubleArray(1, 2, 3);
+
                     sender.table(tableName)
                             .symbol("x", "42i")
                             .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")  // ensuring no array parsing for symbol
                             .longColumn("l1", 23452345)
-                            .doubleArray("a1", (double[]) createDoubleArray(new int[]{5}))
-                            .doubleArray("a2", (double[][]) createDoubleArray(new int[]{2, 3}))
-                            .doubleArray("a3", (double[][][]) createDoubleArray(new int[]{1, 2, 3}))
-                            .doubleArray("a4", DoubleArray.create(1, 1, 2, 1).setAll(4))
-                            .doubleArray("a5", DoubleArray.create(3, 2, 1, 4, 1).setAll(5))
-                            .doubleArray("a6", DoubleArray.create(1, 3, 4, 2, 1, 1).setAll(6))
+                            .doubleArray("a1", a1)
+                            .doubleArray("a2", a2)
+                            .doubleArray("a3", a3)
+                            .doubleArray("b1", arr1d)
+                            .doubleArray("b2", arr2d)
+                            .doubleArray("b3", arr3d)
                             .at(100000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
-
                 serverMain.awaitTxn(tableName, 1);
-
-                serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta1\ta2\ta3\ta4\ta5\ta6\tts\n" +
+                serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta1\ta2\ta3\tb1\tb2\tb3\tts\n" +
                         "42i\t[6f1.0,2.5,3.0,4.5,5.0]\t23452345\t" +
+                        "[[[8.0,9.0],[2.0,3.0]],[[4.0,5.0],[6.0,7.0]]]\t" +
+                        "[[[0.0,0.0],[99.0,0.0]],[[0.0,0.0],[0.0,100.0]]]\t" +
+                        "[[[101.0,101.0],[101.0,101.0]],[[101.0,101.0],[101.0,101.0]]]\t" +
                         "[1.0,2.0,3.0,4.0,5.0]\t" +
                         "[[1.0,2.0,3.0],[2.0,4.0,6.0]]\t" +
                         "[[[1.0,2.0,3.0],[2.0,4.0,6.0]]]\t" +
-                        "[[[[4.0],[4.0]]]]\t" +
-                        "[[[[[5.0],[5.0],[5.0],[5.0]]],[[[5.0],[5.0],[5.0],[5.0]]]],[[[[5.0],[5.0],[5.0],[5.0]]],[[[5.0],[5.0],[5.0],[5.0]]]],[[[[5.0],[5.0],[5.0],[5.0]]],[[[5.0],[5.0],[5.0],[5.0]]]]]\t" +
-                        "[[[[[[6.0]],[[6.0]]],[[[6.0]],[[6.0]]],[[[6.0]],[[6.0]]],[[[6.0]],[[6.0]]]],[[[[6.0]],[[6.0]]],[[[6.0]],[[6.0]]],[[[6.0]],[[6.0]]],[[[6.0]],[[6.0]]]],[[[[6.0]],[[6.0]]],[[[6.0]],[[6.0]]],[[[6.0]],[[6.0]]],[[[6.0]],[[6.0]]]]]]\t" +
                         "1970-01-02T03:46:40.000000Z\n");
             }
         });
@@ -438,11 +400,12 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     public void testInsertLongArray() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "8192"
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512"
             )) {
                 String tableName = "arr_long_test";
-                serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, y SYMBOL, l1 LONG, a1 LONG[], " +
-                        "a2 LONG[][], a3 LONG[][][], a4 LONG[][][][], a5 LONG[][][][][], a6 LONG[][][][][][], " +
+                serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, y SYMBOL, l1 LONG, " +
+                        "a1 LONG[][][], a2 LONG[][][], a3 LONG[][][], " +
+                        "b1 LONG[], b2 LONG[][], b3 LONG[][][], " +
                         "ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
 
@@ -451,39 +414,53 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         .address("localhost:" + port)
                         .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
                         .retryTimeoutMillis(0)
-                        .build()
+                        .build();
+                     LongArray a1 = new LongArray(2, 2, 2);
+                     LongArray a2 = new LongArray(2, 2, 2).set(99L, 0, 1, 0).set(100L, 1, 1, 1);
+                     LongArray a3 = new LongArray(2, 2, 2).setAll(101);
                 ) {
+                    // array.append() appends in a circular fashion, wrapping around to start from the end.
+                    // We deliberately append two more than the length of the array, to test this behavior.
+                    // The intended use is to fill it up exactly, then for the next row just continue
+                    // filling up with new data.
+                    for (int i = 0; i < 10; i++) {
+                        a1.append(i);
+                    }
+
+                    long[] arr1d = createLongArray(5);
+                    long[][] arr2d = createLongArray(2, 3);
+                    long[][][] arr3d = createLongArray(1, 2, 3);
                     sender.table(tableName)
                             .symbol("x", "42i")
                             .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")  // ensuring no array parsing for symbol
                             .longColumn("l1", 23452345)
-                            .longArray("a1", (long[]) createLongArray(new int[]{5}))
-                            .longArray("a2", (long[][]) createLongArray(new int[]{2, 3}))
-                            .longArray("a3", (long[][][]) createLongArray(new int[]{1, 2, 3}))
-                            .longArray("a4", LongArray.create(1, 2, 1, 1).setAll(4))
-                            .longArray("a5", LongArray.create(3, 2, 1, 4, 1).setAll(5))
-                            .longArray("a6", LongArray.create(1, 3, 4, 2, 1, 1).setAll(6))
+                            .longArray("a1", a1)
+                            .longArray("a2", a2)
+                            .longArray("a3", a3)
+                            .longArray("b1", arr1d)
+                            .longArray("b2", arr2d)
+                            .longArray("b3", arr3d)
                             .at(100000000000L, ChronoUnit.MICROS);
                     sender.flush();
                 }
 
                 serverMain.awaitTxn(tableName, 1);
 
-                serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta1\ta2\ta3\ta4\ta5\ta6\tts\n" +
+                serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta1\ta2\ta3\tb1\tb2\tb3\tts\n" +
                         "42i\t[6f1.0,2.5,3.0,4.5,5.0]\t23452345\t" +
+                        "[[[8,9],[2,3]],[[4,5],[6,7]]]\t" +
+                        "[[[0,0],[99,0]],[[0,0],[0,100]]]\t" +
+                        "[[[101,101],[101,101]],[[101,101],[101,101]]]\t" +
                         "[1,2,3,4,5]\t" +
                         "[[1,2,3],[2,4,6]]\t" +
                         "[[[1,2,3],[2,4,6]]]\t" +
-                        "[[[[4]],[[4]]]]\t" +
-                        "[[[[[5],[5],[5],[5]]],[[[5],[5],[5],[5]]]],[[[[5],[5],[5],[5]]],[[[5],[5],[5],[5]]]],[[[[5],[5],[5],[5]]],[[[5],[5],[5],[5]]]]]\t" +
-                        "[[[[[[6]],[[6]]],[[[6]],[[6]]],[[[6]],[[6]]],[[[6]],[[6]]]],[[[[6]],[[6]]],[[[6]],[[6]]],[[[6]],[[6]]],[[[6]],[[6]]]],[[[[6]],[[6]]],[[[6]],[[6]]],[[[6]],[[6]]],[[[6]],[[6]]]]]]\t" +
                         "1970-01-02T03:46:40.000000Z\n");
             }
         });
     }
 
     @Test
-    public void testInsertNullNdArray() throws Exception {
+    public void testInsertNullArray() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
@@ -617,57 +594,6 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         TestUtils.assertContains(e.getMessage(), "Could not flush buffer: HTTP endpoint does not support ILP.");
                     }
                 }
-            }
-        });
-    }
-
-    @Test
-    public void testLongArray() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512"
-            )) {
-                String tableName = "arr_long_test";
-                serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, y SYMBOL, l1 LONG, a1 LONG[][][], " +
-                        "a2 LONG[][][], a3 LONG[][][], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                serverMain.awaitTxn(tableName, 0);
-
-                int port = serverMain.getHttpServerPort();
-                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
-                        .address("localhost:" + port)
-                        .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
-                        .retryTimeoutMillis(0)
-                        .build();
-                     LongArray a1 = LongArray.create(2, 2, 2);
-                     LongArray a2 = LongArray.create(2, 2, 2);
-                     LongArray a3 = LongArray.create(2, 2, 2).setAll(101);
-                     LongArray a4 = LongArray.create(new long[][]{{10, 11}, {12, 13}});
-                     LongArray a5 = LongArray.create(2).setAll(9);
-                ) {
-                    a1.setValue(99L, 0, 1, 0);
-                    a1.setSubArray(a4, false, 1);
-                    a2.setValue(100L, 1, 1, 1);
-                    a2.setSubArray(a5, false, 0, 0);
-
-                    sender.table(tableName)
-                            .symbol("x", "42i")
-                            .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")  // ensuring no array parsing for symbol
-                            .longColumn("l1", 23452345)
-                            .longArray("a1", a1)
-                            .longArray("a2", a2)
-                            .longArray("a3", a3)
-                            .at(100000000000L, ChronoUnit.MICROS);
-                    sender.flush();
-                }
-
-                serverMain.awaitTxn(tableName, 1);
-
-                serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta1\ta2\ta3\tts\n" +
-                        "42i\t[6f1.0,2.5,3.0,4.5,5.0]\t23452345\t" +
-                        "[[[0,0],[99,0]],[[10,11],[12,13]]]\t" +
-                        "[[[9,9],[0,0]],[[0,0],[0,100]]]\t" +
-                        "[[[101,101],[101,101]],[[101,101],[101,101]]]\t" +
-                        "1970-01-02T03:46:40.000000Z\n");
             }
         });
     }
@@ -866,14 +792,14 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         });
     }
 
-    private static Object buildNestedArray(ArrayDataType dataType, int[] shapes, int currentDim, int[] indices) {
+    private static <T> T buildNestedArray(ArrayDataType dataType, int[] shapes, int currentDim, int[] indices) {
         if (currentDim == shapes.length - 1) {
             Object arr = dataType.createArray(shapes[currentDim]);
             for (int i = 0; i < Array.getLength(arr); i++) {
                 indices[currentDim] = i;
                 dataType.setElement(arr, i, indices);
             }
-            return arr;
+            return (T) arr;
         } else {
             Class<?> componentType = dataType.getComponentType(shapes.length - currentDim - 1);
             Object arr = Array.newInstance(componentType, shapes[currentDim]);
@@ -882,7 +808,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 Object subArr = buildNestedArray(dataType, shapes, currentDim + 1, indices);
                 Array.set(arr, i, subArr);
             }
-            return arr;
+            return (T) arr;
         }
     }
 

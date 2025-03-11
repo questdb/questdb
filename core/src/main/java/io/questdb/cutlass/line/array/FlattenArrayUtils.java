@@ -37,7 +37,7 @@ public class FlattenArrayUtils {
 
     public static long putDataToBuf(long bufPtr, CapacityChecker checkFn, double[] array) {
         int length = array.length;
-        CapacityChecker.check(checkFn, (long) length * Double.BYTES);
+        CapacityChecker.check(checkFn, bufPtr, (long) length * Double.BYTES);
         for (int i = 0; i < length; i++) {
             double v = array[i];
             Unsafe.getUnsafe().putDouble(bufPtr, v);
@@ -73,7 +73,7 @@ public class FlattenArrayUtils {
     }
 
     public static long putDataToBuf(long bufPtr, CapacityChecker checkFn, long[] array) {
-        CapacityChecker.check(checkFn, (long) array.length * Double.BYTES);
+        CapacityChecker.check(checkFn, bufPtr, (long) array.length * Double.BYTES);
         for (long v : array) {
             Unsafe.getUnsafe().putLong(bufPtr, v);
             bufPtr += Long.BYTES;
