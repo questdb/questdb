@@ -109,12 +109,6 @@ public class TxnScoreboardV1 implements TxnScoreboard {
     }
 
     @Override
-    public boolean isMax(long txn) {
-        // Unknown, return true as default
-        return true;
-    }
-
-    @Override
     public boolean hasEarlierTxnLocks(long maxTxn) {
         try {
             if (acquireTxn(0, maxTxn)) {
@@ -130,6 +124,18 @@ public class TxnScoreboardV1 implements TxnScoreboard {
                     .$(", errno=").$(ex.getErrno()).I$();
             return getMin() < maxTxn;
         }
+    }
+
+    public boolean incrementTxn(int id, long txn) {
+        assert txn > -1;
+        final long internalTxn = toInternalTxn(txn);
+        return incrementTxnScoreboardMem(mem, internalTxn);
+    }
+
+    @Override
+    public boolean isMax(long txn) {
+        // Unknown, return false as default
+        return false;
     }
 
     @Override
@@ -196,6 +202,14 @@ public class TxnScoreboardV1 implements TxnScoreboard {
     private static native long getCount(long pTxnScoreboard, long txn);
 
     private static native long getMin(long pTxnScoreboard);
+
+    private native static boolean incrementTxn0(long pTxnScoreboard, long txn);
+
+    private static boolean incrementTxnScoreboardMem(long pTxnScoreboard, long txn) {
+        assert pTxnScoreboard > 0;
+        LOG.debug().$("increment [p=").$(pTxnScoreboard).$(", txn=").$(fromInternalTxn(txn)).I$();
+        return incrementTxn0(pTxnScoreboard, txn);
+    }
 
     private static native void init(long pTxnScoreboard, int entryCount);
 

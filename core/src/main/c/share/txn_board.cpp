@@ -197,7 +197,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboardV1_acquireTxn0
     return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->txn_acquire(txn);
 }
 
-JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_TxnScoreboard_incrementTxn0
+JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_TxnScoreboardV1_incrementTxn0
         (JAVA_STATIC, jlong p_txn_scoreboard, jlong txn) {
     return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->txn_increment(txn);
 }

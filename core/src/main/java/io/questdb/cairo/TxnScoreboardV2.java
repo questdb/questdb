@@ -151,6 +151,19 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     }
 
     @Override
+    public boolean incrementTxn(int id, long txn) {
+        long internalId = toInternalId(id);
+        assert internalId < entryScanCount;
+        if (Unsafe.getUnsafe().compareAndSwapLong(null, entriesMem + internalId * Long.BYTES, UNLOCKED, txn)) {
+            updateMaxReaderId(internalId);
+            incrementActiveReaderCount();
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    @Override
     public boolean isMax(long txn) {
         return txn >= getMax();
     }
@@ -189,6 +202,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         long internalId = toInternalId(id);
         assert internalId < entryScanCount;
         Unsafe.getUnsafe().putLongVolatile(null, entriesMem + internalId * Long.BYTES, UNLOCKED);
+        // It's too expensive to count how many readers are left for the txn, caller will have to do additional checks.
         return 0;
     }
 

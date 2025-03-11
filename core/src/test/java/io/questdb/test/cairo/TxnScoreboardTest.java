@@ -314,28 +314,26 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     @Test
     public void testIncrementTxn() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (
-                    final Path shmPath = new Path();
-                    final TxnScoreboard scoreboard = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, 1024).ofRW(shmPath.of(root))
-            ) {
-                Assert.assertEquals(0, scoreboard.getMin());
-                Assert.assertTrue(scoreboard.acquireTxn(1));
-                Assert.assertEquals(1, scoreboard.getMin());
-                // Don't release the older txn.
+            try (final TxnScoreboard scoreboard = newTxnScoreboard()) {
+                assertScoreboardMinOrNoLocks(scoreboard, 0);
+                Assert.assertTrue(scoreboard.acquireTxn(0, 1));
+                Assert.assertEquals(1, getMin(scoreboard));
 
-                Assert.assertTrue(scoreboard.acquireTxn(2));
-                scoreboard.releaseTxn(2);
-                Assert.assertEquals(1, scoreboard.getMin());
+                // Don't release the older txn.
+                Assert.assertTrue(scoreboard.acquireTxn(1, 2));
+                scoreboard.releaseTxn(1, 2);
+                Assert.assertEquals(1, getMin(scoreboard));
 
                 // acquireTxn() would have failed here, but we can use incrementTxn()
-                Assert.assertTrue(scoreboard.incrementTxn(1));
-                scoreboard.releaseTxn(1);
-                Assert.assertEquals(1, scoreboard.getMin());
+                Assert.assertTrue(scoreboard.incrementTxn(2, 1));
+                scoreboard.releaseTxn(2, 1);
+                Assert.assertEquals(1, getMin(scoreboard));
 
                 // Now we can release the older txn.
-                scoreboard.releaseTxn(1);
-                Assert.assertEquals(2, scoreboard.getMin());
+                scoreboard.releaseTxn(0, 1);
+                assertScoreboardMinOrNoLocks(scoreboard, 2);
             }
+            scoreboardPoolFactory.clear();
         });
     }
 

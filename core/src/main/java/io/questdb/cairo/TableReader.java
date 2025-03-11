@@ -67,10 +67,10 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
     private final MillisecondClock clock;
     private final ColumnVersionReader columnVersionReader;
-    private final int id;
     private final CairoConfiguration configuration;
     private final int dbRootSize;
     private final FilesFacade ff;
+    private final int id;
     private final int maxOpenPartitions;
     private final MessageBus messageBus;
     private final TableReaderMetadata metadata;
@@ -154,13 +154,15 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     // copyOf constructor.
     public TableReader(
+            int id,
             CairoConfiguration configuration,
             TableReader srcReader,
+            TxnScoreboardPool scoreboardPool,
             @Nullable MessageBus messageBus,
             @Nullable PartitionOverwriteControl partitionOverwriteControl
     ) {
         assert srcReader.isOpen() && srcReader.isActive();
-
+        this.id = id;
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
         this.maxOpenPartitions = configuration.getInactiveReaderMaxOpenPartitions();
@@ -178,8 +180,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             metadata = copyMeta(srcReader.metadata);
             partitionBy = metadata.getPartitionBy();
             columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
-            txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount());
-            txnScoreboard.ofRW(path.trimTo(rootLen));
+            txnScoreboard = scoreboardPool.getTxnScoreboard(tableToken);
             LOG.debug()
                     .$("open as copy [id=").$(metadata.getTableId())
                     .$(", table=").utf8(tableToken.getTableName())
@@ -639,19 +640,24 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void checkSchedulePurgeO3Partitions() {
-        long partitionTableVersion = txFile.getPartitionTableVersion();
-        if (txFile.unsafeLoadAll() && txFile.getPartitionTableVersion() > partitionTableVersion && txnScoreboard.isTxnAvailable(txn)) {
-            // Last lock for this txn is released and this is not latest txn number
-            // Schedule a job to clean up partition versions this reader may hold
-            if (TableUtils.schedulePurgeO3Partitions(messageBus, tableToken, partitionBy)) {
-                return;
-            }
+        // In scoreboard V2 it is cheap to check that the txn released is not the max txn,
+        // do it as a first step before more expensive checks.
+        if (!txnScoreboard.isMax(txn)) {
+            long partitionTableVersion = txFile.getPartitionTableVersion();
+            // In scoreboard V2 isTxnAvailable(txn) can be relatively expensive, do this check at the end.
+            if (txFile.unsafeLoadAll() && txFile.getPartitionTableVersion() > partitionTableVersion && txnScoreboard.isTxnAvailable(txn)) {
+                // Last lock for this txn is released and this is not latest txn number
+                // Schedule a job to clean up partition versions this reader may hold
+                if (TableUtils.schedulePurgeO3Partitions(messageBus, tableToken, partitionBy)) {
+                    return;
+                }
 
-            LOG.error()
-                    .$("could not queue purge partition task, queue is full [")
-                    .$("dirName=").utf8(tableToken.getDirName())
-                    .$(", txn=").$(txn)
-                    .$(']').$();
+                LOG.error()
+                        .$("could not queue purge partition task, queue is full [")
+                        .$("dirName=").utf8(tableToken.getDirName())
+                        .$(", txn=").$(txn)
+                        .$(']').$();
+            }
         }
     }
 
@@ -1394,7 +1400,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void reloadAtTxn(TableReader srcReader, boolean reshuffle) {
         releaseTxn();
         final long txn = srcReader.getTxn();
-        if (!txnScoreboard.incrementTxn(txn)) {
+        if (!txnScoreboard.incrementTxn(id, txn)) {
             throw CairoException.critical(0).put("could not acquire txn for copy, source reader has to be active [table=")
                     .put(tableToken.getTableName()).put(", txn=").put(txn).put(']');
         }

@@ -98,7 +98,7 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
 
     @Override
     protected R newCopyOfTenant(R srcReader, Entry<R> entry, int index, ResourcePoolSupervisor<R> supervisor) {
-        return new R(this, entry, index, srcReader, messageBus, readerListener, partitionOverwriteControl, supervisor);
+        return new R(this, entry, index, srcReader, txnScoreboardPool, messageBus, readerListener, partitionOverwriteControl, supervisor);
     }
 
     @Override
@@ -149,12 +149,13 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
                 Entry<R> entry,
                 int index,
                 R srcReader,
+                TxnScoreboardPool txnScoreboardPool,
                 MessageBus messageBus,
                 ReaderListener readerListener,
                 PartitionOverwriteControl partitionOverwriteControl,
                 ResourcePoolSupervisor<R> supervisor
         ) {
-            super(pool.getConfiguration(), srcReader, messageBus, partitionOverwriteControl);
+            super(entry.getIndex() * ENTRY_SIZE + index, pool.getConfiguration(), srcReader, txnScoreboardPool, messageBus, partitionOverwriteControl);
             this.pool = pool;
             this.entry = entry;
             this.index = index;
