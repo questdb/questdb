@@ -692,9 +692,8 @@ public final class LineHttpSender implements Sender {
                 break;
         }
         escapeQuotedString(name);
+        request.put('=');
         if (nativeFormat) {
-            request.put(':');
-        } else {
             request.put('=');
         }
         return request;

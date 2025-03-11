@@ -200,6 +200,7 @@ public class LineTcpParser implements QuietCloseable {
                 }
                 return ParseResult.ERROR;
             }
+            bufAt++;
             nativeFormatStreamStep = NativeFormatStreamStep.NotINNativeFormat;
         }
 
@@ -228,7 +229,6 @@ public class LineTcpParser implements QuietCloseable {
                 case ',':
                 case '=':
                 case ' ':
-                case ':':
                     isQuotedFieldValue = false;
                     if (!completeEntity(b, bufHi)) {
                         // parse of key or value is unsuccessful
@@ -253,9 +253,7 @@ public class LineTcpParser implements QuietCloseable {
                         return ParseResult.ERROR;
                     }
                     // skip the separator
-                    if (b != ':') {
-                        bufAt++;
-                    }
+                    bufAt++;
                     if (!isQuotedFieldValue) {
                         // reset few indicators
                         nEscapedChars = 0;
@@ -382,7 +380,7 @@ public class LineTcpParser implements QuietCloseable {
             case ENTITY_HANDLER_NAME:
                 return expectEntityName(endOfEntityByte, bufHi);
             case ENTITY_HANDLER_VALUE:
-                return expectEntityValue(endOfEntityByte);
+                return expectEntityValue(endOfEntityByte, bufHi);
             case ENTITY_HANDLER_TIMESTAMP:
                 return expectTimestamp(endOfEntityByte);
             case ENTITY_HANDLER_NEW_LINE:
@@ -397,9 +395,7 @@ public class LineTcpParser implements QuietCloseable {
     }
 
     private boolean expectEntityName(byte endOfEntityByte, long bufHi) {
-        // '=' represents text value format following
-        // ':' represents native byte value format following, which only supported in fieldVale
-        if (endOfEntityByte == (byte) '=' || endOfEntityByte == (byte) ':') {
+        if (endOfEntityByte == (byte) '=') {
             if (bufAt - entityLo - nEscapedChars == 0) { // no tag/field name
                 errorCode = tagsComplete ? ErrorCode.INCOMPLETE_FIELD : ErrorCode.INCOMPLETE_TAG;
                 return false;
@@ -408,38 +404,24 @@ public class LineTcpParser implements QuietCloseable {
             currentEntity = popEntity();
             nEntities++;
             currentEntity.setName();
-            if (endOfEntityByte == (byte) '=') {
-                entityHandler = ENTITY_HANDLER_VALUE;
-                if (tagsComplete) {
-                    if (bufAt + 3 < bufHi) { // peek oncoming value's 1st byte, only caring for valid strings (2 quotes plus a follow-up byte)
-                        long candidateQuoteIdx = bufAt + 1;
-                        byte b = Unsafe.getUnsafe().getByte(candidateQuoteIdx);
-                        if (b == (byte) '"') {
-                            nEscapedChars = 0;
-                            nQuoteCharacters++;
-                            bufAt += 2;
-                            return prepareQuotedEntity(candidateQuoteIdx, bufHi);// go to first byte of the string, past the '"'
-                        } else {
-                            nextValueCanBeOpenQuote = false;
-                        }
+            entityHandler = ENTITY_HANDLER_VALUE;
+            if (tagsComplete) {
+                if (bufAt + 3 < bufHi) { // peek oncoming value's 1st byte, only caring for valid strings (2 quotes plus a follow-up byte)
+                    long candidateQuoteIdx = bufAt + 1;
+                    byte b = Unsafe.getUnsafe().getByte(candidateQuoteIdx);
+                    if (b == (byte) '"') {
+                        nEscapedChars = 0;
+                        nQuoteCharacters++;
+                        bufAt += 2;
+                        return prepareQuotedEntity(candidateQuoteIdx, bufHi);// go to first byte of the string, past the '"'
                     } else {
-                        nextValueCanBeOpenQuote = true;
+                        nextValueCanBeOpenQuote = false;
                     }
+                } else {
+                    nextValueCanBeOpenQuote = true;
                 }
-                return true;
-            } else {
-                if (tagsComplete) {
-                    nativeFormatStreamStep = NativeFormatStreamStep.INNativeFormat;
-                    bufAt++;
-                    if (expectNativeFormat(bufHi)) {
-                        nativeFormatStreamStep = NativeFormatStreamStep.NotINNativeFormat;
-                        return true;
-                    }
-                    return false;
-                }
-                errorCode = ErrorCode.INVALID_COLUMN_NAME;
-                return false;
             }
+            return true;
         }
 
         boolean emptyEntity = bufAt == entityLo;
@@ -478,7 +460,7 @@ public class LineTcpParser implements QuietCloseable {
         return false;
     }
 
-    private boolean expectEntityValue(byte endOfEntityByte) {
+    private boolean expectEntityValue(byte endOfEntityByte, long bufHi) {
         boolean endOfSet = endOfEntityByte == (byte) ' ';
         if (endOfSet || endOfEntityByte == (byte) ',' || endOfEntityByte == (byte) '\n') {
             if (currentEntity.setValueAndUnit()) {
@@ -496,6 +478,14 @@ public class LineTcpParser implements QuietCloseable {
             }
 
             errorCode = tagsComplete ? ErrorCode.INVALID_FIELD_VALUE : ErrorCode.INVALID_TAG_VALUE;
+            return false;
+        } else if (endOfEntityByte == (byte) '=' && bufAt == entityLo && tagsComplete) { // '==' represents native byte value format following, which only supported in fieldValue
+            nativeFormatStreamStep = NativeFormatStreamStep.INNativeFormat;
+            bufAt++;
+            if (expectNativeFormat(bufHi)) {
+                nativeFormatStreamStep = NativeFormatStreamStep.NotINNativeFormat;
+                return true;
+            }
             return false;
         }
 
@@ -517,13 +507,11 @@ public class LineTcpParser implements QuietCloseable {
             byte expectSeparator = Unsafe.getUnsafe().getByte(bufAt);
             if (expectSeparator == (byte) ' ') {
                 entityHandler = ENTITY_HANDLER_TIMESTAMP;
-                bufAt++;
-                entityLo = bufAt;
+                entityLo = bufAt + 1;
                 return true;
             } else if (expectSeparator == (byte) ',' || expectSeparator == (byte) '\n' || expectSeparator == (byte) '\r') {
                 entityHandler = ENTITY_HANDLER_NAME;
-                bufAt++;
-                entityLo = bufAt;
+                entityLo = bufAt + 1;
                 return true;
             } else {
                 entityLo = bufAt;
@@ -988,7 +976,7 @@ public class LineTcpParser implements QuietCloseable {
     }
 
     static {
-        char[] chars = new char[]{'\n', '\r', '=', ',', ' ', '\\', '"', '\0', '/', ':'};
+        char[] chars = new char[]{'\n', '\r', '=', ',', ' ', '\\', '"', '\0', '/'};
         controlBytes = new boolean[256];
         for (char ch : chars) {
             controlBytes[ch] = true;

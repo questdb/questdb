@@ -598,11 +598,11 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
                 putAsciiInternal(',');
             }
             put(name);
+            putAsciiInternal('=');
             if (binaryFormat) {
-                return putAsciiInternal(':');
-            } else {
-                return putAsciiInternal('=');
+                putAsciiInternal('=');
             }
+            return this;
         }
         throw new LineSenderException("table expected");
     }
