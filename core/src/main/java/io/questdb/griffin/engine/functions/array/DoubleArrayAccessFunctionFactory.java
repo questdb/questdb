@@ -150,14 +150,15 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             }
             int flatIndex = 0;
             for (int n = indexArgs.size(), dim = 0; dim < n; dim++) {
-                int indexAtDim = indexArgs.getQuick(dim).getInt(rec);
+                // Decrement the index in the argument because Postgres uses 1-based array indexing
+                int indexAtDim = indexArgs.getQuick(dim).getInt(rec) - 1;
                 int strideAtDim = array.getStride(dim);
                 int dimLen = array.getDimLen(dim);
                 if (indexAtDim < 0 || indexAtDim >= dimLen) {
                     throw CairoException.nonCritical()
                             .position(indexArgPositions.get(dim))
                             .put("array index out of range [dim=").put(dim)
-                            .put(", index=").put(indexAtDim)
+                            .put(", index=").put(indexAtDim + 1)
                             .put(", dimLen=").put(dimLen).put(']');
                 }
                 flatIndex += strideAtDim * indexAtDim;
@@ -219,17 +220,21 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                         hi = Numbers.INT_NULL;
                     } else {
                         assert hi == hiLong : "int overflow on interval upper bound: " + hiLong;
+                        // Decrement the index in the argument because Postgres uses 1-based array indexing
+                        hi--;
                     }
                     assert lo == loLong : "int overflow on interval lower bound: " + loLong;
+                    // Decrement the index in the argument because Postgres uses 1-based array indexing
+                    lo--;
                     derivedArray.slice(dim++, lo, hi, argPos);
                 } else {
-                    int index = rangeFn.getInt(rec);
+                    int index = rangeFn.getInt(rec) - 1;
                     int dimLen = derivedArray.getDimLen(dim);
                     if (index < 0 || index >= dimLen) {
                         throw CairoException.nonCritical()
                                 .position(argPos)
                                 .put("array index out of range [dim=").put(i)
-                                .put(", index=").put(index)
+                                .put(", index=").put(index + 1)
                                 .put(", dimLen=").put(dimLen)
                                 .put(']');
                     }

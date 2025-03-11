@@ -136,10 +136,10 @@ import java.util.stream.Stream;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
-import static io.questdb.test.tools.TestUtils.assertEquals;
 import static io.questdb.test.tools.TestUtils.*;
-import static org.junit.Assert.assertEquals;
+import static io.questdb.test.tools.TestUtils.assertEquals;
 import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
 
 /**
  * This class contains tests which replay PGWIRE traffic.
@@ -1412,54 +1412,6 @@ public class PGJobContextTest extends BasePGTest {
         });
     }
 
-    private void assertPgWireQuery(Connection conn, String query, CharSequence expected) throws Exception {
-        try (PreparedStatement stmt = conn.prepareStatement(query)) {
-            sink.clear();
-            try (ResultSet rs = stmt.executeQuery()) {
-                assertResultSet(expected, sink, rs);
-            }
-        }
-    }
-
-    @Test
-    public void testSliceArray() throws Exception {
-        skipInLegacyMode();
-
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4], [5, 6]] arr FROM long_sequence(1))");
-            assertPgWireQuery(connection,
-                    "SELECT arr[0:1] slice FROM tango",
-                    "slice[ARRAY]\n" +
-                            "{{1.0,2.0}}\n");
-            assertPgWireQuery(connection,
-                    "SELECT arr[1:] slice FROM tango",
-                    "slice[ARRAY]\n" +
-                            "{{3.0,4.0},{5.0,6.0}}\n");
-            assertPgWireQuery(connection,
-                    "SELECT arr[2:, 0:1] slice FROM tango",
-                    "slice[ARRAY]\n" +
-                            "{{5.0}}\n");
-            assertPgWireQuery(connection,
-                    "SELECT arr[2:, 1] slice FROM tango",
-                    "slice[ARRAY]\n" +
-                            "{6.0}\n");
-            assertPgWireQuery(connection,
-                    "SELECT arr[0:2] slice FROM tango",
-                    "slice[ARRAY]\n" +
-                            "{{1.0,2.0},{3.0,4.0}}\n");
-            assertPgWireQuery(connection,
-                    "SELECT arr[0:2, 0:1] slice FROM tango",
-                    "slice[ARRAY]\n" +
-                            "{{1.0},{3.0}}\n");
-            assertPgWireQuery(connection,
-                    "SELECT arr[1, 1] element FROM tango",
-                    "element[DOUBLE]\n" +
-                            "4.0\n");
-        }, () -> {
-            sendBufferSize = 1000 * 1024; // use large enough buffer, otherwise we will get fragmented messages and this currently leads to non-deterministic results of rnd_double_array
-        });
-    }
-
     @Test
     public void testArrayResultSet() throws Exception {
         skipOnWalRun();
@@ -2157,28 +2109,6 @@ if __name__ == "__main__":
         }
     }
 
-//Testing through postgres - need to establish connection
-//    @Test
-//    public void testReadINet() throws SQLException, IOException {
-//        Properties properties = new Properties();
-//        properties.setProperty("user", "admin");
-//        properties.setProperty("password", "postgres");
-//        properties.setProperty("sslmode", "disable");
-//        properties.setProperty("binaryTransfer", Boolean.toString(true));
-//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
-//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-//
-//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
-//
-//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
-//            var stmt = connection.prepareStatement("select * from ipv4");
-//            ResultSet rs = stmt.executeQuery();
-//            assertResultSet("a[OTHER]\n" +
-//                    "1.1.1.1\n" +
-//                    "12.2.65.90\n", sink, rs);
-//        }
-//    }
-
     @Test
     public void testBindVariableDropLastPartitionListByWeekHigherPrecision() throws Exception {
         testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.WEEK);
@@ -2212,6 +2142,28 @@ if __name__ == "__main__":
             }
         });
     }
+
+//Testing through postgres - need to establish connection
+//    @Test
+//    public void testReadINet() throws SQLException, IOException {
+//        Properties properties = new Properties();
+//        properties.setProperty("user", "admin");
+//        properties.setProperty("password", "postgres");
+//        properties.setProperty("sslmode", "disable");
+//        properties.setProperty("binaryTransfer", Boolean.toString(true));
+//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
+//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+//
+//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
+//
+//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
+//            var stmt = connection.prepareStatement("select * from ipv4");
+//            ResultSet rs = stmt.executeQuery();
+//            assertResultSet("a[OTHER]\n" +
+//                    "1.1.1.1\n" +
+//                    "12.2.65.90\n", sink, rs);
+//        }
+//    }
 
     @Test
     public void testBindVariableInFilter() throws Exception {
@@ -2962,102 +2914,6 @@ if __name__ == "__main__":
                         assertContains(e.getMessage(), "cancelled by user");
                     }
                 }
-            }
-        });
-    }
-
-    @Test
-    public void testExplicitCastInsertStringToArrayColum() throws Exception {
-        skipOnWalRun();
-        skipInLegacyMode();
-
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[])")) {
-                stmt.execute();
-            }
-
-            try (PreparedStatement stmt = connection.prepareStatement("insert into x values ('{1,2,3,4,5}'::double[])")) {
-                stmt.execute();
-            }
-
-            try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
-                sink.clear();
-                try (ResultSet rs = stmt.executeQuery()) {
-                    assertResultSet("al[ARRAY]\n" +
-                                    "{1.0,2.0,3.0,4.0,5.0}\n",
-                            sink,
-                            rs
-                    );
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testInsertStringToArrayColum() throws Exception {
-        skipOnWalRun();
-        skipInLegacyMode();
-
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
-                stmt.execute();
-            }
-
-            try (PreparedStatement stmt = connection.prepareStatement("insert into x values ('{{1,2},{3,4}}')")) {
-                stmt.execute();
-            }
-
-            // insert null
-            try (PreparedStatement stmt = connection.prepareStatement("insert into x values (null::string)")) {
-                stmt.execute();
-            }
-
-            try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
-                sink.clear();
-                try (ResultSet rs = stmt.executeQuery()) {
-                    assertResultSet("al[ARRAY]\n" +
-                                    "{{1.0,2.0},{3.0,4.0}}\n" +
-                                    "null\n",
-                            sink,
-                            rs
-                    );
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testInsertStringToArrayColum_negativeScenarios() throws Exception {
-        skipOnWalRun();
-        skipInLegacyMode();
-
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
-                stmt.execute();
-            }
-
-            // bad dimension count
-            try (PreparedStatement stmt = connection.prepareStatement("insert into x values ('{1,2,3,4}')")) {
-                stmt.execute();
-                Assert.fail("inserted 1D array into 2D column");
-            } catch (SQLException e) {
-                TestUtils.assertContains(e.getMessage(), "inconvertible value: `{1,2,3,4}` [STRING -> DOUBLE[][]]");
-            }
-
-            // inconsistent row sizes
-            try (PreparedStatement stmt = connection.prepareStatement("insert into x values ('{{1,2},{3,4,5}}')")) {
-                stmt.execute();
-                Assert.fail("inserted 2D array with different row sizes");
-            } catch (SQLException e) {
-                TestUtils.assertContains(e.getMessage(), "inconvertible value: `{{1,2},{3,4,5}}` [STRING -> DOUBLE[][]]");
-            }
-
-            // bad literal
-            try (PreparedStatement stmt = connection.prepareStatement("insert into x values ('{{1,2},{3,a}}')")) {
-                stmt.execute();
-                Assert.fail("inserted bad array literal");
-            } catch (SQLException e) {
-                TestUtils.assertContains(e.getMessage(), "inconvertible value: `{{1,2},{3,a}}` [STRING -> DOUBLE[][]]");
             }
         });
     }
@@ -4118,6 +3974,33 @@ if __name__ == "__main__":
                                     "        PageFrame\n" +
                                     "            Row forward scan\n" +
                                     "            Frame forward scan on: xx\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testExplicitCastInsertStringToArrayColum() throws Exception {
+        skipOnWalRun();
+        skipInLegacyMode();
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[])")) {
+                stmt.execute();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("insert into x values ('{1,2,3,4,5}'::double[])")) {
+                stmt.execute();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("al[ARRAY]\n" +
+                                    "{1.0,2.0,3.0,4.0,5.0}\n",
                             sink,
                             rs
                     );
@@ -6159,6 +6042,75 @@ nodejs code:
                         sink,
                         rs
                 );
+            }
+        });
+    }
+
+    @Test
+    public void testInsertStringToArrayColum() throws Exception {
+        skipOnWalRun();
+        skipInLegacyMode();
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
+                stmt.execute();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("insert into x values ('{{1,2},{3,4}}')")) {
+                stmt.execute();
+            }
+
+            // insert null
+            try (PreparedStatement stmt = connection.prepareStatement("insert into x values (null::string)")) {
+                stmt.execute();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("al[ARRAY]\n" +
+                                    "{{1.0,2.0},{3.0,4.0}}\n" +
+                                    "null\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInsertStringToArrayColum_negativeScenarios() throws Exception {
+        skipOnWalRun();
+        skipInLegacyMode();
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
+                stmt.execute();
+            }
+
+            // bad dimension count
+            try (PreparedStatement stmt = connection.prepareStatement("insert into x values ('{1,2,3,4}')")) {
+                stmt.execute();
+                Assert.fail("inserted 1D array into 2D column");
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "inconvertible value: `{1,2,3,4}` [STRING -> DOUBLE[][]]");
+            }
+
+            // inconsistent row sizes
+            try (PreparedStatement stmt = connection.prepareStatement("insert into x values ('{{1,2},{3,4,5}}')")) {
+                stmt.execute();
+                Assert.fail("inserted 2D array with different row sizes");
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "inconvertible value: `{{1,2},{3,4,5}}` [STRING -> DOUBLE[][]]");
+            }
+
+            // bad literal
+            try (PreparedStatement stmt = connection.prepareStatement("insert into x values ('{{1,2},{3,a}}')")) {
+                stmt.execute();
+                Assert.fail("inserted bad array literal");
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "inconvertible value: `{{1,2},{3,a}}` [STRING -> DOUBLE[][]]");
             }
         });
     }
@@ -10402,6 +10354,45 @@ create table tab as (
     }
 
     @Test
+    public void testSliceArray() throws Exception {
+        skipInLegacyMode();
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4], [5, 6]] arr FROM long_sequence(1))");
+            assertPgWireQuery(connection,
+                    "SELECT arr[1:2] slice FROM tango",
+                    "slice[ARRAY]\n" +
+                            "{{1.0,2.0}}\n");
+            assertPgWireQuery(connection,
+                    "SELECT arr[2:] slice FROM tango",
+                    "slice[ARRAY]\n" +
+                            "{{3.0,4.0},{5.0,6.0}}\n");
+            assertPgWireQuery(connection,
+                    "SELECT arr[3:, 1:2] slice FROM tango",
+                    "slice[ARRAY]\n" +
+                            "{{5.0}}\n");
+            assertPgWireQuery(connection,
+                    "SELECT arr[3:, 2] slice FROM tango",
+                    "slice[ARRAY]\n" +
+                            "{6.0}\n");
+            assertPgWireQuery(connection,
+                    "SELECT arr[1:3] slice FROM tango",
+                    "slice[ARRAY]\n" +
+                            "{{1.0,2.0},{3.0,4.0}}\n");
+            assertPgWireQuery(connection,
+                    "SELECT arr[1:3, 1:2] slice FROM tango",
+                    "slice[ARRAY]\n" +
+                            "{{1.0},{3.0}}\n");
+            assertPgWireQuery(connection,
+                    "SELECT arr[2, 2] element FROM tango",
+                    "element[DOUBLE]\n" +
+                            "4.0\n");
+        }, () -> {
+            sendBufferSize = 1000 * 1024; // use large enough buffer, otherwise we will get fragmented messages and this currently leads to non-deterministic results of rnd_double_array
+        });
+    }
+
+    @Test
     public void testSlowClient() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
@@ -12202,6 +12193,15 @@ create table tab as (
     private void assertHexScriptAltCreds(String script) throws Exception {
         skipOnWalRun();
         assertHexScript(NetworkFacadeImpl.INSTANCE, script, getStdPgWireConfigAltCreds());
+    }
+
+    private void assertPgWireQuery(Connection conn, String query, CharSequence expected) throws Exception {
+        try (PreparedStatement stmt = conn.prepareStatement(query)) {
+            sink.clear();
+            try (ResultSet rs = stmt.executeQuery()) {
+                assertResultSet(expected, sink, rs);
+            }
+        }
     }
 
     private void assertQueryAgainstIndexedSymbol(

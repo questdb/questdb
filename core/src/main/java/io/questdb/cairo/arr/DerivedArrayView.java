@@ -89,12 +89,14 @@ public class DerivedArrayView extends ArrayView {
         if (hi == Numbers.INT_NULL) {
             hi = dimLen;
         }
+        // Report bounds + 1 because that's what the user entered, the caller subtracted 1
+        // to align with Postgres' 1-based array indexing
         if (lo >= hi) {
             throw CairoException.nonCritical()
                     .position(argPos)
                     .put("lower bound is not less than upper bound [dim=").put(dim)
-                    .put(", lowerBound=").put(lo)
-                    .put(", upperBound=").put(hi)
+                    .put(", lowerBound=").put(lo + 1)
+                    .put(", upperBound=").put(hi + 1)
                     .put(']');
         }
         if (lo < 0 || lo >= dimLen || hi > dimLen) {
@@ -102,8 +104,8 @@ public class DerivedArrayView extends ArrayView {
                     .position(argPos)
                     .put("array slice bounds out of range [dim=").put(dim)
                     .put(", dimLen=").put(dimLen)
-                    .put(", lowerBound=").put(lo)
-                    .put(", upperBound=").put(hi)
+                    .put(", lowerBound=").put(lo + 1)
+                    .put(", upperBound=").put(hi + 1)
                     .put(']');
         }
         if (lo == 0 && hi == dimLen) {
