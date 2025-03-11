@@ -44,7 +44,7 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 
 public class IlpArrayBenchmark {
     private static final int ELEM_COUNT = 100;
-    private static final int INSERT_BATCH_SIZE = 80;
+    private static final int INSERT_BATCH_SIZE = 75;
     private static final int N_INSERTERS = 1;
     private static final int N_SELECTORS = 1;
     private static final long RUNTIME_SECONDS = 10;
@@ -108,12 +108,7 @@ public class IlpArrayBenchmark {
                 ddlStatement.execute("DROP TABLE IF EXISTS tango");
                 ddlStatement.execute(
                         "CREATE TABLE tango (ts TIMESTAMP, " +
-                                (USE_ARRAY ? "arr DOUBLE[]"
-                                        : "n0 DOUBLE, n1 DOUBLE, n2 DOUBLE, n3 DOUBLE, n4 DOUBLE, " +
-                                        "n5 DOUBLE, n6 DOUBLE, n7 DOUBLE, n8 DOUBLE, n9 DOUBLE, " +
-                                        "n10 DOUBLE, n11 DOUBLE, n12 DOUBLE, n13 DOUBLE, n14 DOUBLE, " +
-                                        "n15 DOUBLE, n16 DOUBLE, n17 DOUBLE, n18 DOUBLE, n19 DOUBLE") +
-                                ") TIMESTAMP(ts) PARTITION BY HOUR WAL");
+                                (USE_ARRAY ? "arr DOUBLE[]" : "n0 DOUBLE") + ") TIMESTAMP(ts) PARTITION BY HOUR WAL");
             }
             long start = System.nanoTime();
             long deadline = start + SECONDS.toNanos(RUNTIME_SECONDS);
