@@ -9,6 +9,12 @@ use std::fs;
 use std::process;
 use thiserror::Error;
 use tokio_postgres::{types::ToSql, Client, NoTls, Row};
+use std::error::Error;
+use std::fmt;
+use postgres_protocol::types::{float8_from_sql, Array};
+use tokio_postgres::types::{FromSql, Type, Kind};
+use fallible_iterator::FallibleIterator;
+
 
 #[derive(Debug, Deserialize)]
 struct TestFile {
@@ -379,39 +385,24 @@ fn get_value_as_yaml(row: &Row, idx: usize) -> Value {
     let column_type = row.columns()[idx].type_();
 
     match *column_type {
-        tokio_postgres::types::Type::INT2 => Value::Number(row.get::<_, i16>(idx).into()),
-        tokio_postgres::types::Type::INT4 => Value::Number(row.get::<_, i32>(idx).into()),
-        tokio_postgres::types::Type::INT8 => Value::Number(row.get::<_, i64>(idx).into()),
-        tokio_postgres::types::Type::FLOAT4 => {
+        Type::INT2 => Value::Number(row.get::<_, i16>(idx).into()),
+        Type::INT4 => Value::Number(row.get::<_, i32>(idx).into()),
+        Type::INT8 => Value::Number(row.get::<_, i64>(idx).into()),
+        Type::FLOAT4 => {
             Value::Number(serde_yaml::Number::from(row.get::<_, f32>(idx)))
         }
-        tokio_postgres::types::Type::FLOAT8 => {
+        Type::FLOAT8 => {
             Value::Number(serde_yaml::Number::from(row.get::<_, f64>(idx)))
         }
         tokio_postgres::types::Type::BOOL => Value::Bool(row.get(idx)),
-        tokio_postgres::types::Type::TIMESTAMP => {
+        Type::TIMESTAMP => {
             let val: NaiveDateTime = row.get(idx);
             Value::String(val.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string())
         }
-        tokio_postgres::types::Type::VARCHAR => Value::String(row.get(idx)),
-        tokio_postgres::types::Type::FLOAT8_ARRAY => {
-            let float_array: Vec<Option<f64>> = row.get(idx);
-            let float_strs: Vec<String> = float_array.iter()
-                .map(|&opt_num| {
-                    match opt_num {
-                        None => "NULL".to_string(),
-                        Some(num) => {
-                            // Ensure at least one digit after decimal point
-                            if num.fract().abs() < f64::EPSILON {
-                                format!("{:.1}", num) // Force one decimal place for integers
-                            } else {
-                                num.to_string() // Regular formatting for non-integers
-                            }
-                        }
-                    }
-                })
-                .collect();
-            Value::String(format!("{{{}}}", float_strs.join(",")))
+        Type::VARCHAR => Value::String(row.get(idx)),
+        Type::FLOAT8_ARRAY => {
+            let PgArrayString (float_array) = row.get(idx);
+            Value::String(float_array)
         }
         _ => Value::String(row.get(idx)),
     }
@@ -501,6 +492,111 @@ fn handle_execute_result(
         }
     }
     Ok(())
+}
+
+/// String representation of a PostgreSQL multi-dimensional array
+#[derive(Debug, Clone)]
+pub struct PgArrayString(pub String);
+
+impl fmt::Display for PgArrayString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl<'a> FromSql<'a> for PgArrayString {
+    fn from_sql(ty: &Type, raw: &'a [u8]) -> Result<Self, Box<dyn Error + Sync + Send>> {
+        // Check if it's an array type
+        match ty.kind() {
+            Kind::Array(element_type) => {
+                let array: Array = postgres_protocol::types::array_from_sql(raw)?;
+                let mut buffer = String::new();
+                array_to_text(&array, 0, 0, &mut buffer, element_type)?;
+                Ok(PgArrayString(buffer))
+            },
+            _ => Err("expected array type".into()),
+        }
+    }
+
+    fn accepts(ty: &Type) -> bool {
+        matches!(ty.kind(), Kind::Array(_))
+    }
+}
+
+fn array_to_text(
+    array: &Array,
+    dim: usize,
+    mut flat_index: usize,
+    buffer: &mut String,
+    element_type: &Type
+) -> Result<usize, Box<dyn Error + Sync + Send>> {
+    // Get dimensions info - manually collect them
+    let mut dimensions = Vec::new();
+    let mut dims_iter = array.dimensions();
+    while let Ok(Some(dim_result)) = dims_iter.next() {
+        dimensions.push(dim_result);
+    }
+
+    if dimensions.is_empty() {
+        buffer.push_str("{}");
+        return Ok(flat_index);
+    }
+
+    let count = dimensions[dim].len as usize;
+
+    // Calculate stride for this dimension
+    let stride = if dim < dimensions.len() - 1 {
+        dimensions[dim + 1..].iter().map(|d| d.len as usize).product()
+    } else {
+        1 // Leaf dimension
+    };
+
+    let at_deepest_dim = dim == dimensions.len() - 1;
+
+    // Opening brace
+    buffer.push('{');
+
+    if at_deepest_dim {
+        // Leaf level - append actual values
+        for i in 0..count {
+            if i > 0 {
+                buffer.push(',');
+            }
+
+            // Get the value at flat_index
+            let value = array.values().nth(flat_index)?
+                .ok_or("Value index out of bounds")?;
+
+            match value {
+                None => buffer.push_str("NULL"),
+                Some(val) => {
+                    // Ensure decimal point for integers
+                    let f8 = float8_from_sql(val)?;
+                    if f8.fract().abs() < f64::EPSILON {
+                        buffer.push_str(&format!("{:.1}", f8));
+                    } else {
+                        buffer.push_str(&f8.to_string());
+                    }
+                }
+            }
+            flat_index += stride;
+        }
+    } else {
+        // Nested dimension - recursively process
+        for i in 0..count {
+            if i > 0 {
+                buffer.push(',');
+            }
+
+            // Recursive call for next dimension
+            flat_index = array_to_text(array, dim + 1, flat_index, buffer, element_type)?;
+        }
+    }
+
+    // Closing brace
+    buffer.push('}');
+
+    Ok(flat_index)
 }
 
 #[derive(Error, Debug)]

@@ -118,36 +118,58 @@ def convert_query_result(result):
 
     for row in result_converted:
         for i, value in enumerate(row):
-            # convert timestamps to strings for comparison, format: '2021-09-01T12:34:56.123456Z'
-            if isinstance(value, datetime.datetime):
-                row[i] = value.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
-            # convert bytes to char
-            elif isinstance(value, bytes):
-                row[i] = value.decode()
-            # convert lists of floats to PostgreSQL array string representation
-            elif isinstance(value, list):
-                # Check if it's a list of numbers or None values
-                if all(isinstance(item, (int, float, type(None))) for item in value):
-                    # Format as {n1, n2, n3, ...} with proper float representation
-                    float_strs = []
-                    for item in value:
-                        if item is None:
-                            float_strs.append("NULL")
-                        else:
-                            float_val = float(item)
-                            # Check if it's an integer value and add .0 if needed
-                            if float_val.is_integer():
-                                float_strs.append(f"{float_val:.1f}")
-                            else:
-                                float_strs.append(str(float_val))
-                    row[i] = '{' + ','.join(float_strs) + '}'
-
-    for row in result_converted:
-        for i, value in enumerate(row):
-            if isinstance(value, bytes):
-                row[i] = value.decode()
+            row[i] = convert_value(value)
 
     return result_converted
+
+
+def convert_value(value):
+    # Convert timestamps to strings for comparison, format: '2021-09-01T12:34:56.123456Z'
+    if isinstance(value, datetime.datetime):
+        return value.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+
+    # Convert bytes to char
+    elif isinstance(value, bytes):
+        return value.decode()
+
+    # Recursively handle lists
+    elif isinstance(value, list):
+        # Handle nested lists
+        if value and isinstance(value[0], list):
+            nested_items = [convert_value(item) for item in value]
+            # If nested_items are already in PostgreSQL array format (start with '{')
+            if all(isinstance(item, str) and item.startswith('{') for item in nested_items):
+                return '{' + ','.join(nested_items) + '}'
+            else:
+                # Otherwise, wrap each nested list in braces
+                return '{' + ''.join('{' + str(item)[1:-1] + '}' for item in nested_items) + '}'
+
+        # Process flat lists of numbers or None values for PostgreSQL array formatting
+        elif all(isinstance(item, (int, float, type(None))) for item in value):
+            float_strs = []
+            for item in value:
+                if item is None:
+                    float_strs.append("NULL")
+                else:
+                    float_val = float(item)
+                    # Check if it's an integer value and add .0 if needed
+                    if float_val.is_integer():
+                        float_strs.append(f"{float_val:.1f}")
+                    else:
+                        float_strs.append(str(float_val))
+            return '{' + ','.join(float_strs) + '}'
+
+        # For other types of lists, recursively convert each item
+        else:
+            return [convert_value(item) for item in value]
+
+    # Handle dictionaries by recursively converting their values
+    elif isinstance(value, dict):
+        return {k: convert_value(v) for k, v in value.items()}
+
+    # Return other types unchanged
+    else:
+        return value
 
 
 def assert_result(expect, actual):

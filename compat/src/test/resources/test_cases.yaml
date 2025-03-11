@@ -34,6 +34,52 @@ tests:
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS ${table_name};"
+
+  - name: Test non Vanilla Arrays
+    description: Selecting sliced arrays
+    prepare:
+      - action: execute
+        query: "CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4], [5, 6]] arr FROM long_sequence(1))"
+    steps:
+      - action: query
+        query: "SELECT arr[0:1] slice FROM tango"
+        expect:
+          result:
+            - [ "{{1.0,2.0}}" ]
+      - action: query
+        query: "SELECT arr[1:] slice FROM tango"
+        expect:
+          result:
+            - [ "{{3.0,4.0},{5.0,6.0}}" ]
+      - action: query
+        query: "SELECT arr[2:, 0:1] slice FROM tango"
+        expect:
+          result:
+            - [ "{{5.0}}" ]
+      - action: query
+        query: "SELECT arr[2:, 1] slice FROM tango"
+        expect:
+          result:
+            - [ "{6.0}" ]
+      - action: query
+        query: "SELECT arr[0:2] slice FROM tango"
+        expect:
+          result:
+            - [ "{{1.0,2.0},{3.0,4.0}}" ]
+      - action: query
+        query: "SELECT arr[0:2, 0:1] slice FROM tango"
+        expect:
+          result:
+            - [ "{{1.0},{3.0}}" ]
+      - action: query
+        query: "SELECT arr[1, 1] element FROM tango"
+        expect:
+          result:
+            - [ 4.0 ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS tango;"
+
   - name: Binding in projection
     description: Test binding variable in projection, without any function
     prepare:

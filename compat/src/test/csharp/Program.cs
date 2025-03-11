@@ -1,8 +1,10 @@
 ﻿using System.Globalization;
+using System.Text;
 using Npgsql;
 using NpgsqlTypes;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
+using InvalidCastException = System.InvalidCastException;
 
 namespace csharp;
 
@@ -197,7 +199,16 @@ public class TestRunner
                     var dataTypeName = reader.GetDataTypeName(i);
                     if (dataTypeName == "double precision[]") // todo: this is ugly af
                     {
-                        row[fieldName] = reader.GetFieldValue<double?[]>(i);
+                        try
+                        {
+                            // we need this to support 1D arrays with nulls
+                            row[fieldName] = reader.GetFieldValue<double?[]>(i);
+                        }
+                        catch (InvalidCastException)
+                        {
+                            // multi-dimensional array
+                            row[fieldName] = reader.GetValue(i);
+                        }
                     }
                     else
                     {
@@ -350,33 +361,83 @@ public class TestRunner
                     DateTime dt => (object)dt.ToString("yyyy-MM-ddTHH:mm:ss.ffffffZ"),
                     // Convert all numeric types to string and cast back to object
                     long l => l.ToString(CultureInfo.InvariantCulture),
-                    double d => d.ToString(CultureInfo.InvariantCulture),
+                    double d => d.ToString("0.0########", CultureInfo.InvariantCulture),
                     int i => i.ToString(CultureInfo.InvariantCulture),
                     short s => s.ToString(CultureInfo.InvariantCulture),
                     decimal dec => dec.ToString(CultureInfo.InvariantCulture),
-                    double?[] doubleArray => ConvertDoubleArrayToString(doubleArray),
+                    double?[] doubleArray => ArrayToText(doubleArray),
+                    double[,] array => ArrayToText(array),
                     _ => value.ToString() ?? ""
                 })
                 .ToList())
             .ToList();
     }
-    
-    private string ConvertDoubleArrayToString(double?[] doubleArray)
+   
+   
+    // Process any array object into PostgreSQL text format
+    private static string ArrayToText(object arrayValue)
     {
-        if (doubleArray == null || doubleArray.Length == 0)
-            return "{}";
+        if (arrayValue == null)
+        {
+            return "NULL";
+        }
 
-        // Convert each nullable double to string with at least one decimal place or NULL
-        string valuesString = string.Join(",", doubleArray.Select(d => 
-            d.HasValue 
-                ? d.Value.ToString("0.0########", CultureInfo.InvariantCulture) 
-                : "NULL"
-        ));
-
-        // Enclose in curly braces
-        return "{" + valuesString + "}";
+        var sb = new StringBuilder();
+        var arr = (Array)arrayValue;
+        ProcessDimension(arr, 0, new int[arr.Rank], sb);
+        return sb.ToString();
     }
     
+    // Recursive method to process array dimensions - closely matches your Java implementation
+    private static void ProcessDimension(Array array, int dim, int[] indices, StringBuilder sb)
+    {
+        int count = array.GetLength(dim);
+        bool atDeepestDim = (dim == array.Rank - 1);
+        
+        // Opening brace
+        sb.Append('{');
+        
+        for (int i = 0; i < count; i++)
+        {
+            // Add comma between elements
+            if (i > 0)
+                sb.Append(',');
+                
+            indices[dim] = i;
+            
+            if (atDeepestDim)
+            {
+                // At leaf level, append the actual value
+                object? value = array.GetValue(indices);
+                
+                if (value == null || value is DBNull)
+                {
+                    sb.Append("NULL");
+                }
+                else if (value is double d)
+                {
+                    // Ensure decimal point for integer values
+                    if (Math.Abs(d % 1) < double.Epsilon)
+                        sb.Append($"{d:0.0}");
+                    else
+                        sb.Append(d);
+                }
+                else
+                {
+                    sb.Append(value);
+                }
+            }
+            else
+            {
+                // For nested dimensions, recurse
+                ProcessDimension(array, dim + 1, indices, sb);
+            }
+        }
+        
+        // Closing brace
+        sb.Append('}');
+    }
+
     private bool DeepEquals(object obj1, object obj2)
     {
         if (obj1 == null && obj2 == null) return true;
