@@ -381,25 +381,6 @@ int64_t dedup_sorted_timestamp_index_many_addresses(
 }
 
 template<typename TIdx>
-int64_t dedup_sorted_timestamp_index_many_addresses_segment_bits(
-        int32_t segment_encoding_bytes,
-        jlong indexOut,
-        const jlong indexIn,
-        const int64_t index_count,
-        jlong indexTemp,
-        int32_t dedup_key_count,
-        const dedup_column *src_keys
-) {
-    auto index_out = reinterpret_cast<index_tr<TIdx> *>(indexOut);
-    auto index_in = reinterpret_cast<const index_tr<TIdx> *>(indexIn);
-    auto index_temp = reinterpret_cast<index_tr<TIdx> *>(indexTemp);
-    return dedup_sorted_timestamp_index_many_addresses<TIdx>(
-            index_out, index_in, index_count, index_temp,
-            dedup_key_count, src_keys, segment_encoding_bytes
-    );
-}
-
-template<typename TIdx>
 int64_t dedup_sorted_timestamp_index_many_addresses_segment_bits_clean(
         int32_t segment_encoding_bytes,
         jlong indexOut,
@@ -411,8 +392,14 @@ int64_t dedup_sorted_timestamp_index_many_addresses_segment_bits_clean(
 ) {
     static_assert(std::is_integral_v<TIdx> && std::is_unsigned_v<TIdx>, "TRevIdx must be an unsigned integer");
 
-    int64_t dedup_rows = dedup_sorted_timestamp_index_many_addresses_segment_bits<TIdx>(
-            segment_encoding_bytes, indexOut, indexIn, row_count, indexTemp, dedup_key_count, src_keys
+    int64_t dedup_rows = dedup_sorted_timestamp_index_many_addresses<TIdx>(
+            reinterpret_cast<index_tr<TIdx> *>(indexOut),
+            reinterpret_cast<const index_tr<TIdx> *>(indexIn),
+            row_count,
+            reinterpret_cast<index_tr<TIdx> *>(indexTemp),
+            dedup_key_count,
+            src_keys,
+            segment_encoding_bytes * 8
     );
 
     // -2 means no dups
