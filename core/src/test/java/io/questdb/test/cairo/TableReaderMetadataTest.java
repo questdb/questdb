@@ -178,13 +178,13 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
     @Test
     public void testApplyTransitionFrom() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             CreateTableTestUtils.createAllTableWithNewTypes(engine, PartitionBy.HOUR);
             final String tableName = "all2";
             final TableToken tableToken = engine.verifyTableName(tableName);
             try (
                     TableReaderMetadata ogMeta = new TableReaderMetadata(configuration, tableToken);
-                    TableReaderMetadata copyMeta = new TableReaderMetadata(configuration, tableToken);
+                    TableReaderMetadata copyMeta = new TableReaderMetadata(configuration, tableToken)
             ) {
                 ogMeta.load();
                 copyMeta.load();
@@ -291,7 +291,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
             final TableToken tableToken = engine.verifyTableName(tableName);
             try (
                     TableReaderMetadata ogMeta = new TableReaderMetadata(configuration, tableToken);
-                    TableReaderMetadata copyMeta = new TableReaderMetadata(configuration, tableToken);
+                    TableReaderMetadata copyMeta = new TableReaderMetadata(configuration, tableToken)
             ) {
                 ogMeta.load();
                 copyMeta.loadFrom(ogMeta);
