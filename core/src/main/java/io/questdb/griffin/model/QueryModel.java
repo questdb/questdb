@@ -1283,6 +1283,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         baseModel.setLimit(null, null);
     }
 
+    public void moveOrderByFrom(QueryModel model) {
+        orderBy.addAll(model.getOrderBy());
+        orderByDirection.addAll(model.getOrderByDirection());
+        model.clearOrderBy();
+    }
+
     public void movePivotFrom(QueryModel model) {
         assert model.getPivotColumns() != null && model.getPivotColumns().size() > 0;
         assert model.getPivotFor() != null && model.getPivotFor().size() > 0;

@@ -5854,6 +5854,7 @@ public class SqlOptimiser implements Mutable {
             groupByModel.setNestedModel(root);
             groupByModel.moveLimitFrom(limitSource);
             groupByModel.moveJoinAliasFrom(limitSource);
+            groupByModel.moveOrderByFrom(limitSource);
             root = groupByModel;
             limitSource = groupByModel;
         }
@@ -6450,6 +6451,16 @@ public class SqlOptimiser implements Mutable {
                 model.moveSampleByFrom(nested);
             }
 
+            model.moveOrderByFrom(nested);
+//            model.moveLimitFrom(nested);
+
+
+            QueryModel groupByModel = queryModelPool.next();
+            groupByModel.setSelectModelType(SELECT_MODEL_CHOOSE);
+
+            QueryModel bonusModel = queryModelPool.next();
+            bonusModel.setSelectModelType(SELECT_MODEL_CHOOSE);
+
 
             // add the group by column
             for (int i = 0, n = nested.getGroupBy().size(); i < n; i++) {
@@ -6463,8 +6474,59 @@ public class SqlOptimiser implements Mutable {
                             nested.getGroupBy().getQuick(i).token,
                             nested.getGroupBy().getQuick(i)
                     ));
+                    groupByModel.addBottomUpColumn(queryColumnPool.next().of(
+                            nested.getGroupBy().getQuick(i).token,
+                            nested.getGroupBy().getQuick(i)
+                    ));
+                    bonusModel.addGroupBy(groupByExpr);
                 }
             }
+
+            groupByModel.moveGroupByFrom(nested);
+
+            for (int i = 0, n = groupByModel.getGroupBy().size(); i < n; i++) {
+                model.addGroupBy(groupByModel.getGroupBy().getQuick(i));
+            }
+
+            // add extra group bys and where filters
+
+
+            // copy pivot for expressions into group by and where filter
+            for (int i = 0, n = nested.getPivotFor().size(); i < n; i++) {
+                ExpressionNode forExpr = nested.getPivotFor().getQuick(i);
+
+                ExpressionNode groupByName = rewritePivotGetAppropriateNameFromInExpr(forExpr);
+                // add to group by
+                groupByModel.addGroupBy(groupByName);
+
+                if (!groupByModel.getAliasToColumnMap().contains(groupByName.token)) {
+                    // add to select
+                    groupByModel.addBottomUpColumn(queryColumnPool.next().of(
+                            groupByName.token,
+                            groupByName
+                    ));
+                }
+
+
+                // add to where clause
+                if (nested.getWhereClause() == null) {
+                    nested.setWhereClause(forExpr);
+                } else {
+                    rewritePivotMakeBinaryExpression(nested.getWhereClause(), forExpr, "and", opAnd);
+                }
+            }
+
+
+            // add group by columns
+            for (int i = 0, n = nested.getPivotColumns().size(); i < n; i++) {
+                QueryColumn pivotColumn = nested.getPivotColumns().getQuick(i);
+                groupByModel.addBottomUpColumn(queryColumnPool.next().of(
+                        pivotColumn.getAlias() == null ? pivotColumn.getAst().token : pivotColumn.getAlias(),
+                        pivotColumn.getAst()
+                ));
+//                groupByModel.addBottomUpColumn(pivotColumn);
+            }
+
 
             // need to permute all of the FOR exprs
             // FOR year in (2000, 2010, 2020)
@@ -6580,7 +6642,12 @@ public class SqlOptimiser implements Mutable {
                     caseExpr.args.add(defaultValueExpr);
 
                     // population
-                    caseExpr.args.add(pivotColumnParam);
+                    caseExpr.args.add(expressionNodePool.next().of(
+                            LITERAL,
+                            pivotColumnAlias == null ? pivotColumn.getAst().token : pivotColumnAlias,
+                            0,
+                            0
+                    ));
 
                     // case
                     if (pivotForSize == 1) {
@@ -6597,6 +6664,7 @@ public class SqlOptimiser implements Mutable {
                     model.addBottomUpColumn(queryColumnPool.next().of(
                             nameSink.toString(),
                             aggExpr
+//                            caseExpr
                     ));
 
                     nameSink.clear();
@@ -6618,6 +6686,11 @@ public class SqlOptimiser implements Mutable {
             }
 
             model.getNestedModel().clearPivot();
+
+            groupByModel.setNestedModel(model.getNestedModel());
+            bonusModel.setNestedModel(groupByModel);
+
+            model.setNestedModel(bonusModel);
 
         } else {
             model.setNestedModel(rewritePivot(model.getNestedModel()));
