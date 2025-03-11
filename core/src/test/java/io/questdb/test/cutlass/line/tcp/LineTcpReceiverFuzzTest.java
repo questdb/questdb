@@ -31,7 +31,9 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.Net;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
@@ -46,8 +48,11 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
 
     @Test
     public void testAddColumns() throws Exception {
-        initLoadParameters(15, 2, 2, 5, 75);
-        initFuzzParameters(-1, -1, -1, 4, -1, false, true, false);
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        initLoadParameters(
+                10 + rnd.nextInt(200), 1 + rnd.nextInt(5), 1 + rnd.nextInt(16), 1, rnd.nextInt(75));
+        initFuzzParameters(-1, 1, 1,
+                1, -1, true, true, false);
         runTest();
     }
 
