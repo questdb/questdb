@@ -3446,6 +3446,14 @@ public class SqlParser {
         int typePosition = lexer.lastTokenPosition();
         final short typeTag = SqlUtil.toPersistedTypeTag(tok, typePosition);
 
+        // ignore precision keyword for DOUBLE column: 'double precision' is the same type as 'double'
+        if (typeTag == ColumnType.DOUBLE) {
+            CharSequence next = optTok(lexer);
+            if (next != null && !isPrecisionKeyword(next)) {
+                lexer.unparseLast();
+            }
+        }
+
         int dim = SqlUtil.parseArrayDimensions(lexer);
         if (dim > 0) {
             if (ColumnType.isSupportedArrayElementType(typeTag)) {
