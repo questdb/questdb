@@ -33,6 +33,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -142,6 +143,7 @@ public final class DirectArray extends MutableArray implements Mutable {
     private void ensureCapacity(long requiredCapacity) {
         if (ptr == 0) {
             ptr = Unsafe.malloc(requiredCapacity, MEM_TAG);
+            Vect.memset(ptr, requiredCapacity, 0);
             size = requiredCapacity;
         } else if (size < requiredCapacity) {
             long newCapacity = size;
@@ -152,6 +154,10 @@ public final class DirectArray extends MutableArray implements Mutable {
                 }
             }
             ptr = Unsafe.realloc(ptr, size, newCapacity, MEM_TAG);
+            long initializeSize = newCapacity - size;
+            // arrays are grow-only, so we should never shrink
+            assert initializeSize > 0 : "shrinking array";
+            Vect.memset(ptr + size, initializeSize, 0);
             size = newCapacity;
         }
     }
