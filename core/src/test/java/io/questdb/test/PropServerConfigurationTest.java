@@ -207,7 +207,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(2097152, configuration.getCairoConfiguration().getSqlCopyBufferSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getCopyPoolCapacity());
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
-        Assert.assertFalse(configuration.getCairoConfiguration().isMatViewEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isMatViewEnabled());
         Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewMaxRecompileAttempts());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
         Assert.assertTrue(configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());
@@ -1334,7 +1334,7 @@ public class PropServerConfigurationTest {
 
             Assert.assertTrue(configuration.getMetricsConfiguration().isEnabled());
 
-            Assert.assertTrue(configuration.getCairoConfiguration().isMatViewEnabled());
+            Assert.assertFalse(configuration.getCairoConfiguration().isMatViewEnabled());
             Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRecompileAttempts());
             Assert.assertEquals(1000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
             Assert.assertFalse(configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());
@@ -1732,7 +1732,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals(CommitMode.ASYNC, configuration.getCommitMode());
         Assert.assertEquals(12, configuration.getCreateAsSelectRetryCount());
-        Assert.assertTrue(configuration.isMatViewEnabled());
+        Assert.assertFalse(configuration.isMatViewEnabled());
         Assert.assertTrue(configuration.getDefaultSymbolCacheFlag());
         Assert.assertEquals(512, configuration.getDefaultSymbolCapacity());
         Assert.assertEquals(10, configuration.getFileOperationRetryCount());
