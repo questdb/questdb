@@ -67,10 +67,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final Path dbRoot;
     private final int dbRootLen;
     private final CairoEngine engine;
+    private final MatViewQueryIntervalIterator intervalIterator = new MatViewQueryIntervalIterator();
     private final MicrosecondClock microsecondClock;
     private final MatViewRefreshExecutionContext refreshExecutionContext;
     private final MatViewRefreshTask refreshTask = new MatViewRefreshTask();
-    private final SampleByRangeCursor sampleByCursor = new SampleByRangeCursor();
     private final WalTxnRangeLoader txnRangeLoader;
     private final MatViewGraph viewGraph;
     private final int workerId;
@@ -151,7 +151,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
-    private SampleByRangeCursor findSampleByRanges(
+    private MatViewQueryIntervalIterator findSampleByIntervals(
             @NotNull TableReader baseTableReader,
             @NotNull MatViewDefinition viewDefinition,
             long lastRefreshTxn
@@ -180,7 +180,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             final int step = Math.max(1, (int) (rowsPerQuery / rowsPerBucket));
 
             // there are no concurrent accesses to the sampler at this point as we've locked the state
-            sampleByCursor.of(
+            intervalIterator.of(
                     timestampSampler,
                     viewDefinition.getTzRules(),
                     viewDefinition.getFixedOffset(),
@@ -193,11 +193,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     .$(", base=").$(baseTableReader.getTableToken())
                     .$(", fromTxn=").$(lastRefreshTxn)
                     .$(", toTxn=").$(lastTxn)
-                    .$(", ts>=").$ts(sampleByCursor.getMinTimestamp())
-                    .$(", ts<").$ts(sampleByCursor.getMaxTimestamp())
+                    .$(", ts>=").$ts(intervalIterator.getMinTimestamp())
+                    .$(", ts<").$ts(intervalIterator.getMaxTimestamp())
                     .I$();
 
-            return sampleByCursor;
+            return intervalIterator;
         }
 
         return null;
@@ -217,7 +217,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             MatViewRefreshState state,
             MatViewDefinition viewDef,
             TableWriterAPI tableWriter,
-            SampleByRangeCursor sampleByCursor,
+            MatViewQueryIntervalIterator intervalIterator,
             long baseTableTxn,
             long refreshTriggeredTimestamp
     ) throws SqlException {
@@ -266,9 +266,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     long commitTarget = batchSize;
                     rowCount = 0;
 
-                    sampleByCursor.toTop();
-                    while (sampleByCursor.next()) {
-                        refreshExecutionContext.setRange(sampleByCursor.getTimestampLo(), sampleByCursor.getTimestampHi());
+                    intervalIterator.toTop();
+                    while (intervalIterator.next()) {
+                        refreshExecutionContext.setRange(intervalIterator.getTimestampLo(), intervalIterator.getTimestampHi());
                         try (RecordCursor cursor = factory.getCursor(refreshExecutionContext)) {
                             final Record record = cursor.getRecord();
                             while (cursor.hasNext()) {
@@ -512,9 +512,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // Specify -1 as the last refresh txn, so that we scan all partitions.
                 try (TableWriterAPI commitWriter = engine.getTableWriterAPI(viewToken, "mat view full refresh")) {
                     commitWriter.truncateSoft();
-                    final SampleByRangeCursor sampleByCursor = findSampleByRanges(baseTableReader, viewDef, -1);
-                    if (sampleByCursor != null) {
-                        insertAsSelect(state, viewDef, commitWriter, sampleByCursor, toBaseTxn, refreshTriggeredTimestamp);
+                    final MatViewQueryIntervalIterator intervalIterator = findSampleByIntervals(baseTableReader, viewDef, -1);
+                    if (intervalIterator != null) {
+                        insertAsSelect(state, viewDef, commitWriter, intervalIterator, toBaseTxn, refreshTriggeredTimestamp);
                     }
                     resetInvalidState(state);
                     writeLastRefreshBaseTableTxn(state, toBaseTxn);
@@ -596,11 +596,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             refreshExecutionContext.of(baseTableReader);
             try {
                 final MatViewDefinition viewDef = state.getViewDefinition();
-                final SampleByRangeCursor sampleByCursor = findSampleByRanges(baseTableReader, viewDef, fromBaseTxn);
-                if (sampleByCursor != null) {
+                final MatViewQueryIntervalIterator intervalIterator = findSampleByIntervals(baseTableReader, viewDef, fromBaseTxn);
+                if (intervalIterator != null) {
                     toBaseTxn = baseTableReader.getSeqTxn();
                     try (TableWriterAPI tableWriter = engine.getTableWriterAPI(viewToken, "Mat View refresh")) {
-                        boolean changed = insertAsSelect(state, viewDef, tableWriter, sampleByCursor, toBaseTxn, refreshTriggeredTimestamp);
+                        boolean changed = insertAsSelect(state, viewDef, tableWriter, intervalIterator, toBaseTxn, refreshTriggeredTimestamp);
                         if (changed) {
                             writeLastRefreshBaseTableTxn(state, toBaseTxn);
                         }

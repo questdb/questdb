@@ -24,7 +24,7 @@
 
 package io.questdb.test.cairo.mv;
 
-import io.questdb.cairo.mv.SampleByRangeCursor;
+import io.questdb.cairo.mv.MatViewQueryIntervalIterator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
@@ -33,13 +33,13 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class SampleByRangeCursorTest {
+public class MatViewQueryIntervalIteratorTest {
 
     @Test
     public void testBigStep() throws Exception {
-        final SampleByRangeCursor cursor = new SampleByRangeCursor();
+        final MatViewQueryIntervalIterator iterator = new MatViewQueryIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
-        cursor.of(
+        iterator.of(
                 sampler,
                 null,
                 0,
@@ -48,21 +48,21 @@ public class SampleByRangeCursorTest {
                 14
         );
 
-        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2024-03-03T00:00:00.000000Z"), cursor.getMinTimestamp());
-        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2024-03-05T00:00:00.000000Z"), cursor.getMaxTimestamp());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2024-03-03T00:00:00.000000Z"), iterator.getMinTimestamp());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2024-03-05T00:00:00.000000Z"), iterator.getMaxTimestamp());
 
-        Assert.assertTrue(cursor.next());
-        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2024-03-03T00:00:00.000000Z"), cursor.getTimestampLo());
-        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2024-03-05T00:00:00.000000Z"), cursor.getTimestampHi());
-        Assert.assertFalse(cursor.next());
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2024-03-03T00:00:00.000000Z"), iterator.getTimestampLo());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2024-03-05T00:00:00.000000Z"), iterator.getTimestampHi());
+        Assert.assertFalse(iterator.next());
     }
 
     @Test
     public void testFixedOffset() throws SqlException {
-        final SampleByRangeCursor cursor = new SampleByRangeCursor();
+        final MatViewQueryIntervalIterator iterator = new MatViewQueryIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
         final long offset = Timestamps.HOUR_MICROS;
-        cursor.of(
+        iterator.of(
                 sampler,
                 null,
                 offset,
@@ -71,22 +71,22 @@ public class SampleByRangeCursorTest {
                 1
         );
 
-        Assert.assertEquals(offset, cursor.getMinTimestamp());
-        Assert.assertEquals(offset + 7 * Timestamps.DAY_MICROS, cursor.getMaxTimestamp());
+        Assert.assertEquals(offset, iterator.getMinTimestamp());
+        Assert.assertEquals(offset + 7 * Timestamps.DAY_MICROS, iterator.getMaxTimestamp());
 
         for (int i = 0; i < 7; i++) {
-            Assert.assertTrue(cursor.next());
-            Assert.assertEquals(offset + i * Timestamps.DAY_MICROS, cursor.getTimestampLo());
-            Assert.assertEquals(offset + (i + 1) * Timestamps.DAY_MICROS, cursor.getTimestampHi());
+            Assert.assertTrue(iterator.next());
+            Assert.assertEquals(offset + i * Timestamps.DAY_MICROS, iterator.getTimestampLo());
+            Assert.assertEquals(offset + (i + 1) * Timestamps.DAY_MICROS, iterator.getTimestampHi());
         }
-        Assert.assertFalse(cursor.next());
+        Assert.assertFalse(iterator.next());
     }
 
     @Test
     public void testSmoke() throws SqlException {
-        final SampleByRangeCursor cursor = new SampleByRangeCursor();
+        final MatViewQueryIntervalIterator iterator = new MatViewQueryIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
-        cursor.of(
+        iterator.of(
                 sampler,
                 null,
                 0,
@@ -95,22 +95,22 @@ public class SampleByRangeCursorTest {
                 1
         );
 
-        Assert.assertEquals(0, cursor.getMinTimestamp());
-        Assert.assertEquals(7 * Timestamps.DAY_MICROS, cursor.getMaxTimestamp());
+        Assert.assertEquals(0, iterator.getMinTimestamp());
+        Assert.assertEquals(7 * Timestamps.DAY_MICROS, iterator.getMaxTimestamp());
 
         for (int i = 0; i < 7; i++) {
-            Assert.assertTrue(cursor.next());
-            Assert.assertEquals(i * Timestamps.DAY_MICROS, cursor.getTimestampLo());
-            Assert.assertEquals((i + 1) * Timestamps.DAY_MICROS, cursor.getTimestampHi());
+            Assert.assertTrue(iterator.next());
+            Assert.assertEquals(i * Timestamps.DAY_MICROS, iterator.getTimestampLo());
+            Assert.assertEquals((i + 1) * Timestamps.DAY_MICROS, iterator.getTimestampHi());
         }
-        Assert.assertFalse(cursor.next());
+        Assert.assertFalse(iterator.next());
     }
 
     @Test
     public void testTimeZoneWithDst() throws Exception {
-        final SampleByRangeCursor cursor = new SampleByRangeCursor();
+        final MatViewQueryIntervalIterator iterator = new MatViewQueryIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(2, 'h', 0);
-        cursor.of(
+        iterator.of(
                 sampler,
                 Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "Europe/Berlin"),
                 0,
@@ -119,30 +119,30 @@ public class SampleByRangeCursorTest {
                 2
         );
 
-        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-27T23:00:00.000000Z"), cursor.getMinTimestamp());
-        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T10:00:00.000000Z"), cursor.getMaxTimestamp());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-27T23:00:00.000000Z"), iterator.getMinTimestamp());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T10:00:00.000000Z"), iterator.getMaxTimestamp());
 
         // DST edge is here
-        Assert.assertTrue(cursor.next());
-        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-27T23:00:00.000000Z"), cursor.getTimestampLo());
-        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T02:00:00.000000Z"), cursor.getTimestampHi());
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-27T23:00:00.000000Z"), iterator.getTimestampLo());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T02:00:00.000000Z"), iterator.getTimestampHi());
 
-        Assert.assertTrue(cursor.next());
-        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T02:00:00.000000Z"), cursor.getTimestampLo());
-        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T06:00:00.000000Z"), cursor.getTimestampHi());
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T02:00:00.000000Z"), iterator.getTimestampLo());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T06:00:00.000000Z"), iterator.getTimestampHi());
 
-        Assert.assertTrue(cursor.next());
-        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T06:00:00.000000Z"), cursor.getTimestampLo());
-        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T10:00:00.000000Z"), cursor.getTimestampHi());
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T06:00:00.000000Z"), iterator.getTimestampLo());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T10:00:00.000000Z"), iterator.getTimestampHi());
 
-        Assert.assertFalse(cursor.next());
+        Assert.assertFalse(iterator.next());
     }
 
     @Test
     public void testTimeZoneWithFixedOffset() throws Exception {
-        final SampleByRangeCursor cursor = new SampleByRangeCursor();
+        final MatViewQueryIntervalIterator iterator = new MatViewQueryIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
-        cursor.of(
+        iterator.of(
                 sampler,
                 Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "GMT+00:30"),
                 0,
@@ -156,14 +156,14 @@ public class SampleByRangeCursorTest {
 
         final long tzOffset = 30 * Timestamps.MINUTE_MICROS;
 
-        Assert.assertEquals(minExpectedTs - tzOffset, cursor.getMinTimestamp());
-        Assert.assertEquals(maxExpectedTs - tzOffset, cursor.getMaxTimestamp());
+        Assert.assertEquals(minExpectedTs - tzOffset, iterator.getMinTimestamp());
+        Assert.assertEquals(maxExpectedTs - tzOffset, iterator.getMaxTimestamp());
 
         for (int i = 0; i < 3; i++) {
-            Assert.assertTrue(cursor.next());
-            Assert.assertEquals(minExpectedTs - tzOffset + i * Timestamps.DAY_MICROS, cursor.getTimestampLo());
-            Assert.assertEquals(minExpectedTs - tzOffset + (i + 1) * Timestamps.DAY_MICROS, cursor.getTimestampHi());
+            Assert.assertTrue(iterator.next());
+            Assert.assertEquals(minExpectedTs - tzOffset + i * Timestamps.DAY_MICROS, iterator.getTimestampLo());
+            Assert.assertEquals(minExpectedTs - tzOffset + (i + 1) * Timestamps.DAY_MICROS, iterator.getTimestampHi());
         }
-        Assert.assertFalse(cursor.next());
+        Assert.assertFalse(iterator.next());
     }
 }

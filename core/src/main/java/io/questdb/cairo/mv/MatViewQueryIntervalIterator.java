@@ -35,8 +35,9 @@ import org.jetbrains.annotations.Nullable;
  * Allows iterating through SAMPLE BY buckets with the given step.
  * The goal is to split a potentially large time interval to be scanned by
  * the materialized view query into smaller intervals, thus minimizing
+ * chances of out-of-memory kills.
  */
-public class SampleByRangeCursor {
+public class MatViewQueryIntervalIterator {
     private long maxTimestamp;
     private long minTimestamp;
     private TimestampSampler sampler;
