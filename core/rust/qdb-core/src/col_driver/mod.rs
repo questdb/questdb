@@ -26,6 +26,7 @@ mod mapped;
 mod primitives;
 mod string;
 mod symbol;
+mod util;
 mod varchar;
 
 use crate::col_type::ColumnTypeTag;

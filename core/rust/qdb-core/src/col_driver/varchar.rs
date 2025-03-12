@@ -21,9 +21,9 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+use crate::col_driver::util::cast_slice;
 use crate::col_driver::{ColumnDriver, MappedColumn};
-use crate::error::{CoreResult, fmt_err};
-use std::intrinsics::transmute;
+use crate::error::{CoreErrorExt, CoreResult, fmt_err};
 
 pub struct VarcharDriver;
 
@@ -39,6 +39,7 @@ impl ColumnDriver for VarcharDriver {
 }
 
 #[repr(transparent)]
+#[derive(Clone, Copy)]
 struct VarcharAuxEntry {
     packed: u128,
 }
@@ -86,16 +87,13 @@ fn data_and_aux_size_at(col: &MappedColumn, row_count: u64) -> CoreResult<(u64, 
 
     let aux_mmap = col.aux.as_ref().expect("varchar has aux");
     let data_mmap = &col.data;
-    if aux_mmap.len() % size_of::<u128>() != 0 {
-        return Err(fmt_err!(
-            InvalidColumnData,
-            "varchar aux len {} not a multiple of 16 bytes for column {} in {}",
-            aux_mmap.len(),
+    let aux: &[VarcharAuxEntry] = cast_slice(&aux_mmap[..]).with_context(|_| {
+        format!(
+            "bad layout of varchar aux column {} in {}",
             col.col_name,
             col.parent_path.display()
-        ));
-    }
-    let aux: &[VarcharAuxEntry] = unsafe { transmute(&aux_mmap[..]) };
+        )
+    })?;
     let Some(aux_entry) = aux.get((row_index) as usize) else {
         return Err(fmt_err!(
             InvalidColumnData,
@@ -108,16 +106,9 @@ fn data_and_aux_size_at(col: &MappedColumn, row_count: u64) -> CoreResult<(u64, 
 
     let aux_size = (row_index + 1) * size_of::<VarcharAuxEntry>() as u64;
     let offset = aux_entry.offset();
-    eprintln!("data_and_aux_size_at :: (A)");
     let data_size = if aux_entry.is_inlined() || aux_entry.is_null() {
-        eprintln!("data_and_aux_size_at :: (B)");
         offset
     } else {
-        eprintln!(
-            "data_and_aux_size_at :: (C): aux_entry.packed: {:032X}, aux_entry.size(): {}",
-            aux_entry.packed,
-            aux_entry.size()
-        );
         offset + aux_entry.size() as u64
     };
     if (data_mmap.len() as u64) < data_size {
@@ -137,6 +128,7 @@ fn data_and_aux_size_at(col: &MappedColumn, row_count: u64) -> CoreResult<(u64, 
 mod tests {
     use super::*;
     use crate::col_type::ColumnTypeTag;
+    use crate::error::CoreErrorCause;
     use std::path::PathBuf;
 
     fn map_col(name: &str) -> MappedColumn {
@@ -171,6 +163,7 @@ mod tests {
     #[test]
     fn test_v1() {
         let col = map_col("v1");
+
         let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 0).unwrap();
         assert_eq!(data_size, 0);
         assert_eq!(aux_size, Some(0));
@@ -194,5 +187,16 @@ mod tests {
         let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 4).unwrap();
         assert_eq!(data_size, 50);
         assert_eq!(aux_size, Some(64));
+
+        // index 4 is a null string
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 5).unwrap();
+        assert_eq!(data_size, 50);
+        assert_eq!(aux_size, Some(80));
+
+        // out of range
+        let err = VarcharDriver.col_sizes_for_size(&col, 6).unwrap_err();
+        let msg = format!("{:#}", err);
+        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
+        assert!(msg.contains("varchar row index 5 not found in aux for column v1 in"));
     }
 }
