@@ -21,10 +21,97 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-use crate::col_type::ColumnTypeTag;
-use crate::error::CoreResult;
+use crate::col_type::{ColumnType, ColumnTypeTag};
+use crate::error::{CoreErrorExt, CoreResult, fmt_err};
+use memmap2::Mmap;
 use paste::paste;
-use std::path::Path;
+use std::fs::File;
+use std::path::{Path, PathBuf};
+
+pub struct MappedColumn {
+    pub col_type: ColumnType,
+    pub col_name: String,
+    pub parent_path: PathBuf,
+    pub data: Mmap,
+    pub aux: Option<Mmap>,
+}
+
+impl MappedColumn {
+    pub fn open(
+        parent_path: impl Into<PathBuf>,
+        col_name: impl Into<String>,
+        col_type: ColumnType,
+    ) -> CoreResult<Self> {
+        let col_name = col_name.into();
+        let mut path = parent_path.into();
+        path.push(&col_name);
+
+        // Open and map the "data" file which is always present for columns.
+        path.set_extension("d");
+        let data_file = File::open(&path).with_context(|_| {
+            format!(
+                "Could not open data file for column: {}, col_type: {}, path: {}",
+                col_name,
+                col_type,
+                path.display()
+            )
+        })?;
+        let data = unsafe { Mmap::map(&data_file) }.with_context(|_| {
+            format!(
+                "Could not map data file for column: {}, col_type: {}, path: {}",
+                col_name,
+                col_type,
+                path.display()
+            )
+        })?;
+
+        // Open and map the "aux" file which is present for var-sized types.
+        let aux = if col_type.tag().is_var_size() {
+            path.set_extension("i");
+            let aux_file = File::open(&path).with_context(|_| {
+                format!(
+                    "Could not open aux file for column: {}, col_type: {}, path: {}",
+                    col_name,
+                    col_type,
+                    path.display()
+                )
+            })?;
+            let aux = unsafe { Mmap::map(&aux_file) }.with_context(|_| {
+                format!(
+                    "Could not map aux file for column: {}, col_type: {}, path: {}",
+                    col_name,
+                    col_type,
+                    path.display()
+                )
+            })?;
+            Some(aux)
+        } else {
+            let fixed_size = col_type.tag().fixed_size().expect("fixed size column");
+            if data.len() % fixed_size != 0 {
+                return Err(fmt_err!(
+                    InvalidColumnData,
+                    "Bad file size {} for column: {}, col_type: {}, path: {}, expected a multiple of {}",
+                    data.len(),
+                    col_name,
+                    col_type,
+                    path.display(),
+                    fixed_size
+                ));
+            }
+            None
+        };
+
+        // Restore the parent path.
+        path.pop();
+        Ok(Self {
+            col_type,
+            col_name,
+            parent_path: path,
+            data,
+            aux,
+        })
+    }
+}
 
 pub trait ColumnDriver {
     /// Returns the data and aux file sizes at the given row.
@@ -76,7 +163,11 @@ impl_primitive_type_driver!(IPv4);
 pub struct StringDriver;
 
 impl ColumnDriver for StringDriver {
-    fn col_sizes_for_row(&self, _row_index: usize, _parent_path: &Path) -> CoreResult<(u64, Option<u64>)> {
+    fn col_sizes_for_row(
+        &self,
+        _row_index: usize,
+        _parent_path: &Path,
+    ) -> CoreResult<(u64, Option<u64>)> {
         todo!()
     }
 }
@@ -84,7 +175,11 @@ impl ColumnDriver for StringDriver {
 pub struct SymbolDriver;
 
 impl ColumnDriver for SymbolDriver {
-    fn col_sizes_for_row(&self, _row_index: usize, _parent_path: &Path) -> CoreResult<(u64, Option<u64>)> {
+    fn col_sizes_for_row(
+        &self,
+        _row_index: usize,
+        _parent_path: &Path,
+    ) -> CoreResult<(u64, Option<u64>)> {
         todo!()
     }
 }
@@ -92,7 +187,11 @@ impl ColumnDriver for SymbolDriver {
 pub struct BinaryDriver;
 
 impl ColumnDriver for BinaryDriver {
-    fn col_sizes_for_row(&self, _row_index: usize, _parent_path: &Path) -> CoreResult<(u64, Option<u64>)> {
+    fn col_sizes_for_row(
+        &self,
+        _row_index: usize,
+        _parent_path: &Path,
+    ) -> CoreResult<(u64, Option<u64>)> {
         todo!()
     }
 }
@@ -100,7 +199,11 @@ impl ColumnDriver for BinaryDriver {
 pub struct VarcharDriver;
 
 impl ColumnDriver for VarcharDriver {
-    fn col_sizes_for_row(&self, _row_index: usize, _parent_path: &Path) -> CoreResult<(u64, Option<u64>)> {
+    fn col_sizes_for_row(
+        &self,
+        _row_index: usize,
+        _parent_path: &Path,
+    ) -> CoreResult<(u64, Option<u64>)> {
         todo!()
     }
 }

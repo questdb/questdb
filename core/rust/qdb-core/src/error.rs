@@ -169,45 +169,44 @@ impl From<std::io::Error> for CoreError {
 pub type CoreResult<T> = Result<T, CoreError>;
 
 pub trait CoreErrorExt<T> {
-    fn context(self, context: &str) -> Self;
-    fn with_context<F>(self, context: F) -> Self
+    fn context(self, context: &str) -> CoreResult<T>;
+    fn with_context<F>(self, context: F) -> CoreResult<T>
     where
         F: FnOnce(&mut CoreError) -> String;
 }
 
-impl<T> CoreErrorExt<T> for CoreResult<T> {
+impl<T, E> CoreErrorExt<T> for Result<T, E>
+where
+    E: Into<CoreError>,
+{
     /// Add a layer of context to the error.
     /// The `context: &str` is copied into a `String` iff the error is an `Err`.
     /// Use the `with_context` method if you need to compute the context lazily.
-    fn context(self, context: &str) -> Self {
-        match self {
-            Ok(val) => Ok(val),
-            Err(mut err) => {
-                err.add_context(context);
-                Err(err)
-            }
-        }
+    fn context(self, context: &str) -> CoreResult<T> {
+        self.map_err(|e| {
+            let mut err = e.into();
+            err.add_context(context);
+            err
+        })
     }
 
     /// Lazily add a layer of context to the error.
-    fn with_context<F>(self, context: F) -> Self
+    fn with_context<F>(self, context: F) -> CoreResult<T>
     where
         F: FnOnce(&mut CoreError) -> String,
     {
-        match self {
-            Ok(val) => Ok(val),
-            Err(mut err) => {
-                let context = context(&mut err);
-                err.add_context(context);
-                Err(err)
-            }
-        }
+        self.map_err(|e| {
+            let mut err = e.into();
+            let context = context(&mut err);
+            err.add_context(context);
+            err
+        })
     }
 }
 
 macro_rules! fmt_err {
     ($cause: ident, $($arg:tt)*) => {
-        CoreError::with_descr(
+        crate::error::CoreError::with_descr(
             crate::error::CoreErrorCause::$cause,
             format!($($arg)*))
     };
