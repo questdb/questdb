@@ -559,6 +559,20 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewSampleByAlignToFirstObservation() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String query = "select ts, avg(v) from " + TABLE1 + " sample by 1d align to first observation";
+            try {
+                execute("create materialized view test as (" + query + ") partition by day");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "ALIGN TO FIRST OBSERVATION is not supported for materialized views");
+            }
+        });
+    }
+
+    @Test
     public void testCreateMatViewSampleByFill() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE2);

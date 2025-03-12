@@ -209,7 +209,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     @Test
     public void testMultipleQueryExecutionsPerRefresh() throws Exception {
         final Rnd rnd = fuzzer.generateRandom(LOG);
-        final int rowsPerQuery = Math.max(1000, rnd.nextInt(10_000));
+        final int rowsPerQuery = Math.max(100, rnd.nextInt(10_000));
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
         final String tableName = testName.getMethodName();
         final String mvName = testName.getMethodName() + "_mv";
@@ -221,7 +221,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     @Test
     public void testMultipleQueryExecutionsPerRefreshDSTForwardEdge() throws Exception {
         final Rnd rnd = fuzzer.generateRandom(LOG);
-        final int rowsPerQuery = Math.max(1000, rnd.nextInt(10_000));
+        final int rowsPerQuery = Math.max(100, rnd.nextInt(10_000));
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
         final String tableName = testName.getMethodName();
         final String mvName = testName.getMethodName() + "_mv";
@@ -235,7 +235,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     @Test
     public void testMultipleQueryExecutionsPerRefreshDSTShiftBack() throws Exception {
         final Rnd rnd = fuzzer.generateRandom(LOG);
-        final int rowsPerQuery = Math.max(1000, rnd.nextInt(10_000));
+        final int rowsPerQuery = Math.max(100, rnd.nextInt(10_000));
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
         final String tableName = testName.getMethodName();
         final String mvName = testName.getMethodName() + "_mv";
@@ -249,7 +249,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     @Test
     public void testMultipleQueryExecutionsPerRefreshDSTWithOffset() throws Exception {
         final Rnd rnd = fuzzer.generateRandom(LOG);
-        final int rowsPerQuery = Math.max(1000, rnd.nextInt(10_000));
+        final int rowsPerQuery = Math.max(100, rnd.nextInt(10_000));
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
         final String tableName = testName.getMethodName();
         final String mvName = testName.getMethodName() + "_mv";
