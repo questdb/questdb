@@ -263,13 +263,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     final int cursorTimestampIndex = factory.getMetadata().getColumnIndex(timestampName);
                     assert cursorTimestampIndex > -1;
 
+                    long deadline = batchSize;
+                    rowCount = 0;
+
                     sampleByCursor.toTop();
                     while (sampleByCursor.next()) {
                         refreshExecutionContext.setRange(sampleByCursor.getTimestampLo(), sampleByCursor.getTimestampHi());
                         try (RecordCursor cursor = factory.getCursor(refreshExecutionContext)) {
                             final Record record = cursor.getRecord();
-                            long deadline = batchSize;
-                            rowCount = 0;
                             while (cursor.hasNext()) {
                                 TableWriter.Row row = tableWriter.newRow(record.getTimestamp(cursorTimestampIndex));
                                 copier.copy(record, row);

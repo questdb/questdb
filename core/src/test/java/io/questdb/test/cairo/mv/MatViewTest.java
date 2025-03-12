@@ -48,14 +48,24 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
 import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
 
 
+@RunWith(Parameterized.class)
 public class MatViewTest extends AbstractCairoTest {
+    private final int rowsPerQuery;
+
+    public MatViewTest(int rowsPerQuery) {
+        this.rowsPerQuery = rowsPerQuery;
+    }
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -66,11 +76,22 @@ public class MatViewTest extends AbstractCairoTest {
         AbstractCairoTest.setUpStatic();
     }
 
+    @Parameterized.Parameters(name = "rows_per_query={0}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {-1},
+                {1},
+        });
+    }
+
     @Before
     public void setUp() {
         super.setUp();
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        if (rowsPerQuery > 0) {
+            setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
+        }
     }
 
     @Test
@@ -1747,12 +1768,46 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testSelfJoinQuery() throws Exception {
-        testSelfJoinQuery(-1);
-    }
+        // Here we want to verify that the detached base table reader used by the refresh job
+        // can be safely used in the mat view query multiple times.
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "sym symbol index, sym2 symbol, price double, ts timestamp, extra_col long" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
 
-    @Test
-    public void testSelfJoinQueryMultipleQueryExecutionsPerRefresh() throws Exception {
-        testSelfJoinQuery(1);
+            final String viewSql = "select a.sym sym_a, b.sym sym_b, a.sym2 sym2_a, b.sym2 sym2_b, last(b.price) as price, a.ts " +
+                    "from (base_price where sym = 'foobar') a " +
+                    "asof join (base_price where sym = 'barbaz') b on (sym2) " +
+                    "sample by 1h";
+            createMatView(viewSql);
+
+            execute(
+                    "insert into base_price(sym, sym2, price, ts) values('foobar', 's1', 1.320, '2024-09-10T12:01')" +
+                            ",('foobar', 's1', 1.323, '2024-09-10T12:02')" +
+                            ",('barbaz', 's1', 103.21, '2024-09-10T12:02')" +
+                            ",('foobar', 's1', 1.321, '2024-09-10T13:02')"
+            );
+
+            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\tbase_table_name\tview_status\n" +
+                            "price_1h\tbase_price\tvalid\n",
+                    "select view_name, base_table_name, view_status from materialized_views",
+                    null,
+                    false
+            );
+
+            final String expected = "sym_a\tsym_b\tsym2_a\tsym2_b\tprice\tts\n" +
+                    "foobar\t\ts1\t\tnull\t2024-09-10T12:00:00.000000Z\n" +
+                    "foobar\tbarbaz\ts1\ts1\t103.21\t2024-09-10T12:00:00.000000Z\n" +
+                    "foobar\tbarbaz\ts1\ts1\t103.21\t2024-09-10T13:00:00.000000Z\n";
+            assertQueryNoLeakCheck(expected, viewSql + " order by ts, sym_a, sym_b", "ts", true);
+            assertQueryNoLeakCheck(expected, "price_1h order by ts, sym_a, sym_b", "ts", true, true);
+        });
     }
 
     @Test
@@ -2197,52 +2252,6 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             assertViewMatchesSqlOverBaseTable(viewSql);
-        });
-    }
-
-    private void testSelfJoinQuery(int rowsPerQuery) throws Exception {
-        if (rowsPerQuery > 0) {
-            setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
-        }
-        // Here we want to verify that the detached base table reader used by the refresh job
-        // can be safely used in the mat view query multiple times.
-        assertMemoryLeak(() -> {
-            execute(
-                    "create table base_price (" +
-                            "sym symbol index, sym2 symbol, price double, ts timestamp, extra_col long" +
-                            ") timestamp(ts) partition by DAY WAL"
-            );
-
-            final String viewSql = "select a.sym sym_a, b.sym sym_b, a.sym2 sym2_a, b.sym2 sym2_b, last(b.price) as price, a.ts " +
-                    "from (base_price where sym = 'foobar') a " +
-                    "asof join (base_price where sym = 'barbaz') b on (sym2) " +
-                    "sample by 1h";
-            createMatView(viewSql);
-
-            execute(
-                    "insert into base_price(sym, sym2, price, ts) values('foobar', 's1', 1.320, '2024-09-10T12:01')" +
-                            ",('foobar', 's1', 1.323, '2024-09-10T12:02')" +
-                            ",('barbaz', 's1', 103.21, '2024-09-10T12:02')" +
-                            ",('foobar', 's1', 1.321, '2024-09-10T13:02')"
-            );
-
-            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
-            drainQueues();
-
-            assertQueryNoLeakCheck(
-                    "view_name\tbase_table_name\tview_status\n" +
-                            "price_1h\tbase_price\tvalid\n",
-                    "select view_name, base_table_name, view_status from materialized_views",
-                    null,
-                    false
-            );
-
-            final String expected = "sym_a\tsym_b\tsym2_a\tsym2_b\tprice\tts\n" +
-                    "foobar\t\ts1\t\tnull\t2024-09-10T12:00:00.000000Z\n" +
-                    "foobar\tbarbaz\ts1\ts1\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                    "foobar\tbarbaz\ts1\ts1\t103.21\t2024-09-10T13:00:00.000000Z\n";
-            assertQueryNoLeakCheck(expected, viewSql + " order by ts, sym_a, sym_b", "ts", true);
-            assertQueryNoLeakCheck(expected, "price_1h order by ts, sym_a, sym_b", "ts", true, true);
         });
     }
 
