@@ -10233,7 +10233,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table x (l long, ts timestamp)",
                 "select * from x where ts > (select min(ts) from x)",
                 "Async Filter workers: 1\n" +
-                        "  filter: ts>cursor \n" +
+                        "  filter: ts [thread-safe] > cursor \n" +
                         "    GroupBy vectorized: true workers: 1\n" +
                         "      values: [min(ts)]\n" +
                         "        PageFrame\n" +
@@ -10263,7 +10263,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table x (l long, ts timestamp)",
                 "select * from x where ts < (select max(ts) from x)",
                 "Async Filter workers: 1\n" +
-                        "  filter: ts<cursor \n" +
+                        "  filter: ts [thread-safe] < cursor \n" +
                         "    GroupBy vectorized: true workers: 1\n" +
                         "      values: [max(ts)]\n" +
                         "        PageFrame\n" +
