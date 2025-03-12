@@ -77,6 +77,13 @@ impl VarcharAuxEntry {
 
 /// Return (data_size, aux_size).
 fn data_and_aux_size_at(col: &MappedColumn, row_count: u64) -> CoreResult<(u64, u64)> {
+    if row_count == 0 {
+        return Ok((0, 0));
+    }
+    // To know the size required for a given row count we need to poke at size needed to
+    // store the row index just before.
+    let row_index = row_count - 1;
+
     let aux_mmap = col.aux.as_ref().expect("varchar has aux");
     let data_mmap = &col.data;
     if aux_mmap.len() % size_of::<u128>() != 0 {
@@ -89,18 +96,17 @@ fn data_and_aux_size_at(col: &MappedColumn, row_count: u64) -> CoreResult<(u64, 
         ));
     }
     let aux: &[VarcharAuxEntry] = unsafe { transmute(&aux_mmap[..]) };
-    // TODO(amunra): Am I even indexing the right value or should this be `row_index - 1`?
-    let Some(aux_entry) = aux.get(row_count as usize) else {
+    let Some(aux_entry) = aux.get((row_index) as usize) else {
         return Err(fmt_err!(
             InvalidColumnData,
             "varchar row index {} not found in aux for column {} in {}",
-            row_count,
+            row_index,
             col.col_name,
             col.parent_path.display()
         ));
     };
 
-    let aux_size = (row_count + 1) * size_of::<VarcharAuxEntry>() as u64;
+    let aux_size = (row_index + 1) * size_of::<VarcharAuxEntry>() as u64;
     let offset = aux_entry.offset();
     let data_size = if aux_entry.is_inlined() || aux_entry.is_null() {
         offset
@@ -118,4 +124,52 @@ fn data_and_aux_size_at(col: &MappedColumn, row_count: u64) -> CoreResult<(u64, 
         ));
     }
     Ok((data_size, aux_size))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::col_type::ColumnTypeTag;
+    use std::path::PathBuf;
+
+    fn map_col(name: &str) -> MappedColumn {
+        /*
+
+        It should be noted that the various test columns have been generated as so:
+
+            final String nullString = "NULL";
+            final String emptyString = "''";
+            final String shortStr = "'abc'";
+            final String longStr = "'Lorem ipsum dolor sit amet, consectetur tincidunt.'"; // 50 bytes
+
+            qdb.execute("create table x (v1 varchar, v2 varchar, v3 varchar, v4 varchar, timestamp_c timestamp) timestamp(timestamp_c) partition by day wal");
+            qdb.execute("insert into x (v1, v2, v3, v4, timestamp_c) values " +
+                    "(" + nullString + ", " + emptyString + ", " + shortStr + ", " + longStr + ", '2022-02-24T01:01:00')");
+            qdb.execute("insert into x (v1, v2, v3, v4, timestamp_c) values " +
+                    "(" + emptyString + ", " + shortStr + ", " + longStr + ", " + nullString + ", '2022-02-24T01:01:01')");
+            qdb.execute("insert into x (v1, v2, v3, v4, timestamp_c) values " +
+                    "(" + shortStr + ", " + longStr + ", " + nullString + ", " + emptyString + ", '2022-02-24T01:01:02')");
+            qdb.execute("insert into x (v1, v2, v3, v4, timestamp_c) values " +
+                    "(" + longStr + ", " + nullString + ", " + emptyString + ", " + longStr + ", '2022-02-24T01:01:03')");
+            qdb.execute("insert into x (v1, v2, v3, v4, timestamp_c) values " +
+                    "(" + nullString + ", " + emptyString + ", " + shortStr + ", " + longStr + ", '2022-02-24T01:01:04')");
+
+        This gives the various columns different starting and ending patterns.
+        */
+        let mut parent_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        parent_path.push("resources/test/col_driver/varchar");
+        MappedColumn::open(parent_path, name, ColumnTypeTag::Varchar.into_type()).unwrap()
+    }
+
+    #[test]
+    fn test_v1() {
+        let col = map_col("v1");
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 0).unwrap();
+        assert_eq!(data_size, 0);
+        assert_eq!(aux_size, Some(0));
+
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 1).unwrap();
+        assert_eq!(data_size, 0);
+        assert_eq!(aux_size, Some(16));
+    }
 }

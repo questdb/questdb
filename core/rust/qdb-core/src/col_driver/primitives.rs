@@ -82,7 +82,7 @@ mod tests {
 
     fn map_col(name: &str, col_type: ColumnType) -> MappedColumn {
         let mut parent_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        parent_path.push("resources/test/col_driver");
+        parent_path.push("resources/test/col_driver/primitives");
         MappedColumn::open(parent_path, name, col_type).unwrap()
     }
 
