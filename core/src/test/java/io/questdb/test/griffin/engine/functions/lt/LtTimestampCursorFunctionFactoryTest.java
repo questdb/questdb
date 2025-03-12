@@ -30,6 +30,123 @@ import org.junit.Test;
 public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testPlans() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "  select rnd_varchar() a, rnd_long(30000, 80000000, 1)::timestamp ts from long_sequence(10)" +
+                    ")");
+
+            // non-thread-safe
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts::string::timestamp < cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [null]\n" +
+                            "        long_sequence count: 1 [state-shared]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts::string::timestamp < (select null)"
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts::string::timestamp < cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [1]\n" +
+                            "        long_sequence count: 1 [state-shared]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts::string::timestamp < (select 1::timestamp)"
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts::string::timestamp < cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: ['2015-03-11']\n" +
+                            "        long_sequence count: 1 [state-shared]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts::string::timestamp < (select '2015-03-11'::string)"
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts::string::timestamp < cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: ['2015-03-12']\n" +
+                            "        long_sequence count: 1 [state-shared]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts::string::timestamp < (select '2015-03-12'::varchar)"
+            );
+
+            // thread-safe
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts [thread-safe] < cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [null]\n" +
+                            "        long_sequence count: 1\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts < (select null)"
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts [thread-safe] < cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [1]\n" +
+                            "        long_sequence count: 1\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts < (select 1::timestamp)"
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts [thread-safe] < cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: ['2015-03-11']\n" +
+                            "        long_sequence count: 1\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts < (select '2015-03-11'::string)"
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts [thread-safe] < cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: ['2015-03-12']\n" +
+                            "        long_sequence count: 1\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts < (select '2015-03-12'::varchar)"
+            );
+        });
+    }
+
+    @Test
     public void testCompareTimestampWithNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (" +
@@ -42,6 +159,7 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
             assertSql(expected, "select * from x where ts < (select null::timestamp)");
             assertSql(expected, "select * from x where ts < (select null::string)");
             assertSql(expected, "select * from x where ts < (select null::varchar)");
+
             // no rows selected in the cursor
             assertSql(expected, "select * from x where ts < (select 1::timestamp from x where 1 <> 1)");
             assertSql(expected, "select * from x where ts < (select '11' from x where 1 <> 1)");
