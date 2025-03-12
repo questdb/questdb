@@ -1326,8 +1326,8 @@ fn long_stat_value(value: &Option<Vec<u8>>) -> ParquetResult<i64> {
 #[cfg(test)]
 mod tests {
     use crate::allocator::{AcVec, TestAllocatorState};
-    use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
     use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
+    use crate::parquet::tests::ColumnTypeTagExt;
     use crate::parquet_read::decode::{INT_NULL, LONG_NULL, UUID_NULL};
     use crate::parquet_read::{ColumnChunkBuffers, ParquetDecoder};
     use crate::parquet_write::file::ParquetWriter;
@@ -1337,6 +1337,7 @@ mod tests {
     use bytes::Bytes;
     use parquet::file::reader::Length;
     use parquet2::write::Version;
+    use qdb_core::col_type::{ColumnType, ColumnTypeTag};
     use rand::Rng;
     use std::fs::File;
     use std::io::{Cursor, Write};

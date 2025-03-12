@@ -145,6 +145,7 @@ impl ParquetUpdater {
 
 #[cfg(test)]
 mod tests {
+    use crate::parquet::tests::ColumnTypeTagExt;
     use bytes::Bytes;
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use parquet2::compression::CompressionOptions;
@@ -159,11 +160,11 @@ mod tests {
     use crate::parquet_write::file::{create_row_group, ParquetWriter, WriteOptions};
     use crate::parquet_write::schema::{to_encodings, to_parquet_schema, Column, Partition};
 
-    use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
     use arrow::datatypes::ToByteSlice;
     use num_traits::float::FloatCore;
     use parquet2::read::read_metadata_with_size;
     use parquet2::write;
+    use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 
     fn save_to_file(bytes: &Bytes) {
         if let Ok(path) = env::var("OUT_PARQUET_FILE") {

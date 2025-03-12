@@ -38,6 +38,9 @@ pub use string::*;
 pub use symbol::*;
 pub use varchar::*;
 
+pub const DATA_FILE_EXTENSION: &str = "d";
+pub const AUX_FILE_EXTENSION: &str = "i";
+
 pub trait ColumnDriver {
     /// Returns the data and aux file sizes at the given row.
     /// If a column is a simple type such as `INT` or `DOUBLE`, the aux size will be `None`.

@@ -167,7 +167,8 @@ impl QdbMeta {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parquet::col_type::ColumnTypeTag;
+    use crate::parquet::tests::ColumnTypeTagExt;
+    use qdb_core::col_type::ColumnTypeTag;
     use serde_json::{json, Value};
 
     #[test]

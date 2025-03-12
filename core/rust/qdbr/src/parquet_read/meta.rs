@@ -186,13 +186,13 @@ mod tests {
     use std::ptr::null;
 
     use crate::allocator::TestAllocatorState;
-    use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
     use crate::parquet_read::meta::ParquetDecoder;
     use crate::parquet_write::file::ParquetWriter;
     use crate::parquet_write::schema::{Column, Partition};
     use arrow::datatypes::ToByteSlice;
     use bytes::Bytes;
     use parquet::file::reader::Length;
+    use qdb_core::col_type::{ColumnType, ColumnTypeTag};
     use tempfile::NamedTempFile;
 
     #[test]
