@@ -28,12 +28,19 @@ import io.questdb.cairo.mv.SampleByIntervalIterator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.Rnd;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class SampleByIntervalIteratorTest {
+    private static final Log LOG = LogFactory.getLog(SampleByIntervalIteratorTest.class);
 
     @Test
     public void testBigStep() throws Exception {
@@ -80,6 +87,33 @@ public class SampleByIntervalIteratorTest {
             Assert.assertEquals(offset + (i + 1) * Timestamps.DAY_MICROS, iterator.getTimestampHi());
         }
         Assert.assertFalse(iterator.next());
+    }
+
+    @Test
+    public void testFuzzNoTimeZone() throws Exception {
+        testFuzz(
+                null,
+                TimestampFormatUtils.parseTimestamp("2024-03-03T12:01:01.000000Z"),
+                TimestampFormatUtils.parseTimestamp("2024-03-07T12:01:01.000000Z")
+        );
+    }
+
+    @Test
+    public void testFuzzTimeZoneWithDst() throws Exception {
+        testFuzz(
+                Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "Europe/Berlin"),
+                TimestampFormatUtils.parseTimestamp("2021-03-26T10:03:00.000000Z"),
+                TimestampFormatUtils.parseTimestamp("2021-03-29T12:01:00.000000Z")
+        );
+    }
+
+    @Test
+    public void testFuzzTimeZoneWithFixedOffset() throws Exception {
+        testFuzz(
+                Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "GMT+2"),
+                TimestampFormatUtils.parseTimestamp("2000-01-01T23:10:00.000000Z"),
+                TimestampFormatUtils.parseTimestamp("2000-01-02T20:59:59.000000Z")
+        );
     }
 
     @Test
@@ -201,5 +235,53 @@ public class SampleByIntervalIteratorTest {
             Assert.assertEquals(minExpectedTs - tzOffset + (i + 1) * Timestamps.DAY_MICROS, iterator.getTimestampHi());
         }
         Assert.assertFalse(iterator.next());
+    }
+
+    private void testFuzz(
+            @Nullable TimeZoneRules tzRules,
+            long start,
+            long end
+    ) throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final int step = Math.max(1, rnd.nextInt(1000));
+        final int interval = Math.max(1, rnd.nextInt(300));
+
+        final char[] timeUnits = new char[]{'m', 'h', 'd'};
+        final char timeUnit = timeUnits[rnd.nextInt(timeUnits.length)];
+
+        final long fixedTzOffset = (rnd.nextBoolean() ? 1 : -1) * rnd.nextLong(Timestamps.HOUR_MICROS);
+
+        final SampleByIntervalIterator iterator = new SampleByIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(interval, timeUnit, 0);
+        iterator.of(
+                sampler,
+                tzRules,
+                fixedTzOffset,
+                start,
+                end,
+                step
+        );
+
+        final long minTs = iterator.getMinTimestamp();
+        final long maxTs = iterator.getMaxTimestamp();
+        Assert.assertTrue(minTs < maxTs);
+
+        long minObservedTs = Long.MAX_VALUE;
+        long maxObservedTs = Long.MIN_VALUE;
+        long prevTsHi = Long.MIN_VALUE;
+        while (iterator.next()) {
+            final long tsLo = iterator.getTimestampLo();
+            final long tsHi = iterator.getTimestampHi();
+            Assert.assertTrue(tsLo < tsHi);
+            if (prevTsHi != Long.MIN_VALUE) {
+                Assert.assertEquals(prevTsHi, tsLo);
+            }
+            prevTsHi = tsHi;
+            minObservedTs = Math.min(minObservedTs, tsLo);
+            maxObservedTs = Math.max(maxObservedTs, tsHi);
+        }
+
+        Assert.assertEquals(minTs, minObservedTs);
+        Assert.assertEquals(maxTs, maxObservedTs);
     }
 }
