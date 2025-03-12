@@ -29,16 +29,12 @@ import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 
 /**
  * `AbstractArray` provides an interface for Java client users to create multi-dimensional arrays,
  * supporting up to 32 dimensions.
  * <p>It manages a contiguous block of memory to store the actual array data.
  * To prevent memory leaks, please ensure to invoke the {@link #close()}  method after usage.
- * <p>Additionally, the memory will also be released after calling
- * {@link #appendToBufPtr(long, CapacityChecker, boolean)}.
  * <p>Example of usage:
  * <pre>{@code
  *    // Creates a 2x3x2 matrix (of rank 3)
@@ -76,19 +72,14 @@ public abstract class AbstractArray implements QuietCloseable {
     /**
      * Appends this array to the ILP request buffer, in the proper protocol format.
      */
-    public long appendToBufPtr(long bufPtr, CapacityChecker checkCapacityFn, boolean move) {
+    public void appendToBufPtr(MemoryA mem) {
         assert !closed;
         byte nDims = (byte) array.getDimCount();
-        long size = array.size();
-        CapacityChecker.check(checkCapacityFn, bufPtr, Byte.BYTES + nDims * Integer.BYTES + size);
-        Unsafe.getUnsafe().putByte(bufPtr, nDims);
-        bufPtr += Byte.BYTES;
+        mem.putByte(nDims);
         for (byte i = 0; i < nDims; i++) {
-            Unsafe.getUnsafe().putInt(bufPtr, array.getDimLen(i));
-            bufPtr += Integer.BYTES;
+            mem.putInt(array.getDimLen(i));
         }
-        Vect.memcpy(bufPtr, array.ptr(), size);
-        return bufPtr + size;
+        array.appendToMem(mem);
     }
 
     @Override

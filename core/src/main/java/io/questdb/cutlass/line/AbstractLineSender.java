@@ -26,6 +26,7 @@ package io.questdb.cutlass.line;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.line.array.ArrayDataAppender;
@@ -34,11 +35,14 @@ import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.FlattenArrayUtils;
 import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8s;
@@ -54,7 +58,7 @@ import java.security.SignatureException;
 import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 
-public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender {
+public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender, MemoryA {
     protected final int capacity;
     private final long bufA;
     private final long bufB;
@@ -177,17 +181,20 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
         writeFieldName(name, true)
                 .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ARRAY binary format
                 .put((byte) ColumnType.DOUBLE); // element type
-        ptr = values.appendToBufPtr(ptr, null, true);
+        values.appendToBufPtr(this);
         return this;
     }
 
     @Override
     public final AbstractLineSender doubleColumn(CharSequence name, double value) {
-        writeFieldName(name, true).
-                put(LineTcpParser.ENTITY_TYPE_DOUBLE);
+        writeFieldName(name, true)
+                .put(LineTcpParser.ENTITY_TYPE_DOUBLE);
+        if (ptr + Double.BYTES >= hi) {
+            send00();
+        }
         Unsafe.getUnsafe().putDouble(ptr, value);
         ptr += Double.BYTES;
-        return field(name, value);
+        return this;
     }
 
     public AbstractLineSender field(CharSequence name, long value) {
@@ -222,6 +229,21 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
     }
 
     @Override
+    public long getAppendOffset() {
+        return ptr;
+    }
+
+    @Override
+    public long getExtendSegmentSize() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void jumpTo(long offset) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public Sender longArray(@NotNull CharSequence name, long[] values) {
         return arrayColumn(name, ColumnType.LONG, (byte) 1, values,
                 FlattenArrayUtils::putShapeToBuf,
@@ -250,7 +272,7 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
         writeFieldName(name, true)
                 .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ARRAY binary format
                 .put((byte) ColumnType.LONG); // element type
-        ptr = values.appendToBufPtr(ptr, null, true);
+        values.appendToBufPtr(this);
         return this;
     }
 
@@ -392,7 +414,153 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
     }
 
     @Override
+    public long putBin(BinarySequence value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long putBin(long from, long len) {
+        putBlockOfBytes(from, len);
+        return ptr;
+    }
+
+    @Override
+    public void putBlockOfBytes(long from, long len) {
+        while (len > 0) {
+            if (ptr >= hi) {
+                send00();
+            }
+            long copy = Math.min(len, hi - ptr);
+            Vect.memcpy(ptr, from, copy);
+            len -= copy;
+            ptr += copy;
+        }
+    }
+
+    @Override
+    public void putBool(boolean value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void putByte(byte value) {
+        put(value);
+    }
+
+    @Override
+    public void putChar(char value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void putDouble(double value) {
+        if (ptr + Double.BYTES >= hi) {
+            send00();
+        }
+        Unsafe.getUnsafe().putDouble(ptr, value);
+        ptr += Double.BYTES;
+    }
+
+    @Override
+    public void putFloat(float value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void putInt(int value) {
+        if (ptr + Integer.BYTES >= hi) {
+            send00();
+        }
+        Unsafe.getUnsafe().putInt(ptr, value);
+        ptr += Integer.BYTES;
+    }
+
+    @Override
+    public void putLong(long value) {
+        if (ptr + Long.BYTES >= hi) {
+            send00();
+        }
+        Unsafe.getUnsafe().putLong(ptr, value);
+        ptr += Long.BYTES;
+    }
+
+    @Override
+    public void putLong128(long lo, long hi) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void putLong256(long l0, long l1, long l2, long l3) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void putLong256(Long256 value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void putLong256(@Nullable CharSequence hexString) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void putLong256(@NotNull CharSequence hexString, int start, int end) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void putLong256Utf8(@Nullable Utf8Sequence hexString) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public AbstractLineSender putNonAscii(long lo, long hi) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long putNullBin() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long putNullStr() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void putShort(short value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long putStr(CharSequence value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long putStr(char value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long putStr(CharSequence value, int pos, int len) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long putStrUtf8(DirectUtf8Sequence value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long putVarchar(@NotNull Utf8Sequence value, int lo, int hi) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void skip(long bytes) {
         throw new UnsupportedOperationException();
     }
 
@@ -425,6 +593,16 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
         return this;
     }
 
+    @Override
+    public void truncate() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void zeroMem(int length) {
+        throw new UnsupportedOperationException();
+    }
+
     private static int findEOL(long ptr, int len) {
         for (int i = 0; i < len; i++) {
             byte b = Unsafe.getUnsafe().getByte(ptr + i);
@@ -451,9 +629,8 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
                 .put(LineTcpParser.ENTITY_TYPE_ARRAY)
                 .put((byte) columnType)
                 .put(nDims);
-        shapeAppender.append(ptr, array);
-        ptr += (long) Integer.BYTES * nDims;
-        ptr = dataAppender.append(ptr, null, array);
+        shapeAppender.append(this, array);
+        dataAppender.append(this, array);
         return this;
     }
 

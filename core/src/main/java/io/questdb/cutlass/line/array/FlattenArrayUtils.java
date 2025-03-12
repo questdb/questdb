@@ -24,8 +24,8 @@
 
 package io.questdb.cutlass.line.array;
 
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.std.Unsafe;
 
 /**
  * Utility class with methods that flatten an N-dimensional Java array into a
@@ -35,121 +35,101 @@ import io.questdb.std.Unsafe;
  */
 public class FlattenArrayUtils {
 
-    public static long putDataToBuf(long bufPtr, CapacityChecker checkFn, double[] array) {
-        int length = array.length;
-        CapacityChecker.check(checkFn, bufPtr, (long) length * Double.BYTES);
-        for (int i = 0; i < length; i++) {
-            double v = array[i];
-            Unsafe.getUnsafe().putDouble(bufPtr, v);
-            bufPtr += Double.BYTES;
+    public static void putDataToBuf(MemoryA mem, double[] array) {
+        for (double v : array) {
+            mem.putDouble(v);
         }
-        return bufPtr;
     }
 
-    public static long putDataToBuf(long bufPtr, CapacityChecker checkFn, double[][] array) {
-        final int dim0Len = array.length;
+    public static void putDataToBuf(MemoryA mem, double[][] array) {
         final int dim1Len = array[0].length;
-        for (int i = 0; i < dim0Len; i++) {
-            double[] v = array[i];
+        for (double[] v : array) {
             if (v.length != dim1Len) {
                 throw new LineSenderException("irregular array shape");
             }
-            bufPtr = putDataToBuf(bufPtr, checkFn, v);
+            putDataToBuf(mem, v);
         }
-        return bufPtr;
     }
 
-    public static long putDataToBuf(long bufPtr, CapacityChecker checkFn, double[][][] array) {
-        final int dim0Len = array.length;
+    public static void putDataToBuf(MemoryA mem, double[][][] array) {
         final int dim1Len = array[0].length;
-        for (int i = 0; i < dim0Len; i++) {
-            double[][] v = array[i];
+        for (double[][] v : array) {
             if (v.length != dim1Len) {
-                throw new LineSenderException("array is not regular");
+                throw new LineSenderException("irregular array shape");
             }
-            bufPtr = putDataToBuf(bufPtr, checkFn, v);
+            putDataToBuf(mem, v);
         }
-        return bufPtr;
     }
 
-    public static long putDataToBuf(long bufPtr, CapacityChecker checkFn, long[] array) {
-        CapacityChecker.check(checkFn, bufPtr, (long) array.length * Double.BYTES);
+    public static void putDataToBuf(MemoryA mem, long[] array) {
         for (long v : array) {
-            Unsafe.getUnsafe().putLong(bufPtr, v);
-            bufPtr += Long.BYTES;
+            mem.putLong(v);
         }
-        return bufPtr;
     }
 
-    public static long putDataToBuf(long bufPtr, CapacityChecker checkFn, long[][] array) {
-        int length = array[0].length;
+    public static void putDataToBuf(MemoryA mem, long[][] array) {
+        final int dim1Len = array[0].length;
         for (long[] v : array) {
-            if (length != v.length) {
-                throw new LineSenderException("array is not regular");
+            if (v.length != dim1Len) {
+                throw new LineSenderException("irregular array shape");
             }
-            bufPtr = putDataToBuf(bufPtr, checkFn, v);
+            putDataToBuf(mem, v);
         }
-        return bufPtr;
     }
 
-    public static long putDataToBuf(long bufPtr, CapacityChecker checkFn, long[][][] array) {
-        int length = array[0].length;
+    public static void putDataToBuf(MemoryA mem, long[][][] array) {
+        final int dim1Len = array[0].length;
         for (long[][] v : array) {
-            if (length != v.length) {
-                throw new LineSenderException("array is not regular");
+            if (v.length != dim1Len) {
+                throw new LineSenderException("irregular array shape");
             }
-            bufPtr = putDataToBuf(bufPtr, checkFn, v);
+            putDataToBuf(mem, v);
         }
-        return bufPtr;
     }
 
-    public static void putShapeToBuf(long bufPtr, double[] array) {
+    public static void putShapeToBuf(MemoryA mem, double[] array) {
         if (array.length == 0) {
             throw new LineSenderException("zero length array not supported");
         }
-        Unsafe.getUnsafe().putInt(bufPtr, array.length);
+        mem.putInt(array.length);
     }
 
-    public static void putShapeToBuf(long bufPtr, double[][] array) {
+    public static void putShapeToBuf(MemoryA mem, double[][] array) {
         if (array.length == 0) {
             throw new LineSenderException("zero length array not supported");
         }
-        Unsafe.getUnsafe().putInt(bufPtr, array.length);
-        bufPtr += Integer.BYTES;
-        putShapeToBuf(bufPtr, array[0]);
+        mem.putInt(array.length);
+        putShapeToBuf(mem, array[0]);
     }
 
-    public static void putShapeToBuf(long bufPtr, double[][][] array) {
+    public static void putShapeToBuf(MemoryA mem, double[][][] array) {
         if (array.length == 0) {
             throw new LineSenderException("zero length array not supported");
         }
-        Unsafe.getUnsafe().putInt(bufPtr, array.length);
-        bufPtr += Integer.BYTES;
-        putShapeToBuf(bufPtr, array[0]);
+        mem.putInt(array.length);
+        putShapeToBuf(mem, array[0]);
     }
 
-    public static void putShapeToBuf(long bufPtr, long[] array) {
+    public static void putShapeToBuf(MemoryA mem, long[] array) {
         if (array.length == 0) {
             throw new LineSenderException("zero length array not supported");
         }
-        Unsafe.getUnsafe().putInt(bufPtr, array.length);
+        mem.putInt(array.length);
     }
 
-    public static void putShapeToBuf(long bufPtr, long[][] array) {
+    public static void putShapeToBuf(MemoryA mem, long[][] array) {
         if (array.length == 0) {
             throw new LineSenderException("zero length array not supported");
         }
-        Unsafe.getUnsafe().putInt(bufPtr, array.length);
-        bufPtr += Integer.BYTES;
-        putShapeToBuf(bufPtr, array[0]);
+        mem.putInt(array.length);
+        putShapeToBuf(mem, array[0]);
     }
 
-    public static void putShapeToBuf(long bufPtr, long[][][] array) {
+    public static void putShapeToBuf(MemoryA mem, long[][][] array) {
         if (array.length == 0) {
             throw new LineSenderException("zero length array not supported");
         }
-        Unsafe.getUnsafe().putInt(bufPtr, array.length);
-        bufPtr += Integer.BYTES;
-        putShapeToBuf(bufPtr, array[0]);
+        mem.putInt(array.length);
+        putShapeToBuf(mem, array[0]);
     }
 }

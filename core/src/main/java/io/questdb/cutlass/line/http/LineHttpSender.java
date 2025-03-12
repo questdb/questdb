@@ -51,7 +51,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.NanosecondClockImpl;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
-import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -253,7 +252,7 @@ public final class LineHttpSender implements Sender {
         writeFieldName(name, true)
                 .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ND_ARRAY binary format
                 .put((byte) ColumnType.DOUBLE); // element type
-        request.setPtr(values.appendToBufPtr(request.getPtr(), request::checkCapacity, true));
+        values.appendToBufPtr(request);
         return this;
     }
 
@@ -261,9 +260,7 @@ public final class LineHttpSender implements Sender {
     public Sender doubleColumn(CharSequence name, double value) {
         writeFieldName(name, true)
                 .put(LineTcpParser.ENTITY_TYPE_DOUBLE);
-        long ptr = request.getPtr();
-        Unsafe.getUnsafe().putDouble(ptr, value);
-        request.setPtr(ptr + Double.BYTES);
+        request.putDouble(value);
         return this;
     }
 
@@ -301,7 +298,7 @@ public final class LineHttpSender implements Sender {
         writeFieldName(name, true)
                 .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ND_ARRAY binary format
                 .put((byte) ColumnType.LONG); // element type
-        request.setPtr(values.appendToBufPtr(request.getPtr(), request::checkCapacity, true));
+        values.appendToBufPtr(request);
         return this;
     }
 
@@ -418,12 +415,8 @@ public final class LineHttpSender implements Sender {
                 .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ND_ARRAY binary format
                 .put((byte) columnType) // element type
                 .put(nDims); // dims.
-        request.checkCapacity(request.getPtr(), Integer.BYTES * nDims);
-        long addr = request.getPtr();
-
-        shapeAppender.append(addr, array);
-        addr += Integer.BYTES * nDims;
-        request.setPtr(dataAppender.append(addr, request::checkCapacity, array));
+        shapeAppender.append(request, array);
+        dataAppender.append(request, array);
         return this;
     }
 

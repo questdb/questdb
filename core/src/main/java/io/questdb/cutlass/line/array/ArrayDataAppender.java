@@ -24,7 +24,9 @@
 
 package io.questdb.cutlass.line.array;
 
+import io.questdb.cairo.vm.api.MemoryA;
+
 @FunctionalInterface
 public interface ArrayDataAppender<T> {
-    long append(long bufPtr, CapacityChecker checkFunc, T values);
+    void append(MemoryA mem, T values);
 }
