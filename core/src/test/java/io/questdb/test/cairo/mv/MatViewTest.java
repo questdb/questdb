@@ -1787,7 +1787,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "insert into base_price(sym, sym2, price, ts) values('foobar', 's1', 1.320, '2024-09-10T12:01')" +
                             ",('foobar', 's1', 1.323, '2024-09-10T12:02')" +
                             ",('barbaz', 's1', 103.21, '2024-09-10T12:02')" +
-                            ",('foobar', 's1', 1.321, '2024-09-10T13:02')"
+                            ",('foobar', 's1', 1.321, '2024-09-10T13:02')" +
+                            ",('barbaz', 's1', 103.23, '2024-09-10T13:02')"
             );
 
             currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.842574Z");
@@ -1804,7 +1805,7 @@ public class MatViewTest extends AbstractCairoTest {
             final String expected = "sym_a\tsym_b\tsym2_a\tsym2_b\tprice\tts\n" +
                     "foobar\t\ts1\t\tnull\t2024-09-10T12:00:00.000000Z\n" +
                     "foobar\tbarbaz\ts1\ts1\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                    "foobar\tbarbaz\ts1\ts1\t103.21\t2024-09-10T13:00:00.000000Z\n";
+                    "foobar\tbarbaz\ts1\ts1\t103.23\t2024-09-10T13:00:00.000000Z\n";
             assertQueryNoLeakCheck(expected, viewSql + " order by ts, sym_a, sym_b", "ts", true);
             assertQueryNoLeakCheck(expected, "price_1h order by ts, sym_a, sym_b", "ts", true, true);
         });
