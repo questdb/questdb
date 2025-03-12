@@ -24,7 +24,11 @@
 
 package io.questdb.test.cutlass.http.line;
 
-import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.http.HttpChunkedResponse;
+import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpMultipartContentListener;
+import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.Chars;
@@ -209,17 +213,20 @@ final class MockHttpProcessor implements HttpRequestProcessor, HttpMultipartCont
 
     private void verifyInteraction(ExpectedRequest expectedRequest, ActualRequest actualRequest, int interactionIndex) {
         if (actualRequest == null) {
-            throw new AssertionError("Expected request: " + expectedRequest + ", actual: null. Interaction index: " + interactionIndex);
+            throw new AssertionError("Expected request: " + expectedRequest +
+                    ", actual: null. Interaction index: " + interactionIndex);
         }
         if (expectedRequest.content != null) {
             if (!Chars.equals(expectedRequest.content, actualRequest.bodyContent.toString())) {
-                throw new AssertionError("Expected content: " + expectedRequest.content + ", actual: " + actualRequest.bodyContent + ". Interaction index: " + interactionIndex);
+                throw new AssertionError("Expected content: " + expectedRequest.content +
+                        ", actual: " + actualRequest.bodyContent + ". Interaction index: " + interactionIndex);
             }
         }
         for (Map.Entry<String, String> header : expectedRequest.headers.entrySet()) {
             String actualHeaderValue = actualRequest.headers.get(header.getKey());
             if (actualHeaderValue == null || !Chars.equals(header.getValue(), actualHeaderValue)) {
-                throw new AssertionError("Expected header: " + header.getKey() + "=" + header.getValue() + ", actual: " + actualHeaderValue + ". Interaction index: " + interactionIndex);
+                throw new AssertionError("Expected header: " + header.getKey() + "=" + header.getValue() +
+                        ", actual: " + actualHeaderValue + ". Interaction index: " + interactionIndex);
             }
         }
     }
