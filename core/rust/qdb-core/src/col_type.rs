@@ -87,6 +87,14 @@ impl ColumnTypeTag {
             ColumnTypeTag::Binary | ColumnTypeTag::String | ColumnTypeTag::Varchar => None,
         }
     }
+
+    // Don't expose this in the general API, as it heightens the risk
+    // of constructing an invalid `ColumnType`, e.g. one without the appropriate
+    // extra type info for Geo types.
+    #[cfg(test)]
+    pub(crate) fn into_type(self) -> ColumnType {
+        ColumnType::new(self, 0)
+    }
 }
 
 impl TryFrom<u8> for ColumnTypeTag {

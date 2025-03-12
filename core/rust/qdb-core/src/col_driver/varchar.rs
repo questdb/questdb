@@ -28,12 +28,12 @@ use std::intrinsics::transmute;
 pub struct VarcharDriver;
 
 impl ColumnDriver for VarcharDriver {
-    fn col_sizes_for_row(
+    fn col_sizes_for_size(
         &self,
         col: &MappedColumn,
-        row_index: u64,
+        row_count: u64,
     ) -> CoreResult<(u64, Option<u64>)> {
-        let (data_size, aux_size) = data_and_aux_size_at(col, row_index)?;
+        let (data_size, aux_size) = data_and_aux_size_at(col, row_count)?;
         Ok((data_size, Some(aux_size)))
     }
 }
@@ -76,7 +76,7 @@ impl VarcharAuxEntry {
 }
 
 /// Return (data_size, aux_size).
-fn data_and_aux_size_at(col: &MappedColumn, row_index: u64) -> CoreResult<(u64, u64)> {
+fn data_and_aux_size_at(col: &MappedColumn, row_count: u64) -> CoreResult<(u64, u64)> {
     let aux_mmap = col.aux.as_ref().expect("varchar has aux");
     let data_mmap = &col.data;
     if aux_mmap.len() % size_of::<u128>() != 0 {
@@ -90,17 +90,17 @@ fn data_and_aux_size_at(col: &MappedColumn, row_index: u64) -> CoreResult<(u64, 
     }
     let aux: &[VarcharAuxEntry] = unsafe { transmute(&aux_mmap[..]) };
     // TODO(amunra): Am I even indexing the right value or should this be `row_index - 1`?
-    let Some(aux_entry) = aux.get(row_index as usize) else {
+    let Some(aux_entry) = aux.get(row_count as usize) else {
         return Err(fmt_err!(
             InvalidColumnData,
             "varchar row index {} not found in aux for column {} in {}",
-            row_index,
+            row_count,
             col.col_name,
             col.parent_path.display()
         ));
     };
 
-    let aux_size = (row_index + 1) * size_of::<VarcharAuxEntry>() as u64;
+    let aux_size = (row_count + 1) * size_of::<VarcharAuxEntry>() as u64;
     let offset = aux_entry.offset();
     let data_size = if aux_entry.is_inlined() || aux_entry.is_null() {
         offset

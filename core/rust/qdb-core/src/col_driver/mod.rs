@@ -42,12 +42,12 @@ pub const DATA_FILE_EXTENSION: &str = "d";
 pub const AUX_FILE_EXTENSION: &str = "i";
 
 pub trait ColumnDriver {
-    /// Returns the data and aux file sizes at the given row.
+    /// Returns the data and aux file sizes for the given row count.
     /// If a column is a simple type such as `INT` or `DOUBLE`, the aux size will be `None`.
-    fn col_sizes_for_row(
+    fn col_sizes_for_size(
         &self,
         col: &MappedColumn,
-        row_index: u64,
+        row_count: u64,
     ) -> CoreResult<(u64, Option<u64>)>;
 }
 

@@ -23,7 +23,7 @@
  ******************************************************************************/
 use crate::col_driver::{ColumnDriver, MappedColumn};
 use crate::col_type::ColumnTypeTag;
-use crate::error::CoreResult;
+use crate::error::{CoreResult, fmt_err};
 use paste::paste;
 
 macro_rules! impl_primitive_type_driver {
@@ -32,11 +32,21 @@ macro_rules! impl_primitive_type_driver {
             pub struct [<$tag Driver>];
 
             impl ColumnDriver for [<$tag Driver>] {
-                fn col_sizes_for_row(&self, _col: &MappedColumn, row_index: u64) -> CoreResult<(u64, Option<u64>)> {
+                fn col_sizes_for_size(&self, col: &MappedColumn, row_count: u64) -> CoreResult<(u64, Option<u64>)> {
                     assert!(!ColumnTypeTag::$tag.is_var_size());
                     let row_size = ColumnTypeTag::$tag.fixed_size().expect("fixed size column") as u64;
-                    // +1 because row_index is 0-based
-                    let data_size = (row_size * (row_index + 1));
+                    let data_size = (row_size * row_count);
+                    if data_size > col.data.len() as u64 {
+                        return Err(fmt_err!(
+                            InvalidColumnData,
+                            "Data file for column {} smaller than {} rows, expected at least {} bytes but is {} at {}",
+                            col.col_name,
+                            row_count,
+                            data_size,
+                            col.data.len(),
+                            col.parent_path.display()
+                        ));
+                    }
                     Ok((data_size, None))
                 }
             }
@@ -62,3 +72,75 @@ impl_primitive_type_driver!(GeoLong);
 impl_primitive_type_driver!(Uuid);
 impl_primitive_type_driver!(Long128);
 impl_primitive_type_driver!(IPv4);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::col_type::ColumnType;
+    use crate::error::CoreErrorCause;
+    use std::path::PathBuf;
+
+    fn map_col(name: &str, col_type: ColumnType) -> MappedColumn {
+        let mut parent_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        parent_path.push("resources/test/col_driver");
+        MappedColumn::open(parent_path, name, col_type).unwrap()
+    }
+
+    #[test]
+    fn test_int_col0() {
+        // Empty column
+        let col = map_col("int_col0", ColumnTypeTag::Int.into_type());
+
+        let (data_size, aux_size) = IntDriver.col_sizes_for_size(&col, 0).unwrap();
+        assert_eq!(data_size, 0);
+        assert_eq!(aux_size, None);
+
+        let err = IntDriver.col_sizes_for_size(&col, 1).unwrap_err();
+        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
+        let msg = format!("{:#}", err);
+        eprintln!("{}", msg);
+        assert!(msg.contains(
+            "Data file for column int_col0 smaller than 1 rows, expected at least 4 bytes but is 0"
+        ));
+    }
+
+    #[test]
+    fn test_int_col1() {
+        let col = map_col("int_col1", ColumnTypeTag::Int.into_type());
+        let (data_size, aux_size) = IntDriver.col_sizes_for_size(&col, 0).unwrap();
+        assert_eq!(data_size, 0);
+        assert_eq!(aux_size, None);
+
+        let (data_size, aux_size) = IntDriver.col_sizes_for_size(&col, 1).unwrap();
+        assert_eq!(data_size, 4);
+        assert_eq!(aux_size, None);
+
+        let err = IntDriver.col_sizes_for_size(&col, 2).unwrap_err();
+        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
+        let msg = format!("{:#}", err);
+        // eprintln!("{}", msg);
+        assert!(msg.contains(
+            "Data file for column int_col1 smaller than 2 rows, expected at least 8 bytes but is 4"
+        ));
+    }
+
+    #[test]
+    fn test_timestamp_col1() {
+        let col = map_col("timestamp_col1", ColumnTypeTag::Timestamp.into_type());
+        let (data_size, aux_size) = TimestampDriver.col_sizes_for_size(&col, 0).unwrap();
+        assert_eq!(data_size, 0);
+        assert_eq!(aux_size, None);
+
+        let (data_size, aux_size) = TimestampDriver.col_sizes_for_size(&col, 1).unwrap();
+        assert_eq!(data_size, 8);
+        assert_eq!(aux_size, None);
+
+        let err = TimestampDriver.col_sizes_for_size(&col, 2).unwrap_err();
+        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
+        let msg = format!("{:#}", err);
+        // eprintln!("{}", msg);
+        assert!(msg.contains(
+            "Data file for column timestamp_col1 smaller than 2 rows, expected at least 16 bytes but is 8"
+        ));
+    }
+}

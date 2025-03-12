@@ -27,10 +27,10 @@ use crate::error::CoreResult;
 pub struct StringDriver;
 
 impl ColumnDriver for StringDriver {
-    fn col_sizes_for_row(
+    fn col_sizes_for_size(
         &self,
         _col: &MappedColumn,
-        _row_index: u64,
+        _row_count: u64,
     ) -> CoreResult<(u64, Option<u64>)> {
         todo!()
     }
