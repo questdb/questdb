@@ -442,6 +442,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewMaxRetriesOnOom() {
+        return getDelegate().getMatViewMaxRetriesOnOom();
+    }
+
+    @Override
     public int getMatViewRowsPerQueryEstimate() {
         return getDelegate().getMatViewRowsPerQueryEstimate();
     }

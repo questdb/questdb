@@ -224,17 +224,19 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         assert state.isLocked();
 
         final int maxRecompileAttempts = configuration.getMatViewMaxRecompileAttempts();
+        final int maxRetriesOnOom = configuration.getMatViewMaxRetriesOnOom();
         final long batchSize = configuration.getMatViewInsertAsSelectBatchSize();
 
         RecordCursorFactory factory = null;
         RecordToRowCopier copier;
+        int intervalStep = intervalIterator.getStep();
         long rowCount = 0;
         long refreshTimestamp = microsecondClock.getTicks();
         try {
             factory = state.acquireRecordFactory();
             copier = state.getRecordToRowCopier();
 
-            for (int i = 0; i < maxRecompileAttempts; i++) {
+            for (int i = 0, n = Math.max(maxRecompileAttempts, maxRetriesOnOom); i < n; i++) {
                 try {
                     if (factory == null) {
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -266,7 +268,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     long commitTarget = batchSize;
                     rowCount = 0;
 
-                    intervalIterator.toTop();
+                    intervalIterator.toTop(intervalStep);
                     while (intervalIterator.next()) {
                         refreshExecutionContext.setRange(intervalIterator.getTimestampLo(), intervalIterator.getTimestampHi());
                         try (RecordCursor cursor = factory.getCursor(refreshExecutionContext)) {
@@ -285,7 +287,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     break;
                 } catch (TableReferenceOutOfDateException e) {
                     factory = Misc.free(factory);
-                    if (i == maxRecompileAttempts - 1) {
+                    if (i >= maxRecompileAttempts - 1) {
                         LOG.info().$("base table is under heavy DDL changes, will reattempt refresh later [view=").$(viewDef.getMatViewToken())
                                 .$(", recompileAttempts=").$(maxRecompileAttempts)
                                 .I$();
@@ -294,6 +296,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     }
                 } catch (Throwable th) {
                     factory = Misc.free(factory);
+                    if (CairoException.isCairoOomError(th)) {
+                        if (i < maxRetriesOnOom) {
+                            intervalStep = Math.max(1, intervalStep / 2);
+                            LOG.info().$("query failed with out-of-memory error, retrying with smaller step [view=").$(viewDef.getMatViewToken())
+                                    .$(", intervalStep=").$(intervalStep)
+                                    .$(", error=").$(((CairoException) th).getFlyweightMessage())
+                                    .I$();
+                            continue;
+                        }
+                    }
                     refreshFailState(state, refreshTimestamp, th.getMessage());
                     throw th;
                 }

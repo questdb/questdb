@@ -170,6 +170,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS("cairo.sql.max.recompile.attempts"),
     CAIRO_MAT_VIEW_ENABLED("cairo.mat.view.enabled"),
     CAIRO_MAT_VIEW_SQL_MAX_RECOMPILE_ATTEMPTS("cairo.mat.view.sql.max.recompile.attempts"),
+    CAIRO_MAT_VIEW_SQL_MAX_RETRIES_ON_OOM("cairo.mat.view.sql.max.retries.on.oom"),
     CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE("cairo.mat.view.insert.as.select.batch.size"),
     CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE("cairo.mat.view.rows.per.query.estimate"),
     CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED("cairo.mat.view.parallel.sql.enabled"),

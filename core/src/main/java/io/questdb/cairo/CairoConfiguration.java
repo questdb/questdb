@@ -267,6 +267,8 @@ public interface CairoConfiguration {
 
     int getMatViewMaxRecompileAttempts();
 
+    int getMatViewMaxRetriesOnOom();
+
     int getMatViewRowsPerQueryEstimate();
 
     int getMaxCrashFiles();

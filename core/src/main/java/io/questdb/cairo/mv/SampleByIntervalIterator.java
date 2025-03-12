@@ -54,6 +54,10 @@ public class SampleByIntervalIterator {
         return minTimestamp;
     }
 
+    public int getStep() {
+        return step;
+    }
+
     public long getTimestampHi() {
         return timestampHi;
     }
@@ -86,7 +90,6 @@ public class SampleByIntervalIterator {
     ) {
         this.sampler = sampler;
         this.tzRules = tzRules;
-        this.step = step;
 
         sampler.setStart(fixedTzOffset);
         final long tzMinOffset = tzRules != null ? tzRules.getOffset(minTs) : 0;
@@ -94,12 +97,13 @@ public class SampleByIntervalIterator {
         minTimestamp = tzRules != null ? Timestamps.toUTC(tzMinTs, tzRules) : tzMinTs - tzMinOffset;
         maxTimestamp = nextTimestamp(maxTs);
 
-        toTop();
+        toTop(step);
     }
 
-    public void toTop() {
+    public void toTop(int step) {
         this.timestampLo = Numbers.LONG_NULL;
         this.timestampHi = minTimestamp;
+        this.step = step;
     }
 
     private long nextTimestamp(long ts) {
