@@ -263,7 +263,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     final int cursorTimestampIndex = factory.getMetadata().getColumnIndex(timestampName);
                     assert cursorTimestampIndex > -1;
 
-                    long deadline = batchSize;
+                    long commitTarget = batchSize;
                     rowCount = 0;
 
                     sampleByCursor.toTop();
@@ -275,9 +275,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 TableWriter.Row row = tableWriter.newRow(record.getTimestamp(cursorTimestampIndex));
                                 copier.copy(record, row);
                                 row.append();
-                                if (++rowCount >= deadline) {
+                                if (++rowCount >= commitTarget) {
                                     tableWriter.ic();
-                                    deadline = rowCount + batchSize;
+                                    commitTarget = rowCount + batchSize;
                                 }
                             }
                         }
