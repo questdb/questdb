@@ -28,6 +28,10 @@ pub(super) fn cast_slice<T>(data: &[u8]) -> CoreResult<&[T]>
 where
     T: Copy + 'static,
 {
+    if size_of::<T>() == 0 {
+        return Err(fmt_err!(InvalidColumnData, "target type has zero size"));
+    }
+
     if data.len() % size_of::<T>() != 0 {
         return Err(fmt_err!(
             InvalidColumnData,
