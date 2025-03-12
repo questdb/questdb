@@ -1,7 +1,5 @@
 use super::util::BinaryMaxMin;
-use crate::parquet::error::{
-    fmt_err, ParquetError, ParquetErrorCause, ParquetErrorExt, ParquetResult,
-};
+use crate::parquet::error::{fmt_err, ParquetErrorCause, ParquetErrorExt, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};

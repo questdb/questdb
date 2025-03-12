@@ -23,6 +23,7 @@
  ******************************************************************************/
 use crate::allocator::{take_last_alloc_error, AllocFailure};
 use crate::cairo::CairoException;
+use qdb_core::error::{CoreError, CoreErrorCause};
 use std::alloc::AllocError;
 use std::backtrace::{Backtrace, BacktraceStatus};
 use std::collections::TryReserveError;
@@ -47,6 +48,16 @@ pub enum ParquetErrorCause {
 
     #[cfg(test)]
     ArrowParquet(Arc<parquet::errors::ParquetError>),
+}
+
+impl From<CoreErrorCause> for ParquetErrorCause {
+    fn from(cause: CoreErrorCause) -> Self {
+        match cause {
+            CoreErrorCause::InvalidColumnType => ParquetErrorCause::Invalid,
+            CoreErrorCause::InvalidColumnData => ParquetErrorCause::Invalid,
+            CoreErrorCause::Io(err) => ParquetErrorCause::Io(err),
+        }
+    }
 }
 
 impl ParquetErrorCause {
@@ -227,9 +238,11 @@ impl From<std::io::Error> for ParquetError {
     }
 }
 
-impl From<qdb_core::col_type::InvalidColumnType> for ParquetError {
-    fn from(e: qdb_core::col_type::InvalidColumnType) -> Self {
-        Self::with_descr(ParquetErrorCause::Invalid, e.msg)
+impl From<CoreError> for ParquetError {
+    fn from(e: CoreError) -> Self {
+        let (cause, context, backtrace) = e.into_tuple();
+        let cause: ParquetErrorCause = cause.into();
+        Self { cause, context, backtrace }
     }
 }
 
@@ -250,20 +263,24 @@ impl From<parquet::errors::ParquetError> for ParquetError {
 pub type ParquetResult<T> = Result<T, ParquetError>;
 
 pub trait ParquetErrorExt<T> {
-    fn context(self, context: &str) -> Self;
-    fn with_context<F>(self, context: F) -> Self
+    fn context(self, context: &str) -> ParquetResult<T>;
+    fn with_context<F>(self, context: F) -> ParquetResult<T>
     where
         F: FnOnce(&mut ParquetError) -> String;
 }
 
-impl<T> ParquetErrorExt<T> for ParquetResult<T> {
+impl<T, E> ParquetErrorExt<T> for Result<T, E>
+where
+    E: Into<ParquetError>,
+{
     /// Add a layer of context to the error.
     /// The `context: &str` is copied into a `String` iff the error is an `Err`.
     /// Use the `with_context` method if you need to compute the context lazily.
-    fn context(self, context: &str) -> Self {
+    fn context(self, context: &str) -> ParquetResult<T> {
         match self {
             Ok(val) => Ok(val),
-            Err(mut err) => {
+            Err(e) => {
+                let mut err = e.into();
                 err.add_context(context);
                 Err(err)
             }
@@ -271,13 +288,14 @@ impl<T> ParquetErrorExt<T> for ParquetResult<T> {
     }
 
     /// Lazily add a layer of context to the error.
-    fn with_context<F>(self, context: F) -> Self
+    fn with_context<F>(self, context: F) -> ParquetResult<T>
     where
         F: FnOnce(&mut ParquetError) -> String,
     {
         match self {
             Ok(val) => Ok(val),
-            Err(mut err) => {
+            Err(e) => {
+                let mut err = e.into();
                 let context = context(&mut err);
                 err.add_context(context);
                 Err(err)
@@ -288,7 +306,7 @@ impl<T> ParquetErrorExt<T> for ParquetResult<T> {
 
 macro_rules! fmt_err {
     ($cause: ident, $($arg:tt)*) => {
-        ParquetError::with_descr(
+        crate::parquet::error::ParquetError::with_descr(
             crate::parquet::error::ParquetErrorCause::$cause,
             format!($($arg)*))
     };

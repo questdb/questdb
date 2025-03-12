@@ -1,5 +1,5 @@
 use crate::allocator::{AcVec, QdbAllocator};
-use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
+use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
 use crate::parquet_read::column_sink::fixed::{
     FixedBooleanColumnSink, FixedDoubleColumnSink, FixedFloatColumnSink, FixedInt2ByteColumnSink,

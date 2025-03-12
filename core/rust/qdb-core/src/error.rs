@@ -93,6 +93,10 @@ impl CoreError {
         }
         Ok(())
     }
+
+    pub fn into_tuple(self) -> (CoreErrorCause, Vec<String>, Arc<Backtrace>) {
+        (self.cause, self.context, self.backtrace)
+    }
 }
 
 impl CoreError {
@@ -183,11 +187,14 @@ where
     /// The `context: &str` is copied into a `String` iff the error is an `Err`.
     /// Use the `with_context` method if you need to compute the context lazily.
     fn context(self, context: &str) -> CoreResult<T> {
-        self.map_err(|e| {
-            let mut err = e.into();
-            err.add_context(context);
-            err
-        })
+        match self {
+            Ok(val) => Ok(val),
+            Err(e) => {
+                let mut err = e.into();
+                err.add_context(context);
+                Err(err)
+            }
+        }
     }
 
     /// Lazily add a layer of context to the error.
@@ -195,12 +202,15 @@ where
     where
         F: FnOnce(&mut CoreError) -> String,
     {
-        self.map_err(|e| {
-            let mut err = e.into();
-            let context = context(&mut err);
-            err.add_context(context);
-            err
-        })
+        match self {
+            Ok(val) => Ok(val),
+            Err(e) => {
+                let mut err = e.into();
+                let context = context(&mut err);
+                err.add_context(context);
+                Err(err)
+            }
+        }
     }
 }
 
