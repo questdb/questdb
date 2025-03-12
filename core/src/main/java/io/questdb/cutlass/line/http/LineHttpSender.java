@@ -378,7 +378,9 @@ public final class LineHttpSender implements Sender {
     @Override
     public Sender timestampColumn(CharSequence name, Instant value) {
         // micros
-        writeFieldName(name, false).put((value.getEpochSecond() * Timestamps.SECOND_MICROS + value.getNano() / 1000L)).put('t');
+        writeFieldName(name, false)
+                .put((value.getEpochSecond() * Timestamps.SECOND_MICROS + value.getNano() / 1000L))
+                .put('t');
         return this;
     }
 
@@ -402,12 +404,14 @@ public final class LineHttpSender implements Sender {
         return connectionHeader != null && Utf8s.equalsAscii("close", connectionHeader);
     }
 
-    private <T> Sender arrayColumn(CharSequence name,
-                                   short columnType,
-                                   byte nDims,
-                                   T array,
-                                   ArrayShapeAppender<T> shapeAppender,
-                                   ArrayDataAppender<T> dataAppender) {
+    private <T> Sender arrayColumn(
+            CharSequence name,
+            short columnType,
+            byte nDims,
+            T array,
+            ArrayShapeAppender<T> shapeAppender,
+            ArrayDataAppender<T> dataAppender
+    ) {
         if (processNullArray(name, array)) {
             return this;
         }
@@ -475,7 +479,9 @@ public final class LineHttpSender implements Sender {
 
     private void flush0(boolean closing) {
         if (state != RequestState.EMPTY && !closing) {
-            throw new LineSenderException("Cannot flush buffer while row is in progress. Use sender.at() or sender.atNow() to finish the current row first.");
+            throw new LineSenderException(
+                    "Cannot flush buffer while row is in progress. " +
+                            "Use sender.at() or sender.atNow() to finish the current row first.");
         }
         if (pendingRows == 0) {
             return;
@@ -516,7 +522,10 @@ public final class LineHttpSender implements Sender {
                 assert response.isChunked();
                 if (isRetryableHttpStatus(statusCode)) {
                     long nowNanos = System.nanoTime();
-                    retryingDeadlineNanos = (retryingDeadlineNanos == Long.MIN_VALUE && !closing) ? nowNanos + maxRetriesNanos : retryingDeadlineNanos;
+                    retryingDeadlineNanos =
+                            (retryingDeadlineNanos == Long.MIN_VALUE && !closing)
+                                    ? nowNanos + maxRetriesNanos
+                                    : retryingDeadlineNanos;
                     if (nowNanos >= retryingDeadlineNanos) {
                         throwOnHttpErrorResponse(statusCode, response);
                     }
@@ -529,13 +538,17 @@ public final class LineHttpSender implements Sender {
                 // this is a network error, we can retry
                 client.disconnect(); // forces reconnect
                 long nowNanos = System.nanoTime();
-                retryingDeadlineNanos = (retryingDeadlineNanos == Long.MIN_VALUE && !closing) ? nowNanos + maxRetriesNanos : retryingDeadlineNanos;
+                retryingDeadlineNanos =
+                        (retryingDeadlineNanos == Long.MIN_VALUE && !closing)
+                                ? nowNanos + maxRetriesNanos
+                                : retryingDeadlineNanos;
                 if (nowNanos >= retryingDeadlineNanos) {
                     // we did our best, give up
                     pendingRows = 0;
                     flushAfterNanos = Long.MAX_VALUE;
                     request = newRequest();
-                    throw new LineSenderException("Could not flush buffer: ").put(url).put(" Connection Failed").put(": ").put(e.getMessage());
+                    throw new LineSenderException("Could not flush buffer: ").put(url)
+                            .put(" Connection Failed").put(": ").put(e.getMessage());
                 }
                 retryBackoff = backoff(retryBackoff);
             }
@@ -656,7 +669,8 @@ public final class LineHttpSender implements Sender {
     private void validateColumnName(CharSequence name) {
         if (!TableUtils.isValidColumnName(name, Integer.MAX_VALUE)) {
             throw new LineSenderException("column name contains an illegal char: '\\n', '\\r', '?', '.', ','" +
-                    ", ''', '\"', '\\', '/', ':', ')', '(', '+', '-', '*' '%%', '~', or a non-printable char: ").putAsPrintable(name);
+                    ", ''', '\"', '\\', '/', ':', ')', '(', '+', '-', '*' '%%', '~', or a non-printable char: ")
+                    .putAsPrintable(name);
         }
     }
 
@@ -669,7 +683,8 @@ public final class LineHttpSender implements Sender {
     private void validateTableName(CharSequence name) {
         if (!TableUtils.isValidTableName(name, Integer.MAX_VALUE)) {
             throw new LineSenderException("table name contains an illegal char: '\\n', '\\r', '?', ',', ''', " +
-                    "'\"', '\\', '/', ':', ')', '(', '+', '*' '%%', '~', or a non-printable char: ").putAsPrintable(name);
+                    "'\"', '\\', '/', ':', ')', '(', '+', '*' '%%', '~', or a non-printable char: ")
+                    .putAsPrintable(name);
         }
     }
 
