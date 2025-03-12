@@ -276,7 +276,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 copier.copy(record, row);
                                 row.append();
                                 if (++rowCount >= commitTarget) {
-                                    tableWriter.ic();
+                                    tableWriter.commit();
                                     commitTarget = rowCount + batchSize;
                                 }
                             }
