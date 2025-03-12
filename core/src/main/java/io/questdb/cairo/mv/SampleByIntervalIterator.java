@@ -37,7 +37,7 @@ import org.jetbrains.annotations.Nullable;
  * the materialized view query into smaller intervals, thus minimizing
  * chances of out-of-memory kills.
  */
-public class MatViewQueryIntervalIterator {
+public class SampleByIntervalIterator {
     private long maxTimestamp;
     private long minTimestamp;
     private TimestampSampler sampler;

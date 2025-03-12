@@ -67,7 +67,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final Path dbRoot;
     private final int dbRootLen;
     private final CairoEngine engine;
-    private final MatViewQueryIntervalIterator intervalIterator = new MatViewQueryIntervalIterator();
+    private final SampleByIntervalIterator intervalIterator = new SampleByIntervalIterator();
     private final MicrosecondClock microsecondClock;
     private final MatViewRefreshExecutionContext refreshExecutionContext;
     private final MatViewRefreshTask refreshTask = new MatViewRefreshTask();
@@ -151,7 +151,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
-    private MatViewQueryIntervalIterator findSampleByIntervals(
+    private SampleByIntervalIterator findSampleByIntervals(
             @NotNull TableReader baseTableReader,
             @NotNull MatViewDefinition viewDefinition,
             long lastRefreshTxn
@@ -217,7 +217,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             MatViewRefreshState state,
             MatViewDefinition viewDef,
             TableWriterAPI tableWriter,
-            MatViewQueryIntervalIterator intervalIterator,
+            SampleByIntervalIterator intervalIterator,
             long baseTableTxn,
             long refreshTriggeredTimestamp
     ) throws SqlException {
@@ -512,7 +512,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // Specify -1 as the last refresh txn, so that we scan all partitions.
                 try (TableWriterAPI commitWriter = engine.getTableWriterAPI(viewToken, "mat view full refresh")) {
                     commitWriter.truncateSoft();
-                    final MatViewQueryIntervalIterator intervalIterator = findSampleByIntervals(baseTableReader, viewDef, -1);
+                    final SampleByIntervalIterator intervalIterator = findSampleByIntervals(baseTableReader, viewDef, -1);
                     if (intervalIterator != null) {
                         insertAsSelect(state, viewDef, commitWriter, intervalIterator, toBaseTxn, refreshTriggeredTimestamp);
                     }
@@ -596,7 +596,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             refreshExecutionContext.of(baseTableReader);
             try {
                 final MatViewDefinition viewDef = state.getViewDefinition();
-                final MatViewQueryIntervalIterator intervalIterator = findSampleByIntervals(baseTableReader, viewDef, fromBaseTxn);
+                final SampleByIntervalIterator intervalIterator = findSampleByIntervals(baseTableReader, viewDef, fromBaseTxn);
                 if (intervalIterator != null) {
                     toBaseTxn = baseTableReader.getSeqTxn();
                     try (TableWriterAPI tableWriter = engine.getTableWriterAPI(viewToken, "Mat View refresh")) {

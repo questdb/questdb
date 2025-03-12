@@ -24,7 +24,7 @@
 
 package io.questdb.test.cairo.mv;
 
-import io.questdb.cairo.mv.MatViewQueryIntervalIterator;
+import io.questdb.cairo.mv.SampleByIntervalIterator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
@@ -33,11 +33,11 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class MatViewQueryIntervalIteratorTest {
+public class SampleByIntervalIteratorTest {
 
     @Test
     public void testBigStep() throws Exception {
-        final MatViewQueryIntervalIterator iterator = new MatViewQueryIntervalIterator();
+        final SampleByIntervalIterator iterator = new SampleByIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
         iterator.of(
                 sampler,
@@ -59,7 +59,7 @@ public class MatViewQueryIntervalIteratorTest {
 
     @Test
     public void testFixedOffset() throws SqlException {
-        final MatViewQueryIntervalIterator iterator = new MatViewQueryIntervalIterator();
+        final SampleByIntervalIterator iterator = new SampleByIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
         final long offset = Timestamps.HOUR_MICROS;
         iterator.of(
@@ -84,7 +84,7 @@ public class MatViewQueryIntervalIteratorTest {
 
     @Test
     public void testSmoke() throws SqlException {
-        final MatViewQueryIntervalIterator iterator = new MatViewQueryIntervalIterator();
+        final SampleByIntervalIterator iterator = new SampleByIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
         iterator.of(
                 sampler,
@@ -108,7 +108,7 @@ public class MatViewQueryIntervalIteratorTest {
 
     @Test
     public void testTimeZoneWithDst() throws Exception {
-        final MatViewQueryIntervalIterator iterator = new MatViewQueryIntervalIterator();
+        final SampleByIntervalIterator iterator = new SampleByIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(2, 'h', 0);
         iterator.of(
                 sampler,
@@ -140,7 +140,7 @@ public class MatViewQueryIntervalIteratorTest {
 
     @Test
     public void testTimeZoneWithDstSmallInterval() throws Exception {
-        final MatViewQueryIntervalIterator iterator = new MatViewQueryIntervalIterator();
+        final SampleByIntervalIterator iterator = new SampleByIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(30, 'm', 0);
         iterator.of(
                 sampler,
@@ -176,7 +176,7 @@ public class MatViewQueryIntervalIteratorTest {
 
     @Test
     public void testTimeZoneWithFixedOffset() throws Exception {
-        final MatViewQueryIntervalIterator iterator = new MatViewQueryIntervalIterator();
+        final SampleByIntervalIterator iterator = new SampleByIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
         iterator.of(
                 sampler,
