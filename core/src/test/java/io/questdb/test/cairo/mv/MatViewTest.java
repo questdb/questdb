@@ -78,10 +78,12 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Parameterized.Parameters(name = "rows_per_query={0}")
     public static Collection<Object[]> testParams() {
-        return Arrays.asList(new Object[][]{
-                {-1},
-                {1},
-        });
+        // only run a single combination per CI run
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        if (rnd.nextBoolean()) {
+            return Arrays.asList(new Object[][]{{-1}});
+        }
+        return Arrays.asList(new Object[][]{{1}});
     }
 
     @Before

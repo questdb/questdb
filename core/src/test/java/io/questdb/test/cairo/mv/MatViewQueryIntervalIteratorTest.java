@@ -139,6 +139,42 @@ public class MatViewQueryIntervalIteratorTest {
     }
 
     @Test
+    public void testTimeZoneWithDstSmallInterval() throws Exception {
+        final MatViewQueryIntervalIterator iterator = new MatViewQueryIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(30, 'm', 0);
+        iterator.of(
+                sampler,
+                Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "Europe/Berlin"),
+                0,
+                TimestampFormatUtils.parseTimestamp("2021-03-28T00:01:00.000000Z"),
+                TimestampFormatUtils.parseTimestamp("2021-03-28T01:52:00.000000Z"),
+                1
+        );
+
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T00:00:00.000000Z"), iterator.getMinTimestamp());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T02:00:00.000000Z"), iterator.getMaxTimestamp());
+
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T00:00:00.000000Z"), iterator.getTimestampLo());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T00:30:00.000000Z"), iterator.getTimestampHi());
+
+        // DST edge is here
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T00:30:00.000000Z"), iterator.getTimestampLo());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T01:00:00.000000Z"), iterator.getTimestampHi());
+
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T01:00:00.000000Z"), iterator.getTimestampLo());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T01:30:00.000000Z"), iterator.getTimestampHi());
+
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T01:30:00.000000Z"), iterator.getTimestampLo());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T02:00:00.000000Z"), iterator.getTimestampHi());
+
+        Assert.assertFalse(iterator.next());
+    }
+
+    @Test
     public void testTimeZoneWithFixedOffset() throws Exception {
         final MatViewQueryIntervalIterator iterator = new MatViewQueryIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
