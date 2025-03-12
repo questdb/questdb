@@ -61,7 +61,7 @@ public abstract class ArrayView implements QuietCloseable {
             } else {
                 flatView.appendToMemFlat(mem);
             }
-        } else {
+        } else if (!isEmpty()) {
             appendToMemRecursive(0, 0, mem);
         }
     }
@@ -73,7 +73,19 @@ public abstract class ArrayView implements QuietCloseable {
         if (this.isVanilla && other.isVanilla) {
             return this.flatView.flatEquals(other.flatView);
         }
+        if (isEmpty()) {
+            return true;
+        }
         return arrayEqualsRecursive(0, 0, other, 0);
+    }
+
+    public boolean isEmpty() {
+        for (int i = 0; i < shape.size(); i++) {
+            if (shape.getQuick(i) == 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override

@@ -30,9 +30,9 @@ import io.questdb.cairo.ColumnType;
 public class MutableArray extends ArrayView {
 
     public final void setDimLen(int dimension, int length) {
-        if (length <= 0) {
+        if (length < 0) {
             throw CairoException.nonCritical()
-                    .put("dimension length must be positive [dim=").put(dimension)
+                    .put("dimension length must not be negative [dim=").put(dimension)
                     .put(", dimLen=").put(length)
                     .put(']');
         }
@@ -75,12 +75,17 @@ public class MutableArray extends ArrayView {
             strides.add(0);
         }
 
+        // optimization: if any dimension len is 0, we can skip the rest since the array is empty, no element can be stored
+        for (int i = 0; i < nDims; i++) {
+            if (shape.get(i) == 0) {
+                this.flatViewLength = 0;
+                return;
+            }
+        }
+
         int stride = 1;
         for (int i = nDims - 1; i >= 0; i--) {
             int dimLen = shape.get(i);
-            if (dimLen == 0) {
-                throw new IllegalStateException("Zero dimLen at " + i);
-            }
             strides.set(i, stride);
             try {
                 stride = Math.multiplyExact(stride, dimLen);

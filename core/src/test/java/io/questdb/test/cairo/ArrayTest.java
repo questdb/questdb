@@ -228,6 +228,20 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEmptyArrayToJsonDouble() {
+        try (DirectArray array = new DirectArray(configuration);
+             DirectUtf8Sink sink = new DirectUtf8Sink(20)
+        ) {
+            array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+            array.setDimLen(0, 0);
+            array.applyShape(1);
+            sink.clear();
+            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayState.INSTANCE);
+            assertEquals("[]", sink.toString());
+        }
+    }
+
+    @Test
     public void testArrayToJsonLong() {
         try (DirectArray array = new DirectArray(configuration);
              DirectUtf8Sink sink = new DirectUtf8Sink(20)

@@ -217,6 +217,10 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             sink.putAscii(nullLiteral);
             return;
         }
+        if (array.isEmpty()) {
+            sink.put(openChar).put(closeChar);
+            return;
+        }
         arrayToText(array, 0, 0, sink, appender, openChar, closeChar, nullLiteral, arrayState);
     }
 

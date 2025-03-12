@@ -42,6 +42,7 @@ public class FunctionArray extends MutableArray implements FlatArrayView {
     public FunctionArray(short elementType, int nDims) {
         setType(ColumnType.encodeArrayType(elementType, nDims));
         this.flatView = this;
+        this.isVanilla = true;
     }
 
     @Override

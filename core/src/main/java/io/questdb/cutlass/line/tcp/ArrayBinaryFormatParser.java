@@ -107,7 +107,7 @@ public class ArrayBinaryFormatParser implements QuietCloseable {
                 nextBinaryPartExpectSize = ColumnType.sizeOf(elemType);
                 for (int i = 0; i < dims; ++i) {
                     final int dimLength = Unsafe.getUnsafe().getInt(addr + (long) i * Integer.BYTES);
-                    //TODO: replace ArithmeticException with ParseException
+                    //TODO: replace ArithmeticException with ParseException + prevent breakage when at least one dimension len is 0
                     nextBinaryPartExpectSize = Math.multiplyExact(nextBinaryPartExpectSize, dimLength);
                 }
                 if (nextBinaryPartExpectSize == 0) {

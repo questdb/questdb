@@ -71,8 +71,7 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
     }
 
     public BorrowedFlatArrayView of(long ptr, short elemType, int length) {
-        assert ptr > 0 : "ptr <= 0";
-        assert length > 0 : "length <= 0";
+        assert ptr > 0 || length == 0 : "ptr <= 0 && length > 0";
         this.elemType = elemType;
         this.ptr = ptr;
         this.length = length;
