@@ -36,24 +36,26 @@ import io.questdb.cutlass.line.LineSenderException;
 public class FlattenArrayUtils {
 
     public static void putDataToBuf(MemoryA mem, double[] array) {
-        for (double v : array) {
-            mem.putDouble(v);
+        for (int n = array.length, i = 0; i < n; i++) {
+            mem.putDouble(array[i]);
         }
     }
 
     public static void putDataToBuf(MemoryA mem, double[][] array) {
         final int dim1Len = array[0].length;
-        for (double[] v : array) {
-            if (v.length != dim1Len) {
+        for (int n = array.length, i = 0; i < n; i++) {
+            double[] subArr = array[i];
+            if (subArr.length != dim1Len) {
                 throw new LineSenderException("irregular array shape");
             }
-            putDataToBuf(mem, v);
+            putDataToBuf(mem, subArr);
         }
     }
 
     public static void putDataToBuf(MemoryA mem, double[][][] array) {
         final int dim1Len = array[0].length;
-        for (double[][] v : array) {
+        for (int n = array.length, i = 0; i < n; i++) {
+            double[][] v = array[i];
             if (v.length != dim1Len) {
                 throw new LineSenderException("irregular array shape");
             }
@@ -62,14 +64,16 @@ public class FlattenArrayUtils {
     }
 
     public static void putDataToBuf(MemoryA mem, long[] array) {
-        for (long v : array) {
+        for (int n = array.length, i = 0; i < n; i++) {
+            long v = array[i];
             mem.putLong(v);
         }
     }
 
     public static void putDataToBuf(MemoryA mem, long[][] array) {
         final int dim1Len = array[0].length;
-        for (long[] v : array) {
+        for (int n = array.length, i = 0; i < n; i++) {
+            long[] v = array[i];
             if (v.length != dim1Len) {
                 throw new LineSenderException("irregular array shape");
             }
@@ -79,7 +83,8 @@ public class FlattenArrayUtils {
 
     public static void putDataToBuf(MemoryA mem, long[][][] array) {
         final int dim1Len = array[0].length;
-        for (long[][] v : array) {
+        for (int n = array.length, i = 0; i < n; i++) {
+            long[][] v = array[i];
             if (v.length != dim1Len) {
                 throw new LineSenderException("irregular array shape");
             }
