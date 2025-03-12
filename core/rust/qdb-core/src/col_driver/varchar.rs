@@ -59,10 +59,10 @@ impl VarcharAuxEntry {
     fn size(&self) -> u32 {
         if self.is_inlined() {
             // An inlined varchar has at most 4 bits for the size.
-            ((self.packed >> 4) & 0xf) as u32
+            (self.packed as u32 >> 4) & 0xf
         } else {
             // The size at the offset in the data file.
-            (self.packed >> 4) as u32
+            (self.packed as u32) >> 4
         }
     }
 
@@ -108,9 +108,16 @@ fn data_and_aux_size_at(col: &MappedColumn, row_count: u64) -> CoreResult<(u64, 
 
     let aux_size = (row_index + 1) * size_of::<VarcharAuxEntry>() as u64;
     let offset = aux_entry.offset();
+    eprintln!("data_and_aux_size_at :: (A)");
     let data_size = if aux_entry.is_inlined() || aux_entry.is_null() {
+        eprintln!("data_and_aux_size_at :: (B)");
         offset
     } else {
+        eprintln!(
+            "data_and_aux_size_at :: (C): aux_entry.packed: {:032X}, aux_entry.size(): {}",
+            aux_entry.packed,
+            aux_entry.size()
+        );
         offset + aux_entry.size() as u64
     };
     if (data_mmap.len() as u64) < data_size {
@@ -168,8 +175,24 @@ mod tests {
         assert_eq!(data_size, 0);
         assert_eq!(aux_size, Some(0));
 
+        // index 0 is null string
         let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 1).unwrap();
         assert_eq!(data_size, 0);
         assert_eq!(aux_size, Some(16));
+
+        // index 1 is empty string
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 2).unwrap();
+        assert_eq!(data_size, 0);
+        assert_eq!(aux_size, Some(32));
+
+        // index 2 is a short inlined string
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 3).unwrap();
+        assert_eq!(data_size, 0);
+        assert_eq!(aux_size, Some(48));
+
+        // index 3 is a 50-byte non-inlined string
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 4).unwrap();
+        assert_eq!(data_size, 50);
+        assert_eq!(aux_size, Some(64));
     }
 }
