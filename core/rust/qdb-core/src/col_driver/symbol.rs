@@ -30,7 +30,7 @@ impl ColumnDriver for SymbolDriver {
     fn col_sizes_for_row(
         &self,
         _col: &MappedColumn,
-        _row_index: usize,
+        _row_index: u64,
     ) -> CoreResult<(u64, Option<u64>)> {
         todo!()
     }

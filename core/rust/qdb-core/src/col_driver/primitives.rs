@@ -32,11 +32,11 @@ macro_rules! impl_primitive_type_driver {
             pub struct [<$tag Driver>];
 
             impl ColumnDriver for [<$tag Driver>] {
-                fn col_sizes_for_row(&self, _col: &MappedColumn, row_index: usize) -> CoreResult<(u64, Option<u64>)> {
+                fn col_sizes_for_row(&self, _col: &MappedColumn, row_index: u64) -> CoreResult<(u64, Option<u64>)> {
                     assert!(!ColumnTypeTag::$tag.is_var_size());
-                    let row_size = ColumnTypeTag::$tag.fixed_size().expect("fixed size column");
+                    let row_size = ColumnTypeTag::$tag.fixed_size().expect("fixed size column") as u64;
                     // +1 because row_index is 0-based
-                    let data_size = (row_size * (row_index + 1)) as u64;
+                    let data_size = (row_size * (row_index + 1));
                     Ok((data_size, None))
                 }
             }

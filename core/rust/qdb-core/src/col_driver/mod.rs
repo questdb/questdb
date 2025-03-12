@@ -44,7 +44,7 @@ pub trait ColumnDriver {
     fn col_sizes_for_row(
         &self,
         col: &MappedColumn,
-        row_index: usize,
+        row_index: u64,
     ) -> CoreResult<(u64, Option<u64>)>;
 }
 
