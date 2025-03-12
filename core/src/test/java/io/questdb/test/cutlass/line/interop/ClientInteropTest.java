@@ -39,6 +39,7 @@ import io.questdb.test.cutlass.line.tcp.StringChannel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.time.temporal.ChronoUnit;
@@ -46,6 +47,8 @@ import java.time.temporal.ChronoUnit;
 public class ClientInteropTest {
 
     @Test
+    @Ignore("This test assumes text ILP protocol. With the introduction of binary encoding this test is no longer valid")
+    // todo: reenable this once we have a switch to downgrade clients to purely text protocol
     public void testInterop() throws Exception {
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         String pp = TestUtils.getTestResourcePath("/io/questdb/test/cutlass/line/interop/ilp-client-interop-test.json");
