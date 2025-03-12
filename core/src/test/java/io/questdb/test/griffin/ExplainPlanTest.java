@@ -3361,7 +3361,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    Filter filter: s='key'\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
-                        "            Frame forward scan on: a\n" +
+                        "            Frame forward scan on: a [state-shared]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"

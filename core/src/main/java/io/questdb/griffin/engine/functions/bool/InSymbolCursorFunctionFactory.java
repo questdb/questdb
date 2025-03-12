@@ -117,8 +117,9 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         private final Function valueArg;
         private final CharSequenceHashSet valueSetA = new CharSequenceHashSet();
         private final CharSequenceHashSet valueSetB = new CharSequenceHashSet();
-        private CharSequenceHashSet valueSet;
         private boolean stateInherited = false;
+        private boolean stateShared = false;
+        private CharSequenceHashSet valueSet;
 
         public StrInCursorFunc(Function valueArg, Function cursorArg, Record.CharSequenceFunction func) {
             this.valueArg = valueArg;
@@ -151,6 +152,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
                 return;
             }
 
+            stateShared = false;
             CharSequenceHashSet valueSet;
             if (this.valueSet == this.valueSetA) {
                 valueSet = this.valueSetB;
@@ -191,7 +193,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
                 thatF.valueSetB.clear();
                 thatF.valueSetB.addAll(valueSet);
                 thatF.valueSet = valueSetA;
-                thatF.stateInherited = true;
+                thatF.stateInherited = this.stateShared = true;
             }
             BinaryFunction.super.offerStateTo(that);
         }
@@ -199,6 +201,9 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(valueArg).val(" in ").val(cursorArg);
+            if (stateShared) {
+                sink.val(" [state-shared]");
+            }
         }
     }
 
@@ -231,6 +236,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         private final IntHashSet symbolKeys = new IntHashSet();
         private final SymbolFunction valueArg;
         private boolean stateInherited = false;
+        private boolean stateShared = false;
 
         public SymbolInCursorFunc(SymbolFunction valueArg, Function cursorArg, Record.CharSequenceFunction func) {
             this.valueArg = valueArg;
@@ -259,7 +265,8 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
             cursorArg.init(symbolTableSource, executionContext);
             if (stateInherited) {
                 return;
-            }
+            }//testGroupBySymbolWithSubQueryFilter
+            stateShared = false;
             symbolKeys.clear();
             RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
@@ -287,7 +294,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
                 SymbolInCursorFunc thatF = (SymbolInCursorFunc) that;
                 thatF.symbolKeys.clear();
                 thatF.symbolKeys.addAll(symbolKeys);
-                thatF.stateInherited = true;
+                thatF.stateInherited = this.stateShared = true;
             }
             BinaryFunction.super.offerStateTo(that);
         }
@@ -295,6 +302,9 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(valueArg).val(" in ").val(cursorArg);
+            if (stateShared) {
+                sink.val(" [state-shared]");
+            }
         }
     }
 
@@ -316,13 +326,13 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(valueArg).val(" in null");
+        public boolean isThreadSafe() {
+            return valueArg.isThreadSafe();
         }
 
         @Override
-        public boolean isThreadSafe() {
-            return valueArg.isThreadSafe();
+        public void toPlan(PlanSink sink) {
+            sink.val(valueArg).val(" in null");
         }
     }
 }

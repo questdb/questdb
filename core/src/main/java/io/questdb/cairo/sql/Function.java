@@ -43,19 +43,42 @@ import java.io.Closeable;
 
 public interface Function extends Closeable, StatefulAtom, Plannable {
 
+    /**
+     * Initializes each function in the list of clones. It is assumed by this method that "clones" are copies of
+     * the same function.
+     * <p>
+     * Two-phase functions might need to perform certain transformations upfront, before SQL executes. This is to
+     * avoid doing those transformations on for every row/invocation. These transformations are done during the
+     * "init" phase.
+     * <p>
+     * During concurrent SQL execution it might be beneficial to split the "init" phase into per-SQL execution and
+     * per-thread. For example "init" could be a heavy SQL execution itself, which would benefit from executing once and
+     * copying state of this execution to clones, so that clones to not have to repeat that heavy SQL execution. The
+     * "prototype" function is the one that has already been fully initialized and it is ready to pass its state to
+     * all the clones.
+     * <p>
+     * Even though the prototype will be trying to pass its state, the clones do not have to accept it and chose to
+     * continue to calculate own state.
+     *
+     * @param clones            uniform function to initialize and accept state from the prototype, if prototype is not null
+     * @param symbolTableSource symbol table source to perform symbol value to key conversion
+     * @param executionContext  the execution context, bind variables etc
+     * @param prototypeFunction the prototype function, ready to donate its state
+     * @throws SqlException function are allowed to throw SQLException to indicate initialization error
+     */
     static void init(
-            ObjList<? extends Function> args,
+            ObjList<? extends Function> clones,
             SymbolTableSource symbolTableSource,
             SqlExecutionContext executionContext,
             @Nullable Function prototypeFunction
     ) throws SqlException {
         if (prototypeFunction != null) {
-            for (int i = 0, n = args.size(); i < n; i++) {
-                prototypeFunction.offerStateTo(args.getQuick(i));
+            for (int i = 0, n = clones.size(); i < n; i++) {
+                prototypeFunction.offerStateTo(clones.getQuick(i));
             }
         }
-        for (int i = 0, n = args.size(); i < n; i++) {
-            args.getQuick(i).init(symbolTableSource, executionContext);
+        for (int i = 0, n = clones.size(); i < n; i++) {
+            clones.getQuick(i).init(symbolTableSource, executionContext);
         }
     }
 
