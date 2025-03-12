@@ -1768,7 +1768,7 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testSelfJoinQuery() throws Exception {
-        // Here we want to verify that the detached base table reader used by the refresh job
+        // Verify that the detached base table reader used by the refresh job
         // can be safely used in the mat view query multiple times.
         assertMemoryLeak(() -> {
             execute(
