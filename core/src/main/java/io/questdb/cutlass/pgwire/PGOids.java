@@ -174,7 +174,10 @@ public class PGOids {
         TYPE_OIDS.extendAndSet(ColumnType.LONG, PG_INT8); // INT8
         TYPE_OIDS.extendAndSet(ColumnType.BYTE, PG_INT2); // INT2
         TYPE_OIDS.extendAndSet(ColumnType.BOOLEAN, PG_BOOL); // BOOL
-        TYPE_OIDS.extendAndSet(ColumnType.DATE, PG_TIMESTAMP); // DATE
+        // We represent QuestDB native DATE type as TIMESTAMP in PostgreSQL
+        // Why? QuestDB DATE type has millisecond precision, while PostgreSQL DATE type has 'day' precision.
+        // This is a workaround to avoid data loss when transferring data from QuestDB to PostgreSQL.
+        TYPE_OIDS.extendAndSet(ColumnType.DATE, PG_TIMESTAMP); // TIMESTAMP, not PG_DATE! (this intentional)
         TYPE_OIDS.extendAndSet(ColumnType.BINARY, PG_BYTEA); // BYTEA
         TYPE_OIDS.extendAndSet(ColumnType.LONG256, PG_VARCHAR); // VARCHAR
         TYPE_OIDS.extendAndSet(ColumnType.GEOBYTE, PG_VARCHAR); // VARCHAR

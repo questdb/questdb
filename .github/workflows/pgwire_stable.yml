@@ -44,6 +44,10 @@ jobs:
         uses: actions/setup-python@v2
         with:
           python-version: 3.8
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '22'
       - name: Run all scenarios
         run: |
           ./compat/src/test/scenarios_stable.sh
