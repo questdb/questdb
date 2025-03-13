@@ -46,13 +46,9 @@ final class PgNonNullBinaryArrayView extends PGWireArrayView implements FlatArra
         int size = this.flatViewLength;
         switch (ColumnType.decodeArrayElementType(type)) {
             case ColumnType.LONG:
-                for (int i = 0; i < size; i++) {
-                    mem.putLong(getLong(i));
-                }
-                break;
             case ColumnType.DOUBLE:
                 for (int i = 0; i < size; i++) {
-                    mem.putDouble(getDouble(i));
+                    mem.putLong(getLong(i));
                 }
                 break;
             default:

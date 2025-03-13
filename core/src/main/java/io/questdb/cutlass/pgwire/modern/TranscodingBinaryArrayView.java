@@ -78,7 +78,7 @@ public class TranscodingBinaryArrayView extends PGWireArrayView implements FlatA
 
     @Override
     public long getLongAtAbsoluteIndex(int elemIndex) {
-        throw new UnsupportedOperationException("not implemented yet");
+        return mem.getLong((long) elemIndex * Long.BYTES);
     }
 
     @Override
