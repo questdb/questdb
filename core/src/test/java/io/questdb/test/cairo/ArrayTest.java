@@ -228,20 +228,6 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testEmptyArrayToJsonDouble() {
-        try (DirectArray array = new DirectArray(configuration);
-             DirectUtf8Sink sink = new DirectUtf8Sink(20)
-        ) {
-            array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
-            array.setDimLen(0, 0);
-            array.applyShape(1);
-            sink.clear();
-            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayState.INSTANCE);
-            assertEquals("[]", sink.toString());
-        }
-    }
-
-    @Test
     public void testArrayToJsonLong() {
         try (DirectArray array = new DirectArray(configuration);
              DirectUtf8Sink sink = new DirectUtf8Sink(20)
@@ -362,6 +348,20 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEmptyArrayToJsonDouble() {
+        try (DirectArray array = new DirectArray(configuration);
+             DirectUtf8Sink sink = new DirectUtf8Sink(20)
+        ) {
+            array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+            array.setDimLen(0, 0);
+            array.applyShape(1);
+            sink.clear();
+            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayState.INSTANCE);
+            assertEquals("[]", sink.toString());
+        }
+    }
+
+    @Test
     public void testEqualsArrayLiterals() throws Exception {
         assertMemoryLeak(() -> {
             assertSql("eq\ntrue\n", "SELECT (ARRAY[[1.0, 3]] = ARRAY[[1.0, 3]]) eq FROM long_sequence(1)");
@@ -429,6 +429,56 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("eq\ntrue\ntrue\nfalse\n", "SELECT (left[2] = right[2]) eq FROM tango");
             assertSql("eq\ntrue\ntrue\nfalse\n", "SELECT (left[2:] = right[2:]) eq FROM tango");
             assertSql("eq\nfalse\nfalse\ntrue\n", "SELECT (left[1:2] = right[2:]) eq FROM tango");
+        });
+    }
+
+    @Test
+    public void testExplicitCast() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql("cast\n" +
+                    "[1.0,2.0]\n", "SELECT '{1, 2}'::double[] FROM long_sequence(1)");
+
+            // quoted elements
+            assertSql("cast\n" +
+                    "[1.0,2.0]\n", "SELECT '{\"1\", \"2\"}'::double[] FROM long_sequence(1)");
+
+            // quoted elements with spaces, 2D array
+            assertSql("cast\n" +
+                    "[[1.0,2.0],[3.0,4.0]]\n", "SELECT '{{\"1\", \"2\"}, {\"3\", \"4\"}}'::double[][] FROM long_sequence(1)");
+
+            // 2D array
+            assertSql("cast\n" +
+                    "[[1.0,2.0],[3.0,4.0]]\n", "SELECT '{{1,2}, {3, 4}}'::double[][] FROM long_sequence(1)");
+
+            // 2D array with null
+            assertSql("cast\n" +
+                    "[[1.0,2.0],[3.0,null]]\n", "SELECT '{{1,2}, {3, NULL}}'::double[][] FROM long_sequence(1)");
+
+            // empty arrays are always printed as [], regardless of dimensionality. at least of now. this may change.
+            assertSql("cast\n" +
+                    "[]\n", "SELECT '{{}, {}}'::double[][] FROM long_sequence(1)");
+
+            // empty array can be casted to higher dimensionality -> empty array
+            assertSql("cast\n" +
+                    "[]\n", "SELECT '{}'::double[][] FROM long_sequence(1)");
+
+            // but empty array cannot cast to lower dimensionality -> NULL
+            assertSql("cast\n" +
+                    "null\n", "SELECT '{{},{}}'::double[] FROM long_sequence(1)");
+
+            assertSql("cast\n" +
+                    "null\n", "SELECT NULL::double[] FROM long_sequence(1)");
+
+            assertSql("cast\n" +
+                    "null\n", "SELECT 'not an array'::double[] FROM long_sequence(1)");
+
+            // 2D array explicitly casted to 1D array -> null
+            assertSql("cast\n" +
+                    "null\n", "SELECT '{{1,2}, {3, 4}}'::double[] FROM long_sequence(1)");
+
+            assertSql("cast\n" +
+                    "null\n", "SELECT '{nonsense, 2}'::double[] FROM long_sequence(1)");
+
         });
     }
 

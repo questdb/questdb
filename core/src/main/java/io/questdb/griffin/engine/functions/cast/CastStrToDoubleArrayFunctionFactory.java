@@ -47,16 +47,20 @@ public class CastStrToDoubleArrayFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new Func(args.getQuick(0));
+        Function typeFun = args.getQuick(1);
+        int type = typeFun.getType();
+        return new Func(args.getQuick(0), type);
     }
 
     private static class Func extends ArrayFunction implements UnaryFunction {
+        private final int dims;
         private final Function function;
         private final DoubleArrayParser parser = new DoubleArrayParser();
 
-        public Func(Function fun) {
+        public Func(Function fun, int type) {
+            super.type = type;
             this.function = fun;
-            super.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+            this.dims = ColumnType.decodeArrayDimensionality(type);
         }
 
         @Override
@@ -70,8 +74,11 @@ public class CastStrToDoubleArrayFunctionFactory implements FunctionFactory {
             assert str != null; // for now
             assert str.length() > 0; // for now
 
-            parser.of(str, 1);
-            // todo: validate types and dimensions
+            try {
+                parser.of(str, dims);
+            } catch (IllegalArgumentException e) {
+                parser.of(null);
+            }
 
             return parser;
         }
