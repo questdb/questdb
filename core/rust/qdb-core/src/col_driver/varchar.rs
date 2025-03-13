@@ -140,7 +140,15 @@ fn data_and_aux_size_at(col: &MappedColumn, row_count: u64) -> CoreResult<(u64, 
     // store the row index just before.
     let row_index = row_count - 1;
 
-    let aux_mmap = col.aux.as_ref().expect("varchar has aux");
+    let aux_mmap = col.aux.as_ref().ok_or_else(|| {
+        fmt_err!(
+            InvalidColumnData,
+            "varchar driver expects aux mapping, but missing for {} column {} in {}",
+            col.col_type,
+            col.col_name,
+            col.parent_path.display()
+        )
+    })?;
     let data_mmap = &col.data;
     let aux: &[VarcharAuxEntry] = cast_slice(&aux_mmap[..]).with_context(|_| {
         format!(
@@ -169,7 +177,7 @@ fn data_and_aux_size_at(col: &MappedColumn, row_count: u64) -> CoreResult<(u64, 
     if (data_mmap.len() as u64) < data_size {
         return Err(fmt_err!(
             InvalidColumnData,
-            "varchar data size {} exceeds data mmap len {} for column {} in {}",
+            "varchar required data size {} exceeds data mmap len {} for column {} in {}",
             data_size,
             data_mmap.len(),
             col.col_name,

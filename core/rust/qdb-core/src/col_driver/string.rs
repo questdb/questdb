@@ -21,8 +21,9 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+use crate::col_driver::util::cast_slice;
 use crate::col_driver::{ColumnDriver, MappedColumn};
-use crate::error::CoreResult;
+use crate::error::{CoreErrorExt, CoreResult, fmt_err};
 
 /// The `string` column type is implemented using two files:
 ///
@@ -81,9 +82,53 @@ pub struct StringDriver;
 impl ColumnDriver for StringDriver {
     fn col_sizes_for_size(
         &self,
-        _col: &MappedColumn,
-        _row_count: u64,
+        col: &MappedColumn,
+        row_count: u64,
     ) -> CoreResult<(u64, Option<u64>)> {
-        todo!()
+        let (data_size, aux_size) = data_and_aux_size_at(col, row_count)?;
+        Ok((data_size, Some(aux_size)))
     }
+}
+
+/// Return (data_size, aux_size).
+fn data_and_aux_size_at(col: &MappedColumn, row_count: u64) -> CoreResult<(u64, u64)> {
+    let aux_mmap = col.aux.as_ref().ok_or_else(|| {
+        fmt_err!(
+            InvalidColumnData,
+            "string driver expects aux mapping, but missing for {} column {} in {}",
+            col.col_type,
+            col.col_name,
+            col.parent_path.display()
+        )
+    })?;
+    let aux: &[u64] = cast_slice(&aux_mmap[..]).with_context(|_| {
+        format!(
+            "bad layout of string aux column {} in {}",
+            col.col_name,
+            col.parent_path.display()
+        )
+    })?;
+    let required_aux_entry_count = row_count + 1; // N + 1 logic (see format comment above)
+    if aux.len() < required_aux_entry_count as usize {
+        return Err(fmt_err!(
+            InvalidColumnData,
+            "string entry index {} not found in aux for column {} in {}",
+            row_count,
+            col.col_name,
+            col.parent_path.display()
+        ));
+    }
+    let data_size = aux[row_count as usize - 1];
+    if (col.data.len() as u64) < data_size {
+        return Err(fmt_err!(
+            InvalidColumnData,
+            "string required data size {} exceeds data mmap len {} for column {} in {}",
+            data_size,
+            col.data.len(),
+            col.col_name,
+            col.parent_path.display()
+        ));
+    }
+    let aux_size = required_aux_entry_count * (size_of::<u64>() as u64);
+    Ok((data_size, aux_size))
 }
