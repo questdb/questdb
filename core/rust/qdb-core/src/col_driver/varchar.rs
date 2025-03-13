@@ -25,6 +25,61 @@ use crate::col_driver::util::cast_slice;
 use crate::col_driver::{ColumnDriver, MappedColumn};
 use crate::error::{CoreErrorExt, CoreResult, fmt_err};
 
+/// Type driver for the Varchar column type.
+///
+/// # Format Overview
+///
+/// The `varchar` column type is implemented using two files:
+/// - **Aux file:** Contains fixed-size records—one per row—that store metadata about each UTF-8 string.
+///    Strings up to 9 bytes are also inlined.
+/// - **Data file:** Stores the actual UTF-8 string bytes for values that are too long to be stored directly in the aux record
+///   for any strings larger than 9 bytes.
+///
+/// The aux record has two different layouts depending on whether the string is NULL, inlined or stored in the data file.
+///
+/// The lowest 4 bits of the aux record contains the flags. The flags are:
+/// * `INLINED`: 1
+/// * `ASCII`: 2
+/// * `NULL`: 4
+///
+/// ## NULL varchar
+///
+/// ```text
+/// +----------+------------------+------------------+
+/// | Flags    | 0-padding        | 48-bit Offset    |
+/// | (4 bits) | (9 & half bytes) | (last data size) |
+/// +----------+------------------+------------------+
+/// ```
+///
+/// _Flags: `NULL` flag set_
+///
+/// ## Small inlined varchar (<= 9 bytes)
+///
+/// ```text
+/// +----------+----------+---------------------+-------------+-------------------+
+/// | Flags    | Size     | Inlined UTF-8 Bytes | 0-padding   | 48-bit Offset     |
+/// | (4 bits) | (4 bits) | (up to 9 bytes)     | (if needed) | (last data size)  |
+/// +----------+----------+---------------------+-------------+-------------------+
+/// ```
+///
+/// _Flags: `INLINED` flag set; `ASCII` flag if applicable_
+///
+/// ## Long varchar (> 9 bytes)
+///
+/// ```text
+/// +----------+------------+----------------+------------------+
+/// | Flags    | UTF-8 size | Inlined prefix | 48-bit Offset    |
+/// | (4 bits) | (28 bits)  | (6 bytes)      | (last data size) |
+/// +----------+------------+----------------+------------------+
+/// ```
+///
+/// _Flags: `ASCII` flag if applicable_
+///
+/// ## 48-bit Offset
+///
+/// The 48-bit offset is stored in 6 bytes in little-endian order.
+/// It points to the start of the UTF-8 string in the data file for large strings,
+/// or the end of the previous record for small strings and null values.
 pub struct VarcharDriver;
 
 impl ColumnDriver for VarcharDriver {
