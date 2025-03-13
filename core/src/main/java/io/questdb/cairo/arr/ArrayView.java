@@ -51,7 +51,9 @@ public abstract class ArrayView implements QuietCloseable {
     protected int type = ColumnType.UNDEFINED;
 
     public final void appendToMem(MemoryA mem) {
-        if (isNull()) {
+        // We need isEmpty() check to protect us from running appendToMemRecursive() for an
+        // almost unbounded number of steps, e.g., on an array of shape (100_000_000, 100_000_000, 0).
+        if (isNull() || isEmpty()) {
             return;
         }
         if (isVanilla) {
@@ -61,7 +63,7 @@ public abstract class ArrayView implements QuietCloseable {
             } else {
                 flatView.appendToMemFlat(mem);
             }
-        } else if (!isEmpty()) {
+        } else {
             appendToMemRecursive(0, 0, mem);
         }
     }
@@ -70,17 +72,24 @@ public abstract class ArrayView implements QuietCloseable {
         if (this.getDimCount() != other.getDimCount() || !this.shape.equals(other.shape)) {
             return false;
         }
-        if (this.isVanilla && other.isVanilla) {
-            return this.flatView.flatEquals(other.flatView);
-        }
-        // isEmpty() involves a loop, perform it after the above step in order to avoid the overhead
-        // for the most likely case of a non-empty array. We need this check to protect from running
-        // arrayEqualsRecursive() for an almost unbounded number of steps, e.g., on an array of shape
-        // (100_000_000, 100_000_000, 0).
+        // We need this check to protect from running arrayEqualsRecursive() for an almost unbounded number of steps,
+        // e.g., on an array of shape (100_000_000, 100_000_000, 0).
         if (isEmpty()) {
             return true;
         }
+        if (this.isVanilla && other.isVanilla) {
+            return this.flatView.flatEquals(other.flatView);
+        }
         return arrayEqualsRecursive(0, 0, other, 0);
+    }
+
+    /**
+     * Convenience that downcasts `flatView` into {@link BorrowedFlatArrayView}.
+     * There is no general guarantee that the downcast will succeed, this depends
+     * on the implementation you call it on.
+     */
+    public final BorrowedFlatArrayView borrowedFlatView() {
+        return (BorrowedFlatArrayView) flatView;
     }
 
     @Override
@@ -217,9 +226,5 @@ public abstract class ArrayView implements QuietCloseable {
             }
         }
         return true;
-    }
-
-    protected final BorrowedFlatArrayView borrowedFlatView() {
-        return (BorrowedFlatArrayView) flatView;
     }
 }
