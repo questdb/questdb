@@ -35,7 +35,6 @@ import io.questdb.std.Unsafe;
 
 public class TranscodingBinaryArrayView extends PGWireArrayView implements FlatArrayView, Mutable {
     private final MemoryAR mem;
-    private long baseOffset;
 
     public TranscodingBinaryArrayView(MemoryAR mem) {
         this.mem = mem;
@@ -64,7 +63,6 @@ public class TranscodingBinaryArrayView extends PGWireArrayView implements FlatA
         strides.clear();
         flatViewLength = 1;
         type = ColumnType.UNDEFINED;
-        baseOffset = -1;
     }
 
     @Override
@@ -73,12 +71,12 @@ public class TranscodingBinaryArrayView extends PGWireArrayView implements FlatA
     }
 
     @Override
-    public double getDouble(int elemIndex) {
+    public double getDoubleAtAbsoluteIndex(int elemIndex) {
         return mem.getDouble((long) elemIndex * Double.BYTES);
     }
 
     @Override
-    public long getLong(int elemIndex) {
+    public long getLongAtAbsoluteIndex(int elemIndex) {
         throw new UnsupportedOperationException("not implemented yet");
     }
 
@@ -114,7 +112,5 @@ public class TranscodingBinaryArrayView extends PGWireArrayView implements FlatA
 
         this.type = ColumnType.encodeArrayType(componentNativeType, shape.size());
         resetToDefaultStrides();
-        baseOffset = mem.getAppendOffset();
     }
-
 }
