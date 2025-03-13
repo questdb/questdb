@@ -156,10 +156,10 @@ fn data_and_aux_size_at(col: &MappedColumn, row_count: u64) -> CoreResult<(u64, 
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
     use super::*;
     use crate::col_driver::ColumnTypeTag;
     use crate::error::CoreErrorCause;
+    use std::path::PathBuf;
 
     fn map_col(name: &str) -> MappedColumn {
         /*
@@ -171,17 +171,17 @@ mod tests {
             final String shortStr = "'abc'";
             final String longStr = "'Lorem ipsum dolor sit amet, consectetur tincidunt.'"; // 50 bytes
 
-            primaryMain.execute("create table x (s1 string, s2 string, s3 string, s4 string, timestamp_c timestamp) timestamp(timestamp_c) partition by day wal");
-            primaryMain.execute("insert into x (s1, s2, s3, s4, timestamp_c) values " +
-                "(" + nullString + ", " + emptyString + ", " + shortStr + ", " + longStr + ", '2022-02-24T01:01:00')");
-            primaryMain.execute("insert into x (s1, s2, s3, s4, timestamp_c) values " +
-                "(" + emptyString + ", " + shortStr + ", " + longStr + ", " + nullString + ", '2022-02-24T01:01:01')");
-            primaryMain.execute("insert into x (s1, s2, s3, s4, timestamp_c) values " +
-                "(" + shortStr + ", " + longStr + ", " + nullString + ", " + emptyString + ", '2022-02-24T01:01:02')");
-            primaryMain.execute("insert into x (s1, s2, s3, s4, timestamp_c) values " +
-                "(" + longStr + ", " + nullString + ", " + emptyString + ", " + longStr + ", '2022-02-24T01:01:03')");
-            primaryMain.execute("insert into x (s1, s2, s3, s4, timestamp_c) values " +
-                "(" + nullString + ", " + emptyString + ", " + shortStr + ", " + longStr + ", '2022-02-24T01:01:04')");
+            primaryMain.execute("create table x (s1 string, s2 string, timestamp_c timestamp) timestamp(timestamp_c) partition by day wal");
+            primaryMain.execute("insert into x (s1, s2, timestamp_c) values " +
+                "(" + nullString + ", " + longStr + ", '2022-02-24T01:01:00')");
+            primaryMain.execute("insert into x (s1, s2, timestamp_c) values " +
+                "(" + emptyString + ", " + nullString + ", '2022-02-24T01:01:01')");
+            primaryMain.execute("insert into x (s1, s2, timestamp_c) values " +
+                "(" + shortStr + ", " + emptyString + ", '2022-02-24T01:01:02')");
+            primaryMain.execute("insert into x (s1, s2, timestamp_c) values " +
+                "(" + longStr + ", " + longStr + ", '2022-02-24T01:01:03')");
+            primaryMain.execute("insert into x (s1, s2, timestamp_c) values " +
+                "(" + nullString + ", " + longStr + ", '2022-02-24T01:01:04')");
 
         This gives the various columns different starting and ending patterns.
 
@@ -200,35 +200,77 @@ mod tests {
         assert_eq!(data_size, 0);
         assert_eq!(aux_size, Some(8));
 
-        // // index 0 is null string
-        // let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 1).unwrap();
-        // assert_eq!(data_size, 0);
-        // assert_eq!(aux_size, Some(16));
-        //
-        // // index 1 is empty string
-        // let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 2).unwrap();
-        // assert_eq!(data_size, 0);
-        // assert_eq!(aux_size, Some(32));
-        //
-        // // index 2 is a short inlined string
-        // let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 3).unwrap();
-        // assert_eq!(data_size, 0);
-        // assert_eq!(aux_size, Some(48));
-        //
-        // // index 3 is a 50-byte non-inlined string
-        // let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 4).unwrap();
-        // assert_eq!(data_size, 50);
-        // assert_eq!(aux_size, Some(64));
-        //
-        // // index 4 is a null string
-        // let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 5).unwrap();
-        // assert_eq!(data_size, 50);
-        // assert_eq!(aux_size, Some(80));
-        //
-        // // out of range
-        // let err = VarcharDriver.col_sizes_for_size(&col, 6).unwrap_err();
-        // let msg = format!("{:#}", err);
-        // assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
-        // assert!(msg.contains("varchar row index 5 not found in aux for column v1 in"));
+        // index 0 is null string
+        let (data_size, aux_size) = StringDriver.col_sizes_for_size(&col, 1).unwrap();
+        assert_eq!(data_size, 4);
+        assert_eq!(aux_size, Some(16));
+
+        // index 1 is empty string
+        let (data_size, aux_size) = StringDriver.col_sizes_for_size(&col, 2).unwrap();
+        assert_eq!(data_size, 8);
+        assert_eq!(aux_size, Some(24));
+
+        // index 2 is a 3-byte string
+        let (data_size, aux_size) = StringDriver.col_sizes_for_size(&col, 3).unwrap();
+        assert_eq!(data_size, 18);
+        assert_eq!(aux_size, Some(32));
+
+        // index 3 is a 50-byte string
+        let (data_size, aux_size) = StringDriver.col_sizes_for_size(&col, 4).unwrap();
+        assert_eq!(data_size, 122);
+        assert_eq!(aux_size, Some(40));
+
+        // index 4 is a null string
+        let (data_size, aux_size) = StringDriver.col_sizes_for_size(&col, 5).unwrap();
+        assert_eq!(data_size, 126);
+        assert_eq!(aux_size, Some(48));
+
+        // out of range
+        let err = StringDriver.col_sizes_for_size(&col, 6).unwrap_err();
+        let msg = format!("{:#}", err);
+        // eprintln!("{}", &msg);
+        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
+        assert!(msg.contains("string entry index 6 not found in aux for column s1 in"));
+    }
+
+    #[test]
+    fn test_s2() {
+        let col = map_col("s2");
+
+        let (data_size, aux_size) = StringDriver.col_sizes_for_size(&col, 0).unwrap();
+        assert_eq!(data_size, 0);
+        assert_eq!(aux_size, Some(8));
+
+        // index 0 is a 50-byte string
+        let (data_size, aux_size) = StringDriver.col_sizes_for_size(&col, 1).unwrap();
+        assert_eq!(data_size, 104);
+        assert_eq!(aux_size, Some(16));
+
+        // index 1 is null string
+        let (data_size, aux_size) = StringDriver.col_sizes_for_size(&col, 2).unwrap();
+        assert_eq!(data_size, 108);
+        assert_eq!(aux_size, Some(24));
+
+        // index 2 is empty string
+        let (data_size, aux_size) = StringDriver.col_sizes_for_size(&col, 3).unwrap();
+        assert_eq!(data_size, 112);
+        assert_eq!(aux_size, Some(32));
+
+        // index 3 is a 50-byte string
+        let (data_size, aux_size) = StringDriver.col_sizes_for_size(&col, 4).unwrap();
+        assert_eq!(data_size, 216);
+        assert_eq!(aux_size, Some(40));
+
+        // index 4 is a 50-byte string
+        let (data_size, aux_size) = StringDriver.col_sizes_for_size(&col, 5).unwrap();
+        assert_eq!(data_size, 320);
+        assert_eq!(aux_size, Some(48));
+
+        // out of range
+        let err = StringDriver.col_sizes_for_size(&col, 6).unwrap_err();
+        let msg = format!("{:#}", err);
+        // eprintln!("{}", &msg);
+        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
+        assert!(msg.contains("string entry index 6 not found in aux for column s2 in"));
     }
 }
