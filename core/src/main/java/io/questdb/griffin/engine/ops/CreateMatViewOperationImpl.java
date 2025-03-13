@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.OperationCodes;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
@@ -37,6 +38,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlOptimiser;
 import io.questdb.griffin.SqlParser;
+import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExpressionNode;
@@ -49,6 +51,7 @@ import io.questdb.std.GenericLexer;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -379,6 +382,29 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         samplingInterval = TimestampSamplerFactory.parseInterval(interval, samplingIntervalEnd, intervalExpr.position);
         assert samplingInterval > 0;
         samplingIntervalUnit = interval.charAt(samplingIntervalEnd);
+
+        // Check if PARTITION BY wasn't specified in SQL, so that we need
+        // to assign it based on the sampling interval.
+        if (createTableOperation.getPartitionBy() == PartitionBy.NONE) {
+            final TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(
+                    samplingInterval,
+                    samplingIntervalUnit,
+                    0
+            );
+            final long approxBucketMicros = timestampSampler.getApproxBucketSize();
+            int partitionBy = PartitionBy.DAY;
+            if (approxBucketMicros > Timestamps.HOUR_MICROS) {
+                partitionBy = PartitionBy.YEAR;
+            } else if (approxBucketMicros > Timestamps.MINUTE_MICROS) {
+                partitionBy = PartitionBy.WEEK;
+            }
+            createTableOperation.setPartitionBy(partitionBy);
+            final int ttlHoursOrMonths = createTableOperation.getTtlHoursOrMonths();
+            if (ttlHoursOrMonths > 0) {
+                // Don't forget to validate TTL against PARTITION BY.
+                PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, 0);
+            }
+        }
 
         // Mark key columns as dedup keys.
         baseKeyColumnNames.clear();

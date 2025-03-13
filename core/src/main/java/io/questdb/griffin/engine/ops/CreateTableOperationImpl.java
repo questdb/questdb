@@ -434,6 +434,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         return walEnabled;
     }
 
+    public void setPartitionBy(int partitionBy) {
+        this.partitionBy = partitionBy;
+    }
+
     public void setTimestampColumnName(String timestampColumnName) {
         this.timestampColumnName = timestampColumnName;
     }
