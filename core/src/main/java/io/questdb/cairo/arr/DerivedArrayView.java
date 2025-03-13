@@ -37,10 +37,11 @@ public class DerivedArrayView extends ArrayView {
     public final void flattenDim(int dim, int argPos) {
         final int nDims = getDimCount();
         assert dim >= 0 && dim < nDims : "dim out of range: " + dim + ", nDims: " + nDims;
-        if (getStride(dim) == 1) {
+        if (getStride(dim) == 1 && getDimLen(dim) > 1) {
             throw CairoException.nonCritical()
                     .position(argPos)
-                    .put("cannot flatten dim with stride 1 [dim=").put(dim)
+                    .put("cannot flatten dim with stride = 1 and length > 1 [dim=").put(dim)
+                    .put(", dimLen=").put(getDimLen(dim))
                     .put(", nDims=").put(nDims).put(']');
         }
         final int dimToFlattenInto;
