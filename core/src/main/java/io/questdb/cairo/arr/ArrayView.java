@@ -83,15 +83,6 @@ public abstract class ArrayView implements QuietCloseable {
         return arrayEqualsRecursive(0, 0, other, 0);
     }
 
-    public boolean isEmpty() {
-        for (int i = 0; i < shape.size(); i++) {
-            if (shape.getQuick(i) == 0) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     @Override
     public void close() {
     }
@@ -154,6 +145,15 @@ public abstract class ArrayView implements QuietCloseable {
      */
     public final int getType() {
         return type;
+    }
+
+    public boolean isEmpty() {
+        for (int i = 0; i < shape.size(); i++) {
+            if (shape.getQuick(i) == 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public final boolean isNull() {
