@@ -73,13 +73,16 @@ public class MmappedArray extends MutableArray {
     }
 
     public MmappedArray of(int columnType, int nDims, long shapeAddr, long valuePtr, int valueSize) {
-        assert valueSize > 0;
+        assert shapeAddr != 0 : "shapeAddr == 0";
+        assert ColumnType.isArray(columnType) : "columnType is not Array";
+        short elemType = ColumnType.decodeArrayElementType(columnType);
         setType(columnType);
         loadShape(shapeAddr, nDims);
         resetToDefaultStrides();
-        short elemType = ColumnType.decodeArrayElementType(columnType);
         assert ColumnType.sizeOf(elemType) * flatViewLength == valueSize;
-        borrowedFlatView().of(valuePtr, elemType, flatViewLength);
+        if (!isEmpty()) {
+            borrowedFlatView().of(valuePtr, elemType, flatViewLength);
+        }
         return this;
     }
 

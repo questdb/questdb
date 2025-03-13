@@ -343,7 +343,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             )) {
                 String tableName = "arr_double_test";
                 serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, y SYMBOL, l1 LONG, " +
-                        "a1 DOUBLE[][][], a2 DOUBLE[][][], a3 DOUBLE[][][], " +
+                        "a1 DOUBLE[][][], a2 DOUBLE[][][], a3 DOUBLE[][][], a4 DOUBLE[][][], " +
                         "b1 DOUBLE[], b2 DOUBLE[][], b3 DOUBLE[][][], " +
                         "ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
@@ -357,6 +357,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                      DoubleArray a1 = new DoubleArray(2, 2, 2);
                      DoubleArray a2 = new DoubleArray(2, 2, 2).set(99.0, 0, 1, 0).set(100.0, 1, 1, 1);
                      DoubleArray a3 = new DoubleArray(2, 2, 2).setAll(101);
+                     DoubleArray a4 = new DoubleArray(100_000_000, 100_000_000, 0).setAll(0);
                 ) {
                     // array.append() appends in a circular fashion, wrapping around to start from the end.
                     // We deliberately append two more than the length of the array, to test this behavior.
@@ -376,6 +377,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .doubleArray("a1", a1)
                             .doubleArray("a2", a2)
                             .doubleArray("a3", a3)
+                            .doubleArray("a4", a4)
                             .doubleArray("b1", arr1d)
                             .doubleArray("b2", arr2d)
                             .doubleArray("b3", arr3d)
@@ -383,11 +385,12 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     sender.flush();
                 }
                 serverMain.awaitTxn(tableName, 1);
-                serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta1\ta2\ta3\tb1\tb2\tb3\tts\n" +
+                serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta1\ta2\ta3\ta4\tb1\tb2\tb3\tts\n" +
                         "42i\t[6f1.0,2.5,3.0,4.5,5.0]\t23452345\t" +
                         "[[[8.0,9.0],[2.0,3.0]],[[4.0,5.0],[6.0,7.0]]]\t" +
                         "[[[0.0,0.0],[99.0,0.0]],[[0.0,0.0],[0.0,100.0]]]\t" +
                         "[[[101.0,101.0],[101.0,101.0]],[[101.0,101.0],[101.0,101.0]]]\t" +
+                        "[]\t" +
                         "[1.0,2.0,3.0,4.0,5.0]\t" +
                         "[[1.0,2.0,3.0],[2.0,4.0,6.0]]\t" +
                         "[[[1.0,2.0,3.0],[2.0,4.0,6.0]]]\t" +
@@ -404,7 +407,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             )) {
                 String tableName = "arr_long_test";
                 serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, y SYMBOL, l1 LONG, " +
-                        "a1 LONG[][][], a2 LONG[][][], a3 LONG[][][], " +
+                        "a1 LONG[][][], a2 LONG[][][], a3 LONG[][][], a4 LONG[][][], " +
                         "b1 LONG[], b2 LONG[][], b3 LONG[][][], " +
                         "ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
@@ -418,6 +421,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                      LongArray a1 = new LongArray(2, 2, 2);
                      LongArray a2 = new LongArray(2, 2, 2).set(99L, 0, 1, 0).set(100L, 1, 1, 1);
                      LongArray a3 = new LongArray(2, 2, 2).setAll(101);
+                     LongArray a4 = new LongArray(100_000_000, 100_000_000, 0);
                 ) {
                     // array.append() appends in a circular fashion, wrapping around to start from the end.
                     // We deliberately append two more than the length of the array, to test this behavior.
@@ -437,6 +441,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .longArray("a1", a1)
                             .longArray("a2", a2)
                             .longArray("a3", a3)
+                            .longArray("a4", a4)
                             .longArray("b1", arr1d)
                             .longArray("b2", arr2d)
                             .longArray("b3", arr3d)
@@ -446,11 +451,12 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 serverMain.awaitTxn(tableName, 1);
 
-                serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta1\ta2\ta3\tb1\tb2\tb3\tts\n" +
+                serverMain.assertSql("select * from " + tableName, "x\ty\tl1\ta1\ta2\ta3\ta4\tb1\tb2\tb3\tts\n" +
                         "42i\t[6f1.0,2.5,3.0,4.5,5.0]\t23452345\t" +
                         "[[[8,9],[2,3]],[[4,5],[6,7]]]\t" +
                         "[[[0,0],[99,0]],[[0,0],[0,100]]]\t" +
                         "[[[101,101],[101,101]],[[101,101],[101,101]]]\t" +
+                        "[]\t" +
                         "[1,2,3,4,5]\t" +
                         "[[1,2,3],[2,4,6]]\t" +
                         "[[[1,2,3],[2,4,6]]]\t" +
@@ -825,20 +831,20 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         });
     }
 
-    private static <T> T buildNestedArray(ArrayDataType dataType, int[] shapes, int currentDim, int[] indices) {
-        if (currentDim == shapes.length - 1) {
-            Object arr = dataType.createArray(shapes[currentDim]);
+    private static <T> T buildNestedArray(ArrayDataType dataType, int[] shape, int currentDim, int[] indices) {
+        if (currentDim == shape.length - 1) {
+            Object arr = dataType.createArray(shape[currentDim]);
             for (int i = 0; i < Array.getLength(arr); i++) {
                 indices[currentDim] = i;
                 dataType.setElement(arr, i, indices);
             }
             return (T) arr;
         } else {
-            Class<?> componentType = dataType.getComponentType(shapes.length - currentDim - 1);
-            Object arr = Array.newInstance(componentType, shapes[currentDim]);
-            for (int i = 0; i < shapes[currentDim]; i++) {
+            Class<?> componentType = dataType.getComponentType(shape.length - currentDim - 1);
+            Object arr = Array.newInstance(componentType, shape[currentDim]);
+            for (int i = 0; i < shape[currentDim]; i++) {
                 indices[currentDim] = i;
-                Object subArr = buildNestedArray(dataType, shapes, currentDim + 1, indices);
+                Object subArr = buildNestedArray(dataType, shape, currentDim + 1, indices);
                 Array.set(arr, i, subArr);
             }
             return (T) arr;

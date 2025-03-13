@@ -25,15 +25,13 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.arr.BorrowedFlatArrayView;
 import io.questdb.cairo.arr.MmappedArray;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.ND_ARR_INVALID_TYPE;
-import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.ND_ARR_LARGE_DIMENSIONS;
+import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.*;
 
 /**
  * Parses the binary N-dimensional array format used in ILP.
@@ -50,9 +48,9 @@ import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.ND_ARR_LARGE_D
  */
 public class ArrayBinaryFormatParser implements QuietCloseable {
 
-    private final MmappedArray view = new MmappedArray();
-    private int dims;
+    private final MmappedArray array = new MmappedArray();
     private short elemType;
+    private int nDims;
     private int nextBinaryPartExpectSize = 1;
     private long shapeAddr;
     private ParserState state;
@@ -65,7 +63,7 @@ public class ArrayBinaryFormatParser implements QuietCloseable {
 
     public @NotNull MmappedArray getArray() {
         assert state == ParserState.FINISH;
-        return view;
+        return array;
     }
 
     public int getNextExpectSize() {
@@ -77,72 +75,71 @@ public class ArrayBinaryFormatParser implements QuietCloseable {
             case ELEMENT_TYPE:
                 elemType = Unsafe.getUnsafe().getByte(addr);
                 if (elemType == ColumnType.NULL) {
-                    view.ofNull();
+                    array.ofNull();
                     state = ParserState.FINISH;
                     return true;
                 }
                 if (!ColumnType.isSupportedArrayElementType(elemType)) {
                     throw ParseException.invalidType();
                 }
-
                 state = ParserState.N_DIMS;
                 nextBinaryPartExpectSize = 1;
                 return false;
             case N_DIMS:
-                dims = Unsafe.getUnsafe().getByte(addr);
-                if (dims > ColumnType.ARRAY_NDIMS_LIMIT) {
-                    throw ParseException.largeDims();
+                nDims = Unsafe.getUnsafe().getByte(addr);
+                if (nDims > ColumnType.ARRAY_NDIMS_LIMIT) {
+                    throw ParseException.tooManyDims();
                 }
-                if (dims == 0) {
-                    view.ofNull();
+                if (nDims == 0) {
+                    array.ofNull();
                     state = ParserState.FINISH;
                     return true;
                 }
-
                 state = ParserState.SHAPE;
-                nextBinaryPartExpectSize = dims * Integer.BYTES;
+                nextBinaryPartExpectSize = nDims * Integer.BYTES;
                 return false;
             case SHAPE:
                 shapeAddr = addr;
+                int n = nDims;
+                for (long i = 0; i < n; i++) {
+                    final int dimLength = Unsafe.getUnsafe().getInt(addr + i * Integer.BYTES);
+                    if (dimLength == 0) {
+                        int type = ColumnType.encodeArrayType(elemType, nDims);
+                        array.of(type, nDims, shapeAddr, 0L, 0);
+                        state = ParserState.FINISH;
+                        return true;
+                    }
+                }
                 nextBinaryPartExpectSize = ColumnType.sizeOf(elemType);
-                for (int i = 0; i < dims; ++i) {
-                    final int dimLength = Unsafe.getUnsafe().getInt(addr + (long) i * Integer.BYTES);
-                    //TODO: replace ArithmeticException with ParseException + prevent breakage when at least one dimension len is 0
-                    nextBinaryPartExpectSize = Math.multiplyExact(nextBinaryPartExpectSize, dimLength);
+                for (long i = 0; i < n; i++) {
+                    final int dimLength = Unsafe.getUnsafe().getInt(addr + i * Integer.BYTES);
+                    try {
+                        nextBinaryPartExpectSize = Math.multiplyExact(nextBinaryPartExpectSize, dimLength);
+                    } catch (ArithmeticException e) {
+                        throw ParseException.tooLarge();
+                    }
                 }
-                if (nextBinaryPartExpectSize == 0) {
-                    view.ofNull();
-                    state = ParserState.FINISH;
-                    return true;
-                }
-
                 state = ParserState.VALUES;
                 return false;
             case VALUES:
-                int type = ColumnType.encodeArrayType(elemType, dims);
-                view.of(
-                        type,
-                        dims,
-                        shapeAddr,
-                        addr,
-                        nextBinaryPartExpectSize
-                );
+                int type = ColumnType.encodeArrayType(elemType, nDims);
+                array.of(type, nDims, shapeAddr, addr, nextBinaryPartExpectSize);
                 state = ParserState.FINISH;
                 return true;
+            default:
+                throw ParseException.invalidType();
         }
-
-        throw ParseException.invalidType();
     }
 
     public void reset() {
         nextBinaryPartExpectSize = 1;
         state = ParserState.ELEMENT_TYPE;
-        view.reset();
+        array.reset();
     }
 
     public void shl(long delta) {
-        if (state == ParserState.FINISH && !view.isNull()) {
-            ((BorrowedFlatArrayView) view.flatView()).shl(delta);
+        if (state == ParserState.FINISH && !array.isNull()) {
+            array.borrowedFlatView().shl(delta);
         } else if (state == ParserState.VALUES) {
             this.shapeAddr -= delta;
         }
@@ -161,11 +158,15 @@ public class ArrayBinaryFormatParser implements QuietCloseable {
         private LineTcpParser.ErrorCode errorCode;
 
         public static @NotNull ParseException invalidType() {
-            return tlException.get().errorCode(ND_ARR_INVALID_TYPE);
+            return tlException.get().errorCode(ARRAY_INVALID_TYPE);
         }
 
-        public static @NotNull ParseException largeDims() {
-            return tlException.get().errorCode(ND_ARR_LARGE_DIMENSIONS);
+        public static @NotNull ParseException tooLarge() {
+            return tlException.get().errorCode(ARRAY_TOO_LARGE);
+        }
+
+        public static @NotNull ParseException tooManyDims() {
+            return tlException.get().errorCode(ARRAY_TOO_MANY_DIMENSIONS);
         }
 
         public ParseException errorCode(LineTcpParser.ErrorCode errorCode) {

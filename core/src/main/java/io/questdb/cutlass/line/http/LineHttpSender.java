@@ -245,14 +245,14 @@ public final class LineHttpSender implements Sender {
     }
 
     @Override
-    public Sender doubleArray(CharSequence name, DoubleArray values) {
-        if (processNullArray(name, values)) {
+    public Sender doubleArray(CharSequence name, DoubleArray array) {
+        if (processNullArray(name, array)) {
             return this;
         }
         writeFieldName(name, true)
                 .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ND_ARRAY binary format
                 .put((byte) ColumnType.DOUBLE); // element type
-        values.appendToBufPtr(request);
+        array.appendToBufPtr(request);
         return this;
     }
 

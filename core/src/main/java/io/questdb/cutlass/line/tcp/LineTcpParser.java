@@ -684,17 +684,18 @@ public class LineTcpParser implements QuietCloseable {
         MISSING_FIELD_VALUE,
         MISSING_TAG_VALUE,
         UNSUPPORTED_BINARY_FORMAT,
-
         /**
-         * Array literal specifies an irregular (jagged) array shape. E.g. {{1, 2}, {1, 2, 3}}
+         * Failed to parse the array element type
          */
-        ND_ARR_LARGE_DIMENSIONS,
-
+        ARRAY_INVALID_TYPE,
         /**
-         * Parsing of the array datatype failed.
+         * Array has more than the max 32 dimensions
          */
-        ND_ARR_INVALID_TYPE,
-
+        ARRAY_TOO_MANY_DIMENSIONS,
+        /**
+         * Element count of the array exceeds {@code Integer.MAX_VALUE}
+         */
+        ARRAY_TOO_LARGE,
         NONE
     }
 
