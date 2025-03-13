@@ -26,8 +26,11 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -259,9 +262,9 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
                 groupByFunctionsUpdater.updateExisting(mapValue, baseRecord, rowId++);
             } else {
                 // timestamp changed, make sure we keep the value of 'lastTimestamp'
-                // unchanged. Timestamp columns uses this variable
+                // unchanged. Timestamp column uses this variable.
                 // When map is exhausted we would assign 'next' to 'lastTimestamp'
-                // and build another map
+                // and build another map.
                 timestamp = adjustDst(timestamp, mapValue, next);
                 if (timestamp != Long.MIN_VALUE) {
                     nextSamplePeriod(timestamp);

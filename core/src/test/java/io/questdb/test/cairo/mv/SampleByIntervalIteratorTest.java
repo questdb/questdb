@@ -173,7 +173,43 @@ public class SampleByIntervalIteratorTest {
     }
 
     @Test
-    public void testTimeZoneWithDstSmallInterval() throws Exception {
+    public void testTimeZoneWithDstForwardShitWithIntervalLargerThanShift() throws Exception {
+        final SampleByIntervalIterator iterator = new SampleByIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(75, 'm', 0);
+        iterator.of(
+                sampler,
+                Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "Europe/Berlin"),
+                0,
+                TimestampFormatUtils.parseTimestamp("2021-03-28T00:01:00.000000Z"), // 01:01 local time (GMT+1)
+                TimestampFormatUtils.parseTimestamp("2021-03-28T01:52:00.000000Z"), // 03:52 local time (GMT+2)
+                1
+        );
+
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-27T23:15:00.000000Z"), iterator.getMinTimestamp());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T02:30:00.000000Z"), iterator.getMaxTimestamp());
+
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-27T23:15:00.000000Z"), iterator.getTimestampLo()); // 00:15
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T00:30:00.000000Z"), iterator.getTimestampHi()); // 01:30
+
+        // DST edge is here (02:00 -> 03:00 local time)
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T00:30:00.000000Z"), iterator.getTimestampLo()); // 01:30
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T01:00:00.000000Z"), iterator.getTimestampHi()); // 02:00 -> 03:00
+
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T01:00:00.000000Z"), iterator.getTimestampLo()); // 02:00 -> 03:00
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T01:45:00.000000Z"), iterator.getTimestampHi()); // 03:45
+
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T01:45:00.000000Z"), iterator.getTimestampLo()); // 03:45
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T02:30:00.000000Z"), iterator.getTimestampHi()); // 04:30
+
+        Assert.assertFalse(iterator.next());
+    }
+
+    @Test
+    public void testTimeZoneWithDstWithSmallInterval() throws Exception {
         final SampleByIntervalIterator iterator = new SampleByIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(30, 'm', 0);
         iterator.of(

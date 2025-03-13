@@ -206,9 +206,9 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
                 baseRecord = null;
             } else {
                 // timestamp changed, make sure we keep the value of 'lastTimestamp'
-                // unchanged. Timestamp columns uses this variable
+                // unchanged. Timestamp column uses this variable.
                 // When map is exhausted we would assign 'next' to 'lastTimestamp'
-                // and build another map
+                // and build another map.
                 timestamp = adjustDst(timestamp, null, next);
                 if (timestamp != Long.MIN_VALUE) {
                     nextSamplePeriod(timestamp);

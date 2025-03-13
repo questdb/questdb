@@ -219,20 +219,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
-    public void testMultipleQueryExecutionsPerRefreshDSTForwardEdge() throws Exception {
-        final Rnd rnd = fuzzer.generateRandom(LOG);
-        final int rowsPerQuery = Math.max(100, rnd.nextInt(10_000));
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
-        final String tableName = testName.getMethodName();
-        final String mvName = testName.getMethodName() + "_mv";
-        final int mins = 1 + rnd.nextInt(300);
-        final String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by " + mins + "m " +
-                "align to calendar time zone 'Europe/Berlin'";
-        long start = TimestampFormatUtils.parseUTCTimestamp("2021-03-28T00:59:00.000000Z");
-        testMvFuzz(tableName, start, mvName, viewSql);
-    }
-
-    @Test
     public void testMultipleQueryExecutionsPerRefreshDSTShiftBack() throws Exception {
         final Rnd rnd = fuzzer.generateRandom(LOG);
         final int rowsPerQuery = Math.max(100, rnd.nextInt(10_000));
@@ -243,6 +229,20 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by " + mins + "m " +
                 "align to calendar time zone 'Europe/Berlin'";
         long start = TimestampFormatUtils.parseUTCTimestamp("2020-10-23T20:30:00.000000Z");
+        testMvFuzz(tableName, start, mvName, viewSql);
+    }
+
+    @Test
+    public void testMultipleQueryExecutionsPerRefreshDSTShiftForward() throws Exception {
+        final Rnd rnd = fuzzer.generateRandom(LOG);
+        final int rowsPerQuery = Math.max(100, rnd.nextInt(10_000));
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
+        final String tableName = testName.getMethodName();
+        final String mvName = testName.getMethodName() + "_mv";
+        final int mins = 1 + rnd.nextInt(300);
+        final String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by " + mins + "m " +
+                "align to calendar time zone 'Europe/Berlin'";
+        long start = TimestampFormatUtils.parseUTCTimestamp("2021-03-28T00:59:00.000000Z");
         testMvFuzz(tableName, start, mvName, viewSql);
     }
 
