@@ -721,7 +721,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             @NotNull CharSink<?> sink,
             @NotNull String nullLiteral
     ) {
-        long d = array.flatView().getLongAtAbsoluteIndex(array.getFlatViewOffset() + index);
+        long d = array.getLong(index);
         if (d != Numbers.LONG_NULL) {
             sink.put(d);
         } else {

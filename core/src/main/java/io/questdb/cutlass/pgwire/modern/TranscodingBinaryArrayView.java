@@ -50,7 +50,7 @@ public class TranscodingBinaryArrayView extends PGWireArrayView implements FlatA
             case ColumnType.LONG:
                 // TODO optimize to Vect.memcpy()
                 for (int i = 0; i < size; i++) {
-                    dst.putLong(getLongAtAbsoluteIndex(i));
+                    dst.putLong(getLong(i));
                 }
                 break;
             default:
