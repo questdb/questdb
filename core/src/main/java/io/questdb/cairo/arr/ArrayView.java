@@ -73,6 +73,10 @@ public abstract class ArrayView implements QuietCloseable {
         if (this.isVanilla && other.isVanilla) {
             return this.flatView.flatEquals(other.flatView);
         }
+        // isEmpty() involves a loop, perform it after the above step in order to avoid the overhead
+        // for the most likely case of a non-empty array. We need this check to protect from running
+        // arrayEqualsRecursive() for an almost unbounded number of steps, e.g., on an array of shape
+        // (100_000_000, 100_000_000, 0).
         if (isEmpty()) {
             return true;
         }

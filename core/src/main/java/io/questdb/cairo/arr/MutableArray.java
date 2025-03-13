@@ -75,12 +75,11 @@ public class MutableArray extends ArrayView {
             strides.add(0);
         }
 
-        // optimization: if any dimension len is 0, we can skip the rest since the array is empty, no element can be stored
-        for (int i = 0; i < nDims; i++) {
-            if (shape.get(i) == 0) {
-                this.flatViewLength = 0;
-                return;
-            }
+        // An empty array can have various shapes, such as (100_000_000, 100_000_000, 0).
+        // Avoid initializing the strides in this case, because that may erroneously fail with "array is too large".
+        if (isEmpty()) {
+            this.flatViewLength = 0;
+            return;
         }
 
         int stride = 1;

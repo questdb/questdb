@@ -28,10 +28,9 @@ import io.questdb.cairo.CairoException;
 import io.questdb.std.Numbers;
 
 /**
- * A view over a native-memory array. Does not own the backing native memory.
- * The array contents can't be mutated through this view, but the view itself can be.
- * You can change what slice of the underlying flat array it represents, as well as
- * transpose it.
+ * A view over an array. Does not own the backing flat array. The array contents can't
+ * be mutated through this view, but the view itself can be: you can change what slice
+ * of the underlying flat array it represents, as well as transpose it.
  */
 public class DerivedArrayView extends ArrayView {
 
