@@ -126,6 +126,45 @@ public class WalEventCursor {
         type = WalTxnType.NONE;
     }
 
+    private long calcSymbolMapDiffEndOffset(long startOffset) {
+        long offset = startOffset;
+        while (true) {
+            if (memSize >= offset + Integer.BYTES) {
+                final int columnIndex = eventMem.getInt(offset);
+                offset += Integer.BYTES;
+                if (columnIndex == SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS) {
+                    break;
+                }
+
+                if (memSize < offset + Byte.BYTES + 2 * Integer.BYTES) {
+                    break;
+                }
+
+                offset += (Byte.BYTES + 2 * Integer.BYTES);
+
+                // entries loop
+                while (true) {
+                    if (memSize >= offset + Integer.BYTES) {
+                        final int value = eventMem.getInt(offset);
+                        offset += Integer.BYTES;
+                        if (value == SymbolMapDiffImpl.END_OF_SYMBOL_ENTRIES) {
+                            break;
+                        }
+
+                        final int strLength = eventMem.getStrLen(offset);
+                        final long storageLength = Vm.getStorageLength(strLength);
+                        offset += storageLength;
+                    } else {
+                        break;
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+        return offset;
+    }
+
     private void checkMemSize(long requiredBytes) {
         if (memSize < offset + requiredBytes) {
             throw CairoException.critical(0).put("WAL event file is too small, size=").put(memSize)
@@ -280,6 +319,7 @@ public class WalEventCursor {
         private long endRowID;
         private long maxTimestamp;
         private long minTimestamp;
+        private long mvRefreshTxn = Long.MIN_VALUE;
         private boolean outOfOrder;
         private long startRowID;
 
@@ -293,6 +333,10 @@ public class WalEventCursor {
 
         public long getMinTimestamp() {
             return minTimestamp;
+        }
+
+        public long getMvRefreshTxn() {
+            return mvRefreshTxn;
         }
 
         public long getStartRowID() {
@@ -313,6 +357,19 @@ public class WalEventCursor {
             minTimestamp = readLong();
             maxTimestamp = readLong();
             outOfOrder = readBool();
+            // Forward/backward compatibility note:
+            // The matview WAL event format was extended with mvRefreshTxn, affecting only matview WAL events.
+            // Regular WAL events remain unaffected.
+            // If mvRefreshTxn is absent, it is set to Long.MIN_VALUE.
+            // This field is placed after the symbol map diff and is "invisible" to regular WAL and older matview event readers.
+            // If there's a gap between the symbol map diff and record end, mvRefreshTxn is assumed to be present.
+            // It is read without changing the offset.
+            // The symbol map diff will be handled in the nextSymbolMapDiff method.
+
+            long symbolMapDiffOffset = calcSymbolMapDiffEndOffset(offset);
+            if (symbolMapDiffOffset != offset && symbolMapDiffOffset <= nextOffset - Long.BYTES) {
+                mvRefreshTxn = eventMem.getLong(nextOffset - Long.BYTES);
+            }
         }
     }
 

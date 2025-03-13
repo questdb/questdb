@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.RecordToRowCopier;
@@ -188,7 +189,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private boolean insertAsSelect(
             MatViewRefreshState state,
             MatViewDefinition viewDef,
-            TableWriterAPI tableWriter,
+            WalWriter walWriter,
             long baseTableTxn,
             long refreshTriggeredTimestamp
     ) throws SqlException {
@@ -214,8 +215,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             assert compiledQuery.getType() == CompiledQuery.SELECT;
                             factory = compiledQuery.getRecordCursorFactory();
 
-                            if (copier == null || tableWriter.getMetadata().getMetadataVersion() != state.getRecordRowCopierMetadataVersion()) {
-                                copier = getRecordToRowCopier(tableWriter, factory, compiler);
+                            if (copier == null || walWriter.getMetadata().getMetadataVersion() != state.getRecordRowCopierMetadataVersion()) {
+                                copier = getRecordToRowCopier(walWriter, factory, compiler);
                             }
                         } catch (SqlException e) {
                             factory = Misc.free(factory);
@@ -230,7 +231,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     assert factory != null;
                     assert copier != null;
 
-                    final CharSequence timestampName = tableWriter.getMetadata().getColumnName(tableWriter.getMetadata().getTimestampIndex());
+                    final CharSequence timestampName = walWriter.getMetadata().getColumnName(walWriter.getMetadata().getTimestampIndex());
                     final int cursorTimestampIndex = factory.getMetadata().getColumnIndex(timestampName);
                     assert cursorTimestampIndex > -1;
 
@@ -239,11 +240,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         long deadline = batchSize;
                         rowCount = 0;
                         while (cursor.hasNext()) {
-                            TableWriter.Row row = tableWriter.newRow(record.getTimestamp(cursorTimestampIndex));
+                            TableWriter.Row row = walWriter.newRow(record.getTimestamp(cursorTimestampIndex));
                             copier.copy(record, row);
                             row.append();
                             if (++rowCount >= deadline) {
-                                tableWriter.ic();
+                                walWriter.commit();
                                 deadline = rowCount + batchSize;
                             }
                         }
@@ -265,8 +266,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
             }
 
-            tableWriter.commit();
-            state.refreshSuccess(factory, copier, tableWriter.getMetadata().getMetadataVersion(), refreshTimestamp, refreshTriggeredTimestamp, baseTableTxn);
+            walWriter.commitWithParams(baseTableTxn);
+            state.refreshSuccess(factory, copier, walWriter.getMetadata().getMetadataVersion(), refreshTimestamp, refreshTriggeredTimestamp, baseTableTxn);
         } catch (Throwable th) {
             LOG.error().$("error refreshing materialized view [view=").$(viewDef.getMatViewToken()).$(", error=").$(th).I$();
             Misc.free(factory);
@@ -477,7 +478,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // Make time interval filter no-op as we're querying all partitions.
                 refreshExecutionContext.setRange(Long.MIN_VALUE + 1, Long.MAX_VALUE);
 
-                try (TableWriterAPI commitWriter = engine.getTableWriterAPI(viewToken, "mat view full refresh")) {
+                try (WalWriter commitWriter = engine.getWalWriter(viewToken)) {
                     commitWriter.truncateSoft();
                     final MatViewDefinition viewDef = state.getViewDefinition();
                     insertAsSelect(state, viewDef, commitWriter, toBaseTxn, refreshTriggeredTimestamp);
@@ -567,7 +568,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 if (findCommitTimestampRanges(refreshExecutionContext, baseTableReader, viewDef, fromBaseTxn)) {
                     toBaseTxn = baseTableReader.getSeqTxn();
 
-                    try (TableWriterAPI tableWriter = engine.getTableWriterAPI(viewToken, "Mat View refresh")) {
+                    try (WalWriter tableWriter = engine.getWalWriter(viewToken)) {
                         boolean changed = insertAsSelect(state, viewDef, tableWriter, toBaseTxn, refreshTriggeredTimestamp);
                         if (changed) {
                             long seqTxn = viewSeqTracker.getSeqTxn();
