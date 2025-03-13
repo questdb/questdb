@@ -196,14 +196,14 @@ public class ArrayTest extends AbstractCairoTest {
     public void testArrayOpComposition() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0,2.0],[3.0,4.0],[5.0,6.0]] arr FROM long_sequence(1))");
-//            assertSql("x\n[[3.0,4.0]]\n", "SELECT arr[2:3] x FROM tango");
+            assertSql("x\n[[3.0,4.0]]\n", "SELECT arr[2:3] x FROM tango");
             assertSql("x\n[3.0,4.0]\n", "SELECT arr[2] x FROM tango");
-//            assertSql("x\n[[3.0],[4.0]]\n", "SELECT t(arr[2:3]) x FROM tango");
-//            assertSql("x\n[2.0,4.0,6.0]\n", "SELECT t(arr)[2] x FROM tango");
-//            assertSql("x\n4.0\n", "SELECT arr[2][2] x FROM tango");
-//            assertSql("x\n[4.0]\n", "SELECT arr[2][2:3] x FROM tango");
-//            assertSql("x\n[5.0,6.0]\n", "SELECT arr[2:4][2] x FROM tango");
-//            assertSql("x\n[[5.0,6.0]]\n", "SELECT arr[2:4][2:3] x FROM tango");
+            assertSql("x\n[[3.0],[4.0]]\n", "SELECT t(arr[2:3]) x FROM tango");
+            assertSql("x\n[2.0,4.0,6.0]\n", "SELECT t(arr)[2] x FROM tango");
+            assertSql("x\n4.0\n", "SELECT arr[2][2] x FROM tango");
+            assertSql("x\n[4.0]\n", "SELECT arr[2][2:3] x FROM tango");
+            assertSql("x\n[5.0,6.0]\n", "SELECT arr[2:4][2] x FROM tango");
+            assertSql("x\n[[5.0,6.0]]\n", "SELECT arr[2:4][2:3] x FROM tango");
         });
     }
 
