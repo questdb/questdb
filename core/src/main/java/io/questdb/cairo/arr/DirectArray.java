@@ -196,7 +196,11 @@ public final class DirectArray extends MutableArray implements Mutable {
 
         @Override
         public void putBlockOfBytes(long from, long len) {
-            throw new UnsupportedOperationException();
+            assert ptr != 0 : "ptr == 0";
+            assert len >= 0 : "len < 0";
+            assert appendOffset <= size - len : "appending beyond limit";
+            Vect.memcpy(ptr + appendOffset, from, len);
+            appendOffset += len;
         }
 
         @Override
