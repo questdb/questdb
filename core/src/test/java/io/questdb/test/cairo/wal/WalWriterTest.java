@@ -43,7 +43,9 @@ import io.questdb.cairo.wal.WalEventCursor;
 import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalTxnType;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.mp.SOCountDownLatch;
@@ -1379,6 +1381,38 @@ public class WalWriterTest extends AbstractCairoTest {
                     }
                 }
         );
+    }
+
+    @Test
+    public void testExtractRefreshTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testExtractRefreshTxn";
+            TableToken tableToken;
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("a", ColumnType.BYTE)
+                    .col("b", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal();
+            tableToken = createTable(model);
+            final long refreshTxn = 42;
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row row = walWriter.newRow(0);
+                    row.putByte(0, (byte) i);
+                    row.putSym(1, "sym" + i);
+                    row.append();
+                    walWriter.commitWithParams(refreshTxn + i);
+                }
+            }
+
+            try (Path path = new Path(); TransactionLogCursor transactionLogCursor = engine.getTableSequencerAPI().getCursor(tableToken, 0)) {
+                for (int i = 0; i < 10; i++) {
+                    path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+                    long txn = WalUtils.getRefreshTxn(path, i, transactionLogCursor, configuration.getFilesFacade());
+                    assertEquals(refreshTxn + i, txn);
+                }
+            }
+        });
     }
 
     @Test

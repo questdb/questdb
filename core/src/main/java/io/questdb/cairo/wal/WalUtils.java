@@ -26,9 +26,12 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
+import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
+
+import static io.questdb.cairo.wal.WalTxnType.DATA;
 
 public class WalUtils {
     public static final String CONVERT_FILE_NAME = "_convert";
@@ -92,5 +95,25 @@ public class WalUtils {
         } finally {
             txnSeqDirPath.trimTo(rootLen);
         }
+    }
+
+    public static long getRefreshTxn(Path tablePath, long tableTxn, TransactionLogCursor transactionLogCursor, FilesFacade ff) {
+        long refreshTxn = -1; // full refresh if not extracted
+        transactionLogCursor.setPosition(tableTxn);
+        if (transactionLogCursor.hasNext()) {
+            final int walId = transactionLogCursor.getWalId();
+            final int segmentId = transactionLogCursor.getSegmentId();
+            final int segmentTxn = transactionLogCursor.getSegmentTxn();
+            if (walId > 0) {
+                tablePath.concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+                try (WalEventReader eventReader = new WalEventReader(ff)) {
+                    WalEventCursor walEventCursor = eventReader.of(tablePath, WAL_FORMAT_VERSION, segmentTxn);
+                    if (walEventCursor.getType() == DATA) {
+                        refreshTxn = walEventCursor.getDataInfo().getMvRefreshTxn();
+                    }
+                }
+            }
+        }
+        return refreshTxn;
     }
 }

@@ -79,9 +79,9 @@ public class ServerMain implements Closeable {
     protected IPGWireServer pgWireServer;
     private FileWatcher fileWatcher;
     private HttpServer httpServer;
+    private Thread hydrateMetadataThread;
     private boolean initialized;
     private WorkerPoolManager workerPoolManager;
-    private Thread hydrateMetadataThread;
 
     public ServerMain(String... args) {
         this(new Bootstrap(args));
@@ -277,12 +277,18 @@ public class ServerMain implements Closeable {
     }
 
     public void start() {
-        start(false);
+        start(false, false);
     }
 
-    public synchronized void start(boolean addShutdownHook) {
+    public void start(boolean addShutdownHook) {
+        start(addShutdownHook, false);
+    }
+
+    public synchronized void start(boolean addShutdownHook, boolean checkMatViewConsistency) {
         if (!closed.get() && running.compareAndSet(false, true)) {
             initialize();
+
+            engine.buildMatViewGraph(checkMatViewConsistency);
 
             if (addShutdownHook) {
                 addShutdownHook();

@@ -64,10 +64,12 @@ import io.questdb.cairo.wal.DefaultWalListener;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalListener;
 import io.questdb.cairo.wal.WalReader;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.cutlass.text.CopyContext;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.FunctionFactory;
@@ -344,6 +346,102 @@ public class CairoEngine implements Closeable, WriterSource {
                 .put("txn timed out [table=").put(tableName)
                 .put(", expectedTxn=").put(seqTxn)
                 .put(", writerTxn=").put(writerTxn);
+    }
+
+    public void buildMatViewGraph(boolean checkMatViewConsistency) {
+        final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
+        getTableTokens(tableTokenBucket, false);
+
+        try (
+                Path path = new Path();
+                BlockFileReader reader = new BlockFileReader(configuration);
+                BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())
+        ) {
+            path.of(configuration.getDbRoot());
+            final int pathLen = path.size();
+
+            for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
+                final TableToken tableToken = tableTokenBucket.get(i);
+                if (tableToken.isMatView() && TableUtils.isMatViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
+                    try {
+                        final MatViewDefinition matViewDefinition = new MatViewDefinition();
+                        MatViewDefinition.readFrom(
+                                matViewDefinition,
+                                reader,
+                                path,
+                                pathLen,
+                                tableToken
+                        );
+                        final TableToken baseTableToken = tableNameRegistry.getTableToken(matViewDefinition.getBaseTableName());
+                        final boolean baseTableExists = baseTableToken != null && !tableNameRegistry.isTableDropped(baseTableToken);
+                        if (!baseTableExists) {
+                            // Print a warning, but let the mat view load in invalid state.
+                            LOG.info().$("base table for materialized view does not exist [table=").utf8(matViewDefinition.getBaseTableName())
+                                    .$(", view=").utf8(tableToken.getTableName())
+                                    .I$();
+                        }
+
+                        final MatViewRefreshState state = matViewGraph.addView(matViewDefinition);
+                        // Can be null if the graph implementation is no-op.
+                        // The no-op graph does nothing on view creation and other operations
+                        // and is used when mat views are disabled.
+                        if (state != null) {
+                            final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, tableToken.getDirName());
+                            path.trimTo(pathLen).concat(tableToken.getDirName()).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
+                            if (isMatViewStateExists) {
+                                reader.of(path.$());
+                                MatViewRefreshState.readFrom(reader, state);
+                            } else {
+                                blockFileWriter.of(path.$());
+                                MatViewRefreshState.append(state, blockFileWriter);
+                            }
+
+                            if (!state.isInvalid()) {
+                                // this should be called only during replica to primary transition
+                                if (checkMatViewConsistency) {
+                                    long matViewLastTxn = getTableSequencerAPI().lastTxn(tableToken);
+                                    long baseTableLastTxn = baseTableExists && baseTableToken.isWal()
+                                            ? getTableSequencerAPI().lastTxn(baseTableToken)
+                                            : Long.MAX_VALUE;
+                                    if (state.getSeqTxn() > matViewLastTxn || state.getLastRefreshBaseTxn() > baseTableLastTxn) {
+                                        // Materialized view refresh state is ahead of the base table or the view itself.
+                                        // This may happen when a read-only replica node which isn't fully caught up
+                                        // was converted to primary.
+                                        try (TransactionLogCursor transactionLogCursor = getTableSequencerAPI().getCursor(tableToken, matViewLastTxn)) {
+                                            // slow-path, search for the last refresh base txn in the wal-e file
+                                            long refreshBaseTxn = -1;
+                                            try {
+                                                refreshBaseTxn = WalUtils.getRefreshTxn(
+                                                        path.trimTo(pathLen).concat(tableToken.getDirName()),
+                                                        matViewLastTxn,
+                                                        transactionLogCursor,
+                                                        configuration.getFilesFacade()
+                                                );
+                                            } catch (CairoException e) {
+                                                LOG.error().$("could not find last refresh base txn for materialized view [view=")
+                                                        .utf8(tableToken.getTableName()).I$();
+                                            }
+                                            state.setLastRefreshBaseTxn(refreshBaseTxn);
+                                        }
+                                    }
+                                }
+                                matViewGraph.enqueueIncrementalRefresh(tableToken);
+                            }
+                        }
+                    } catch (Throwable th) {
+                        final LogRecord rec = LOG.error().$("could not load materialized view definition [view=").utf8(tableToken.getTableName());
+                        if (th instanceof CairoException) {
+                            final CairoException ce = (CairoException) th;
+                            rec.$(", msg=").$(ce.getFlyweightMessage())
+                                    .$(", errno=").$(ce.getErrno());
+                        } else {
+                            rec.$(", msg=").$(th.getMessage());
+                        }
+                        rec.I$();
+                    }
+                }
+            }
+        }
     }
 
     public void checkpointCreate(SqlExecutionContext executionContext) throws SqlException {
@@ -933,7 +1031,6 @@ public class CairoEngine implements Closeable, WriterSource {
         // Convert tables to WAL/non-WAL, if necessary.
         final ObjList<TableToken> convertedTables = TableConverter.convertTables(this, tableSequencerAPI, tableFlagResolver, tableNameRegistry);
         tableNameRegistry.reload(convertedTables);
-        buildMatViewGraph();
     }
 
     public String lockAll(TableToken tableToken, String lockReason, boolean ignoreInProgressCheckpoint) {
@@ -1394,85 +1491,6 @@ public class CairoEngine implements Closeable, WriterSource {
         }
         if (!tt.equals(tableToken)) {
             throw TableReferenceOutOfDateException.of(tableToken, tableToken.getTableId(), tt.getTableId(), tt.getTableId(), -1);
-        }
-    }
-
-    private void buildMatViewGraph() {
-        final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
-        getTableTokens(tableTokenBucket, false);
-
-        try (
-                Path path = new Path();
-                BlockFileReader reader = new BlockFileReader(configuration);
-                BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())
-        ) {
-            path.of(configuration.getDbRoot());
-            final int pathLen = path.size();
-
-            for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
-                final TableToken tableToken = tableTokenBucket.get(i);
-                if (tableToken.isMatView() && TableUtils.isMatViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
-                    try {
-                        final MatViewDefinition matViewDefinition = new MatViewDefinition();
-                        MatViewDefinition.readFrom(
-                                matViewDefinition,
-                                reader,
-                                path,
-                                pathLen,
-                                tableToken
-                        );
-                        final TableToken baseTableToken = tableNameRegistry.getTableToken(matViewDefinition.getBaseTableName());
-                        final boolean baseTableExists = baseTableToken != null && !tableNameRegistry.isTableDropped(baseTableToken);
-                        if (!baseTableExists) {
-                            // Print a warning, but let the mat view load in invalid state.
-                            LOG.info().$("base table for materialized view does not exist [table=").utf8(matViewDefinition.getBaseTableName())
-                                    .$(", view=").utf8(tableToken.getTableName())
-                                    .I$();
-                        }
-
-                        final MatViewRefreshState state = matViewGraph.addView(matViewDefinition);
-                        // Can be null if the graph implementation is no-op.
-                        // The no-op graph does nothing on view creation and other operations
-                        // and is used when mat views are disabled.
-                        if (state != null) {
-                            final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, tableToken.getDirName());
-                            path.trimTo(pathLen).concat(tableToken.getDirName()).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
-                            if (isMatViewStateExists) {
-                                reader.of(path.$());
-                                MatViewRefreshState.readFrom(reader, state);
-                            } else {
-                                blockFileWriter.of(path.$());
-                                MatViewRefreshState.append(state, blockFileWriter);
-                            }
-
-                            if (!state.isInvalid()) {
-                                long matViewLastTxn = getTableSequencerAPI().lastTxn(tableToken);
-                                long baseTableLastTxn = baseTableExists && baseTableToken.isWal()
-                                        ? getTableSequencerAPI().lastTxn(baseTableToken)
-                                        : Long.MAX_VALUE;
-                                if (state.getSeqTxn() > matViewLastTxn || state.getLastRefreshBaseTxn() > baseTableLastTxn) {
-                                    // Materialized view refresh state is ahead of the base table or the view itself.
-                                    // This may happen when a read-only replica node which isn't fully caught up
-                                    // was converted to primary.
-                                    // Set the last refreshed txn to -1 to have the view fully refreshed.
-                                    state.setLastRefreshBaseTxn(-1);
-                                }
-                                matViewGraph.enqueueIncrementalRefresh(tableToken);
-                            }
-                        }
-                    } catch (Throwable th) {
-                        final LogRecord rec = LOG.error().$("could not load materialized view definition [view=").utf8(tableToken.getTableName());
-                        if (th instanceof CairoException) {
-                            final CairoException ce = (CairoException) th;
-                            rec.$(", msg=").$(ce.getFlyweightMessage())
-                                    .$(", errno=").$(ce.getErrno());
-                        } else {
-                            rec.$(", msg=").$(th.getMessage());
-                        }
-                        rec.I$();
-                    }
-                }
-            }
         }
     }
 
