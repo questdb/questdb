@@ -54,13 +54,11 @@ public final class DirectArray extends MutableArray implements Mutable {
     public DirectArray(CairoConfiguration configuration) {
         this.flatView = new BorrowedFlatArrayView();
         this.configuration = configuration;
-        this.isVanilla = true;
     }
 
     public DirectArray() {
         this.flatView = new BorrowedFlatArrayView();
         this.configuration = null;
-        this.isVanilla = true;
     }
 
     public void applyShape(int errorPosition) {

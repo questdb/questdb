@@ -119,5 +119,6 @@ public class DerivedArrayView extends ArrayView {
     public void transpose() {
         strides.reverse();
         shape.reverse();
+        isVanilla = false;
     }
 }

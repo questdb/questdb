@@ -47,7 +47,7 @@ public abstract class ArrayView implements QuietCloseable {
     protected FlatArrayView flatView;
     protected int flatViewLength;
     protected int flatViewOffset;
-    protected boolean isVanilla;
+    protected boolean isVanilla = true;
     protected int type = ColumnType.UNDEFINED;
 
     public final void appendToMem(MemoryA mem) {
