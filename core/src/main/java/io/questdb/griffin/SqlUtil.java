@@ -651,6 +651,18 @@ public class SqlUtil {
         }
     }
 
+    public static ArrayView implicitCastStringAsDoubleArray(CharSequence value, DoubleArrayParser parser, int expectedType) {
+        try {
+            parser.of(value, ColumnType.decodeArrayDimensionality(expectedType));
+        } catch (IllegalArgumentException e) {
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, expectedType);
+        }
+        if (expectedType != ColumnType.UNDEFINED && parser.getType() != expectedType) {
+            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, expectedType);
+        }
+        return parser;
+    }
+
     public static long implicitCastSymbolAsTimestamp(CharSequence value) {
         return implicitCastStrVarcharAsTimestamp0(value, ColumnType.SYMBOL);
     }
@@ -751,18 +763,6 @@ public class SqlUtil {
         return implicitCastStrVarcharAsTimestamp0(value, ColumnType.VARCHAR);
     }
 
-    public static ArrayView implicitCastStringAsDoubleArray(CharSequence value, DoubleArrayParser parser, int expectedType) {
-        try {
-            parser.of(value);
-        } catch (IllegalArgumentException e) {
-            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, expectedType);
-        }
-        if (expectedType != ColumnType.UNDEFINED && parser.getType() != expectedType) {
-            throw ImplicitCastException.inconvertibleValue(value, ColumnType.STRING, expectedType);
-        }
-        return parser;
-    }
-
     public static boolean isParallelismSupported(ObjList<Function> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
             if (!functions.getQuick(i).supportsParallelism()) {
@@ -794,23 +794,6 @@ public class SqlUtil {
         return pool.next().of(exprNodeType, token, 0, position);
     }
 
-    /**
-     * Parses partial representation of timestamp with time zone.
-     *
-     * @param value            the characters representing timestamp
-     * @param tupleIndex       the tuple index for insert SQL, which inserts multiple rows at once
-     * @param targetColumnType the target column type, which might be different from timestamp
-     * @return epoch offset
-     * @throws ImplicitCastException inconvertible type error.
-     */
-    public static long parseFloorPartialTimestamp(CharSequence value, int tupleIndex, int sourceColumnType, int targetColumnType) {
-        try {
-            return IntervalUtils.parseFloorPartialTimestamp(value);
-        } catch (NumericException e) {
-            throw ImplicitCastException.inconvertibleValue(tupleIndex, value, sourceColumnType, targetColumnType);
-        }
-    }
-
     public static int parseArrayDimensions(GenericLexer lexer) throws SqlException {
         int dim = 0;
         do {
@@ -832,6 +815,23 @@ public class SqlUtil {
             }
         } while (true);
         return dim;
+    }
+
+    /**
+     * Parses partial representation of timestamp with time zone.
+     *
+     * @param value            the characters representing timestamp
+     * @param tupleIndex       the tuple index for insert SQL, which inserts multiple rows at once
+     * @param targetColumnType the target column type, which might be different from timestamp
+     * @return epoch offset
+     * @throws ImplicitCastException inconvertible type error.
+     */
+    public static long parseFloorPartialTimestamp(CharSequence value, int tupleIndex, int sourceColumnType, int targetColumnType) {
+        try {
+            return IntervalUtils.parseFloorPartialTimestamp(value);
+        } catch (NumericException e) {
+            throw ImplicitCastException.inconvertibleValue(tupleIndex, value, sourceColumnType, targetColumnType);
+        }
     }
 
     public static short toPersistedTypeTag(@NotNull CharSequence tok, int tokPosition) throws SqlException {

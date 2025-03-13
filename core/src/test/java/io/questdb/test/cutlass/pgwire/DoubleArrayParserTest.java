@@ -35,24 +35,43 @@ import org.junit.Test;
 public class DoubleArrayParserTest extends AbstractTest {
 
     @Test
+    public void parseEmptyArray() {
+        try (DoubleArrayParser parser = new DoubleArrayParser()) {
+            parser.of("{}", 1);
+            Assert.assertEquals(1, parser.getDimCount());
+            Assert.assertEquals(0, parser.getDimLen(0));
+            Assert.assertEquals(0, parser.length());
+            Assert.assertEquals(0, parser.getFlatViewLength());
+
+            parser.of("{{}}", 2);
+            Assert.assertEquals(2, parser.getDimCount());
+            Assert.assertEquals(1, parser.getDimLen(0));
+            Assert.assertEquals(0, parser.length());
+            Assert.assertEquals(0, parser.getFlatViewLength());
+        }
+    }
+
+    @Test
     public void testInconsistentArray() {
         String input = "{{\"1\",\"2.0\"},{\"3.1\"}}";
-        DoubleArrayParser parser = new DoubleArrayParser();
-        try {
-            parser.of(input);
-            Assert.fail();
-        } catch (IllegalArgumentException ignore) {
-            TestUtils.assertContains(ignore.getMessage(), "inconsistent array [depth=1, currentCount=1, alreadyObservedCount=2, position=19]");
+        try (DoubleArrayParser parser = new DoubleArrayParser()) {
+            try {
+                parser.of(input);
+                Assert.fail();
+            } catch (IllegalArgumentException ignore) {
+                TestUtils.assertContains(ignore.getMessage(), "inconsistent array [depth=1, currentCount=1, alreadyObservedCount=2, position=19]");
+            }
         }
     }
 
     @Test
     public void testParseNull() {
-        DoubleArrayParser parser = new DoubleArrayParser();
-        parser.of(null);
+        try (DoubleArrayParser parser = new DoubleArrayParser()) {
+            parser.of(null);
 
-        Assert.assertEquals(0, parser.getDimCount());
-        Assert.assertEquals(0, parser.getFlatViewLength());
+            Assert.assertEquals(0, parser.getDimCount());
+            Assert.assertEquals(0, parser.getFlatViewLength());
+        }
     }
 
     @Test
@@ -60,17 +79,19 @@ public class DoubleArrayParserTest extends AbstractTest {
         String input = "{{\"1\",\"2.0\"},{\"3.1\",\"0.4\"}}";
         int expectedType = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
 
-        DoubleArrayParser parser = new DoubleArrayParser();
-        parser.of(input);
+        FlatArrayView flat;
+        try (DoubleArrayParser parser = new DoubleArrayParser()) {
+            parser.of(input);
 
-        Assert.assertEquals(4, parser.getFlatViewLength());
-        Assert.assertEquals(0, parser.getFlatViewOffset());
-        Assert.assertEquals(2, parser.getStride(0));
-        Assert.assertEquals(1, parser.getStride(1));
-        Assert.assertEquals(expectedType, parser.getType());
-        Assert.assertEquals(2, parser.getDimCount());
+            Assert.assertEquals(4, parser.getFlatViewLength());
+            Assert.assertEquals(0, parser.getFlatViewOffset());
+            Assert.assertEquals(2, parser.getStride(0));
+            Assert.assertEquals(1, parser.getStride(1));
+            Assert.assertEquals(expectedType, parser.getType());
+            Assert.assertEquals(2, parser.getDimCount());
 
-        FlatArrayView flat = parser.flatView();
+            flat = parser.flatView();
+        }
         Assert.assertEquals(1, flat.getDouble(0), 0.0001);
         Assert.assertEquals(2, flat.getDouble(1), 0.0001);
         Assert.assertEquals(3.1, flat.getDouble(2), 0.0001);
@@ -82,17 +103,19 @@ public class DoubleArrayParserTest extends AbstractTest {
         String input = "{\r{1,2.0}, {3.1,\n0.4}}";
         int expectedType = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
 
-        DoubleArrayParser parser = new DoubleArrayParser();
-        parser.of(input);
+        FlatArrayView flat;
+        try (DoubleArrayParser parser = new DoubleArrayParser()) {
+            parser.of(input);
 
-        Assert.assertEquals(4, parser.getFlatViewLength());
-        Assert.assertEquals(0, parser.getFlatViewOffset());
-        Assert.assertEquals(2, parser.getStride(0));
-        Assert.assertEquals(1, parser.getStride(1));
-        Assert.assertEquals(expectedType, parser.getType());
-        Assert.assertEquals(2, parser.getDimCount());
+            Assert.assertEquals(4, parser.getFlatViewLength());
+            Assert.assertEquals(0, parser.getFlatViewOffset());
+            Assert.assertEquals(2, parser.getStride(0));
+            Assert.assertEquals(1, parser.getStride(1));
+            Assert.assertEquals(expectedType, parser.getType());
+            Assert.assertEquals(2, parser.getDimCount());
 
-        FlatArrayView flat = parser.flatView();
+            flat = parser.flatView();
+        }
         Assert.assertEquals(1, flat.getDouble(0), 0.0001);
         Assert.assertEquals(2, flat.getDouble(1), 0.0001);
         Assert.assertEquals(3.1, flat.getDouble(2), 0.0001);

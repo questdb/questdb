@@ -70,7 +70,7 @@ public class CastStrToDoubleArrayFunctionFactory implements FunctionFactory {
             assert str != null; // for now
             assert str.length() > 0; // for now
 
-            parser.of(str);
+            parser.of(str, 1);
             // todo: validate types and dimensions
 
             return parser;

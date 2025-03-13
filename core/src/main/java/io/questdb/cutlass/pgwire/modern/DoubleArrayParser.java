@@ -73,6 +73,10 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
     }
 
     public void of(CharSequence input) {
+        of(input, -1);
+    }
+
+    public void of(CharSequence input, int expectedDimCount) {
         values.clear();
         shape.clear();
         strides.clear();
@@ -81,8 +85,30 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
             return;
         }
         parse(input);
+        if (expectedDimCount != -1) {
+            if (shape.size() < expectedDimCount) {
+                if (isEmpty()) {
+                    // empty arrays can show less dimensions when serialized into string, we can cast them to expected dimensions
+                    shape.extendAndSet(expectedDimCount - 1, 0);
+                } else {
+                    // non-empty arrays must have the same number of dimensions as expected
+                    throw new IllegalArgumentException("expected " + expectedDimCount + " dimensions, got " + shape.size());
+                }
+            } else if (shape.size() > expectedDimCount) {
+                // arrays with more dimensions than expected are not allowed, even if they are empty
+                // think of `{{},{}}' - this is an empty array, but we cannot insert it into a 1-dimensional array since
+                // it most likely means an error in the input
+                throw new IllegalArgumentException("expected " + expectedDimCount + " dimensions, got " + shape.size());
+            }
+        }
         type = ColumnType.encodeArrayType(ColumnType.DOUBLE, shape.size());
         resetToDefaultStrides();
+
+    }
+
+    private static void incLastIndex(IntList currentDimSizes) {
+        int depth = currentDimSizes.size() - 1;
+        currentDimSizes.increment(depth);
     }
 
     private void parse(CharSequence input) {
@@ -97,7 +123,7 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
 
             if (c == '"') {
                 if (state == STATE_IN_QUOTE) {
-                    parseAndAddNumber(input, numberStart, position);
+                    parseAndAddNumber(input, numberStart, position, currentDimSizes);
                     state = STATE_IDLE;
                 } else {
                     numberStart = position + 1;
@@ -111,30 +137,32 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
             }
 
             switch (c) {
-                case '{':
-                    currentDimSizes.add(1);
+                case '{': {
+                    currentDimSizes.add(0);
                     break;
-                case '}':
+                }
+                case '}': {
                     if (state == STATE_IN_NUMBER) {
-                        parseAndAddNumber(input, numberStart, position);
+                        parseAndAddNumber(input, numberStart, position, currentDimSizes);
                         state = STATE_IDLE;
                     }
-
                     int depth = currentDimSizes.size() - 1;
+                    if (depth > 0) {
+                        currentDimSizes.increment(depth - 1);
+                    }
+
                     int currentCount = currentDimSizes.getQuick(depth);
                     updateShapeInfo(depth, currentCount, position);
                     currentDimSizes.removeIndex(depth);
                     break;
-                case ',':
+                }
+                case ',': {
                     if (state == STATE_IN_NUMBER) {
-                        parseAndAddNumber(input, numberStart, position);
+                        parseAndAddNumber(input, numberStart, position, currentDimSizes);
                         state = STATE_IDLE;
                     }
-
-                    int lastIndex = currentDimSizes.size() - 1;
-                    currentDimSizes.increment(lastIndex);
                     break;
-
+                }
                 // Skip whitespace. {\r{1,2.0}, {3.1,\n0.4}} is a legal input
                 case ' ':
                 case '\t':
@@ -151,7 +179,7 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
         }
     }
 
-    private void parseAndAddNumber(CharSequence input, int numberStart, int i) {
+    private void parseAndAddNumber(CharSequence input, int numberStart, int i, IntList currentDimSizes) {
         int len = i - numberStart;
         if (len == 4
                 && (input.charAt(numberStart) | 32) == 'n'
@@ -166,6 +194,7 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
                 throw new IllegalArgumentException("Invalid number format at position " + numberStart, e);
             }
         }
+        incLastIndex(currentDimSizes);
         flatViewLength++;
     }
 
