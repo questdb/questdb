@@ -317,9 +317,10 @@ fn extract_parameters(
                             let trimmed = substituted.trim_start_matches('{').trim_end_matches('}');
                             let float_array: Vec<Option<f64>> = trimmed
                                 .split(',')
+                                .map(|s | s.trim())
+                                .filter(|s| !s.is_empty())
                                 .map(|s| {
-                                    let trimmed = s.trim();
-                                    if trimmed.eq_ignore_ascii_case("NULL") {
+                                    if s.eq_ignore_ascii_case("NULL") {
                                         Ok(None)
                                     } else {
                                         trimmed.parse::<f64>().map(Some)
