@@ -48,14 +48,14 @@ public interface FlatArrayView {
         switch (elemType()) {
             case ColumnType.DOUBLE:
                 for (int i = 0; i < length; i++) {
-                    if (!Numbers.equals(getDouble(i), other.getDouble(i))) {
+                    if (!Numbers.equals(getDoubleAtAbsoluteIndex(i), other.getDoubleAtAbsoluteIndex(i))) {
                         return false;
                     }
                 }
                 break;
             case ColumnType.LONG:
                 for (int i = 0; i < length; i++) {
-                    if (getLong(i) != other.getLong(i)) {
+                    if (getLongAtAbsoluteIndex(i) != other.getLongAtAbsoluteIndex(i)) {
                         return false;
                     }
                 }
@@ -66,12 +66,12 @@ public interface FlatArrayView {
         return true;
     }
 
-    double getDouble(int elemIndex);
+    double getDoubleAtAbsoluteIndex(int elemIndex);
 
-    long getLong(int elemIndex);
+    long getLongAtAbsoluteIndex(int elemIndex);
 
     /**
-     * Returns the number of elements in this flat array.
+     * Returns the number of elements stored in this flat array.
      */
     int length();
 }

@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -108,11 +107,6 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
                 throw CairoException.nonCritical().position(pricesArgPos)
                         .put("sizes array length doesn't match prices array length");
             }
-            FlatArrayView flatSizes = sizesArr.flatView();
-            FlatArrayView flatPrices = pricesArr.flatView();
-            final int sizesOffset = sizesArr.getFlatViewOffset();
-            final int pricesOffset = pricesArr.getFlatViewOffset();
-
             double ta = 0; // target accumulator
             double pa = 0; // price accumulator
             double rt = t; // reduced target
@@ -124,8 +118,8 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
             // ((ra)             + (rt * price[n+1])) / t
             // get final price by partially filling against the last bin
             for (int i = 0; i < len; i++) {
-                final double size = flatSizes.getDouble(sizesOffset + i);
-                final double price = flatPrices.getDouble(pricesOffset + i);
+                final double size = sizesArr.getDouble(i);
+                final double price = pricesArr.getDouble(i);
 
                 // add size to acc
                 ta += size;

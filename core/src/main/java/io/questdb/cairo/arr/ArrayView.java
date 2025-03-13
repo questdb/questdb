@@ -128,6 +128,10 @@ public abstract class ArrayView implements QuietCloseable {
         return shape.getQuick(dimension);
     }
 
+    public final double getDouble(int flatIndex) {
+        return flatView.getDoubleAtAbsoluteIndex(flatViewOffset + flatIndex);
+    }
+
     /**
      * Returns the total number of data points (leaf values) in this array.
      */
@@ -143,6 +147,10 @@ public abstract class ArrayView implements QuietCloseable {
         return flatViewOffset;
     }
 
+    public final long getLong(int flatIndex) {
+        return flatView.getLongAtAbsoluteIndex(flatViewOffset + flatIndex);
+    }
+
     public final int getStride(int dimension) {
         assert dimension >= 0 && dimension < strides.size();
         return strides.getQuick(dimension);
@@ -155,7 +163,7 @@ public abstract class ArrayView implements QuietCloseable {
         return type;
     }
 
-    public boolean isEmpty() {
+    public final boolean isEmpty() {
         for (int i = 0; i < shape.size(); i++) {
             if (shape.getQuick(i) == 0) {
                 return true;
@@ -179,13 +187,13 @@ public abstract class ArrayView implements QuietCloseable {
             switch (elemType) {
                 case ColumnType.LONG:
                     for (int i = 0; i < count; i++) {
-                        mem.putLong(flatView.getLong(flatViewOffset + flatIndex));
+                        mem.putLong(getLong(flatIndex));
                         flatIndex += stride;
                     }
                     break;
                 case ColumnType.DOUBLE:
                     for (int i = 0; i < count; i++) {
-                        mem.putDouble(flatView.getDouble(flatViewOffset + flatIndex));
+                        mem.putDouble(getDouble(flatIndex));
                         flatIndex += stride;
                     }
                     break;
@@ -207,8 +215,8 @@ public abstract class ArrayView implements QuietCloseable {
         final boolean atDeepestDim = dim == getDimCount() - 1;
         if (atDeepestDim) {
             for (int i = 0; i < count; i++) {
-                if (flatView.getDouble(flatViewOffset + flatIndexThis) !=
-                        other.flatView.getDouble(other.flatViewOffset + flatIndexOther)
+                if (getDouble(flatIndexThis) !=
+                        other.getDouble(flatIndexOther)
                 ) {
                     return false;
                 }

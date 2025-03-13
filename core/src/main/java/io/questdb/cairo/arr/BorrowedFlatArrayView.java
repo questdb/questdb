@@ -52,7 +52,7 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
     }
 
     @Override
-    public double getDouble(int elemIndex) {
+    public double getDoubleAtAbsoluteIndex(int elemIndex) {
         assert ptr != 0;
         assert elemIndex >= 0 && elemIndex < length;
         final long addr = ptr + ((long) elemIndex * Double.BYTES);
@@ -60,7 +60,7 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
     }
 
     @Override
-    public long getLong(int elemIndex) {
+    public long getLongAtAbsoluteIndex(int elemIndex) {
         assert ptr != 0;
         assert elemIndex >= 0 && elemIndex < length;
         final long addr = ptr + ((long) elemIndex * Long.BYTES);

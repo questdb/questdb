@@ -147,10 +147,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     //    and we have to respect this. Thus, if a PARSE message contains a type VARCHAR then
     //    we need to read it from wire as VARCHAR even we use e.g. INT internally. So we need both native and wire types.
     private final LongList outParameterTypeDescriptionTypes;
+    private final ObjectPool<PgNonNullBinaryArrayView> pgNonNullBinaryArrayViewPool = new ObjectPool<>(PgNonNullBinaryArrayView::new, 1);
     private final ObjList<String> pgResultSetColumnNames;
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private final IntList pgResultSetColumnTypes;
     private final ObjList<CharSequence> portalNames = new ObjList<>();
+    // todo: configurable maxPageSize
+    private final MemoryAR transcodedArrayMemory = new MemoryCARWImpl(4096, 10000, MemoryTag.NATIVE_PGW_PIPELINE);
+    private final ObjectPool<TranscodingBinaryArrayView> transcodingBinaryArrayViews = new ObjectPool<>(() -> new TranscodingBinaryArrayView(transcodedArrayMemory), 1);
     boolean isCopy;
     private boolean cacheHit = false;    // extended protocol cursor resume callback
     private CompiledQueryImpl compiledQuery;
@@ -207,10 +211,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private int stateSync = 0;
     private TypesAndInsertModern tai = null;
     private TypesAndSelectModern tas = null;
-    private final ObjectPool<PgNonNullBinaryArrayView> pgNonNullBinaryArrayViewPool = new ObjectPool<>(PgNonNullBinaryArrayView::new, 1);
-    // todo: configurable maxPageSize
-    private final MemoryAR transcodedArrayMemory = new MemoryCARWImpl(4096, 10000, MemoryTag.NATIVE_PGW_PIPELINE);
-    private final ObjectPool<TranscodingBinaryArrayView> transcodingBinaryArrayViews = new ObjectPool<>(() -> new TranscodingBinaryArrayView(transcodedArrayMemory), 1);
     // IMPORTANT: if you add a new state, make sure to add it to the close() method too!
     // PGPipelineEntry instances are pooled and reused, so we need to make sure
     // that all state is cleared before returning the instance to the pool
@@ -1682,13 +1682,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void outColBinArr(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType) {
-        ArrayView arrayView = record.getArray(columnIndex, columnType);
-        if (arrayView.getDimCount() == 0) {
+        ArrayView array = record.getArray(columnIndex, columnType);
+        if (array.getDimCount() == 0) {
             utf8Sink.setNullValue();
             return;
         }
 
-        int nDims = arrayView.getDimCount();
+        int nDims = array.getDimCount();
         short elemType = ColumnType.decodeArrayElementType(columnType);
         int componentTypeOid = getTypeOid(elemType);
 
@@ -1700,17 +1700,19 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
         // Write dimension information
         for (int i = 0; i < nDims; i++) {
-            utf8Sink.putNetworkInt(arrayView.getDimLen(i)); // length of each dimension
+            utf8Sink.putNetworkInt(array.getDimLen(i)); // length of each dimension
             utf8Sink.putNetworkInt(1); // lower bound, always 1 in PostgreSQL
         }
 
         // todo: optimize for vanilla arrays, vanilla arrays do not require recursive processing
-        boolean hasNulls = outColBinArrRecursive(utf8Sink, arrayView, elemType, 0, 0);
+        boolean hasNulls = outColBinArrRecursive(utf8Sink, array, elemType, 0, 0);
         Unsafe.getUnsafe().putInt(hasNullPtr, Numbers.bswap(hasNulls ? 1 : 0));
         utf8Sink.putLenEx(sizePtr);
     }
 
-    private boolean outColBinArrRecursive(PGResponseSink utf8Sink, ArrayView array, short elemType, int dim, int flatIndex) {
+    private boolean outColBinArrRecursive(
+            PGResponseSink utf8Sink, ArrayView array, short elemType, int dim, int flatIndex
+    ) {
         final int count = array.getDimLen(dim);
         final int stride = array.getStride(dim);
         boolean hasNulls = false;
@@ -1719,7 +1721,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             switch (elemType) {
                 case ColumnType.LONG:
                     for (int i = 0; i < count; i++) {
-                        long val = array.flatView().getLong(array.getFlatViewOffset() + flatIndex);
+                        long val = array.getLong(flatIndex);
                         if (val == Numbers.LONG_NULL) {
                             hasNulls = true;
                             utf8Sink.setNullValue();
@@ -1732,7 +1734,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     break;
                 case ColumnType.DOUBLE:
                     for (int i = 0; i < count; i++) {
-                        double val = array.flatView().getDouble(array.getFlatViewOffset() + flatIndex);
+                        double val = array.getDouble(flatIndex);
                         if (Double.isNaN(val)) {
                             hasNulls = true;
                             utf8Sink.setNullValue();
@@ -2521,6 +2523,43 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         utf8Sink.resetToBookmark(messageLengthAddress - Byte.BYTES);
     }
 
+    private void setBindVariableAsArray(int i, long lo, int valueSize, long msgLimit, BindVariableService bindVariableService) throws SqlException, BadProtocolException {
+        PGWireArrayView arrayView;
+
+        int dimensions = getInt(lo, msgLimit, "malformed array dimensions");
+        lo += Integer.BYTES;
+        valueSize -= Integer.BYTES;
+
+        int hasNull = getInt(lo, msgLimit, "malformed array null flag");
+        // todo: clarify the exact semantic of this flag; apparently python asyncpg client sends it as 0,
+        // even when there are NULL elements in the array
+//        if (hasNull == 1) {
+        arrayView = transcodingBinaryArrayViews.next();
+//        } else {
+//            arrayView = pgNonNullBinaryArrayViewPool.next();
+//        }
+        lo += Integer.BYTES;
+        valueSize -= Integer.BYTES;
+
+        int componentOid = getInt(lo, msgLimit, "malformed array component oid");
+        lo += Integer.BYTES;
+        valueSize -= Integer.BYTES;
+
+        IntList dimensionSizes = new IntList();
+        for (int j = 0; j < dimensions; j++) {
+            int dimensionSize = getInt(lo, msgLimit, "malformed array dimension size");
+            arrayView.addDimLen(dimensionSize);
+            dimensionSizes.add(dimensionSize);
+            lo += Integer.BYTES;
+            valueSize -= Integer.BYTES;
+
+            lo += Integer.BYTES; // skip lower bound, it's always 1
+            valueSize -= Integer.BYTES;
+        }
+        arrayView.setPtrAndCalculateStrides(lo, lo + valueSize, componentOid);
+        bindVariableService.setArray(i, arrayView);
+    }
+
     private void setBindVariableAsBoolean(
             int variableIndex,
             long valueAddr,
@@ -2599,43 +2638,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     ) throws BadProtocolException, SqlException {
         ensureValueLength(variableIndex, Long.BYTES, valueSize);
         bindVariableService.setLong(variableIndex, getLongUnsafe(valueAddr));
-    }
-
-    private void setBindVariableAsArray(int i, long lo, int valueSize, long msgLimit, BindVariableService bindVariableService) throws SqlException, BadProtocolException {
-        PGWireArrayView arrayView;
-
-        int dimensions = getInt(lo, msgLimit, "malformed array dimensions");
-        lo += Integer.BYTES;
-        valueSize -= Integer.BYTES;
-
-        int hasNull = getInt(lo, msgLimit, "malformed array null flag");
-        // todo: clarify the exact semantic of this flag; apparently python asyncpg client sends it as 0,
-        // even when there are NULL elements in the array
-//        if (hasNull == 1) {
-        arrayView = transcodingBinaryArrayViews.next();
-//        } else {
-//            arrayView = pgNonNullBinaryArrayViewPool.next();
-//        }
-        lo += Integer.BYTES;
-        valueSize -= Integer.BYTES;
-
-        int componentOid = getInt(lo, msgLimit, "malformed array component oid");
-        lo += Integer.BYTES;
-        valueSize -= Integer.BYTES;
-
-        IntList dimensionSizes = new IntList();
-        for (int j = 0; j < dimensions; j++) {
-            int dimensionSize = getInt(lo, msgLimit, "malformed array dimension size");
-            arrayView.addDimLen(dimensionSize);
-            dimensionSizes.add(dimensionSize);
-            lo += Integer.BYTES;
-            valueSize -= Integer.BYTES;
-
-            lo += Integer.BYTES; // skip lower bound, it's always 1
-            valueSize -= Integer.BYTES;
-        }
-        arrayView.setPtrAndCalculateStrides(lo, lo + valueSize, componentOid);
-        bindVariableService.setArray(i, arrayView);
     }
 
     private void setBindVariableAsShort(

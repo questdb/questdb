@@ -35,8 +35,8 @@ import io.questdb.std.Mutable;
 
 public final class ArrayBindVariable extends ArrayFunction implements Mutable {
 
-    private ArrayView view;
     private final DoubleArrayParser doubleArrayParser = new DoubleArrayParser();
+    private ArrayView view;
 
     public void assignType(int type) throws SqlException {
         if (view == null || view.getType() == ColumnType.UNDEFINED) {

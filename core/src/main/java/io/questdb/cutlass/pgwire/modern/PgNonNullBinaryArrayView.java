@@ -76,7 +76,7 @@ final class PgNonNullBinaryArrayView extends PGWireArrayView implements FlatArra
     }
 
     @Override
-    public double getDouble(int flatIndex) {
+    public double getDoubleAtAbsoluteIndex(int flatIndex) {
         final long addr = lo + Integer.BYTES + ((long) flatIndex * (Double.BYTES + Integer.BYTES));
         assert addr < hi;
         long networkOrderVal = Unsafe.getUnsafe().getLong(addr);
@@ -84,7 +84,7 @@ final class PgNonNullBinaryArrayView extends PGWireArrayView implements FlatArra
     }
 
     @Override
-    public long getLong(int flatIndex) {
+    public long getLongAtAbsoluteIndex(int flatIndex) {
         final long addr = lo + Integer.BYTES + ((long) flatIndex * (Long.BYTES + Integer.BYTES));
         assert addr < hi;
         long networkOrderVal = Unsafe.getUnsafe().getLong(addr);

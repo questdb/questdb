@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
-import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -119,10 +118,6 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
             int leftStride1 = left.getStride(1);
             int rightStride0 = right.getStride(0);
             int rightStride1 = right.getStride(1);
-            FlatArrayView leftFlatView = left.flatView();
-            FlatArrayView rightFlatView = right.flatView();
-            int leftIndexOffset = left.getFlatViewOffset();
-            int rightIndexOffset = right.getFlatViewOffset();
             arrayOut.setType(type);
             arrayOut.setDimLen(0, outRowCount);
             arrayOut.setDimLen(1, outColCount);
@@ -132,9 +127,9 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
                 for (int colOut = 0; colOut < outColCount; colOut++) {
                     double sum = 0;
                     for (int commonDim = 0; commonDim < commonDimLen; commonDim++) {
-                        int leftFlatIndex = leftIndexOffset + leftStride0 * rowOut + leftStride1 * commonDim;
-                        int rightFlatIndex = rightIndexOffset + rightStride0 * commonDim + rightStride1 * colOut;
-                        sum += leftFlatView.getDouble(leftFlatIndex) * rightFlatView.getDouble(rightFlatIndex);
+                        int leftFlatIndex = leftStride0 * rowOut + leftStride1 * commonDim;
+                        int rightFlatIndex = rightStride0 * commonDim + rightStride1 * colOut;
+                        sum += left.getDouble(leftFlatIndex) * right.getDouble(rightFlatIndex);
                     }
                     memOut.putDouble(sum);
                 }

@@ -28,7 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
-import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.arr.FunctionArray;
 import io.questdb.cairo.arr.NoopArrayState;
 import io.questdb.cairo.sql.ArrayFunction;
@@ -52,11 +51,7 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
             array.setDimLen(dim, arrayIn.getDimLen(dim));
         }
         array.applyShape(-1);
-        FlatArrayView flatViewIn = arrayIn.flatView();
-        MemoryA memA = array.startMemoryA();
-        for (int n = arrayIn.getFlatViewLength(), i = 0; i < n; i++) {
-            memA.putDouble(flatViewIn.getDouble(i));
-        }
+        arrayIn.appendToMemFlat(array.startMemoryA());
     }
 
     public ArrayConstant(double[] vals) {

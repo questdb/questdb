@@ -46,10 +46,11 @@ public class TranscodingBinaryArrayView extends PGWireArrayView implements FlatA
     public void appendToMemFlat(MemoryA dst) {
         int size = this.flatViewLength;
         switch (elemType()) {
-            // todo: optimize this
             case ColumnType.DOUBLE:
+            case ColumnType.LONG:
+                // TODO optimize to Vect.memcpy()
                 for (int i = 0; i < size; i++) {
-                    dst.putDouble(getDouble(i));
+                    dst.putLong(getLongAtAbsoluteIndex(i));
                 }
                 break;
             default:

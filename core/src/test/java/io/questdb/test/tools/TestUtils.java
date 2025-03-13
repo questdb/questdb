@@ -1873,36 +1873,6 @@ public final class TestUtils {
         }
     }
 
-    private static void assertEqualsRecursive(
-            ArrayView expected,
-            ArrayView actual,
-            int dim,
-            int expectedFlatIndex,
-            int actualFlatIndex
-    ) {
-        // last dimension
-        int dimLen = actual.getDimLen(dim);
-        if (dim == actual.getDimCount() - 1) {
-            for (int i = 0; i < dimLen; i++) {
-                Assert.assertEquals(
-                        expected.flatView().getDouble(expected.getFlatViewOffset() + expectedFlatIndex + i),
-                        actual.flatView().getDouble(actual.getFlatViewOffset() + actualFlatIndex + i),
-                        Numbers.TOLERANCE
-                );
-            }
-        } else {
-            for (int i = 0; i < dimLen; i++) {
-                assertEqualsRecursive(
-                        expected,
-                        actual,
-                        dim + 1,
-                        expectedFlatIndex + i * expected.getStride(dim),
-                        actualFlatIndex + i * actual.getStride(dim)
-                );
-            }
-        }
-    }
-
     private static void assertEquals(Long256 expected, Long256 actual) {
         if (expected == actual) return;
         if (actual == null) {
@@ -1916,6 +1886,36 @@ public final class TestUtils {
                         || expected.getLong3() != actual.getLong3()
         ) {
             Assert.assertEquals(toHexString(expected), toHexString(actual));
+        }
+    }
+
+    private static void assertEqualsRecursive(
+            ArrayView expected,
+            ArrayView actual,
+            int dim,
+            int expectedFlatIndex,
+            int actualFlatIndex
+    ) {
+        // last dimension
+        int dimLen = actual.getDimLen(dim);
+        if (dim == actual.getDimCount() - 1) {
+            for (int i = 0; i < dimLen; i++) {
+                Assert.assertEquals(
+                        expected.getDouble(expected.getFlatViewOffset() + expectedFlatIndex + i),
+                        actual.getDouble(actual.getFlatViewOffset() + actualFlatIndex + i),
+                        Numbers.TOLERANCE
+                );
+            }
+        } else {
+            for (int i = 0; i < dimLen; i++) {
+                assertEqualsRecursive(
+                        expected,
+                        actual,
+                        dim + 1,
+                        expectedFlatIndex + i * expected.getStride(dim),
+                        actualFlatIndex + i * actual.getStride(dim)
+                );
+            }
         }
     }
 

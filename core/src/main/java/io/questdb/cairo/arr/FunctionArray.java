@@ -132,7 +132,7 @@ public class FunctionArray extends MutableArray implements FlatArrayView {
     }
 
     @Override
-    public double getDouble(int flatIndex) {
+    public double getDoubleAtAbsoluteIndex(int flatIndex) {
         validateFlatIndex(flatIndex);
         return functions[flatIndex].getDouble(record);
     }
@@ -142,7 +142,7 @@ public class FunctionArray extends MutableArray implements FlatArrayView {
     }
 
     @Override
-    public long getLong(int flatIndex) {
+    public long getLongAtAbsoluteIndex(int flatIndex) {
         validateFlatIndex(flatIndex);
         return functions()[flatIndex].getLong(record);
     }

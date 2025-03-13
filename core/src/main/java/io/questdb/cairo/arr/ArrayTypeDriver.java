@@ -126,7 +126,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             @NotNull CharSink<?> sink,
             @NotNull String nullLiteral
     ) {
-        double d = array.flatView().getDouble(array.getFlatViewOffset() + index);
+        double d = array.getDouble(index);
         if (!Numbers.isNull(d)) {
             sink.put(d);
         } else {
@@ -721,7 +721,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             @NotNull CharSink<?> sink,
             @NotNull String nullLiteral
     ) {
-        long d = array.flatView().getLong(array.getFlatViewOffset() + index);
+        long d = array.flatView().getLongAtAbsoluteIndex(array.getFlatViewOffset() + index);
         if (d != Numbers.LONG_NULL) {
             sink.put(d);
         } else {

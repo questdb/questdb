@@ -25,7 +25,6 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cutlass.pgwire.modern.DoubleArrayParser;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
@@ -59,7 +58,8 @@ public class DoubleArrayParserTest extends AbstractTest {
                 parser.of(input);
                 Assert.fail();
             } catch (IllegalArgumentException ignore) {
-                TestUtils.assertContains(ignore.getMessage(), "element counts in sub-arrays don't match [depth=1, currentCount=1, alreadyObservedCount=2, position=19]");
+                TestUtils.assertContains(ignore.getMessage(),
+                        "element counts in sub-arrays don't match [depth=1, currentCount=1, alreadyObservedCount=2, position=19]");
             }
         }
     }
@@ -79,7 +79,6 @@ public class DoubleArrayParserTest extends AbstractTest {
         String input = "{{\"1\",\"2.0\"},{\"3.1\",\"0.4\"}}";
         int expectedType = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
 
-        FlatArrayView flat;
         try (DoubleArrayParser parser = new DoubleArrayParser()) {
             parser.of(input);
 
@@ -89,13 +88,11 @@ public class DoubleArrayParserTest extends AbstractTest {
             Assert.assertEquals(1, parser.getStride(1));
             Assert.assertEquals(expectedType, parser.getType());
             Assert.assertEquals(2, parser.getDimCount());
-
-            flat = parser.flatView();
+            Assert.assertEquals(1, parser.getDouble(0), 0.0001);
+            Assert.assertEquals(2, parser.getDouble(1), 0.0001);
+            Assert.assertEquals(3.1, parser.getDouble(2), 0.0001);
+            Assert.assertEquals(0.4, parser.getDouble(3), 0.0001);
         }
-        Assert.assertEquals(1, flat.getDouble(0), 0.0001);
-        Assert.assertEquals(2, flat.getDouble(1), 0.0001);
-        Assert.assertEquals(3.1, flat.getDouble(2), 0.0001);
-        Assert.assertEquals(0.4, flat.getDouble(3), 0.0001);
     }
 
     @Test
@@ -103,22 +100,18 @@ public class DoubleArrayParserTest extends AbstractTest {
         String input = "{\r{1,2.0}, {3.1,\n0.4}}";
         int expectedType = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
 
-        FlatArrayView flat;
         try (DoubleArrayParser parser = new DoubleArrayParser()) {
             parser.of(input);
-
             Assert.assertEquals(4, parser.getFlatViewLength());
             Assert.assertEquals(0, parser.getFlatViewOffset());
             Assert.assertEquals(2, parser.getStride(0));
             Assert.assertEquals(1, parser.getStride(1));
             Assert.assertEquals(expectedType, parser.getType());
             Assert.assertEquals(2, parser.getDimCount());
-
-            flat = parser.flatView();
+            Assert.assertEquals(1, parser.getDouble(0), 0.0001);
+            Assert.assertEquals(2, parser.getDouble(1), 0.0001);
+            Assert.assertEquals(3.1, parser.getDouble(2), 0.0001);
+            Assert.assertEquals(0.4, parser.getDouble(3), 0.0001);
         }
-        Assert.assertEquals(1, flat.getDouble(0), 0.0001);
-        Assert.assertEquals(2, flat.getDouble(1), 0.0001);
-        Assert.assertEquals(3.1, flat.getDouble(2), 0.0001);
-        Assert.assertEquals(0.4, flat.getDouble(3), 0.0001);
     }
 }

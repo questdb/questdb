@@ -163,7 +163,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                 }
                 flatIndex += strideAtDim * indexAtDim;
             }
-            return array.flatView().getDouble(array.getFlatViewOffset() + flatIndex);
+            return array.getDouble(flatIndex);
         }
 
         @Override
