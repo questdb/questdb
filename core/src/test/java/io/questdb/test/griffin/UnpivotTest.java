@@ -224,13 +224,16 @@ public class UnpivotTest extends AbstractSqlParserTest {
                             "  for: year\n" +
                             "  in: [2000,2010,2020]\n" +
                             "  nulls: excluded\n" +
-                            "    Async Group By workers: 1\n" +
+                            "    GroupBy vectorized: false\n" +
                             "      keys: [country]\n" +
-                            "      values: [sum(case([population,null,year])),sum(case([population,null,year])),sum(case([population,null,year]))]\n" +
-                            "      filter: null\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: cities\n");
+                            "      values: [sum(case([SUM,nullL,year])),sum(case([SUM,nullL,year])),sum(case([SUM,nullL,year]))]\n" +
+                            "        Async JIT Group By workers: 1\n" +
+                            "          keys: [country,year]\n" +
+                            "          values: [sum(population)]\n" +
+                            "          filter: year in [2000,2010,2020]\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: cities\n");
 
             assertSql("country\tyear\tsum_population\n" +
                             "NL\t2000\t1005\n" +
@@ -247,12 +250,15 @@ public class UnpivotTest extends AbstractSqlParserTest {
                             "  for: symbol\n" +
                             "  in: [BTC-USD,ETH-USD]\n" +
                             "  nulls: excluded\n" +
-                            "    Async Group By workers: 1\n" +
-                            "      values: [avg(case([price,NaN,symbol])),avg(case([price,NaN,symbol]))]\n" +
-                            "      filter: null\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: trades\n");
+                            "    GroupBy vectorized: false\n" +
+                            "      values: [avg(case([avg,NaN,symbol])),avg(case([avg,NaN,symbol]))]\n" +
+                            "        Async JIT Group By workers: 1\n" +
+                            "          keys: [symbol]\n" +
+                            "          values: [avg(price)]\n" +
+                            "          filter: symbol in [BTC-USD,ETH-USD]\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: trades\n");
 
             assertSql("symbol\tavg_price\n" +
                             "BTC-USD\t101500.66363636362\n" +

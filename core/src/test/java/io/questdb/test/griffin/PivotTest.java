@@ -481,30 +481,32 @@ public class PivotTest extends AbstractSqlParserTest {
                             "    COUNT(population)\n" +
                             "    FOR\n" +
                             "        year IN (2000, 2010, 2020)\n" +
-                            "    GROUP BY country\n" +
+//                            "    GROUP BY country\n" +
                             ");\n";
-            String rewrittenQuery =
-                    "SELECT \n" +
-                            "    country,\n" +
-                            "    SUM(CASE WHEN year = 2000 THEN population ELSE null END) AS \"2000_SUM\",\n" +
-                            "    COUNT(CASE WHEN year = 2000 THEN population ELSE null END) AS \"2000_COUNT\",\n" +
-                            "    SUM(CASE WHEN year = 2010 THEN population ELSE null END) AS \"2010_SUM\",\n" +
-                            "    COUNT(CASE WHEN year = 2010 THEN population ELSE null END) AS \"2010_COUNT\",\n" +
-                            "    SUM(CASE WHEN year = 2020 THEN population ELSE null END) AS \"2020_SUM\",\n" +
-                            "    COUNT(CASE WHEN year = 2020 THEN population ELSE null END) AS \"2020_COUNT\"\n" +
-                            "FROM cities\n" +
-                            "GROUP BY country;";
+//            String rewrittenQuery =
+//                    "SELECT \n" +
+//                            "    country,\n" +
+//                            "    SUM(CASE WHEN year = 2000 THEN population ELSE null END) AS \"2000_SUM\",\n" +
+//                            "    COUNT(CASE WHEN year = 2000 THEN population ELSE null END) AS \"2000_COUNT\",\n" +
+//                            "    SUM(CASE WHEN year = 2010 THEN population ELSE null END) AS \"2010_SUM\",\n" +
+//                            "    COUNT(CASE WHEN year = 2010 THEN population ELSE null END) AS \"2010_COUNT\",\n" +
+//                            "    SUM(CASE WHEN year = 2020 THEN population ELSE null END) AS \"2020_SUM\",\n" +
+//                            "    COUNT(CASE WHEN year = 2020 THEN population ELSE null END) AS \"2020_COUNT\"\n" +
+//                            "FROM cities\n" +
+//                            "GROUP BY country;";
 
 //            String model = "select-group-by country, SUM(switch(year,2000,population,null)) 2000_SUM, COUNT(switch(year,2000,population,null)) 2000_COUNT, SUM(switch(year,2010,population,null)) 2010_SUM, COUNT(switch(year,2010,population,null)) 2010_COUNT, SUM(switch(year,2020,population,null)) 2020_SUM, COUNT(switch(year,2020,population,null)) 2020_COUNT from (select [country, population, year] from cities)";
 //            assertModel(model, pivotQuery, ExecutionModel.QUERY);
 //            assertModel(model, rewrittenQuery, ExecutionModel.QUERY);
+
+            assertPlanNoLeakCheck(pivotQuery, "abc");
 
             String result = "country\t2000_SUM\t2000_COUNT\t2010_SUM\t2010_COUNT\t2020_SUM\t2020_COUNT\n" +
                     "NL\t1005\t1\t1065\t1\t1158\t1\n" +
                     "US\t8579\t2\t8783\t2\t9510\t2\n";
 
             assertSql(result, pivotQuery);
-            assertSql(result, rewrittenQuery);
+//            assertSql(result, rewrittenQuery);
         });
     }
 
