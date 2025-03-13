@@ -23,7 +23,7 @@
  ******************************************************************************/
 use crate::col_driver::util::cast_slice;
 use crate::col_driver::{ColumnDriver, MappedColumn};
-use crate::error::{CoreErrorExt, CoreResult, fmt_err};
+use crate::error::{CoreErrorExt, CoreResult};
 
 /// The `string` column type is implemented using two files:
 ///
@@ -90,9 +90,11 @@ impl ColumnDriver for StringDriver {
     }
 }
 
-/// Return (data_size, aux_size).
-fn data_and_aux_size_at(col: &MappedColumn, row_count: u64) -> CoreResult<(u64, u64)> {
-    let aux_mmap = col.aux.as_ref().ok_or_else(|| {
+pub(super) mod err {
+    use crate::col_driver::MappedColumn;
+    use crate::error::{CoreError, fmt_err};
+
+    pub(super) fn missing_aux(col: &MappedColumn) -> CoreError {
         fmt_err!(
             InvalidColumnData,
             "string driver expects aux mapping, but missing for {} column {} in {}",
@@ -100,35 +102,54 @@ fn data_and_aux_size_at(col: &MappedColumn, row_count: u64) -> CoreResult<(u64, 
             col.col_name,
             col.parent_path.display()
         )
-    })?;
-    let aux: &[u64] = cast_slice(&aux_mmap[..]).with_context(|_| {
+    }
+
+    pub(super) fn bad_aux_layout(col: &MappedColumn) -> String {
         format!(
             "bad layout of string aux column {} in {}",
             col.col_name,
             col.parent_path.display()
         )
-    })?;
-    let required_aux_entry_count = row_count + 1; // N + 1 logic (see format comment above)
-    if aux.len() < required_aux_entry_count as usize {
-        return Err(fmt_err!(
+    }
+
+    pub(super) fn not_found(col: &MappedColumn, index: u64) -> CoreError {
+        fmt_err!(
             InvalidColumnData,
             "string entry index {} not found in aux for column {} in {}",
-            row_count,
+            index,
             col.col_name,
             col.parent_path.display()
-        ));
+        )
     }
-    let data_size = aux[row_count as usize - 1];
-    if (col.data.len() as u64) < data_size {
-        return Err(fmt_err!(
+
+    pub(super) fn bad_data_size(col: &MappedColumn, data_size: u64) -> CoreError {
+        fmt_err!(
             InvalidColumnData,
             "string required data size {} exceeds data mmap len {} for column {} in {}",
             data_size,
             col.data.len(),
             col.col_name,
             col.parent_path.display()
-        ));
+        )
     }
+}
+
+/// Return (data_size, aux_size).
+fn data_and_aux_size_at(col: &MappedColumn, row_count: u64) -> CoreResult<(u64, u64)> {
+    // Main logic
+    let aux_mmap = col.aux.as_ref().ok_or_else(|| err::missing_aux(col))?;
+    let aux: &[u64] = cast_slice(&aux_mmap[..]).with_context(|_| err::bad_aux_layout(col))?;
+
+    let required_aux_entry_count = row_count + 1; // N + 1 logic
+    if aux.len() < required_aux_entry_count as usize {
+        return Err(err::not_found(col, row_count));
+    }
+
+    let data_size = aux[row_count as usize - 1];
+    if (col.data.len() as u64) < data_size {
+        return Err(err::bad_data_size(col, data_size));
+    }
+
     let aux_size = required_aux_entry_count * (size_of::<u64>() as u64);
     Ok((data_size, aux_size))
 }
