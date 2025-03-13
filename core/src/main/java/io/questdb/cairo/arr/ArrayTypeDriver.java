@@ -121,12 +121,12 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     private static final ArrayValueAppender VALUE_APPENDER_LONG = ArrayTypeDriver::appendLongFromArrayToSink;
 
     public static void appendDoubleFromArrayToSink(
-            @NotNull ArrayView view,
+            @NotNull ArrayView array,
             int index,
             @NotNull CharSink<?> sink,
             @NotNull String nullLiteral
     ) {
-        double d = view.flatView().getDouble(view.getFlatViewOffset() + index);
+        double d = array.flatView().getDouble(array.getFlatViewOffset() + index);
         if (!Numbers.isNull(d)) {
             sink.put(d);
         } else {
@@ -650,8 +650,8 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return res;
     }
 
-    private static @NotNull ArrayValueAppender resolveAppender(@NotNull ArrayView arrayView) {
-        int elemType = ColumnType.decodeArrayElementType(arrayView.getType());
+    private static @NotNull ArrayValueAppender resolveAppender(@NotNull ArrayView array) {
+        int elemType = ColumnType.decodeArrayElementType(array.getType());
         switch (elemType) {
             case ColumnType.DOUBLE:
                 return VALUE_APPENDER_DOUBLE;
@@ -674,14 +674,14 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     /**
      * Write the values and -- while doing so, also calculate the crc value, unless it was already cached.
      **/
-    private static void writeDataEntry(@NotNull MemoryA dataMem, @NotNull ArrayView arrayView) {
-        writeShape(dataMem, arrayView);
+    private static void writeDataEntry(@NotNull MemoryA dataMem, @NotNull ArrayView array) {
+        writeShape(dataMem, array);
         // We could be storing values of different datatypes.
         // We thus need to align accordingly. I.e., if we store doubles, we need to align on an 8-byte boundary.
         // for shorts, it's on a 2-byte boundary. For booleans, we align to the byte.
-        final int requiredByteAlignment = ColumnType.sizeOf(ColumnType.decodeArrayElementType(arrayView.getType()));
+        final int requiredByteAlignment = ColumnType.sizeOf(ColumnType.decodeArrayElementType(array.getType()));
         padTo(dataMem, requiredByteAlignment);
-        arrayView.appendToMem(dataMem);
+        array.appendToMem(dataMem);
         // We pad at the end, ready for the next entry that starts with an int.
         padTo(dataMem, Integer.BYTES);
     }
@@ -689,11 +689,11 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     /**
      * Write the dimensions.
      */
-    private static void writeShape(@NotNull MemoryA dataMem, @NotNull ArrayView arrayView) {
+    private static void writeShape(@NotNull MemoryA dataMem, @NotNull ArrayView array) {
         assert dataMem.getAppendOffset() % Integer.BYTES == 0; // aligned integer write
-        int dim = arrayView.getDimCount();
+        int dim = array.getDimCount();
         for (int i = 0; i < dim; ++i) {
-            dataMem.putInt(arrayView.getDimLen(i));
+            dataMem.putInt(array.getDimLen(i));
         }
     }
 
@@ -716,12 +716,12 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     static void appendLongFromArrayToSink(
-            @NotNull ArrayView view,
+            @NotNull ArrayView array,
             int index,
             @NotNull CharSink<?> sink,
             @NotNull String nullLiteral
     ) {
-        long d = view.flatView().getLong(view.getFlatViewOffset() + index);
+        long d = array.flatView().getLong(array.getFlatViewOffset() + index);
         if (d != Numbers.LONG_NULL) {
             sink.put(d);
         } else {
@@ -732,7 +732,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     @FunctionalInterface
     public interface ArrayValueAppender {
         void appendFromFlatIndex(
-                @NotNull ArrayView view,
+                @NotNull ArrayView array,
                 int index,
                 @NotNull CharSink<?> sink,
                 @NotNull String nulLiteral
