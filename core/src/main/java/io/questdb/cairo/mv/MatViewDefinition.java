@@ -53,19 +53,19 @@ public class MatViewDefinition implements Mutable {
     public static final String MAT_VIEW_DEFINITION_FILE_NAME = "_mv";
     public static final int MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE = 0;
     private String baseTableName;
-    // is not persisted, parsed from timeZoneOffset
+    // Not persisted, parsed from timeZoneOffset.
     private long fixedOffset;
     private String matViewSql;
     private TableToken matViewToken;
     private int refreshType = -1;
-    // is not persisted, parsed from timeZone
+    // Not persisted, parsed from timeZone.
     private @Nullable TimeZoneRules rules;
     private long samplingInterval;
     private char samplingIntervalUnit;
     private @Nullable String timeZone;
     private @Nullable String timeZoneOffset;
-    // is not persisted, parsed from samplingInterval and samplingIntervalUnit;
-    // access must be synchronized as this object is not thread-safe
+    // Not persisted, parsed from samplingInterval and samplingIntervalUnit.
+    // Access must be synchronized as this object is not thread-safe.
     private TimestampSampler timestampSampler;
 
     public static void append(@NotNull MatViewDefinition matViewDefinition, @NotNull AppendableBlock block) {
@@ -216,7 +216,11 @@ public class MatViewDefinition implements Mutable {
         }
     }
 
-    private static boolean loadMatViewDefinition(MatViewDefinition destDefinition, ReadableBlock block, TableToken matViewToken) {
+    private static boolean loadMatViewDefinition(
+            MatViewDefinition destDefinition,
+            ReadableBlock block,
+            TableToken matViewToken
+    ) {
         if (block.type() != MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE) {
             // Unknown block.
             return false;

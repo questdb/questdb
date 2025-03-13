@@ -45,6 +45,7 @@ import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
+import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
@@ -155,7 +156,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @NotNull TableReader baseTableReader,
             @NotNull MatViewDefinition viewDefinition,
             long lastRefreshTxn
-    ) {
+    ) throws SqlException {
         final long lastTxn = baseTableReader.getSeqTxn();
 
         long minTs;
@@ -174,7 +175,25 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
 
         if (minTs <= maxTs) {
-            final TimestampSampler timestampSampler = viewDefinition.getTimestampSampler();
+            TimestampSampler timestampSampler = viewDefinition.getTimestampSampler();
+            // For small sampling intervals such as '10T' or '2s' the actual sampler is
+            // chosen as a 10x multiple of the original interval. That's to speed up
+            // iteration done by the interval iterator.
+            final long minIntervalMicros = configuration.getMatViewMinRefreshInterval();
+            long approxBucketSize = timestampSampler.getApproxBucketSize();
+            long actualInterval = viewDefinition.getSamplingInterval();
+            if (approxBucketSize < minIntervalMicros) {
+                while (approxBucketSize < minIntervalMicros) {
+                    approxBucketSize *= 10;
+                    actualInterval *= 10;
+                }
+                timestampSampler = TimestampSamplerFactory.getInstance(
+                        actualInterval,
+                        viewDefinition.getSamplingIntervalUnit(),
+                        0
+                );
+            }
+
             final long rowsPerBucket = estimateRowsPerBucket(baseTableReader, timestampSampler.getApproxBucketSize());
             final int rowsPerQuery = configuration.getMatViewRowsPerQueryEstimate();
             final int step = Math.max(1, (int) (rowsPerQuery / rowsPerBucket));

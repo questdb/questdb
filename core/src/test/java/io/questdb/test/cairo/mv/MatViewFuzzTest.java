@@ -261,6 +261,18 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testMultipleQueryExecutionsPerRefreshSmallSamplingInterval() throws Exception {
+        final Rnd rnd = fuzzer.generateRandom(LOG);
+        final int rowsPerQuery = Math.max(100, rnd.nextInt(10_000));
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
+        final String tableName = testName.getMethodName();
+        final String mvName = testName.getMethodName() + "_mv";
+        final int secs = 1 + rnd.nextInt(30);
+        final String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by " + secs + "s";
+        testMvFuzz(tableName, mvName, viewSql);
+    }
+
+    @Test
     public void testOneView() throws Exception {
         final String tableName = testName.getMethodName();
         final String mvName = testName.getMethodName() + "_mv";
