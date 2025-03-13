@@ -50,6 +50,7 @@ import io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InTimestampIntervalFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InUuidFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastStrToDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToRegClassFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToStrArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.StringToStringArrayFunction;
@@ -81,6 +82,7 @@ import io.questdb.griffin.engine.functions.columns.VarcharColumn;
 import io.questdb.griffin.engine.functions.conditional.CoalesceFunctionFactory;
 import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
+import io.questdb.griffin.engine.functions.constants.ArrayTypeConstant;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.ByteConstant;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
@@ -2531,8 +2533,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     args.add(new ArrayConstant(new double[]{1.0}));
                                     args.add(new ArrayConstant(new double[]{1.0}));
                                     break;
-                                } else if (isArray && !isConstant && sigArgType == ColumnType.DOUBLE) {
-                                    args.add(new ArrayConstant(new double[][]{{1}, {1}}));
+                                } else if (isArray && sigArgType == ColumnType.DOUBLE) {
+                                    if (factory instanceof CastStrToDoubleArrayFunctionFactory && p == 1) {
+                                        args.add(new ArrayTypeConstant(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2)));
+                                    } else {
+                                        args.add(new ArrayConstant(new double[][]{{1}, {1}}));
+                                    }
                                 } else if (factory instanceof SwitchFunctionFactory) {
                                     args.add(new IntConstant(1));
                                     args.add(new IntConstant(2));
