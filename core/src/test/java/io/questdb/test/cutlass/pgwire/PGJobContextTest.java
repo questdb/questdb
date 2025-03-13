@@ -5834,35 +5834,6 @@ if __name__ == "__main__":
     }
 
     @Test
-    public void testInsertEmptyArray2D() throws Exception {
-        skipOnWalRun();
-        skipInLegacyMode();
-
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
-                stmt.execute();
-            }
-
-            try (PreparedStatement stmt = connection.prepareStatement("insert into x values (?)")) {
-                Array arr = connection.createArrayOf("int8", new Double[]{});
-                stmt.setArray(1, arr);
-                stmt.execute();
-            }
-
-            try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
-                sink.clear();
-                try (ResultSet rs = stmt.executeQuery()) {
-                    assertResultSet("al[ARRAY]\n" +
-                                    "{}\n",
-                            sink,
-                            rs
-                    );
-                }
-            }
-        });
-    }
-
-    @Test
     public void testInsertExtendedAndCommit() throws Exception {
         String expectedAll = "count[BIGINT]\n" +
                 "10000\n";
@@ -6064,6 +6035,29 @@ nodejs code:
                 script,
                 getStdPgWireConfigAltCreds()
         );
+    }
+
+    @Test
+    public void testInsertJaggedArray() throws Exception {
+        skipOnWalRun();
+        skipInLegacyMode();
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+
+            try (Statement statement = connection.createStatement()) {
+                statement.executeQuery("SELECT ARRAY[[1.0, 2], [3, 4], [5, 6, 7]] arr FROM long_sequence(1)");
+                fail("jagged array should not be allowed");
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "element counts in sub-arrays don't match");
+            }
+
+            try (Statement statement = connection.createStatement()) {
+                statement.executeQuery("SELECT '{{1.0, 2}, {3, 4}, {5, 6, 7}}'::double[] arr FROM long_sequence(1)");
+                fail("jagged array should not be allowed");
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "element counts in sub-arrays don't match");
+            }
+        });
     }
 
     @Test

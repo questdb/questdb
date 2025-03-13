@@ -207,7 +207,7 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
                 // first time we see this dimension
                 shape.setQuick(depth, currentCount);
             } else if (currentCount != alreadyObservedCount) {
-                throw new IllegalArgumentException("inconsistent array [depth=" + depth + ", currentCount=" + currentCount + ", alreadyObservedCount=" + alreadyObservedCount + ", position=" + position + "]");
+                throw new IllegalArgumentException("element counts in sub-arrays don't match [depth=" + depth + ", currentCount=" + currentCount + ", alreadyObservedCount=" + alreadyObservedCount + ", position=" + position + "]");
             }
         }
     }
