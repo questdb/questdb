@@ -85,8 +85,7 @@ public abstract class ArrayView implements QuietCloseable {
 
     /**
      * Convenience that downcasts `flatView` into {@link BorrowedFlatArrayView}.
-     * There is no general guarantee that the downcast will succeed, this depends
-     * on the implementation you call it on.
+     * If called on the wrong implementation, this call will fail with a cast exception.
      */
     public final BorrowedFlatArrayView borrowedFlatView() {
         return (BorrowedFlatArrayView) flatView;
