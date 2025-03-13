@@ -145,11 +145,90 @@ fn data_and_aux_size_at(col: &MappedColumn, row_count: u64) -> CoreResult<(u64, 
         return Err(err::not_found(col, row_count));
     }
 
-    let data_size = aux[row_count as usize - 1];
+    let data_size = aux[row_count as usize];
     if (col.data.len() as u64) < data_size {
         return Err(err::bad_data_size(col, data_size));
     }
 
     let aux_size = required_aux_entry_count * (size_of::<u64>() as u64);
     Ok((data_size, aux_size))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use super::*;
+    use crate::col_driver::ColumnTypeTag;
+    use crate::error::CoreErrorCause;
+
+    fn map_col(name: &str) -> MappedColumn {
+        /*
+
+        It should be noted that the various test columns have been generated as so:
+
+            final String nullString = "NULL";
+            final String emptyString = "''";
+            final String shortStr = "'abc'";
+            final String longStr = "'Lorem ipsum dolor sit amet, consectetur tincidunt.'"; // 50 bytes
+
+            primaryMain.execute("create table x (s1 string, s2 string, s3 string, s4 string, timestamp_c timestamp) timestamp(timestamp_c) partition by day wal");
+            primaryMain.execute("insert into x (s1, s2, s3, s4, timestamp_c) values " +
+                "(" + nullString + ", " + emptyString + ", " + shortStr + ", " + longStr + ", '2022-02-24T01:01:00')");
+            primaryMain.execute("insert into x (s1, s2, s3, s4, timestamp_c) values " +
+                "(" + emptyString + ", " + shortStr + ", " + longStr + ", " + nullString + ", '2022-02-24T01:01:01')");
+            primaryMain.execute("insert into x (s1, s2, s3, s4, timestamp_c) values " +
+                "(" + shortStr + ", " + longStr + ", " + nullString + ", " + emptyString + ", '2022-02-24T01:01:02')");
+            primaryMain.execute("insert into x (s1, s2, s3, s4, timestamp_c) values " +
+                "(" + longStr + ", " + nullString + ", " + emptyString + ", " + longStr + ", '2022-02-24T01:01:03')");
+            primaryMain.execute("insert into x (s1, s2, s3, s4, timestamp_c) values " +
+                "(" + nullString + ", " + emptyString + ", " + shortStr + ", " + longStr + ", '2022-02-24T01:01:04')");
+
+        This gives the various columns different starting and ending patterns.
+
+        IMPORTANT! ALL THE COLUMNS HAVE BEEN TRUNCATED!
+         */
+        let mut parent_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        parent_path.push("resources/test/col_driver/string");
+        MappedColumn::open(parent_path, name, ColumnTypeTag::String.into_type()).unwrap()
+    }
+
+    #[test]
+    fn test_s1() {
+        let col = map_col("s1");
+
+        let (data_size, aux_size) = StringDriver.col_sizes_for_size(&col, 0).unwrap();
+        assert_eq!(data_size, 0);
+        assert_eq!(aux_size, Some(8));
+
+        // // index 0 is null string
+        // let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 1).unwrap();
+        // assert_eq!(data_size, 0);
+        // assert_eq!(aux_size, Some(16));
+        //
+        // // index 1 is empty string
+        // let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 2).unwrap();
+        // assert_eq!(data_size, 0);
+        // assert_eq!(aux_size, Some(32));
+        //
+        // // index 2 is a short inlined string
+        // let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 3).unwrap();
+        // assert_eq!(data_size, 0);
+        // assert_eq!(aux_size, Some(48));
+        //
+        // // index 3 is a 50-byte non-inlined string
+        // let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 4).unwrap();
+        // assert_eq!(data_size, 50);
+        // assert_eq!(aux_size, Some(64));
+        //
+        // // index 4 is a null string
+        // let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 5).unwrap();
+        // assert_eq!(data_size, 50);
+        // assert_eq!(aux_size, Some(80));
+        //
+        // // out of range
+        // let err = VarcharDriver.col_sizes_for_size(&col, 6).unwrap_err();
+        // let msg = format!("{:#}", err);
+        // assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
+        // assert!(msg.contains("varchar row index 5 not found in aux for column v1 in"));
+    }
 }
