@@ -28,8 +28,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.arr.BorrowedFlatArrayView;
-import io.questdb.cairo.arr.MmappedArray;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.Chars;
 import io.questdb.std.Long128;
@@ -47,7 +47,7 @@ import io.questdb.std.str.Utf8s;
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
 
 public class LineTcpEventBuffer {
-    private final MmappedArray borrowedDirectArrayView = new MmappedArray();
+    private final BorrowedArray borrowedDirectArrayView = new BorrowedArray();
     private final long bufLo;
     private final long bufSize;
     private final FlyweightDirectUtf16Sink tempSink = new FlyweightDirectUtf16Sink();
@@ -59,7 +59,7 @@ public class LineTcpEventBuffer {
         this.bufSize = bufLo + bufSize;
     }
 
-    public long addArray(long address, MmappedArray arrayView) {
+    public long addArray(long address, BorrowedArray arrayView) {
         if (arrayView == null) {
             return addNull(address);
         }

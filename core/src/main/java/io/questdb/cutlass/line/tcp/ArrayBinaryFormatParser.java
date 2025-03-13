@@ -25,7 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.arr.MmappedArray;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.Unsafe;
@@ -48,7 +48,7 @@ import static io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode.*;
  */
 public class ArrayBinaryFormatParser implements QuietCloseable {
 
-    private final MmappedArray array = new MmappedArray();
+    private final BorrowedArray array = new BorrowedArray();
     private short elemType;
     private int nDims;
     private int nextBinaryPartExpectSize = 1;
@@ -61,7 +61,7 @@ public class ArrayBinaryFormatParser implements QuietCloseable {
         state = ParserState.ELEMENT_TYPE;
     }
 
-    public @NotNull MmappedArray getArray() {
+    public @NotNull BorrowedArray getArray() {
         assert state == ParserState.FINISH;
         return array;
     }

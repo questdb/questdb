@@ -30,15 +30,15 @@ import io.questdb.std.Unsafe;
 
 import static io.questdb.cairo.arr.ArrayTypeDriver.bytesToSkipForAlignment;
 
-public class MmappedArray extends MutableArray {
+public class BorrowedArray extends MutableArray {
     // Helper object used during init
-    private final DirectIntSlice mmappedShape = new DirectIntSlice();
+    private final DirectIntSlice borrowedShape = new DirectIntSlice();
 
-    public MmappedArray() {
+    public BorrowedArray() {
         this.flatView = new BorrowedFlatArrayView();
     }
 
-    public MmappedArray of(int columnType, long auxAddr, long auxLim, long dataAddr, long dataLim, long rowNum) {
+    public BorrowedArray of(int columnType, long auxAddr, long auxLim, long dataAddr, long dataLim, long rowNum) {
         assert ColumnType.isArray(columnType) : "type class is not Array";
         setType(columnType);
         short elemType = ColumnType.decodeArrayElementType(columnType);
@@ -72,7 +72,7 @@ public class MmappedArray extends MutableArray {
         return this;
     }
 
-    public MmappedArray of(int columnType, int nDims, long shapeAddr, long valuePtr, int valueSize) {
+    public BorrowedArray of(int columnType, int nDims, long shapeAddr, long valuePtr, int valueSize) {
         assert shapeAddr != 0 : "shapeAddr == 0";
         assert ColumnType.isArray(columnType) : "columnType is not Array";
         short elemType = ColumnType.decodeArrayElementType(columnType);
@@ -105,13 +105,13 @@ public class MmappedArray extends MutableArray {
     }
 
     private void loadShape(long shapeAddr, int nDims) {
-        mmappedShape.of(shapeAddr, nDims);
+        borrowedShape.of(shapeAddr, nDims);
         try {
             for (int i = 0; i < nDims; i++) {
-                setDimLen(i, mmappedShape.get(i));
+                setDimLen(i, borrowedShape.get(i));
             }
         } finally {
-            mmappedShape.reset();
+            borrowedShape.reset();
         }
     }
 }

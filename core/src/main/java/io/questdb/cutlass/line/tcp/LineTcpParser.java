@@ -25,7 +25,7 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.arr.MmappedArray;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cutlass.line.tcp.ArrayBinaryFormatParser.ParseException;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
@@ -718,7 +718,7 @@ public class LineTcpParser implements QuietCloseable {
             Misc.free(arrayBinaryParser);
         }
 
-        public @NotNull MmappedArray getArray() {
+        public @NotNull BorrowedArray getArray() {
             return arrayBinaryParser.getArray();
         }
 
