@@ -217,6 +217,8 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             sink.putAscii(nullLiteral);
             return;
         }
+        // An empty array can have various shapes, such as (100_000_000, 100_000_000, 0).
+        // The arrayToText() call below would output 10 quadrillion empty brackets in that case.
         if (array.isEmpty()) {
             sink.put(openChar).put(closeChar);
             return;

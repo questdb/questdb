@@ -47,7 +47,7 @@ public abstract class ArrayView implements QuietCloseable {
     protected FlatArrayView flatView;
     protected int flatViewLength;
     protected int flatViewOffset;
-    protected boolean isVanilla;
+    protected boolean isVanilla = true;
     protected int type = ColumnType.UNDEFINED;
 
     public final void appendToMem(MemoryA mem) {
@@ -57,7 +57,7 @@ public abstract class ArrayView implements QuietCloseable {
         if (isVanilla) {
             if (flatView instanceof BorrowedFlatArrayView) {
                 // Ensure a dedicated, inlineable call site
-                flatView.appendToMemFlat(mem);
+                ((BorrowedFlatArrayView) flatView).appendToMemFlat(mem);
             } else {
                 flatView.appendToMemFlat(mem);
             }
@@ -73,19 +73,14 @@ public abstract class ArrayView implements QuietCloseable {
         if (this.isVanilla && other.isVanilla) {
             return this.flatView.flatEquals(other.flatView);
         }
+        // isEmpty() involves a loop, perform it after the above step in order to avoid the overhead
+        // for the most likely case of a non-empty array. We need this check to protect from running
+        // arrayEqualsRecursive() for an almost unbounded number of steps, e.g., on an array of shape
+        // (100_000_000, 100_000_000, 0).
         if (isEmpty()) {
             return true;
         }
         return arrayEqualsRecursive(0, 0, other, 0);
-    }
-
-    public boolean isEmpty() {
-        for (int i = 0; i < shape.size(); i++) {
-            if (shape.getQuick(i) == 0) {
-                return true;
-            }
-        }
-        return false;
     }
 
     @Override
@@ -150,6 +145,15 @@ public abstract class ArrayView implements QuietCloseable {
      */
     public final int getType() {
         return type;
+    }
+
+    public boolean isEmpty() {
+        for (int i = 0; i < shape.size(); i++) {
+            if (shape.getQuick(i) == 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public final boolean isNull() {

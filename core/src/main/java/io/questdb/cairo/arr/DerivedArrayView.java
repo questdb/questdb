@@ -28,20 +28,20 @@ import io.questdb.cairo.CairoException;
 import io.questdb.std.Numbers;
 
 /**
- * A view over a native-memory array. Does not own the backing native memory.
- * The array contents can't be mutated through this view, but the view itself can be.
- * You can change what slice of the underlying flat array it represents, as well as
- * transpose it.
+ * A view over an array. Does not own the backing flat array. The array contents can't
+ * be mutated through this view, but the view itself can be: you can change what slice
+ * of the underlying flat array it represents, as well as transpose it.
  */
 public class DerivedArrayView extends ArrayView {
 
     public final void flattenDim(int dim, int argPos) {
         final int nDims = getDimCount();
         assert dim >= 0 && dim < nDims : "dim out of range: " + dim + ", nDims: " + nDims;
-        if (getStride(dim) == 1) {
+        if (getStride(dim) == 1 && getDimLen(dim) > 1) {
             throw CairoException.nonCritical()
                     .position(argPos)
-                    .put("cannot flatten dim with stride 1 [dim=").put(dim)
+                    .put("cannot flatten dim with stride = 1 and length > 1 [dim=").put(dim)
+                    .put(", dimLen=").put(getDimLen(dim))
                     .put(", nDims=").put(nDims).put(']');
         }
         final int dimToFlattenInto;
@@ -117,6 +117,7 @@ public class DerivedArrayView extends ArrayView {
     }
 
     public void transpose() {
+        isVanilla = false;
         strides.reverse();
         shape.reverse();
     }
