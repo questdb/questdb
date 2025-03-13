@@ -837,6 +837,9 @@ public class SqlParser {
                 if (sampleByFill != null && sampleByFill.size() > 0) {
                     throw SqlException.position(sampleByFill.get(0).position).put("FILL is not supported for materialized views");
                 }
+                if (m.getSampleBy() != null && m.getSampleByOffset() == null) {
+                    throw SqlException.position(m.getSampleBy().position).put("ALIGN TO FIRST OBSERVATION is not supported for materialized views");
+                }
                 m = m.getNestedModel();
             }
 
