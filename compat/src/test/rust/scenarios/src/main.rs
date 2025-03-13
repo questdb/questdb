@@ -323,7 +323,7 @@ fn extract_parameters(
                                     if s.eq_ignore_ascii_case("NULL") {
                                         Ok(None)
                                     } else {
-                                        trimmed.parse::<f64>().map(Some)
+                                        s.parse::<f64>().map(Some)
                                     }
                                 })
                                 .collect::<Result<Vec<Option<f64>>, _>>()?;
