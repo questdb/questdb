@@ -117,8 +117,8 @@ public class DerivedArrayView extends ArrayView {
     }
 
     public void transpose() {
+        isVanilla = false;
         strides.reverse();
         shape.reverse();
-        isVanilla = false;
     }
 }
