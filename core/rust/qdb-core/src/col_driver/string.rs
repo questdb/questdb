@@ -157,7 +157,7 @@ fn data_and_aux_size_at(col: &MappedColumn, row_count: u64) -> CoreResult<(u64, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::col_driver::ColumnTypeTag;
+    use crate::col_type::ColumnTypeTag;
     use crate::error::CoreErrorCause;
     use std::path::PathBuf;
 
@@ -272,5 +272,21 @@ mod tests {
         // eprintln!("{}", &msg);
         assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
         assert!(msg.contains("string entry index 6 not found in aux for column s2 in"));
+    }
+
+    #[test]
+    fn test_vempty() {
+        let col = map_col("sempty");
+
+        let (data_size, aux_size) = StringDriver.col_sizes_for_size(&col, 0).unwrap();
+        assert_eq!(data_size, 0);
+        assert_eq!(aux_size, Some(8));
+
+        // out of range
+        let err = StringDriver.col_sizes_for_size(&col, 1).unwrap_err();
+        let msg = format!("{:#}", err);
+        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
+        // eprintln!("{msg}");
+        assert!(msg.contains("string entry index 1 not found in aux for column sempty in"));
     }
 }
