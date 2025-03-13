@@ -6051,12 +6051,29 @@ nodejs code:
                 TestUtils.assertContains(e.getMessage(), "element counts in sub-arrays don't match");
             }
 
+            // explicit cast if a jagged array produce null
+            assertPgWireQuery(connection, "SELECT '{{1.0, 2}, {3, 4}, {5, 6, 7}}'::double[] arr FROM long_sequence(1)",
+                    "arr[ARRAY]\n" +
+                            "null\n");
+
+            execute("create table tab (arr double[][])");
+
+
+            // implicit cast should fail
             try (Statement statement = connection.createStatement()) {
-                statement.executeQuery("SELECT '{{1.0, 2}, {3, 4}, {5, 6, 7}}'::double[] arr FROM long_sequence(1)");
+                statement.execute("insert into tab values ('{{1.0, 2}, {3, 4}, {5, 6, 7}}')");
                 fail("jagged array should not be allowed");
             } catch (SQLException e) {
-                TestUtils.assertContains(e.getMessage(), "element counts in sub-arrays don't match");
+                TestUtils.assertContains(e.getMessage(), "inconvertible value");
             }
+
+            // explicit cast of a bad array should insert null
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("insert into tab values ('{{1.0, 2}, {3, 4}, {5, 6, 7}}'::double[][])");
+            }
+            assertPgWireQuery(connection, "SELECT * from tab",
+                    "arr[ARRAY]\n" +
+                            "null\n");
         });
     }
 
