@@ -183,7 +183,6 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
 
         @Override
         public void assignType(int type, BindVariableService bindVariableService) {
-            assert arrayOut.isEmpty() : "arrayOut is not empty";
             this.type = type;
             arrayOut.setType(type);
         }
@@ -197,6 +196,13 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         @Override
         public ArrayView getArray(Record rec) {
             ArrayView array0 = args.getQuick(0).getArray(rec);
+            short type0 = decodeArrayElementType(array0.getType());
+            short outType = decodeArrayElementType(arrayOut.getType());
+            if (type0 != ColumnType.UNDEFINED && type0 != outType) {
+                throw CairoException.nonCritical().position(argPositions.getQuick(0))
+                        .put("sub-array has different type [subArrayType=").put(type0)
+                        .put(", thisArrayType=").put(outType);
+            }
             int nDims = array0.getDimCount();
             arrayOut.clear();
             arrayOut.setDimLen(0, args.size());
@@ -250,7 +256,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
 
         @Override
         public void assignType(int type, BindVariableService bindVariableService) {
-            assert array.isEmpty() : "arrayOut is not empty";
+            assert array.isEmpty() : "array is not empty";
             this.type = type;
             array.setType(type);
         }
