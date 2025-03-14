@@ -208,6 +208,20 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             "        Frame forward scan on: x\n",
                     "explain select * from x where ts > (select null)"
             );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts [thread-safe] <= cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [null]\n" +
+                            "        long_sequence count: 1\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts <= (select null)"
+            );
+
             assertSql(
                     "QUERY PLAN\n" +
                             "Async Filter workers: 1\n" +
@@ -224,14 +238,14 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
             assertSql(
                     "QUERY PLAN\n" +
                             "Async Filter workers: 1\n" +
-                            "  filter: ts [thread-safe] > cursor \n" +
+                            "  filter: ts [thread-safe] <= cursor \n" +
                             "    VirtualRecord\n" +
                             "      functions: ['2014-09-03']\n" +
                             "        long_sequence count: 1\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n",
-                    "explain select * from x where ts > (select '2014-09-03'::string)"
+                    "explain select * from x where ts <= (select '2014-09-03'::string)"
             );
 
             assertSql(
@@ -247,8 +261,20 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                     "explain select * from x where ts > (select '2020-02-21'::varchar)"
             );
 
-            // non-thread-safe
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts [thread-safe] <= cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: ['2020-02-21']\n" +
+                            "        long_sequence count: 1\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts <= (select '2020-02-21'::varchar)"
+            );
 
+            // non-thread-safe
             assertSql(
                     "QUERY PLAN\n" +
                             "Async Filter workers: 1\n" +

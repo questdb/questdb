@@ -7345,7 +7345,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "select distinct t1.id " +
                         "from  tab t1, tab t2",
                 "create table tab as (select x as id from long_sequence(2))",
-                null, false, false
+                null, true, true
         );
     }
 

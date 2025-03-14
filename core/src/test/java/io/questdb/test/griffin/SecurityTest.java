@@ -605,14 +605,15 @@ public class SecurityTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     memoryRestrictedCompiler,
                     "sym1\tsym2\n" +
-                            "OOZZ\tHNZH\n" +
-                            "GPGW\tQSRL\n" +
                             "FJGE\tQCEH\n" +
+                            "GPGW\tQSRL\n" +
+                            "OOZZ\tHNZH\n" +
                             "PEHN\tIPHZ\n",
-                    "select distinct sym1, sym2 from tb1 where d < 0.07",
+                    "select distinct sym1, sym2 from tb1 where d < 0.07 order by 1",
                     null,
                     true,
-                    readOnlyExecutionContext
+                    readOnlyExecutionContext,
+                    true
             );
             try {
                 assertQueryNoLeakCheck(
