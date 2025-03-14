@@ -28,15 +28,15 @@ use std::sync::Arc;
 /// Cause of an error.
 #[derive(Debug, Clone)]
 pub enum CoreErrorCause {
-    InvalidColumnType,
-    InvalidColumnData,
+    InvalidType,
+    InvalidLayout,
     Io(Arc<std::io::Error>),
 }
 
 impl CoreErrorCause {
     pub fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::InvalidColumnType | Self::InvalidColumnData => None,
+            Self::InvalidType | Self::InvalidLayout => None,
             Self::Io(err) => Some(err.as_ref()),
         }
     }

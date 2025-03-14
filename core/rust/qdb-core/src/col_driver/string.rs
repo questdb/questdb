@@ -21,8 +21,8 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+use crate::byte_util::cast_slice;
 use crate::col_driver::err;
-use crate::col_driver::util::cast_slice;
 use crate::col_driver::{ColumnDriver, MappedColumn};
 use crate::col_type::ColumnTypeTag;
 use crate::error::{CoreErrorExt, CoreResult};
@@ -195,7 +195,7 @@ mod tests {
         let err = StringDriver.col_sizes_for_size(&col, 6).unwrap_err();
         let msg = format!("{:#}", err);
         // eprintln!("{}", &msg);
-        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
+        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidLayout));
         assert!(msg.contains("string entry index 6 not found in aux for column s1 in"));
     }
 
@@ -236,7 +236,7 @@ mod tests {
         let err = StringDriver.col_sizes_for_size(&col, 6).unwrap_err();
         let msg = format!("{:#}", err);
         // eprintln!("{}", &msg);
-        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
+        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidLayout));
         assert!(msg.contains("string entry index 6 not found in aux for column s2 in"));
     }
 
@@ -251,7 +251,7 @@ mod tests {
         // out of range
         let err = StringDriver.col_sizes_for_size(&col, 1).unwrap_err();
         let msg = format!("{:#}", err);
-        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
+        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidLayout));
         // eprintln!("{msg}");
         assert!(msg.contains("string entry index 1 not found in aux for column sempty in"));
     }

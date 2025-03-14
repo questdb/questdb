@@ -3,7 +3,7 @@ use crate::error::{CoreError, fmt_err};
 
 pub(super) fn missing_aux(driver: &impl ColumnDriver, col: &MappedColumn) -> CoreError {
     fmt_err!(
-        InvalidColumnData,
+        InvalidLayout,
         "{} driver expects aux mapping, but missing for {} column {} in {}",
         driver.tag().name(),
         col.col_type,
@@ -23,7 +23,7 @@ pub(super) fn bad_aux_layout(driver: &impl ColumnDriver, col: &MappedColumn) -> 
 
 pub(super) fn not_found(driver: &impl ColumnDriver, col: &MappedColumn, index: u64) -> CoreError {
     fmt_err!(
-        InvalidColumnData,
+        InvalidLayout,
         "{} entry index {} not found in aux for column {} in {}",
         driver.tag().name(),
         index,
@@ -38,7 +38,7 @@ pub(super) fn bad_data_size(
     data_size: u64,
 ) -> CoreError {
     fmt_err!(
-        InvalidColumnData,
+        InvalidLayout,
         "{} required data size {} exceeds data mmap len {} for column {} in {}",
         driver.tag().name(),
         data_size,

@@ -38,7 +38,7 @@ macro_rules! impl_primitive_type_driver {
                     let data_size = (row_size * row_count);
                     if data_size > col.data.len() as u64 {
                         return Err(fmt_err!(
-                            InvalidColumnData,
+                            InvalidLayout,
                             "Data file for column {} smaller than {} rows, expected at least {} bytes but is {} at {}",
                             col.col_name,
                             row_count,
@@ -101,7 +101,7 @@ mod tests {
         assert_eq!(aux_size, None);
 
         let err = IntDriver.col_sizes_for_size(&col, 1).unwrap_err();
-        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
+        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidLayout));
         let msg = format!("{:#}", err);
         eprintln!("{}", msg);
         assert!(msg.contains(
@@ -121,7 +121,7 @@ mod tests {
         assert_eq!(aux_size, None);
 
         let err = IntDriver.col_sizes_for_size(&col, 2).unwrap_err();
-        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
+        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidLayout));
         let msg = format!("{:#}", err);
         // eprintln!("{}", msg);
         assert!(msg.contains(
@@ -141,7 +141,7 @@ mod tests {
         assert_eq!(aux_size, None);
 
         let err = TimestampDriver.col_sizes_for_size(&col, 2).unwrap_err();
-        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
+        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidLayout));
         let msg = format!("{:#}", err);
         // eprintln!("{}", msg);
         assert!(msg.contains(

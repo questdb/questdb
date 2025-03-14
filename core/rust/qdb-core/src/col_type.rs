@@ -153,7 +153,7 @@ impl TryFrom<u8> for ColumnTypeTag {
             25 => Ok(ColumnTypeTag::IPv4),
             26 => Ok(ColumnTypeTag::Varchar),
             _ => Err(fmt_err!(
-                InvalidColumnType,
+                InvalidType,
                 "unknown QuestDB column tag code: {}",
                 col_tag_num
             )),
@@ -212,7 +212,7 @@ impl TryFrom<i32> for ColumnType {
     fn try_from(v: i32) -> Result<Self, Self::Error> {
         if v <= 0 {
             return Err(fmt_err!(
-                InvalidColumnType,
+                InvalidType,
                 "invalid column type code <= 0: {}",
                 v
             ));

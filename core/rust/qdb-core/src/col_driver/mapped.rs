@@ -88,7 +88,7 @@ impl MappedColumn {
             let fixed_size = col_type.tag().fixed_size().expect("fixed size column");
             if data.len() % fixed_size != 0 {
                 return Err(fmt_err!(
-                    InvalidColumnData,
+                    InvalidLayout,
                     "Bad file size {} for column: {}, col_type: {}, path: {}, expected a multiple of {}",
                     data.len(),
                     col_name,

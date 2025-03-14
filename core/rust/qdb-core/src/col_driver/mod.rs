@@ -26,7 +26,6 @@ mod err;
 mod mapped;
 mod primitives;
 mod string;
-mod util;
 mod varchar;
 
 use crate::col_type::ColumnTypeTag;

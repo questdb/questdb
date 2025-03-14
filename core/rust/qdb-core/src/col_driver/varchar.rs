@@ -21,8 +21,8 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+use crate::byte_util::cast_slice;
 use crate::col_driver::err;
-use crate::col_driver::util::cast_slice;
 use crate::col_driver::{ColumnDriver, MappedColumn};
 use crate::col_type::ColumnTypeTag;
 use crate::error::{CoreErrorExt, CoreResult};
@@ -244,7 +244,7 @@ mod tests {
         // out of range
         let err = VarcharDriver.col_sizes_for_size(&col, 6).unwrap_err();
         let msg = format!("{:#}", err);
-        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
+        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidLayout));
         assert!(msg.contains("varchar entry index 5 not found in aux for column v1 in"));
     }
 
@@ -284,7 +284,7 @@ mod tests {
         // out of range
         let err = VarcharDriver.col_sizes_for_size(&col, 6).unwrap_err();
         let msg = format!("{:#}", err);
-        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
+        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidLayout));
         assert!(msg.contains("varchar entry index 5 not found in aux for column v2 in"));
     }
 
@@ -324,7 +324,7 @@ mod tests {
         // out of range
         let err = VarcharDriver.col_sizes_for_size(&col, 6).unwrap_err();
         let msg = format!("{:#}", err);
-        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
+        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidLayout));
         assert!(msg.contains("varchar entry index 5 not found in aux for column v3 in"));
     }
 
@@ -364,7 +364,7 @@ mod tests {
         // out of range
         let err = VarcharDriver.col_sizes_for_size(&col, 6).unwrap_err();
         let msg = format!("{:#}", err);
-        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
+        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidLayout));
         assert!(msg.contains("varchar entry index 5 not found in aux for column v4 in"));
     }
 
@@ -379,7 +379,7 @@ mod tests {
         // out of range
         let err = VarcharDriver.col_sizes_for_size(&col, 1).unwrap_err();
         let msg = format!("{:#}", err);
-        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
+        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidLayout));
         assert!(msg.contains("varchar entry index 0 not found in aux for column vempty in"));
     }
 }

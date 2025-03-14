@@ -38,7 +38,8 @@ pub enum ParquetErrorCause {
     QdbMeta(Arc<serde_json::Error>),
     Layout,
     Unsupported,
-    Invalid,
+    InvalidType,
+    InvalidLayout,
     Utf8Decode(std::str::Utf8Error),
     Utf16Decode(std::char::DecodeUtf16Error),
     Io(Arc<std::io::Error>),
@@ -53,8 +54,8 @@ pub enum ParquetErrorCause {
 impl From<CoreErrorCause> for ParquetErrorCause {
     fn from(cause: CoreErrorCause) -> Self {
         match cause {
-            CoreErrorCause::InvalidColumnType => ParquetErrorCause::Invalid,
-            CoreErrorCause::InvalidColumnData => ParquetErrorCause::Invalid,
+            CoreErrorCause::InvalidType => ParquetErrorCause::InvalidType,
+            CoreErrorCause::InvalidLayout => ParquetErrorCause::InvalidLayout,
             CoreErrorCause::Io(err) => ParquetErrorCause::Io(err),
         }
     }

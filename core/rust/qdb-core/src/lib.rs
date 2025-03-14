@@ -21,6 +21,7 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+pub mod byte_util;
 pub mod col_driver;
 pub mod col_type;
 pub mod error;
