@@ -1043,6 +1043,103 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    @Override
+    public void changeSymbolCapacity(
+            CharSequence colName,
+            int newSymbolCapacity,
+            SecurityContext securityContext
+    ) {
+        int columnIndex = metadata.getColumnIndexQuiet(colName);
+        if (columnIndex < 0) {
+            throw CairoException.nonCritical().put("cannot change column type, column does not exist [table=")
+                    .put(tableToken.getTableName()).put(", column=").put(colName).put(']');
+        }
+        String columnName = metadata.getColumnName(columnIndex);
+
+        int existingType = metadata.getColumnType(columnIndex);
+        assert existingType > 0;
+
+        if (!ColumnType.isSymbol(existingType)) {
+            throw CairoException.nonCritical().put("cannot symbol capacity, column is not symbol [table=")
+                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+        }
+
+
+        var oldSymbolWriter = (SymbolMapWriter) symbolMapWriters.getQuick(columnIndex);
+        int oldCapacity = oldSymbolWriter.getSymbolCapacity();
+        boolean symbolCacheFlag = metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag();
+
+        newSymbolCapacity = Numbers.ceilPow2(newSymbolCapacity);
+        if (newSymbolCapacity < 0 || newSymbolCapacity > 0x10000000) {
+            LOG.error().$("invalid symbol capacity to change to [table=").$(tableToken).$(", column=").utf8(columnName)
+                    .$(", from=").$(oldCapacity)
+                    .$(", to=").$(newSymbolCapacity).I$();
+
+            throw CairoException.nonCritical().put("invalid symbol capacity [name=").put(columnName).put(", capacity=").put(newSymbolCapacity).put(']');
+        }
+
+        LOG.info().$("changing symbol capacity [table=").$(tableToken).$(", column=").utf8(columnName)
+                .$(", from=").$(oldCapacity)
+                .$(", to=").$(newSymbolCapacity).I$();
+
+        if (oldCapacity == newSymbolCapacity) {
+            // Nothing to do.
+            return;
+        }
+
+        try {
+            commit();
+            long columnNameTxn = getTxn();
+            metadata.updateColumnSymbolCapacity(columnIndex, newSymbolCapacity);
+            rewriteAndSwapMetadata(metadata);
+
+            try {
+                // remove _todo
+                clearTodoLog();
+
+                var newSymbolWriter = createSymbolMapWriterObj(columnName, columnNameTxn, newSymbolCapacity, symbolCacheFlag);
+
+                newSymbolWriter.copySymbols(oldSymbolWriter);
+                symbolMapWriters.set(columnIndex, newSymbolWriter);
+                denseSymbolMapWriters.set(denseSymbolMapWriters.indexOf(oldSymbolWriter), newSymbolWriter);
+                Misc.free(oldSymbolWriter);
+
+                // swap of the files has to be done after _todo is removed
+                hardLinkAndPurgeColumnFiles(columnName, columnIndex, metadata.isIndexed(columnIndex), columnName, ColumnType.SYMBOL, false);
+            } catch (CairoException e) {
+                throwDistressException(e);
+            }
+
+            bumpMetadataVersion();
+
+            // Call finish purge to remove old column files before renaming them in metadata
+            finishColumnPurge();
+
+            // open new column files
+            if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
+                long partitionTimestamp = txWriter.getLastPartitionTimestamp();
+                setStateForTimestamp(path, partitionTimestamp);
+                openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
+                setColumnAppendPosition(columnIndex, txWriter.getTransientRowCount(), false);
+                path.trimTo(pathSize);
+            }
+
+        } catch (Throwable th) {
+            LOG.critical().$("could not change column type [table=").$(tableToken.getTableName()).$(", column=").utf8(columnName)
+                    .$(", error=").$(th).I$();
+            distressed = true;
+            throw th;
+        } finally {
+            partitionRemoveCandidates.clear();
+            // clear temp resources
+            path.trimTo(pathSize);
+        }
+
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(metadata);
+        }
+    }
+
     public boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
         if (checkpointStatus.isInProgress()) {
             // do not alter scoreboard while checkpoint is in progress
@@ -2870,7 +2967,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             clearTodoLog();
 
             // rename column files has to be done after _todo is removed
-            hardLinkAndPurgeColumnFiles(columnName, index, isIndexed, newColumnName, type);
+            hardLinkAndPurgeColumnFiles(columnName, index, isIndexed, newColumnName, type, true);
         } catch (CairoException e) {
             throwDistressException(e);
         }
@@ -3149,6 +3246,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     nullers.add(NOOP);
             }
         }
+    }
+
+    private static void copySymbolColumnFiles_partitionDFile(
+            Path path,
+            int rootLen,
+            int partitionBy,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            CharSequence columnName,
+            long columnNameTxn
+    ) {
+        TableUtils.setPathForNativePartition(
+                path.trimTo(rootLen),
+                partitionBy,
+                partitionTimestamp,
+                partitionNameTxn
+        );
+        dFile(path, columnName, columnNameTxn);
     }
 
     private static void linkFile(FilesFacade ff, LPSZ from, LPSZ to) {
@@ -4233,6 +4348,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void createSymbolMapWriter(CharSequence name, long columnNameTxn, int symbolCapacity, boolean symbolCacheFlag) {
+        SymbolMapWriter w = createSymbolMapWriterObj(name, columnNameTxn, symbolCapacity, symbolCacheFlag);
+
+        denseSymbolMapWriters.add(w);
+        symbolMapWriters.extendAndSet(columnCount, w);
+    }
+
+    @NotNull
+    private SymbolMapWriter createSymbolMapWriterObj(CharSequence name, long columnNameTxn, int symbolCapacity, boolean symbolCacheFlag) {
         MapWriter.createSymbolMapFiles(ff, ddlMem, path, name, columnNameTxn, symbolCapacity, symbolCacheFlag);
         SymbolMapWriter w = new SymbolMapWriter(
                 configuration,
@@ -4254,9 +4377,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             w.close();
             throw t;
         }
-
-        denseSymbolMapWriters.add(w);
-        symbolMapWriters.extendAndSet(columnCount, w);
+        return w;
     }
 
     private boolean createWalSymbolMapping(SymbolMapDiff symbolMapDiff, int columnIndex, IntList symbolMap) {
@@ -5435,7 +5556,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void hardLinkAndPurgeColumnFiles(String columnName, int columnIndex, boolean isIndexed, CharSequence newName, int columnType) {
+    private void hardLinkAndPurgeColumnFiles(String columnName, int columnIndex, boolean isIndexed, CharSequence newName, int columnType, boolean copySymbolRoot) {
         try {
             PurgingOperator purgingOperator = getPurgingOperator();
             long newColumnNameTxn = getTxn();
@@ -5460,11 +5581,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             if (ColumnType.isSymbol(columnType)) {
-                // Link .o, .c, .k, .v symbol files in the table root folder
-                linkFile(ff, offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                linkFile(ff, charFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                linkFile(ff, keyFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                linkFile(ff, valueFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                if (copySymbolRoot) {
+                    // Link .o, .c, .k, .v symbol files in the table root folder
+                    linkFile(ff, offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    linkFile(ff, charFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    linkFile(ff, keyFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    linkFile(ff, valueFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                }
                 purgingOperator.add(columnIndex, columnName, columnType, isIndexed, defaultColumnNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1L);
             }
             long columnAddedPartition = columnVersionWriter.getColumnTopPartitionTimestamp(columnIndex);

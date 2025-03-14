@@ -187,6 +187,14 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         nullValue = false;
     }
 
+    public void copySymbols(SymbolMapWriter another) {
+        final int symbolCount = another.getSymbolCount();
+        for (int i = 0; i < symbolCount; i++) {
+            put(another.valueOf(i));
+        }
+        updateNullFlag(another.getNullFlag());
+    }
+
     @Override
     public boolean getNullFlag() {
         return offsetMem.getBool(HEADER_NULL_FLAG);
@@ -332,6 +340,10 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         final int symIndex = offsetToKey(nOffsetOffset);
         countCollector.collectValueCount(symbolIndexInTxWriter, symIndex + 1);
         return symIndex;
+    }
+
+    private CharSequence valueOf(int key) {
+        return charMem.getStrA(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
     }
 
     static int offsetToKey(long offset) {

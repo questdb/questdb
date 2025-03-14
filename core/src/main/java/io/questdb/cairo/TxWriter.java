@@ -663,6 +663,13 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         // change partition count only when we have something to save to the partition table
         if (maxTimestamp != Long.MIN_VALUE) {
             for (int i = 0; i < size; i++) {
+//                if (i % 4 == 0) {
+//                    var partitionTs = attachedPartitions.get(i);
+//                    if (partitionTs != PartitionBy.getPartitionFloorMethod(PartitionBy.DAY).floor(partitionTs)) {
+//                        int asdfi = 0;
+//                    }
+//                }
+
                 putLong(getPartitionTableIndexOffset(partitionTableOffset, i), attachedPartitions.getQuick(i));
             }
         }

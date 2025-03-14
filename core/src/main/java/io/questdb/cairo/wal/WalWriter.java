@@ -1796,6 +1796,17 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
+        public void changeSymbolCapacity(CharSequence columnName, int symbolCapacity, SecurityContext securityContext) {
+            int columnIndex = validateExistingColumnName(columnName, "cannot change symbol capacity");
+            if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
+                throw CairoException.nonCritical().put("column '").put(columnName).put("' is not of symbol type");
+            }
+            if (symbolCapacity <= 0 || symbolCapacity > 0x10000000) {
+                throw CairoException.nonCritical().put("invalid symbol capacity :").put(symbolCapacity);
+            }
+        }
+
+        @Override
         public void disableDeduplication() {
             structureVersion++;
         }
@@ -2038,6 +2049,11 @@ public class WalWriter implements TableWriterAPI {
             } else {
                 throw CairoException.nonCritical().put("column '").put(columnNameSeq).put("' does not exists");
             }
+        }
+
+        @Override
+        public void changeSymbolCapacity(CharSequence columnName, int symbolCapacity, SecurityContext securityContext) {
+            // No op
         }
 
         @Override

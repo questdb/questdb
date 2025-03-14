@@ -754,12 +754,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "cannot change type of designated timestamp column");
         }
         if (newColumnType == existingColumnType) {
-            throw SqlException.$(lexer.lastTokenPosition(), "column '").put(columnName)
-                    .put("' type is already '").put(ColumnType.nameOf(existingColumnType)).put('\'');
-        }
-        if (!isCompatibleColumnTypeChange(existingColumnType, newColumnType)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "incompatible column type change [existing=")
-                    .put(ColumnType.nameOf(existingColumnType)).put(", new=").put(ColumnType.nameOf(newColumnType)).put(']');
+            if (newColumnType == ColumnType.SYMBOL) {
+                alterOperationBuilder.convertToChangeSymbolCapacity();
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "column '").put(columnName)
+                        .put("' type is already '").put(ColumnType.nameOf(existingColumnType)).put('\'');
+            }
+        } else {
+            if (!isCompatibleColumnTypeChange(existingColumnType, newColumnType)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "incompatible column type change [existing=")
+                        .put(ColumnType.nameOf(existingColumnType)).put(", new=").put(ColumnType.nameOf(newColumnType)).put(']');
+            }
         }
         securityContext.authorizeAlterTableAlterColumnType(tableToken, alterOperationBuilder.getExtraStrInfo());
         compiledQuery.ofAlter(alterOperationBuilder.build());
