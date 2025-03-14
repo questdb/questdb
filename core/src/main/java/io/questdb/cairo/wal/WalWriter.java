@@ -134,6 +134,7 @@ public class WalWriter implements TableWriterAPI {
     private final WalDirectoryPolicy walDirectoryPolicy;
     private final int walId;
     private final String walName;
+    private long avgRecordSize;
     private SegmentColumnRollSink columnConversionSink;
     private int columnCount;
     private ColumnVersionReader columnVersionReader;
@@ -559,6 +560,8 @@ public class WalWriter implements TableWriterAPI {
 
                     final int commitMode = configuration.getCommitMode();
                     for (int columnIndex = 0; columnIndex < columnsToRoll; columnIndex++) {
+                        // Allocate space for new column in columnRollSink and move to next record
+                        // Do it for deleted columns too, it will be skipped in exactly same way in switchColumnsToNewSegment
                         columnRollSink.nextColumn();
                         final int columnType = metadata.getColumnType(columnIndex);
                         if (columnType > 0) {
@@ -578,7 +581,9 @@ public class WalWriter implements TableWriterAPI {
                                 }
                             }
 
-                            int type = columnIndex == timestampIndex ? -columnType : columnType;
+                            int colType = columnIndex == timestampIndex ? -columnType : columnType;
+                            int newColumnType = columnIndex == convertColumnIndex ? convertToColumnType : colType;
+                            // Saves existing segment file offsets and new file sizes in columnRollSink.
                             CopyWalSegmentUtils.rollColumnToSegment(
                                     ff,
                                     configuration.getWriterFileOpenOpts(),
@@ -587,16 +592,17 @@ public class WalWriter implements TableWriterAPI {
                                     path,
                                     newSegmentId,
                                     columnName,
-                                    type,
+                                    colType,
                                     currentTxnStartRowNum,
                                     uncommittedRows,
                                     columnRollSink,
                                     commitMode,
-                                    columnIndex == convertColumnIndex ? convertToColumnType : type,
+                                    newColumnType,
                                     symbolTable,
                                     symbolMapWriter
                             );
                         } else {
+                            // Deleted column
                             rowValueIsNotNull.setQuick(columnIndex, COLUMN_DELETED_NULL_FLAG);
                         }
                     }
@@ -885,6 +891,10 @@ public class WalWriter implements TableWriterAPI {
             return false;
         }
 
+        if (avgRecordSize != 0) {
+            return (segmentRowCount * avgRecordSize) > threshold;
+        }
+
         long tally = 0;
         for (int colIndex = 0, colCount = columns.size(); colIndex < colCount; ++colIndex) {
             final MemoryMA column = columns.getQuick(colIndex);
@@ -896,6 +906,11 @@ public class WalWriter implements TableWriterAPI {
 
         // The events file will also contain the symbols.
         tally += events.size();
+        if (segmentRowCount > 1000 && columns.size() > 50) {
+            // Optimise for tables with many columns so that we don't have to scan all columns
+            // on every commit.
+            avgRecordSize = tally / segmentRowCount;
+        }
 
         return tally > threshold;
     }
@@ -1876,7 +1891,7 @@ public class WalWriter implements TableWriterAPI {
                 throw CairoException.nonCritical().put("invalid column name: ").put(columnName);
             }
             if (metadata.getColumnIndexQuiet(columnName) > -1) {
-                throw CairoException.duplicateColumn("duplicate column name: ").put(columnName);
+                throw CairoException.duplicateColumn(columnName);
             }
         }
 

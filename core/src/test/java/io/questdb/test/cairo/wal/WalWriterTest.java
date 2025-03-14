@@ -224,6 +224,59 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddColumnsRollLargeSegment() throws Exception {
+        assertMemoryLeak(() -> {
+            // This test reproduces a bug where rolling a large segment file sized over 2GB
+            // resulted in int overflow and commit exception.
+
+            // The test is a bit slow writing a column over 2Gb to WAL
+            node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 3000_000);
+            node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_SIZE, 3 * Numbers.SIZE_1GB);
+
+            TableToken tableToken = createTable(new TableModel(configuration, testName.getMethodName(), PartitionBy.HOUR)
+                    .col("desk", ColumnType.VARCHAR)
+                    .timestamp("instanceName")
+                    .wal()
+            );
+
+            long initialTimestamp = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T00:40:00.000Z");
+            long tsIncrement = 1000_0000L;
+
+            int varcharSize = 20 * Numbers.SIZE_1MB;
+            long buffer = Unsafe.malloc(varcharSize, MemoryTag.NATIVE_DEFAULT);
+            Vect.memset(buffer, varcharSize, (byte) 'a');
+            DirectUtf8String longVarchar = new DirectUtf8String();
+            longVarchar.of(buffer, buffer + varcharSize);
+
+            try (WalWriter writer = engine.getWalWriter(tableToken)) {
+                // Add rows so that total size of varchar column is > 2Gb
+                int rowCount = (int) ((Numbers.SIZE_1GB * 2 + Numbers.SIZE_1MB * 20) / varcharSize);
+                for (int i = 0; i < rowCount; i++) {
+                    TableWriter.Row row = writer.newRow(initialTimestamp);
+                    initialTimestamp += tsIncrement;
+                    row.putVarchar(0, longVarchar);
+                    row.append();
+                }
+                writer.commit();
+
+                // Add few more rows and then add a column
+                for (int i = 0; i < 1; i++) {
+                    TableWriter.Row row = writer.newRow(initialTimestamp);
+                    initialTimestamp += tsIncrement;
+                    row.putVarchar(0, longVarchar);
+                    row.append();
+                }
+                writer.addColumn("newColumn", ColumnType.DOUBLE);
+                writer.commit();
+            } finally {
+                Path.clearThreadLocals();
+                Unsafe.free(buffer, varcharSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+
+    }
+
+    @Test
     public void testAddManyColumnsExistingSegments() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = TestUtils.generateRandom(LOG);
@@ -605,7 +658,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     addColumn(walWriter, "c", ColumnType.SHORT);
                     assertExceptionNoLeakCheck("Should not be able to add duplicate column");
                 } catch (CairoException e) {
-                    assertEquals("[-1] duplicate column name: c", e.getMessage());
+                    assertEquals("[-100] duplicate column [name=c]", e.getMessage());
                 }
 
                 row = walWriter.newRow(0);
