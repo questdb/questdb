@@ -561,5 +561,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     protected void setFuzzProperties(Rnd rnd) {
         super.setFuzzProperties(rnd);
         node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, fsAllowsMixedIO);
+        node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1 + rnd.nextLong(engine.getConfiguration().getWalSegmentRolloverRowCount()));
     }
 }

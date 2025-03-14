@@ -93,8 +93,13 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             envMap.put(envs[i], envs[i + 1]);
         }
         TestServerMain serverMain = new TestServerMain(newBootstrapWithEnvVariables(envMap));
-        serverMain.start();
-        return serverMain;
+        try {
+            serverMain.start();
+            return serverMain;
+        } catch (Throwable th) {
+            serverMain.close();
+            throw th;
+        }
     }
 
     @AfterClass

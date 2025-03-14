@@ -88,7 +88,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public static CairoException duplicateColumn(CharSequence column, CharSequence columnAlias) {
-        CairoException exception = critical(METADATA_VALIDATION).put("Duplicate column [name=").put(column);
+        CairoException exception = critical(METADATA_VALIDATION).put("duplicate column [name=").put(column);
         if (columnAlias != null) {
             exception.put(", alias=").put(columnAlias);
         }
@@ -226,6 +226,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public boolean isInterruption() {
         return interruption;
+    }
+
+    public boolean isMetadataValidation() {
+        return errno == METADATA_VALIDATION;
     }
 
     public boolean isOutOfMemory() {

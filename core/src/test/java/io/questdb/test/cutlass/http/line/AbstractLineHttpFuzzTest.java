@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.network.NetworkError;
 import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Os;
@@ -211,10 +212,15 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
 
     public void runTest() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            int httpPortRandom = 7000 + random.nextInt(1000);
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048",
-                    PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
+            while (true) {
+                int httpPortRandom = 7000 + random.nextInt(1000);
+                try (final TestServerMain serverMain = startWithEnvVariables(
+                        PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048",
+                        PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
+                        PropertyKey.PG_ENABLED.getEnvVarName(), "false",
+                        PropertyKey.PG_LEGACY_MODE_ENABLED.getEnvVarName(), "false",
+                        PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
+                        PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
                     PropertyKey.PG_ENABLED.getEnvVarName(), "false",
                     PropertyKey.PG_LEGACY_MODE_ENABLED.getEnvVarName(), "false",
                     PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
@@ -226,25 +232,31 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                     tables.put(tableName, new TableData(tableName));
                 }
 
-                try {
-                    ingest(serverMain.getEngine(), serverMain.getHttpServerPort());
+                    try {
+                        ingest(serverMain.getEngine(), serverMain.getHttpServerPort());
 
-                    for (int i = 0; i < numOfTables; i++) {
-                        final String tableName = getTableName(i);
-                        final TableData table = tables.get(tableName);
-                        if (table.size() > 0) {
-                            serverMain.awaitTable(tableName);
-                            assertTable(serverMain, table, tableName);
+                        for (int i = 0; i < numOfTables; i++) {
+                            final String tableName = getTableName(i);
+                            final TableData table = tables.get(tableName);
+                            if (table.size() > 0) {
+                                serverMain.awaitTable(tableName);
+                                assertTable(serverMain, table, tableName);
+                            }
                         }
+                    } catch (Exception e) {
+                        getLog().errorW().$(e).$();
+                        setError(e.getMessage());
                     }
-                } catch (Exception e) {
-                    getLog().errorW().$(e).$();
-                    setError(e.getMessage());
+                } catch (NetworkError e) {
+                    LOG.error().$("Failed to start server [e=").$((Throwable) e).I$();
+                    Os.sleep(100);
+                    continue;
                 }
-            }
 
-            if (errorMsg != null) {
-                Assert.fail(errorMsg);
+                if (errorMsg != null) {
+                    Assert.fail(errorMsg);
+                }
+                return;
             }
         });
     }
