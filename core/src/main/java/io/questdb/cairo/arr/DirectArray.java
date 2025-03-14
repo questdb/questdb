@@ -145,24 +145,24 @@ public final class DirectArray extends MutableArray implements Mutable {
             return;
         }
         if (ptr == 0) {
-            ptr = Unsafe.malloc(requiredCapacity, MEM_TAG);
-            Vect.memset(ptr, requiredCapacity, 0);
-            size = requiredCapacity;
-        } else if (size < requiredCapacity) {
-            long newCapacity = size;
-            while (newCapacity < requiredCapacity) {
-                newCapacity = newCapacity * 3 / 2;
-                if (newCapacity < 0) {
-                    throw CairoException.nonCritical().put("array capacity overflow");
-                }
-            }
-            ptr = Unsafe.realloc(ptr, size, newCapacity, MEM_TAG);
-            long initializeSize = newCapacity - size;
-            // arrays are grow-only, so we should never shrink
-            assert initializeSize > 0 : "shrinking array";
-            Vect.memset(ptr + size, initializeSize, 0);
-            size = newCapacity;
+            ptr = Unsafe.malloc(requiredSize, MEM_TAG);
+            Vect.memset(ptr, requiredSize, 0);
+            size = requiredSize;
+            return;
         }
+        long newSize = size;
+        while (newSize < requiredSize) {
+            newSize = newSize * 3 / 2;
+            if (newSize < 0) {
+                throw CairoException.nonCritical().put("array capacity overflow");
+            }
+        }
+        ptr = Unsafe.realloc(ptr, size, newSize, MEM_TAG);
+        long sizeToInitialize = newSize - size;
+        // arrays are grow-only, so we should never shrink
+        assert sizeToInitialize > 0 : "shrinking array";
+        Vect.memset(ptr + size, sizeToInitialize, 0);
+        size = newSize;
     }
 
     private class FlatViewMemory implements MemoryA {
