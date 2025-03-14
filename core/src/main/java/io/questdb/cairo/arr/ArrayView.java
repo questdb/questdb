@@ -53,6 +53,7 @@ public abstract class ArrayView implements QuietCloseable {
     public final void appendToMem(MemoryA mem) {
         // We need isEmpty() check to protect us from running appendToMemRecursive() for an
         // almost unbounded number of steps, e.g., on an array of shape (100_000_000, 100_000_000, 0).
+        // We also need it to protect from ptr == 0 in flatView.
         if (isNull() || isEmpty()) {
             return;
         }
@@ -72,8 +73,9 @@ public abstract class ArrayView implements QuietCloseable {
         if (this.getDimCount() != other.getDimCount() || !this.shape.equals(other.shape)) {
             return false;
         }
-        // We need this check to protect from running arrayEqualsRecursive() for an almost unbounded number of steps,
-        // e.g., on an array of shape (100_000_000, 100_000_000, 0).
+        // We need this check to protect from running arrayEqualsRecursive() for an almost unbounded
+        // number of steps, e.g., on an array of shape (100_000_000, 100_000_000, 0).
+        // We also need it to protect from ptr == 0 in flatView.
         if (isEmpty()) {
             return true;
         }
