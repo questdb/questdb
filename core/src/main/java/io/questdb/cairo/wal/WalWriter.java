@@ -151,6 +151,8 @@ public class WalWriter implements TableWriterAPI {
     private long segmentLockFd = -1;
     private long segmentRowCount = -1;
     private TableToken tableToken;
+    private long totalSegmentsRowCount;
+    private long totalSegmentsSize;
     private TxReader txReader;
     private long txnMaxTimestamp = -1;
     private long txnMinTimestamp = Long.MAX_VALUE;
@@ -906,10 +908,11 @@ public class WalWriter implements TableWriterAPI {
 
         // The events file will also contain the symbols.
         tally += events.size();
-        if (segmentRowCount > 1000 && columns.size() > 50) {
-            // Optimise for tables with many columns so that we don't have to scan all columns
-            // on every commit.
-            avgRecordSize = tally / segmentRowCount;
+
+        // If we have many columns it can be a bit expensive, we can optimise the check
+        // by calculating the average record size.
+        if ((totalSegmentsRowCount + segmentRowCount) > 1000) {
+            avgRecordSize = (totalSegmentsSize + tally) / (totalSegmentsRowCount + segmentRowCount);
         }
 
         return tally > threshold;
@@ -1293,6 +1296,7 @@ public class WalWriter implements TableWriterAPI {
     private void openColumnFiles(CharSequence columnName, int columnType, int columnIndex, int pathTrimToLen) {
         try {
             final MemoryMA dataMem = getDataColumn(columnIndex);
+            totalSegmentsSize += dataMem.getAppendOffset();
             dataMem.close(isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
             dataMem.of(
                     ff,
@@ -1306,6 +1310,7 @@ public class WalWriter implements TableWriterAPI {
 
             final MemoryMA auxMem = getAuxColumn(columnIndex);
             if (auxMem != null) {
+                totalSegmentsSize += auxMem.getAppendOffset();
                 auxMem.close(isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
                 ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
                 columnTypeDriver.configureAuxMemMA(
@@ -1330,6 +1335,7 @@ public class WalWriter implements TableWriterAPI {
         segmentLockFd = -1;
         final long oldSegmentRows = segmentRowCount;
         try {
+            totalSegmentsRowCount += Math.max(0, segmentRowCount);
             currentTxnStartRowNum = 0;
             rowValueIsNotNull.fill(0, columnCount, -1);
             final int segmentPathLen = createSegmentDir(newSegmentId);
@@ -1363,6 +1369,7 @@ public class WalWriter implements TableWriterAPI {
 
             segmentRowCount = 0;
             metadata.switchTo(path, segmentPathLen, isTruncateFilesOnClose());
+            totalSegmentsSize += events.size();
             events.openEventFile(path, segmentPathLen, isTruncateFilesOnClose(), tableToken.isSystem());
             if (commitMode != CommitMode.NOSYNC) {
                 events.sync();
