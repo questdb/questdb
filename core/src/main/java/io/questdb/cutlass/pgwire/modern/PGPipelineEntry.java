@@ -147,14 +147,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     //    and we have to respect this. Thus, if a PARSE message contains a type VARCHAR then
     //    we need to read it from wire as VARCHAR even we use e.g. INT internally. So we need both native and wire types.
     private final LongList outParameterTypeDescriptionTypes;
-    private final ObjectPool<PgNonNullBinaryArrayView> pgNonNullBinaryArrayViewPool = new ObjectPool<>(PgNonNullBinaryArrayView::new, 1);
     private final ObjList<String> pgResultSetColumnNames;
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private final IntList pgResultSetColumnTypes;
     private final ObjList<CharSequence> portalNames = new ObjList<>();
     // todo: configurable maxPageSize
     private final MemoryAR transcodedArrayMemory = new MemoryCARWImpl(4096, 10000, MemoryTag.NATIVE_PGW_PIPELINE);
-    private final ObjectPool<TranscodingBinaryArrayView> transcodingBinaryArrayViews = new ObjectPool<>(() -> new TranscodingBinaryArrayView(transcodedArrayMemory), 1);
+    private final ObjectPool<TranscodingBinaryArrayView> transcodingBinaryArrayViewPool = new ObjectPool<>(() -> new TranscodingBinaryArrayView(transcodedArrayMemory), 1);
     boolean isCopy;
     private boolean cacheHit = false;    // extended protocol cursor resume callback
     private CompiledQueryImpl compiledQuery;
@@ -338,9 +337,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateSync = SYNC_PARSE;
         tai = null;
         tas = null;
-        pgNonNullBinaryArrayViewPool.clear();
         transcodedArrayMemory.close();
-        transcodingBinaryArrayViews.clear();
+        transcodingBinaryArrayViewPool.clear();
     }
 
     public void commit(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) throws BadProtocolException {
@@ -1247,6 +1245,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, utf8String);
             }
             lo += valueSize;
+        }
+
+        for (int i = 0, n = transcodingBinaryArrayViewPool.getPos(); i < n; i++) {
+            // intentionally not closing the view, it will be closed when the pool is cleared
+            TranscodingBinaryArrayView view = transcodingBinaryArrayViewPool.peekQuick(i);
+            view.afterMemoryFixed();
         }
     }
 
@@ -2534,7 +2538,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // todo: clarify the exact semantic of this flag; apparently python asyncpg client sends it as 0,
         // even when there are NULL elements in the array
 //        if (hasNull == 1) {
-        arrayView = transcodingBinaryArrayViews.next();
+        arrayView = transcodingBinaryArrayViewPool.next();
 //        } else {
 //            arrayView = pgNonNullBinaryArrayViewPool.next();
 //        }
@@ -2905,6 +2909,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateDesc = SYNC_DESC_NONE;
         stateExec = false;
         stateClosed = false;
+        transcodingBinaryArrayViewPool.clear();
     }
 
     void copyStateFrom(PGPipelineEntry that) {

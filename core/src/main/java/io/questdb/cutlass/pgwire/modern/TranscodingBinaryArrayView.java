@@ -25,6 +25,7 @@
 package io.questdb.cutlass.pgwire.modern;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.arr.BorrowedFlatArrayView;
 import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryAR;
@@ -33,7 +34,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 
-public class TranscodingBinaryArrayView extends PGWireArrayView implements FlatArrayView, Mutable {
+public class TranscodingBinaryArrayView extends PGWireArrayView implements Mutable {
     private final MemoryAR mem;
     // the same MemoryAR is used by multiple views, so we need to keep track of the initial offset
     private long initialOffset;
@@ -41,23 +42,7 @@ public class TranscodingBinaryArrayView extends PGWireArrayView implements FlatA
     public TranscodingBinaryArrayView(MemoryAR mem) {
         this.mem = mem;
         this.flatViewLength = 1;
-        this.flatView = this;
-    }
-
-    @Override
-    public void appendToMemFlat(MemoryA dst) {
-        int size = this.flatViewLength;
-        switch (elemType()) {
-            case ColumnType.DOUBLE:
-            case ColumnType.LONG:
-                // TODO optimize to Vect.memcpy()
-                for (int i = 0; i < size; i++) {
-                    dst.putLong(getLong(i));
-                }
-                break;
-            default:
-                throw new UnsupportedOperationException("not implemented yet");
-        }
+        this.flatView = new BorrowedFlatArrayView();
     }
 
     @Override
@@ -68,24 +53,9 @@ public class TranscodingBinaryArrayView extends PGWireArrayView implements FlatA
         type = ColumnType.UNDEFINED;
     }
 
-    @Override
-    public short elemType() {
-        return ColumnType.decodeArrayElementType(type);
-    }
-
-    @Override
-    public double getDoubleAtAbsoluteIndex(int elemIndex) {
-        return mem.getDouble(initialOffset + (long) elemIndex * Double.BYTES);
-    }
-
-    @Override
-    public long getLongAtAbsoluteIndex(int elemIndex) {
-        return mem.getLong(initialOffset + (long) elemIndex * Long.BYTES);
-    }
-
-    @Override
-    public int length() {
-        return flatViewLength;
+    void afterMemoryFixed() {
+        long ptr = mem.addressOf(initialOffset);
+        borrowedFlatView().of(ptr, ColumnType.decodeArrayElementType(this.type), flatViewLength);
     }
 
     @Override
@@ -113,8 +83,6 @@ public class TranscodingBinaryArrayView extends PGWireArrayView implements FlatA
             default:
                 throw new UnsupportedOperationException("not implemented yet");
         }
-
         this.type = ColumnType.encodeArrayType(componentNativeType, shape.size());
-        resetToDefaultStrides();
     }
 }
