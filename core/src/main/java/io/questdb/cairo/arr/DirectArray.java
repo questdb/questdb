@@ -141,6 +141,9 @@ public final class DirectArray extends MutableArray implements Mutable {
     }
 
     private void ensureSize(long requiredSize) {
+        if (requiredSize <= size) {
+            return;
+        }
         if (ptr == 0) {
             ptr = Unsafe.malloc(requiredCapacity, MEM_TAG);
             Vect.memset(ptr, requiredCapacity, 0);
