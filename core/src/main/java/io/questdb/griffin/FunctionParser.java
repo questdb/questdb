@@ -24,19 +24,15 @@
 
 package io.questdb.griffin;
 
-import java.util.ArrayDeque;
-
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.FunctionArray;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
@@ -52,6 +48,7 @@ import io.questdb.griffin.engine.functions.cast.CastUuidToVarcharFunctionFactory
 import io.questdb.griffin.engine.functions.cast.CastVarcharToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastVarcharToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastVarcharToUuidFunctionFactory;
+import io.questdb.griffin.engine.functions.columns.ArrayColumn;
 import io.questdb.griffin.engine.functions.columns.BinColumn;
 import io.questdb.griffin.engine.functions.columns.BooleanColumn;
 import io.questdb.griffin.engine.functions.columns.ByteColumn;
@@ -76,6 +73,7 @@ import io.questdb.griffin.engine.functions.columns.SymbolColumn;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.columns.UuidColumn;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
+import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.ByteConstant;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
@@ -116,6 +114,10 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.ArrayDeque;
 
 import static io.questdb.griffin.SqlKeywords.*;
 
@@ -146,7 +148,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     @NotNull
-    public static ScalarFunction createColumn(
+    public static Function createColumn(
             int position,
             CharSequence name,
             RecordMetadata metadata
@@ -166,7 +168,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.SHORT:
                 return ShortColumn.newInstance(index);
             case ColumnType.CHAR:
-                return CharColumn.newInstance(index);
+                return new CharColumn(index);
             case ColumnType.INT:
                 return IntColumn.newInstance(index);
             case ColumnType.LONG:
@@ -208,10 +210,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.UUID:
                 return UuidColumn.newInstance(index);
             case ColumnType.IPv4:
-                return IPv4Column.newInstance(index);
+                return new IPv4Column(index);
             case ColumnType.INTERVAL:
-                // we cannot use a pooled IntervalColumn instance, because it is not thread-safe
-                return new IntervalColumn(index);
+                return IntervalColumn.newInstance(index);
+            case ColumnType.ARRAY:
+                return new ArrayColumn(index, columnType);
             default:
                 throw SqlException.position(position)
                         .put("unsupported column type ")
@@ -329,7 +332,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             final Function function = functionStack.poll();
             positionStack.pop();
             assert positionStack.size() == functionStack.size();
-            if (function != null && function.isConstant() && (function instanceof ScalarFunction)) {
+            if (function != null && function.isConstant() && function.extendedOps() == null) {
                 return functionToConstant(function);
             }
             return function;
@@ -414,9 +417,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     // their arguments are not boolean.
                     ex.put("expression type mismatch,");
                     for (int i = 0, n = descriptor.getSigArgCount(); i < n; i++) {
-                        final int mask = descriptor.getArgTypeMask(i);
-                        final int expectedType = FunctionFactoryDescriptor.toType(mask);
-                        final boolean expectedConstant = FunctionFactoryDescriptor.isConstant(mask);
+                        final int typeWithFlags = descriptor.getArgTypeWithFlags(i);
+                        final int expectedType = FunctionFactoryDescriptor.toTypeTag(typeWithFlags);
+                        final boolean expectedConstant = FunctionFactoryDescriptor.isConstant(typeWithFlags);
                         final int actualType = args.getQuick(i).getType();
                         final boolean actualConstant = args.getQuick(i).isConstant();
 
@@ -433,9 +436,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 } else {
                     ex.put("argument type mismatch for function `").put(node.token).put('`');
                     for (int i = 0, n = descriptor.getSigArgCount(); i < n; i++) {
-                        final int mask = descriptor.getArgTypeMask(i);
-                        final int expectedType = FunctionFactoryDescriptor.toType(mask);
-                        final boolean expectedConstant = FunctionFactoryDescriptor.isConstant(mask);
+                        final int typeWithFlags = descriptor.getArgTypeWithFlags(i);
+                        final int expectedType = FunctionFactoryDescriptor.toTypeTag(typeWithFlags);
+                        final boolean expectedConstant = FunctionFactoryDescriptor.isConstant(typeWithFlags);
                         final int actualType = args.getQuick(i).getType();
                         final boolean actualConstant = args.getQuick(i).isConstant();
 
@@ -464,12 +467,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (i > 0) {
                     ex.put(", ");
                 }
-                final int mask = descriptor.getArgTypeMask(i);
-                ex.put(ColumnType.nameOf(FunctionFactoryDescriptor.toType(mask)));
-                if (FunctionFactoryDescriptor.isArray(mask)) {
+                final int typeWithFlags = descriptor.getArgTypeWithFlags(i);
+                ex.put(ColumnType.nameOf(FunctionFactoryDescriptor.toTypeTag(typeWithFlags)));
+                if (FunctionFactoryDescriptor.isArray(typeWithFlags)) {
                     ex.put("[]");
                 }
-                if (FunctionFactoryDescriptor.isConstant(mask)) {
+                if (FunctionFactoryDescriptor.isConstant(typeWithFlags)) {
                     ex.put(" constant");
                 }
             }
@@ -654,6 +657,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         || columnType == ColumnType.IPv4
                         || columnType == ColumnType.VARCHAR
                         || columnType == ColumnType.INTERVAL
+                        || ColumnType.tagOf(columnType) == ColumnType.ARRAY // todo: this is not great, we should be more specific
         ) {
             return Constants.getTypeConstant(columnType);
         }
@@ -778,9 +782,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             final boolean sigVarArgConst;
 
             if (sigArgCount > 0) {
-                final int lastSigArgMask = descriptor.getArgTypeMask(sigArgCount - 1);
-                sigVarArg = FunctionFactoryDescriptor.toType(lastSigArgMask) == ColumnType.VAR_ARG;
-                sigVarArgConst = FunctionFactoryDescriptor.isConstant(lastSigArgMask);
+                final int lastSigArgTypeWithFlags = descriptor.getArgTypeWithFlags(sigArgCount - 1);
+                sigVarArg = FunctionFactoryDescriptor.toTypeTag(lastSigArgTypeWithFlags) == ColumnType.VAR_ARG;
+                sigVarArgConst = FunctionFactoryDescriptor.isConstant(lastSigArgTypeWithFlags);
             } else {
                 sigVarArg = false;
                 sigVarArgConst = false;
@@ -804,24 +808,39 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 int sigArgTypeScore = 0;
                 for (int argIdx = 0; argIdx < sigArgCount; argIdx++) {
                     final Function arg = args.getQuick(argIdx);
-                    final int sigArgTypeMask = descriptor.getArgTypeMask(argIdx);
+                    final int sigArgTypeWithFlags = descriptor.getArgTypeWithFlags(argIdx);
 
-                    if (FunctionFactoryDescriptor.isConstant(sigArgTypeMask) && !arg.isConstant()) {
-                        match = MATCH_NO_MATCH; // no match
+                    if (FunctionFactoryDescriptor.isConstant(sigArgTypeWithFlags) && !arg.isConstant()) {
+                        match = MATCH_NO_MATCH;
                         break;
                     }
 
-                    final boolean isArray = FunctionFactoryDescriptor.isArray(sigArgTypeMask);
-                    final boolean isScalar = arg instanceof ScalarFunction;
-                    if ((isArray && isScalar) || (!isArray && !isScalar)) {
-                        match = MATCH_NO_MATCH; // no match
-                        break;
-                    }
-
-                    final short sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
                     final int argType = arg.getType();
                     final short argTypeTag = ColumnType.tagOf(argType);
-                    final short sigArgTypeTag = ColumnType.tagOf(sigArgType);
+                    final short sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(sigArgTypeWithFlags);
+
+                    final boolean sigIsArray = FunctionFactoryDescriptor.isArray(sigArgTypeWithFlags);
+                    final boolean argIsArray = argTypeTag == ColumnType.ARRAY;
+                    final boolean argIsStringArray = argTypeTag == ColumnType.ARRAY_STRING;
+                    final boolean sigIsStringArray = sigArgTypeTag == ColumnType.ARRAY_STRING;
+                    if (sigIsArray != argIsArray || sigIsStringArray != argIsStringArray) {
+                        match = MATCH_NO_MATCH;
+                        break;
+                    }
+                    if (argIsStringArray) { // give the above checks, implies that sigIsStringArray is also true
+                        match = mergeWithExactMatch(match);
+                        continue;
+                    }
+                    if (argIsArray) { // given the above checks, implies that sigIsArray is also true
+                        short argElemTypeTag = ColumnType.decodeArrayElementType(argType);
+                        if (sigArgTypeTag == argElemTypeTag) {
+                            match = mergeWithExactMatch(match);
+                            continue;
+                        } else {
+                            match = MATCH_NO_MATCH;
+                            break;
+                        }
+                    }
 
                     if (sigArgTypeTag == argTypeTag ||
                             (argTypeTag == ColumnType.CHAR &&              // 'a' could also be a string literal, so it should count as proper match
@@ -829,17 +848,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                                     arg.isConstant() &&                    // bind variable parameter might be a string and throw error during execution.
                                     arg != CharTypeConstant.INSTANCE) ||   // Ignore type constant to keep cast(X as char) working
                             (sigArgTypeTag == ColumnType.GEOHASH && ColumnType.isGeoHash(argType))) {
-                        switch (match) {
-                            case MATCH_NO_MATCH: // was it no match
-                                match = MATCH_EXACT_MATCH;
-                                break;
-                            case MATCH_FUZZY_MATCH: // was it fuzzy match ?
-                                match = MATCH_PARTIAL_MATCH; // this is mixed match, fuzzy and exact
-                                break;
-                            default:
-                                // don't change match otherwise
-                                break;
-                        }
+                        match = mergeWithExactMatch(match);
                         continue;
                     }
 
@@ -850,7 +859,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     //
                     // output of a cast() function is always the 2nd argument in a function signature
                     if (argIdx != 1 || !SqlKeywords.isCastKeyword(node.token)) {
-                        int overloadDistance = ColumnType.overloadDistance(argTypeTag, sigArgType); // NULL to any is 0
+                        int overloadDistance = ColumnType.overloadDistance(argTypeTag, sigArgTypeTag); // NULL to any is 0
 
                         if (argTypeTag == ColumnType.STRING && sigArgTypeTag == ColumnType.CHAR) {
                             if (arg.isConstant()) {
@@ -960,7 +969,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             final int pos = undefinedVariables.getQuick(i);
             if (pos < candidateSigArgCount) {
                 // assign arguments based on the candidate function descriptor
-                final int sigArgType = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(pos));
+                final int sigArgType = FunctionFactoryDescriptor.toTypeTag(candidateDescriptor.getArgTypeWithFlags(pos));
                 args.getQuick(pos).assignType(sigArgType, sqlExecutionContext.getBindVariableService());
             } else {
                 // in case of vararg it is possible that we have more undefined variables than args in the function descriptor,
@@ -972,7 +981,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
         for (int k = 0; k < candidateSigArgCount; k++) {
             final Function arg = args.getQuick(k);
-            final short sigArgTypeTag = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(k));
+            final short sigArgTypeTag = FunctionFactoryDescriptor.toTypeTag(candidateDescriptor.getArgTypeWithFlags(k));
             final short argTypeTag = ColumnType.tagOf(arg.getType());
 
             if (argTypeTag == ColumnType.DOUBLE && arg.isConstant() && Numbers.isNull(arg.getDouble(null))) {
@@ -1209,6 +1218,15 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 } else {
                     return IPv4Constant.newInstance(function.getIPv4(null));
                 }
+            case ColumnType.ARRAY:
+                if (function instanceof ArrayConstant) {
+                    return function;
+                }
+                ArrayView array = function.getArray(null);
+                if (array instanceof FunctionArray) {
+                    return new ArrayConstant((FunctionArray) array);
+                }
+                return function;
             default:
                 return function;
         }
@@ -1221,6 +1239,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             throw SqlException.$(0, "bind variable service is not provided");
         }
         return bindVariableService;
+    }
+
+    private int mergeWithExactMatch(int match) {
+        return match == MATCH_NO_MATCH ? MATCH_EXACT_MATCH
+                : match == MATCH_FUZZY_MATCH ? MATCH_PARTIAL_MATCH
+                : match;
     }
 
     private Function parseIndexedParameter(int position, CharSequence name) throws SqlException {

@@ -24,7 +24,13 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.*;
+import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.std.Chars;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntObjHashMap;
+import io.questdb.std.Long256;
+import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 
 // ColumnType layout - 32bit
@@ -48,6 +54,7 @@ import io.questdb.std.str.StringSink;
  * Column types as numeric (integer) values
  */
 public final class ColumnType {
+    public static final int ARRAY_NDIMS_LIMIT = 32; // inclusive
     public static final int GEOBYTE_MAX_BITS = 7;
     // geohash bits <-> backing primitive types bit boundaries
     public static final int GEOBYTE_MIN_BITS = 1;
@@ -95,15 +102,16 @@ public final class ColumnType {
     public static final short LONG128 = GEOHASH + 1;            // = 24  Limited support, few tests only
     public static final short IPv4 = LONG128 + 1;               // = 25
     public static final short VARCHAR = IPv4 + 1;               // = 26
+    public static final short ARRAY = VARCHAR + 1;           // = 27
     // PG specific types to work with 3rd party software
     // with canned catalogue queries:
     // REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER
-    public static final short REGCLASS = VARCHAR + 1;           // = 27;
-    public static final short REGPROCEDURE = REGCLASS + 1;      // = 28;
-    public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 29;
-    public static final short PARAMETER = ARRAY_STRING + 1;     // = 30;
-    public static final short INTERVAL = PARAMETER + 1;         // = 31
-    public static final short NULL = INTERVAL + 1;              // = 32; ALWAYS the last
+    public static final short REGCLASS = ARRAY + 1;          // = 28;
+    public static final short REGPROCEDURE = REGCLASS + 1;      // = 29;
+    public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 30;
+    public static final short PARAMETER = ARRAY_STRING + 1;     // = 31;
+    public static final short INTERVAL = PARAMETER + 1;         // = 32
+    public static final short NULL = INTERVAL + 1;              // = 33; ALWAYS the last
     private static final short[] TYPE_SIZE = new short[NULL + 1];
     private static final short[] TYPE_SIZE_POW2 = new short[TYPE_SIZE.length];
     // slightly bigger than needed to make it a power of 2
@@ -114,10 +122,15 @@ public final class ColumnType {
     public static final int VERSION = 426;
     static final int[] GEO_TYPE_SIZE_POW2;
     private static final boolean ALLOW_DEFAULT_STRING_CHANGE = false;
-    private static final int BITS_OFFSET = 8;
+    private static final int ARRAY_ELEMTYPE_FIELD_MASK = 0x3F;
+    private static final int ARRAY_ELEMTYPE_FIELD_POS = 8;
+    private static final int ARRAY_NDIMS_FIELD_MASK = ARRAY_NDIMS_LIMIT - 1;
+    private static final int ARRAY_NDIMS_FIELD_POS = 14;
+    private static final int BYTE_BITS = 8;
     private static final short[][] OVERLOAD_PRIORITY;
     private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
     private static final int TYPE_FLAG_GEO_HASH = (1 << 16);
+    private static final IntHashSet arrayTypeSet = new IntHashSet();
     private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final IntHashSet nonPersistedTypes = new IntHashSet();
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
@@ -125,25 +138,98 @@ public final class ColumnType {
     private ColumnType() {
     }
 
+    public static short commonWideningType(short typeA, short typeB) {
+        return (typeA == typeB && typeA != SYMBOL) ? typeA
+                : (isStringyType(typeA) && isStringyType(typeB)) ? STRING
+                : (isStringyType(typeA) && isParseableType(typeB)) ? typeA
+                : (isStringyType(typeB) && isParseableType(typeA)) ? typeB
+
+                // NULL casts to any other nullable type, except for symbols which can't cross symbol tables.
+                : ((typeA == NULL) && isCastableFromNull(typeB) && (typeB != SYMBOL)) ? typeB
+                : ((typeB == NULL) && isCastableFromNull(typeA) && (typeA != SYMBOL)) ? typeA
+
+                // cast long and timestamp to timestamp in unions instead of longs.
+                : ((typeA == TIMESTAMP) && (typeB == LONG)) ? TIMESTAMP
+                : ((typeA == LONG) && (typeB == TIMESTAMP)) ? TIMESTAMP
+
+                // Varchars take priority over strings, but strings over most types.
+                : (typeA == VARCHAR || typeB == VARCHAR) ? VARCHAR
+                : ((typeA == STRING) || (typeB == STRING)) ? STRING
+
+                // cast booleans vs anything other than varchars to strings.
+                : ((typeA == BOOLEAN) || (typeB == BOOLEAN)) ? STRING
+
+                : (isToSameOrWider(typeB, typeA) && typeA != SYMBOL && typeA != CHAR) ? typeA
+                : (isToSameOrWider(typeA, typeB) && typeB != SYMBOL && typeB != CHAR) ? typeB
+                : STRING;
+    }
+
+    public static int decodeArrayDimensionality(int encodedType) {
+        if (ColumnType.isNull(encodedType)) {
+            return 0;
+        }
+        assert ColumnType.isArray(encodedType) : "typeTag of encodedType is not ARRAY";
+        return ((encodedType >> ARRAY_NDIMS_FIELD_POS) & ARRAY_NDIMS_FIELD_MASK) + 1;
+    }
+
+    /**
+     * Returns the int constant denoting the type of the elements in an array of the given encoded type.
+     */
+    public static short decodeArrayElementType(int encodedType) {
+        if (ColumnType.isNull(encodedType)) {
+            return ColumnType.NULL;
+        }
+        assert ColumnType.isArray(encodedType) : "typeTag of encodedType is not ARRAY";
+        return (short) ((encodedType >> ARRAY_ELEMTYPE_FIELD_POS) & ARRAY_ELEMTYPE_FIELD_MASK);
+    }
+
     public static boolean defaultStringImplementationIsUtf8() {
         return Chars.equals(nameOf(STRING), "VARCHAR");
     }
 
+    /**
+     * Encodes the array type tag from the element type tag and dimensionality.
+     * <br>
+     * The encoded type is laid out as follows:
+     * <pre>
+     *     31~19      18~14       13~8           7~0
+     * +----------+----------+-----------+------------------+
+     * | Reserved |  nDims   | elemType  | ColumnType.ARRAY |
+     * +----------+----------+-----------+------------------+
+     * |          |  5 bits  |  6 bits   |      8 bits      |
+     * </pre>
+     *
+     * @param elemType one of the supported array element type tags.
+     * @param nDims    dimensionality, from 1 to {@value ARRAY_NDIMS_LIMIT}.
+     */
+    public static int encodeArrayType(short elemType, int nDims) {
+        assert nDims >= 1 && nDims <= ARRAY_NDIMS_LIMIT : "nDims out of range: " + nDims;
+        assert isSupportedArrayElementType(elemType) || elemType == UNDEFINED
+                : "not supported as array element type: " + elemType;
+
+        nDims--; // 0 == one dimension
+        return (nDims & ARRAY_NDIMS_FIELD_MASK) << ARRAY_NDIMS_FIELD_POS
+                | (elemType & ARRAY_ELEMTYPE_FIELD_MASK) << ARRAY_ELEMTYPE_FIELD_POS
+                | ARRAY;
+    }
+
     public static ColumnTypeDriver getDriver(int columnType) {
-        switch (columnType) {
+        switch (tagOf(columnType)) {
             case STRING:
                 return StringTypeDriver.INSTANCE;
             case BINARY:
                 return BinaryTypeDriver.INSTANCE;
             case VARCHAR:
                 return VarcharTypeDriver.INSTANCE;
+            case ARRAY:
+                return ArrayTypeDriver.INSTANCE;
             default:
                 throw CairoException.critical(0).put("no driver for type: ").put(columnType);
         }
     }
 
     public static int getGeoHashBits(int type) {
-        return (byte) ((type >> BITS_OFFSET) & 0xFF);
+        return (byte) ((type >> BYTE_BITS) & 0xFF);
     }
 
     public static int getGeoHashTypeWithBits(int bits) {
@@ -157,6 +243,17 @@ public final class ColumnType {
             return 4; // 128 bit column
         }
         return pow2SizeOf(columnType);
+    }
+
+    /**
+     * Is an N-dimensional array type.
+     */
+    public static boolean isArray(int columnType) {
+        return ColumnType.tagOf(columnType) == ColumnType.ARRAY;
+    }
+
+    public static boolean isArrayUnknown(int columnType) {
+        return tagOf(columnType) == ARRAY && decodeArrayElementType(columnType) == UNDEFINED;
     }
 
     public static boolean isAssignableFrom(int fromType, int toType) {
@@ -184,6 +281,13 @@ public final class ColumnType {
                 || (fromType == BYTE && toType == BOOLEAN)
                 || (fromType == TIMESTAMP && toType == LONG)
                 || (fromType == STRING && (toType >= BYTE && toType <= DOUBLE));
+    }
+
+    /**
+     * Checks if a type can be cast from NULL to the specified type.
+     */
+    public static boolean isCastableFromNull(int columnType) {
+        return tagOf(columnType) != CHAR;
     }
 
     public static boolean isChar(int columnType) {
@@ -233,8 +337,16 @@ public final class ColumnType {
         }
     }
 
+    public static boolean isGenericType(int columnType) {
+        return isGeoHash(columnType) || isArray(columnType);
+    }
+
     public static boolean isGeoHash(int columnType) {
         return (columnType & TYPE_FLAG_GEO_HASH) != 0;
+    }
+
+    public static boolean isGeoType(int colType) {
+        return colType >= GEOBYTE && colType <= GEOLONG;
     }
 
     public static boolean isInt(int columnType) {
@@ -249,12 +361,24 @@ public final class ColumnType {
         return columnType == NULL;
     }
 
+    public static boolean isParseableType(int colType) {
+        return colType == TIMESTAMP || colType == LONG256;
+    }
+
     public static boolean isPersisted(int columnType) {
         return nonPersistedTypes.excludes(columnType);
     }
 
     public static boolean isString(int columnType) {
         return columnType == STRING;
+    }
+
+    public static boolean isStringyType(int colType) {
+        return colType == VARCHAR || colType == STRING;
+    }
+
+    public static boolean isSupportedArrayElementType(short typeTag) {
+        return arrayTypeSet.contains(typeTag);
     }
 
     public static boolean isSymbol(int columnType) {
@@ -270,13 +394,14 @@ public final class ColumnType {
     }
 
     public static boolean isToSameOrWider(int fromType, int toType) {
-        return (tagOf(fromType) == tagOf(toType) && (getGeoHashBits(fromType) == 0 || getGeoHashBits(fromType) >= getGeoHashBits(toType)))
+        return (tagOf(fromType) == tagOf(toType) && !isArray(fromType) && (getGeoHashBits(fromType) == 0 || getGeoHashBits(fromType) >= getGeoHashBits(toType)))
                 || isBuiltInWideningCast(fromType, toType)
                 || isStringCast(fromType, toType)
                 || isVarcharCast(fromType, toType)
                 || isGeoHashWideningCast(fromType, toType)
                 || isImplicitParsingCast(fromType, toType)
-                || isIPv4Cast(fromType, toType);
+                || isIPv4Cast(fromType, toType)
+                || isArrayCast(fromType, toType);
     }
 
     public static boolean isUndefined(int columnType) {
@@ -284,7 +409,10 @@ public final class ColumnType {
     }
 
     public static boolean isVarSize(int columnType) {
-        return columnType == STRING || columnType == BINARY || columnType == VARCHAR;
+        return columnType == STRING ||
+                columnType == BINARY ||
+                columnType == VARCHAR ||
+                tagOf(columnType) == ARRAY;
     }
 
     public static boolean isVarchar(int columnType) {
@@ -371,10 +499,32 @@ public final class ColumnType {
         return nameTypeMap.get(name);
     }
 
+    private static boolean isArrayCast(int fromType, int toType) {
+        return isArray(fromType) && isArray(toType)
+                && decodeArrayElementType(fromType) == decodeArrayElementType(toType)
+                && decodeArrayDimensionality(fromType) == decodeArrayDimensionality(toType);
+    }
+
     private static boolean isGeoHashWideningCast(int fromType, int toType) {
         final int toTag = tagOf(toType);
         final int fromTag = tagOf(fromType);
-        return (fromTag == GEOLONG && toTag == GEOINT) || (fromTag == GEOLONG && toTag == GEOSHORT) || (fromTag == GEOLONG && toTag == GEOBYTE) || (fromTag == GEOINT && toTag == GEOSHORT) || (fromTag == GEOINT && toTag == GEOBYTE) || (fromTag == GEOSHORT && toTag == GEOBYTE);
+        // Deliberate fallthrough in all case branches!
+        switch (fromTag) {
+            case GEOLONG:
+                if (toTag == GEOINT) {
+                    return true;
+                }
+            case GEOINT:
+                if (toTag == GEOSHORT) {
+                    return true;
+                }
+            case GEOSHORT:
+                if (toTag == GEOBYTE) {
+                    return true;
+                }
+            default:
+                return false;
+        }
     }
 
     private static boolean isIPv4Cast(int fromType, int toType) {
@@ -404,16 +554,18 @@ public final class ColumnType {
                 || (fromType == INT && toType >= BYTE && toType <= SHORT)
                 || (fromType == SHORT && toType == BYTE)
                 || (fromType == CHAR && toType == BYTE)
-                || ((fromType == STRING || fromType == VARCHAR) && toType == BYTE)
-                || ((fromType == STRING || fromType == VARCHAR) && toType == SHORT)
-                || ((fromType == STRING || fromType == VARCHAR) && toType == INT)
-                || ((fromType == STRING || fromType == VARCHAR) && toType == LONG)
-                || ((fromType == STRING || fromType == VARCHAR) && toType == DATE)
-                || ((fromType == STRING || fromType == VARCHAR) && toType == TIMESTAMP)
-                || ((fromType == STRING || fromType == VARCHAR) && toType == FLOAT)
-                || ((fromType == STRING || fromType == VARCHAR) && toType == DOUBLE)
-                || ((fromType == STRING || fromType == VARCHAR) && toType == CHAR)
-                || ((fromType == STRING || fromType == VARCHAR) && toType == UUID);
+                || isStringyType(fromType) && (
+                toType == BYTE ||
+                        toType == SHORT ||
+                        toType == INT ||
+                        toType == LONG ||
+                        toType == DATE ||
+                        toType == TIMESTAMP ||
+                        toType == FLOAT ||
+                        toType == DOUBLE ||
+                        toType == CHAR ||
+                        toType == UUID ||
+                        ColumnType.isArray(toType));
     }
 
     private static boolean isStringCast(int fromType, int toType) {
@@ -434,7 +586,7 @@ public final class ColumnType {
     }
 
     private static int mkGeoHashType(int bits, short baseType) {
-        return (baseType & ~(0xFF << BITS_OFFSET)) | (bits << BITS_OFFSET) | TYPE_FLAG_GEO_HASH; // bit 16 is GeoHash flag
+        return (baseType & ~(0xFF << BYTE_BITS)) | (bits << BYTE_BITS) | TYPE_FLAG_GEO_HASH; // bit 16 is GeoHash flag
     }
 
     static {
@@ -473,11 +625,12 @@ public final class ColumnType {
                 /* 24 LONG128   */, {LONG128}
                 /* 25 IPv4      */, {IPv4}
                 /* 26 VARCHAR   */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE}
-                /* 27 unused    */, {}
+                /* 27 ARRAY     */, {ARRAY}
                 /* 28 unused    */, {}
                 /* 29 unused    */, {}
                 /* 30 unused    */, {}
-                /* 31 INTERVAL  */, {INTERVAL, STRING}
+                /* 31 unused    */, {}
+                /* 32 INTERVAL  */, {INTERVAL, STRING}
                 /* 32 NULL      */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
         };
         for (short fromTag = UNDEFINED; fromTag < NULL; fromTag++) {
@@ -513,6 +666,7 @@ public final class ColumnType {
         typeNameMap.put(CHAR, "CHAR");
         typeNameMap.put(STRING, "STRING");
         typeNameMap.put(VARCHAR, "VARCHAR");
+        typeNameMap.put(ARRAY, "ARRAY");
         typeNameMap.put(SYMBOL, "SYMBOL");
         typeNameMap.put(BINARY, "BINARY");
         typeNameMap.put(DATE, "DATE");
@@ -532,6 +686,19 @@ public final class ColumnType {
         typeNameMap.put(INTERVAL, "INTERVAL");
         typeNameMap.put(NULL, "NULL");
 
+        arrayTypeSet.add(BOOLEAN);
+        arrayTypeSet.add(BYTE);
+        arrayTypeSet.add(SHORT);
+        arrayTypeSet.add(INT);
+        arrayTypeSet.add(LONG);
+        arrayTypeSet.add(DATE);
+        arrayTypeSet.add(TIMESTAMP);
+        arrayTypeSet.add(FLOAT);
+        arrayTypeSet.add(DOUBLE);
+        arrayTypeSet.add(LONG256);
+        arrayTypeSet.add(UUID);
+        arrayTypeSet.add(IPv4);
+
         nameTypeMap.put("boolean", BOOLEAN);
         nameTypeMap.put("byte", BYTE);
         nameTypeMap.put("double", DOUBLE);
@@ -542,6 +709,7 @@ public final class ColumnType {
         nameTypeMap.put("char", CHAR);
         nameTypeMap.put("string", STRING);
         nameTypeMap.put("varchar", VARCHAR);
+        nameTypeMap.put("array", ARRAY);
         nameTypeMap.put("symbol", SYMBOL);
         nameTypeMap.put("binary", BINARY);
         nameTypeMap.put("date", DATE);
@@ -589,6 +757,7 @@ public final class ColumnType {
         TYPE_SIZE_POW2[DOUBLE] = 3;
         TYPE_SIZE_POW2[STRING] = -1;
         TYPE_SIZE_POW2[VARCHAR] = -1;
+        TYPE_SIZE_POW2[ARRAY] = -1;
         TYPE_SIZE_POW2[LONG] = 3;
         TYPE_SIZE_POW2[DATE] = 3;
         TYPE_SIZE_POW2[TIMESTAMP] = 3;
@@ -618,6 +787,7 @@ public final class ColumnType {
         TYPE_SIZE[SYMBOL] = Integer.BYTES;
         TYPE_SIZE[STRING] = 0;
         TYPE_SIZE[VARCHAR] = 0;
+        TYPE_SIZE[ARRAY] = 0;
         TYPE_SIZE[DOUBLE] = Double.BYTES;
         TYPE_SIZE[LONG] = Long.BYTES;
         TYPE_SIZE[DATE] = Long.BYTES;
@@ -647,5 +817,20 @@ public final class ColumnType {
         nonPersistedTypes.add(REGCLASS);
         nonPersistedTypes.add(REGPROCEDURE);
         nonPersistedTypes.add(ARRAY_STRING);
+
+        // add array type names up to dimension limit
+        // this has to be done after we configured type bit widths
+        for (int i = 0, n = arrayTypeSet.size(); i < n; i++) {
+            short type = (short) arrayTypeSet.get(i);
+            sink.clear();
+            sink.put(nameOf(type));
+            for (int d = 1; d <= ARRAY_NDIMS_LIMIT; d++) {
+                sink.put("[]");
+                int arrayType = encodeArrayType(type, d);
+                String name = sink.toString();
+                typeNameMap.put(arrayType, name);
+                nameTypeMap.put(name, arrayType);
+            }
+        }
     }
 }

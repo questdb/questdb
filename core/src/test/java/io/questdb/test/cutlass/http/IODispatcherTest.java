@@ -202,6 +202,7 @@ public class IODispatcherTest extends AbstractTest {
     private static final RescheduleContext emptyRescheduleContext = (retry) -> {
     };
     private static TestHttpClient testHttpClient;
+    private static CairoConfiguration configuration;
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
@@ -217,6 +218,7 @@ public class IODispatcherTest extends AbstractTest {
         // we have some synthetic re-runs
         testHttpClient = Misc.free(testHttpClient);
         testHttpClient = new TestHttpClient();
+        configuration = new DefaultCairoConfiguration(root);
     }
 
     @AfterClass
@@ -360,7 +362,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testCannotSetNonBlocking() throws Exception {
         assertMemoryLeak(() -> {
-            final HttpFullFatServerConfiguration serverConfiguration = new DefaultHttpServerConfiguration();
+            final HttpFullFatServerConfiguration serverConfiguration = new DefaultHttpServerConfiguration(configuration);
             final NetworkFacade nf = new NetworkFacadeImpl() {
                 long theFd;
 
@@ -446,7 +448,7 @@ public class IODispatcherTest extends AbstractTest {
         LOG.info().$("started testConnectDisconnect").$();
 
         assertMemoryLeak(() -> {
-            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
+            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(configuration);
 
             SOCountDownLatch connectLatch = new SOCountDownLatch(1);
             SOCountDownLatch contextClosedLatch = new SOCountDownLatch(1);
@@ -1139,17 +1141,19 @@ public class IODispatcherTest extends AbstractTest {
         final String expectedTableMetadata = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"LONG256\"},{\"index\":1,\"name\":\"f1\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
 
         final String baseDir = root;
-        final HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
-            @Override
-            public MillisecondClock getMillisecondClock() {
-                return StationaryMillisClock.INSTANCE;
-            }
+        final HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(
+                configuration,
+                new DefaultHttpContextConfiguration() {
+                    @Override
+                    public MillisecondClock getMillisecondClock() {
+                        return StationaryMillisClock.INSTANCE;
+                    }
 
-            @Override
-            public NanosecondClock getNanosecondClock() {
-                return StationaryNanosClock.INSTANCE;
-            }
-        });
+                    @Override
+                    public NanosecondClock getNanosecondClock() {
+                        return StationaryNanosClock.INSTANCE;
+                    }
+                });
 
         final ServerConfiguration serverConfiguration = new DefaultServerConfiguration(baseDir) {
             @Override
@@ -1219,17 +1223,19 @@ public class IODispatcherTest extends AbstractTest {
         final String expectedTableMetadata = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"LONG256\"},{\"index\":1,\"name\":\"f1\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
 
         final String baseDir = root;
-        final HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
-            @Override
-            public MillisecondClock getMillisecondClock() {
-                return StationaryMillisClock.INSTANCE;
-            }
+        final HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(
+                configuration,
+                new DefaultHttpContextConfiguration() {
+                    @Override
+                    public MillisecondClock getMillisecondClock() {
+                        return StationaryMillisClock.INSTANCE;
+                    }
 
-            @Override
-            public NanosecondClock getNanosecondClock() {
-                return StationaryNanosClock.INSTANCE;
-            }
-        });
+                    @Override
+                    public NanosecondClock getNanosecondClock() {
+                        return StationaryNanosClock.INSTANCE;
+                    }
+                });
         final ServerConfiguration serverConfiguration = new DefaultServerConfiguration(baseDir) {
             @Override
             public HttpFullFatServerConfiguration getHttpServerConfiguration() {
@@ -2543,7 +2549,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testImportMultipleOnSameConnectionSlow() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = root;
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, baseDir, false);
             final WorkerPool workerPool = new TestWorkerPool(3, httpConfiguration.getMetrics());
             try (
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir));
@@ -3145,7 +3151,7 @@ public class IODispatcherTest extends AbstractTest {
         assertMemoryLeak(() -> {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = root;
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, false);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, nf, baseDir, 256, false, false);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir));
@@ -5062,7 +5068,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testJsonQuerySyntaxError() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = root;
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(1);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir));
@@ -5274,7 +5280,7 @@ public class IODispatcherTest extends AbstractTest {
         assertMemoryLeak(() -> {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = root;
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, true);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, nf, baseDir, 256, false, true);
             final WorkerPool workerPool = new TestWorkerPool(2);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir));
@@ -5321,7 +5327,7 @@ public class IODispatcherTest extends AbstractTest {
         assertMemoryLeak(() -> {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = root;
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 4096, false, true);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, nf, baseDir, 4096, false, true);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
                     CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir));
@@ -5372,6 +5378,13 @@ public class IODispatcherTest extends AbstractTest {
             final String baseDir = root;
             final int tableRowCount = 3_000_000;
 
+            CairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(baseDir) {
+                @Override
+                public int getSqlPageFrameMaxRows() {
+                    // this is necessary to sufficiently fragmented paged filter execution
+                    return 10_000;
+                }
+            };
             DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
                     .withNetwork(nf)
                     .withBaseDir(baseDir)
@@ -5380,17 +5393,11 @@ public class IODispatcherTest extends AbstractTest {
                     .withAllowDeflateBeforeSend(false)
                     .withServerKeepAlive(true)
                     .withHttpProtocolVersion("HTTP/1.1 ")
-                    .build();
+                    .build(cairoConfiguration);
 
             WorkerPool workerPool = new TestWorkerPool(1);
 
-            try (CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir) {
-                @Override
-                public int getSqlPageFrameMaxRows() {
-                    // this is necessary to sufficiently fragmented paged filter execution
-                    return 10_000;
-                }
-            });
+            try (CairoEngine engine = new CairoEngine(cairoConfiguration);
                  HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
             ) {
                 httpServer.bind(new StaticContentProcessorFactory(httpConfiguration));
@@ -5646,7 +5653,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testMaxConnections() throws Exception {
         LOG.info().$("started maxConnections").$();
         assertMemoryLeak(() -> {
-            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
+            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(configuration);
 
             // change to 400 to trigger lockup
             // excess connection take a while to return (because it's N TCP retransmissions + timeout under the hood
@@ -6181,7 +6188,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testSCPConnectDownloadDisconnect() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = root;
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
@@ -6299,7 +6306,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testSCPFullDownload() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = root;
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(configuration, baseDir, false);
             WorkerPool workerPool = new TestWorkerPool(2);
             try (
                     HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)
@@ -6432,6 +6439,7 @@ public class IODispatcherTest extends AbstractTest {
             final String baseDir = root;
             NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(
+                    configuration,
                     nf,
                     baseDir,
                     16 * 1024,
@@ -6588,7 +6596,7 @@ public class IODispatcherTest extends AbstractTest {
                 "\r\n";
 
         assertMemoryLeak(() -> {
-            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
+            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(configuration);
 
             SOCountDownLatch connectLatch = new SOCountDownLatch(1);
             SOCountDownLatch contextClosedLatch = new SOCountDownLatch(1);
@@ -6750,6 +6758,7 @@ public class IODispatcherTest extends AbstractTest {
 
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(
+                    configuration,
                     new DefaultHttpContextConfiguration() {
                         @Override
                         public MillisecondClock getMillisecondClock() {
@@ -6915,7 +6924,7 @@ public class IODispatcherTest extends AbstractTest {
                 "\r\n";
 
         assertMemoryLeak(() -> {
-            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
+            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(configuration);
 
             SOCountDownLatch connectLatch = new SOCountDownLatch(1);
             SOCountDownLatch contextClosedLatch = new SOCountDownLatch(1);
@@ -8021,7 +8030,7 @@ public class IODispatcherTest extends AbstractTest {
         final int senderCount = 2;
 
         assertMemoryLeak(() -> {
-            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
+            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(configuration);
 
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final AtomicInteger requestsReceived = new AtomicInteger();
@@ -8316,19 +8325,7 @@ public class IODispatcherTest extends AbstractTest {
             SOCountDownLatch stopped = new SOCountDownLatch(1);
             AtomicReference<Throwable> queryError = new AtomicReference<>();
 
-            DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
-                    .withNetwork(NetworkFacadeImpl.INSTANCE)
-                    .withBaseDir(root)
-                    .withSendBufferSize(256)
-                    .withDumpingTraffic(false)
-                    .withAllowDeflateBeforeSend(false)
-                    .withServerKeepAlive(true)
-                    .withHttpProtocolVersion("HTTP/1.1 ")
-                    .build();
-
-            WorkerPool workerPool = new TestWorkerPool(1);
-
-            try (CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(root) {
+            CairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(root) {
                 @Override
                 public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                     return new DefaultSqlExecutionCircuitBreakerConfiguration() {
@@ -8338,7 +8335,20 @@ public class IODispatcherTest extends AbstractTest {
                         }
                     };
                 }
-            });
+            };
+            DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
+                    .withNetwork(NetworkFacadeImpl.INSTANCE)
+                    .withBaseDir(root)
+                    .withSendBufferSize(256)
+                    .withDumpingTraffic(false)
+                    .withAllowDeflateBeforeSend(false)
+                    .withServerKeepAlive(true)
+                    .withHttpProtocolVersion("HTTP/1.1 ")
+                    .build(cairoConfiguration);
+
+            WorkerPool workerPool = new TestWorkerPool(1);
+
+            try (CairoEngine engine = new CairoEngine(cairoConfiguration);
                  HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE);
                  SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
@@ -8727,10 +8737,12 @@ public class IODispatcherTest extends AbstractTest {
 
     @NotNull
     private DefaultHttpServerConfiguration createHttpServerConfiguration(
+            CairoConfiguration cairoConfiguration,
             String baseDir,
             @SuppressWarnings("SameParameterValue") boolean dumpTraffic
     ) {
         return createHttpServerConfiguration(
+                cairoConfiguration,
                 NetworkFacadeImpl.INSTANCE,
                 baseDir,
                 1024 * 1024,
@@ -8741,6 +8753,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @NotNull
     private DefaultHttpServerConfiguration createHttpServerConfiguration(
+            CairoConfiguration cairoConfiguration,
             NetworkFacade nf,
             String baseDir,
             int sendBufferSize,
@@ -8748,6 +8761,7 @@ public class IODispatcherTest extends AbstractTest {
             boolean allowDeflateBeforeSend
     ) {
         return createHttpServerConfiguration(
+                cairoConfiguration,
                 nf,
                 baseDir,
                 sendBufferSize,
@@ -8760,6 +8774,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @NotNull
     private DefaultHttpServerConfiguration createHttpServerConfiguration(
+            CairoConfiguration cairoConfiguration,
             NetworkFacade nf,
             String baseDir,
             int sendBufferSize,
@@ -8776,15 +8791,7 @@ public class IODispatcherTest extends AbstractTest {
                 .withAllowDeflateBeforeSend(allowDeflateBeforeSend)
                 .withServerKeepAlive(serverKeepAlive)
                 .withHttpProtocolVersion(httpProtocolVersion)
-                .build();
-    }
-
-    private HttpQueryTestBuilder getSimpleTester() {
-        return new HttpQueryTestBuilder()
-                .withTempFolder(root)
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false);
+                .build(cairoConfiguration);
     }
 
     private boolean handleClientOperation(

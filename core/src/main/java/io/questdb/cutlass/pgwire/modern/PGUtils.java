@@ -26,6 +26,7 @@ package io.questdb.cutlass.pgwire.modern;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.pgwire.BadProtocolException;
 import io.questdb.std.BinarySequence;
@@ -67,10 +68,11 @@ class PGUtils {
             PGPipelineEntry pipelineEntry,
             Record record,
             int columnIndex,
-            int typeTag,
+            int columnType,
             int bitFlags,
             long maxBlobSize
     ) throws BadProtocolException {
+        final short typeTag = ColumnType.tagOf(columnType);
         switch (typeTag) {
             case ColumnType.NULL:
                 return Integer.BYTES;
@@ -143,6 +145,32 @@ class PGUtils {
                                 .put(']');
                     }
                 }
+            case ColumnType.ARRAY:
+                ArrayView array = record.getArray(columnIndex, columnType);
+                if (array.isNull()) {
+                    return Integer.BYTES;
+                }
+                assert ColumnType.decodeArrayElementType(columnType) == ColumnType.DOUBLE || ColumnType.decodeArrayElementType(columnType) == ColumnType.LONG : "implemented only for double and long";
+                // todo: check if this is the only way to get the total size of the array
+                int encodedSize =
+                        Integer.BYTES // size
+                                + Integer.BYTES // dimension count
+                                + Integer.BYTES // has nulls flag
+                                + Integer.BYTES; // component type
+                encodedSize += array.getDimCount() * (2 * Integer.BYTES); // dimension lengths
+
+                int nDims = array.getDimCount();
+                int totalElements = 1;
+                for (int i = 0; i < nDims; i++) {
+                    totalElements *= array.getDimLen(i);
+                }
+
+                // assume non-null array, otherwise we would have to iterate over all elements
+                encodedSize += totalElements * (
+                        Integer.BYTES // element size
+                                + Long.BYTES // element value
+                );
+                return encodedSize;
             default:
                 assert false : "unsupported type: " + typeTag;
                 return -1;

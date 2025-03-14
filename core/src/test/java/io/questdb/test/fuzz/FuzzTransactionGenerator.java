@@ -24,6 +24,7 @@
 
 package io.questdb.test.fuzz;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
@@ -40,6 +41,7 @@ public class FuzzTransactionGenerator {
     private static final int MAX_COLUMNS = 200;
 
     public static ObjList<FuzzTransaction> generateSet(
+            CairoConfiguration cairoConfiguration,
             long initialRowCount,
             TableRecordMetadata sequencerMetadata,
             TableMetadata tableMetadata,
@@ -203,6 +205,7 @@ public class FuzzTransactionGenerator {
                 stopTs = Math.min(startTs + size, maxTimestamp);
 
                 generateDataBlock(
+                        cairoConfiguration,
                         transactionList,
                         rnd,
                         metaVersion,
@@ -295,6 +298,8 @@ public class FuzzTransactionGenerator {
                 return ColumnType.getGeoHashTypeWithBits(25);
             case ColumnType.GEOLONG:
                 return ColumnType.getGeoHashTypeWithBits(35);
+            case ColumnType.ARRAY:
+                return ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
             default:
                 return columnType;
         }
@@ -417,6 +422,7 @@ public class FuzzTransactionGenerator {
     }
 
     static void generateDataBlock(
+            CairoConfiguration cairoConfiguration,
             ObjList<FuzzTransaction> transactionList,
             Rnd rnd,
             int metadataVersion,
@@ -447,7 +453,7 @@ public class FuzzTransactionGenerator {
             }
             long seed1 = rnd.nextLong();
             long seed2 = rnd.nextLong();
-            transaction.operationList.add(new FuzzInsertOperation(seed1, seed2, timestamp, notSet, nullSet, cancelRows, strLen, symbols));
+            transaction.operationList.add(new FuzzInsertOperation(cairoConfiguration, seed1, seed2, timestamp, notSet, nullSet, cancelRows, strLen, symbols));
         }
 
         transaction.rollback = rnd.nextDouble() < rollback;

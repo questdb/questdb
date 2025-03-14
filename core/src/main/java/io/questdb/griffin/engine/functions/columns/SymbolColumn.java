@@ -32,7 +32,7 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.Nullable;
 
-public class SymbolColumn extends SymbolFunction implements ScalarFunction {
+public class SymbolColumn extends SymbolFunction implements Function {
     private final int columnIndex;
     private final boolean symbolTableStatic;
     private boolean ownSymbolTable;

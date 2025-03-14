@@ -38,7 +38,7 @@ import io.questdb.std.ObjList;
 public class StrArrayDereferenceFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "[](S[]I)";
+        return "[](WI)";
     }
 
     @Override
@@ -67,17 +67,17 @@ public class StrArrayDereferenceFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrA(Record rec) {
-            return arrayFunction.getStrA(rec, indexFunction.getInt(rec));
+            return arrayFunction.extendedOps().getStrA(rec, indexFunction.getInt(rec));
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return arrayFunction.getStrB(rec, indexFunction.getInt(rec));
+            return arrayFunction.extendedOps().getStrB(rec, indexFunction.getInt(rec));
         }
 
         @Override
-        public int getStrLen(Record rec, int arrayIndex) {
-            return arrayFunction.getStrLen(rec, indexFunction.getInt(rec));
+        public int getStrLen(Record rec) {
+            return arrayFunction.extendedOps().getStrLen(rec, indexFunction.getInt(rec));
         }
 
         @Override

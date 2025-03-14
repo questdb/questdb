@@ -25,41 +25,26 @@
 package io.questdb.test.cutlass.http;
 
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
-import io.questdb.std.Misc;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
 import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Rule;
 import org.junit.Test;
-import org.junit.rules.Timeout;
 
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class QueryRegistryTest extends AbstractTest {
-    private static TestHttpClient testHttpClient;
+    private static final TestHttpClient testHttpClient = new TestHttpClient();
     private final AtomicInteger counter = new AtomicInteger();
-    @Rule
-    public Timeout timeout = Timeout.builder()
-            .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
-            .withLookingForStuckThread(true)
-            .build();
-
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        AbstractTest.setUpStatic();
-        // this method could be called for multiple iterations within single test
-        // we have some synthetic re-runs
-        testHttpClient = Misc.free(testHttpClient);
-        testHttpClient = new TestHttpClient();
-    }
 
     @AfterClass
     public static void tearDownStatic() {
-        testHttpClient = Misc.free(testHttpClient);
+        testHttpClient.close();
         AbstractTest.tearDownStatic();
+        assert Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN) == 0;
     }
 
     @Before
@@ -72,7 +57,7 @@ public class QueryRegistryTest extends AbstractTest {
 
     @Test
     public void testAlterTable() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
             assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE tab (value LONG)");
             assertGet("{\"dml\":\"OK\"}", "INSERT INTO tab (value) VALUES (6)");
             assertGet("{\"ddl\":\"OK\"}", "ALTER TABLE tab ADD COLUMN text VARCHAR");
@@ -86,12 +71,12 @@ public class QueryRegistryTest extends AbstractTest {
                     "tab"
             );
             assertQueryRegistry();
-        });
+        }));
     }
 
     @Test
     public void testCreateTable() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
             assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE tab (value INT, ts TIMESTAMP) TIMESTAMP(ts)");
             assertGet(
                     "{\"query\":\"tab\"," +
@@ -102,12 +87,12 @@ public class QueryRegistryTest extends AbstractTest {
                     "tab"
             );
             assertQueryRegistry();
-        });
+        }));
     }
 
     @Test
     public void testCreateTableAsSelect() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
             assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE tab AS (SELECT x FROM long_sequence(10))");
             assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE tab2 AS (tab WHERE x>8)");
             assertGet(
@@ -119,12 +104,12 @@ public class QueryRegistryTest extends AbstractTest {
                     "tab2"
             );
             assertQueryRegistry();
-        });
+        }));
     }
 
     @Test
     public void testDropTable() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
             assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE tab (value LONG)");
             assertGet("{\"ddl\":\"OK\"}", "DROP TABLE tab");
             assertGet(
@@ -136,12 +121,12 @@ public class QueryRegistryTest extends AbstractTest {
                     "select id, table_name from tables()"
             );
             assertQueryRegistry();
-        });
+        }));
     }
 
     @Test
     public void testExplain() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
             assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE tab (value LONG)");
             assertGet("{\"dml\":\"OK\"}", "INSERT INTO tab (value) VALUES (10)");
             assertGet(
@@ -153,12 +138,12 @@ public class QueryRegistryTest extends AbstractTest {
                     "explain tab"
             );
             assertQueryRegistry();
-        });
+        }));
     }
 
     @Test
     public void testInsertAsSelect() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
             assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE tab (value LONG)");
             assertGet("{\"dml\":\"OK\"}", "INSERT INTO tab (value) VALUES (1)");
             assertGet("{\"ddl\":\"OK\"}", "INSERT INTO tab SELECT x+5 FROM long_sequence(2)");
@@ -171,7 +156,7 @@ public class QueryRegistryTest extends AbstractTest {
                     "tab"
             );
             assertQueryRegistry();
-        });
+        }));
     }
 
     @Test
@@ -194,7 +179,7 @@ public class QueryRegistryTest extends AbstractTest {
 
     @Test
     public void testUpdateTable() throws Exception {
-        getSimpleTester().run((engine, sqlExecutionContext) -> {
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
             assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE tab (value LONG)");
             assertGet("{\"dml\":\"OK\"}", "INSERT INTO tab (value) VALUES (6)");
             assertGet("{\"dml\":\"OK\",\"updated\":1}", "UPDATE tab SET value=5");
@@ -207,7 +192,7 @@ public class QueryRegistryTest extends AbstractTest {
                     "tab"
             );
             assertQueryRegistry();
-        });
+        }));
     }
 
     private void assertGet(CharSequence expectedResponse, CharSequence sql) {
@@ -227,13 +212,5 @@ public class QueryRegistryTest extends AbstractTest {
                         "\"count\":1}",
                 "select query_id, query from query_activity()"
         );
-    }
-
-    private HttpQueryTestBuilder getSimpleTester() {
-        return new HttpQueryTestBuilder()
-                .withTempFolder(root)
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false);
     }
 }

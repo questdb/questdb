@@ -32,6 +32,8 @@ import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -43,6 +45,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cairo.vm.api.MemoryAR;
 import io.questdb.cutlass.pgwire.BadProtocolException;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.cutlass.pgwire.PGResponseSink;
@@ -104,14 +108,13 @@ import static io.questdb.cutlass.pgwire.modern.PGUtils.estimateColumnTxtSize;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
 
 public class PGPipelineEntry implements QuietCloseable, Mutable {
-    private static final Log LOG = LogFactory.getLog(PGPipelineEntry.class);
-
     // SYNC_DESC_ constants describe the state of the "describe" message
     // they have no relation to the state of SYNC message processing as such
     public static final int SYNC_DESC_NONE = 0;
     public static final int SYNC_DESC_PARAMETER_DESCRIPTION = 2;
     public static final int SYNC_DESC_ROW_DESCRIPTION = 1;
     private static final int ERROR_TAIL_MAX_SIZE = 23;
+    private static final Log LOG = LogFactory.getLog(PGPipelineEntry.class);
     // tableOid + column number + type + type size + type modifier + format code
     private static final int ROW_DESCRIPTION_COLUMN_RECORD_FIXED_SIZE = 3 * Short.BYTES + 3 * Integer.BYTES;
     private static final int SYNC_BIND = 1;
@@ -133,7 +136,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private final BitSet msgBindSelectFormatCodes = new BitSet();
     // types are sent to us via "parse" message
     private final IntList msgParseParameterTypeOIDs;
-
     // List with encoded bind variable types. It combines types client sent to us in PARSE message and types
     // inferred by the SQL compiler. Each entry uses lower 32 bits for QuestDB native type and upper 32 bits
     // contains PGWire OID type. If a client sent us a type, then the high 32 bits (=OID type) is set to the same value.
@@ -149,6 +151,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private final IntList pgResultSetColumnTypes;
     private final ObjList<CharSequence> portalNames = new ObjList<>();
+    private final ObjectPool<PgNonNullBinaryArrayView> arrayViewPool = new ObjectPool<>(PgNonNullBinaryArrayView::new, 1);
     boolean isCopy;
     private boolean cacheHit = false;    // extended protocol cursor resume callback
     private CompiledQueryImpl compiledQuery;
@@ -225,13 +228,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         portalNames.add(portalName);
     }
 
-    public void cacheIfPossible(@NotNull AssociativeCache<TypesAndSelectModern> tasCache, @Nullable SimpleAssociativeCache<TypesAndInsertModern> taiCache) {
+    public void cacheIfPossible(@Nullable AssociativeCache<TypesAndSelectModern> tasCache, @Nullable SimpleAssociativeCache<TypesAndInsertModern> taiCache) {
         if (isPortal() || isPreparedStatement()) {
             // must not cache prepared statements etc.; we must only cache abandoned pipeline entries (their contents)
             return;
         }
 
-        if (tas != null) {
+        if (tas != null && tasCache != null) {
             // close cursor in case it is open
             cursor = Misc.free(cursor);
             // make sure factory is not released when the pipeline entry is closed
@@ -243,6 +246,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             taiCache.put(sqlText, tai);
             // make sure we don't close insert operation when the pipeline entry is closed
             insertOp = null;
+            tai = null;
         }
     }
 
@@ -331,6 +335,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateSync = SYNC_PARSE;
         tai = null;
         tas = null;
+        arrayViewPool.clear();
     }
 
     public void commit(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) throws BadProtocolException {
@@ -1075,7 +1080,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             }
             // number of bits or chars for geohash
             final int bitFlags = Math.abs(pgResultSetColumnTypes.getQuick(2 * i + 1));
-            final int columnValueSize = calculateColumnBinSize(this, record, i, typeTag, bitFlags, maxBlobSize);
+            final int columnValueSize = calculateColumnBinSize(this, record, i, columnType, bitFlags, maxBlobSize);
 
             if (columnValueSize < 0) {
                 return -1; // unsupported type
@@ -1222,6 +1227,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     case X_PG_UUID:
                         setUuidBindVariable(i, lo, valueSize, bindVariableService);
                         break;
+                    case X_PG_ARR_INT8:
+                    case X_PG_ARR_FLOAT8:
+                        setBindVariableAsArray(i, lo, valueSize, msgLimit, bindVariableService);
+                        break;
                     default:
                         // before we bind a string, we need to define the type of the variable
                         // so the binding process can cast the string as required
@@ -1299,6 +1308,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case X_PG_UUID:
                 bindVariableService.define(j, ColumnType.UUID, 0);
                 break;
+            case X_PG_ARR_INT8:
+            case X_PG_ARR_FLOAT8:
+                bindVariableService.define(j, ColumnType.ARRAY, 0);
+                break;
             case PG_UNSPECIFIED:
                 // unknown types, we are not defining them for now - this gives
                 // the compiler a chance to infer the best possible type
@@ -1337,7 +1350,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             if (columnBinaryFlag == 0 && txtAndBinSizesCanBeDifferent(columnType)) {
                 columnValueSize = estimateColumnTxtSize(record, i, typeTag);
             } else {
-                columnValueSize = calculateColumnBinSize(this, record, i, typeTag, bitFlags, Long.MAX_VALUE);
+                columnValueSize = calculateColumnBinSize(this, record, i, columnType, bitFlags, Long.MAX_VALUE);
             }
 
             if (columnValueSize < 0) {
@@ -1457,8 +1470,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                                 sqlAffectedRowCount = m.execute();
                                 TableWriterAPI writer = m.popWriter();
                                 pendingWriters.put(writer.getTableToken(), writer);
+
+                                // return to cache eagerly so other pipelined entries can use the cached insert, even before SYNC
+                                // we only cache if there are bind variables since insert without binding variables
+                                // are unlikely to be re-used
                                 if (tai.hasBindVariables()) {
-                                    taiCache.put(sqlText, tai);
+                                    cacheIfPossible(null, taiCache);
                                 }
                             } catch (Throwable e) {
                                 Misc.free(m);
@@ -1659,6 +1676,80 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
+    private void outColBinArr(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType) {
+        ArrayView array = record.getArray(columnIndex, columnType);
+        if (array.getDimCount() == 0) {
+            utf8Sink.setNullValue();
+            return;
+        }
+
+        int nDims = array.getDimCount();
+        short elemType = ColumnType.decodeArrayElementType(columnType);
+        int componentTypeOid = getTypeOid(elemType);
+
+        // array header
+        long sizePtr = utf8Sink.skipInt();
+        utf8Sink.putNetworkInt(nDims);
+        long hasNullPtr = utf8Sink.skipInt();
+        utf8Sink.putNetworkInt(componentTypeOid);
+
+        // Write dimension information
+        for (int i = 0; i < nDims; i++) {
+            utf8Sink.putNetworkInt(array.getDimLen(i)); // length of each dimension
+            utf8Sink.putNetworkInt(1); // lower bound, always 1 in PostgreSQL
+        }
+
+        // todo: optimize for vanilla arrays, vanilla arrays do not require recursive processing
+        boolean hasNulls = outColBinArrRecursive(utf8Sink, array, elemType, 0, 0);
+        Unsafe.getUnsafe().putInt(hasNullPtr, Numbers.bswap(hasNulls ? 1 : 0));
+        utf8Sink.putLenEx(sizePtr);
+    }
+
+    private boolean outColBinArrRecursive(
+            PGResponseSink utf8Sink, ArrayView array, short elemType, int dim, int flatIndex
+    ) {
+        final int count = array.getDimLen(dim);
+        final int stride = array.getStride(dim);
+        boolean hasNulls = false;
+        final boolean atDeepestDim = dim == array.getDimCount() - 1;
+        if (atDeepestDim) {
+            switch (elemType) {
+                case ColumnType.LONG:
+                    for (int i = 0; i < count; i++) {
+                        long val = array.getLong(flatIndex);
+                        if (val == Numbers.LONG_NULL) {
+                            hasNulls = true;
+                            utf8Sink.setNullValue();
+                        } else {
+                            utf8Sink.putNetworkInt(Long.BYTES);
+                            utf8Sink.putNetworkLong(val);
+                        }
+                        flatIndex += stride;
+                    }
+                    break;
+                case ColumnType.DOUBLE:
+                    for (int i = 0; i < count; i++) {
+                        double val = array.getDouble(flatIndex);
+                        if (Double.isNaN(val)) {
+                            hasNulls = true;
+                            utf8Sink.setNullValue();
+                        } else {
+                            utf8Sink.putNetworkInt(Double.BYTES);
+                            utf8Sink.putNetworkDouble(val);
+                        }
+                        flatIndex += stride;
+                    }
+                    break;
+            }
+        } else {
+            for (int i = 0; i < count; i++) {
+                hasNulls |= outColBinArrRecursive(utf8Sink, array, elemType, dim + 1, flatIndex);
+                flatIndex += stride;
+            }
+        }
+        return hasNulls;
+    }
+
     private void outColBinBool(PGResponseSink utf8Sink, Record record, int columnIndex) {
         utf8Sink.putNetworkInt(Byte.BYTES);
         utf8Sink.put(record.getBool(columnIndex) ? (byte) 1 : (byte) 0);
@@ -1813,6 +1904,19 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             utf8Sink.put(strValue);
             utf8Sink.putLenEx(a);
         }
+    }
+
+    private void outColTxtArr(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType) {
+        ArrayView arrayView = record.getArray(columnIndex, columnType);
+
+        // zero dimension array indicates NULL
+        if (arrayView.getDimCount() == 0) {
+            utf8Sink.setNullValue();
+            return;
+        }
+        long a = utf8Sink.skipInt();
+        ArrayTypeDriver.arrayToPgWire(arrayView, utf8Sink);
+        utf8Sink.putLenEx(a);
     }
 
     private void outColTxtBool(PGResponseSink utf8Sink, Record record, int columnIndex) {
@@ -2264,6 +2368,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     case ColumnType.UUID:
                         outColTxtUuid(utf8Sink, record, i);
                         break;
+                    case ColumnType.ARRAY:
+                        outColTxtArr(utf8Sink, record, i, type);
+                        break;
+                    case BINARY_TYPE_ARRAY:
+                        outColBinArr(utf8Sink, record, i, type);
+                        break;
+
                     default:
                         assert false;
                 }
@@ -2405,6 +2516,39 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         outResendRecordHeader = true;
         // reset to the message start
         utf8Sink.resetToBookmark(messageLengthAddress - Byte.BYTES);
+    }
+
+    private void setBindVariableAsArray(int i, long lo, int valueSize, long msgLimit, BindVariableService bindVariableService) throws SqlException, BadProtocolException {
+        PGWireArrayView arrayView;
+
+        int dimensions = getInt(lo, msgLimit, "malformed array dimensions");
+        lo += Integer.BYTES;
+        valueSize -= Integer.BYTES;
+
+        int hasNull = getInt(lo, msgLimit, "malformed array null flag");
+        // hasNull flag is not a reliable indicator of a null element, since some clients
+        // send it as 0 even if the array element is null. we need to manually check for null
+        lo += Integer.BYTES;
+        valueSize -= Integer.BYTES;
+
+        int componentOid = getInt(lo, msgLimit, "malformed array component oid");
+        lo += Integer.BYTES;
+        valueSize -= Integer.BYTES;
+
+        arrayView = arrayViewPool.next();
+        IntList dimensionSizes = new IntList();
+        for (int j = 0; j < dimensions; j++) {
+            int dimensionSize = getInt(lo, msgLimit, "malformed array dimension size");
+            arrayView.addDimLen(dimensionSize);
+            dimensionSizes.add(dimensionSize);
+            lo += Integer.BYTES;
+            valueSize -= Integer.BYTES;
+
+            lo += Integer.BYTES; // skip lower bound, it's always 1
+            valueSize -= Integer.BYTES;
+        }
+        arrayView.setPtrAndCalculateStrides(lo, lo + valueSize, componentOid);
+        bindVariableService.setArray(i, arrayView);
     }
 
     private void setBindVariableAsBoolean(
@@ -2752,6 +2896,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateDesc = SYNC_DESC_NONE;
         stateExec = false;
         stateClosed = false;
+        arrayViewPool.clear();
     }
 
     void copyStateFrom(PGPipelineEntry that) {
