@@ -204,7 +204,8 @@ public final class ColumnType {
      */
     public static int encodeArrayType(short elemType, int nDims) {
         assert nDims >= 1 && nDims <= ARRAY_NDIMS_LIMIT : "nDims out of range: " + nDims;
-        assert isSupportedArrayElementType(elemType) : "not supported as array element type: " + elemType;
+        assert isSupportedArrayElementType(elemType) || elemType == UNDEFINED
+                : "not supported as array element type: " + elemType;
 
         nDims--; // 0 == one dimension
         return (nDims & ARRAY_NDIMS_FIELD_MASK) << ARRAY_NDIMS_FIELD_POS

@@ -31,9 +31,11 @@ import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.FunctionArray;
 import io.questdb.cairo.arr.NoopArrayState;
 import io.questdb.cairo.sql.ArrayFunction;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.str.StringSink;
 
 public final class ArrayConstant extends ArrayFunction implements ConstantFunction {
@@ -52,6 +54,12 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
         }
         array.applyShape();
         arrayIn.appendToMemFlat(array.startMemoryA());
+    }
+
+    private ArrayConstant(int nDims) {
+        array.setType(ColumnType.encodeArrayType(ColumnType.UNDEFINED, nDims));
+        array.applyShape();
+        this.type = array.getType();
     }
 
     public ArrayConstant(double[] vals) {
@@ -77,6 +85,16 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
                 memA.putDouble(vals[i][j]);
             }
         }
+    }
+
+    public static ArrayConstant emptyUntyped(int nDims) {
+        return new ArrayConstant(nDims);
+    }
+
+    @Override
+    public void assignType(int type, BindVariableService bindVariableService) throws SqlException {
+        this.type = type;
+        array.setType(type);
     }
 
     @Override

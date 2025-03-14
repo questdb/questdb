@@ -526,8 +526,27 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertEmptyArrays1d() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE samba (arr LONG[])");
+            execute("INSERT INTO samba VALUES (ARRAY[])");
+            assertSql("arr\n[]\n", "samba");
+
+            execute("CREATE TABLE tango (arr DOUBLE[])");
+            execute("INSERT INTO tango VALUES (ARRAY[])");
+            assertSql("arr\n[]\n", "tango");
+        });
+    }
+
+    @Test
     public void testInsertEmptyArrays2d() throws Exception {
         assertMemoryLeak(() -> {
+            execute("CREATE TABLE samba (arr LONG[][])");
+            execute("INSERT INTO samba VALUES (ARRAY[[]])");
+            execute("INSERT INTO samba VALUES (ARRAY[[],[]])");
+            execute("INSERT INTO samba VALUES (ARRAY[[],[],[]])");
+            assertSql("arr\n[]\n[]\n[]\n", "samba");
+
             execute("CREATE TABLE tango (arr DOUBLE[][])");
             execute("INSERT INTO tango VALUES (ARRAY[[]])");
             execute("INSERT INTO tango VALUES (ARRAY[[],[]])");
@@ -539,6 +558,12 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testInsertEmptyArrays3d() throws Exception {
         assertMemoryLeak(() -> {
+            execute("CREATE TABLE samba (arr LONG[][][])");
+            execute("INSERT INTO samba VALUES (ARRAY[[[]]])");
+            execute("INSERT INTO samba VALUES (ARRAY[[[]],[[]]])");
+            execute("INSERT INTO samba VALUES (ARRAY[[[],[]]])");
+            assertSql("arr\n[]\n[]\n[]\n", "samba");
+
             execute("CREATE TABLE tango (arr DOUBLE[][][])");
             execute("INSERT INTO tango VALUES (ARRAY[[[]]])");
             execute("INSERT INTO tango VALUES (ARRAY[[[]],[[]]])");

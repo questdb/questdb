@@ -31,6 +31,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.FunctionArray;
 import io.questdb.cairo.sql.ArrayFunction;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.api.MemoryA;
@@ -49,8 +50,6 @@ import static io.questdb.cairo.ColumnType.decodeArrayElementType;
 
 public class ArrayCreateFunctionFactory implements FunctionFactory {
 
-    private static final double[] EMPTY_DOUBLES_1D = new double[0];
-
     @Override
     public String getSignature() {
         return "array(V)";
@@ -66,7 +65,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         int outerDimLen = args == null ? 0 : args.size();
         if (outerDimLen == 0) {
-            return new ArrayConstant(EMPTY_DOUBLES_1D);
+            return ArrayConstant.emptyUntyped(1);
         }
         Function arg0 = args.getQuick(0);
         int arg0Pos = argPositions.getQuick(0);
@@ -183,6 +182,13 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void assignType(int type, BindVariableService bindVariableService) {
+            assert arrayOut.isEmpty() : "arrayOut is not empty";
+            this.type = type;
+            arrayOut.setType(type);
+        }
+
+        @Override
         public void close() {
             this.arrayOut = Misc.free(this.arrayOut);
             Misc.freeObjList(args);
@@ -240,6 +246,13 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
             this.array = array;
             this.isConstant = isConstant;
             this.type = array.getType();
+        }
+
+        @Override
+        public void assignType(int type, BindVariableService bindVariableService) {
+            assert array.isEmpty() : "arrayOut is not empty";
+            this.type = type;
+            array.setType(type);
         }
 
         @Override

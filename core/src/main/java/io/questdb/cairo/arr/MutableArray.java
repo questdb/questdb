@@ -60,14 +60,17 @@ public class MutableArray extends ArrayView {
         }
     }
 
+    private int maxPossibleElemCount() {
+        short elemType = ColumnType.decodeArrayElementType(this.type);
+        return Integer.MAX_VALUE >> (elemType != ColumnType.UNDEFINED ? ColumnType.pow2SizeOf(elemType) : 0);
+    }
+
     protected final void resetToDefaultStrides() {
         resetToDefaultStrides(Integer.MAX_VALUE >> 3, -1);
     }
 
     protected final void resetToDefaultStrides(int maxArrayElemCount, int errorPos) {
-        assert maxArrayElemCount <= Integer.MAX_VALUE >> ColumnType.pow2SizeOf(ColumnType.decodeArrayElementType(this.type))
-                : "maxArrayElemCount > " +
-                (Integer.MAX_VALUE >> ColumnType.pow2SizeOf(ColumnType.decodeArrayElementType(this.type)));
+        assert maxArrayElemCount <= maxPossibleElemCount() : "maxArrayElemCount > " + maxPossibleElemCount();
 
         final int nDims = shape.size();
         strides.clear();
