@@ -157,7 +157,7 @@ public class ArrayTest extends AbstractCairoTest {
             array.setType(ColumnType.encodeArrayType(ColumnType.LONG, 2));
             array.setDimLen(0, 3);
             array.setDimLen(1, 2);
-            array.applyShape(-1);
+            array.applyShape();
             MemoryA memA = array.startMemoryA();
             memA.putLong(1);
             memA.putLong(2);
@@ -212,7 +212,7 @@ public class ArrayTest extends AbstractCairoTest {
             array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2));
             array.setDimLen(0, 2);
             array.setDimLen(1, 2);
-            array.applyShape(1);
+            array.applyShape();
             MemoryA memA = array.startMemoryA();
             memA.putDouble(1.0);
             memA.putDouble(2.0);
@@ -232,7 +232,7 @@ public class ArrayTest extends AbstractCairoTest {
             array.setType(ColumnType.encodeArrayType(ColumnType.LONG, 2));
             array.setDimLen(0, 2);
             array.setDimLen(1, 2);
-            array.applyShape(2);
+            array.applyShape();
             MemoryA memA = array.startMemoryA();
             memA.putLong(1);
             memA.putLong(2);
@@ -351,7 +351,7 @@ public class ArrayTest extends AbstractCairoTest {
         ) {
             array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
             array.setDimLen(0, 0);
-            array.applyShape(1);
+            array.applyShape();
             sink.clear();
             ArrayTypeDriver.arrayToJson(array, sink, NoopArrayState.INSTANCE);
             assertEquals("[]", sink.toString());

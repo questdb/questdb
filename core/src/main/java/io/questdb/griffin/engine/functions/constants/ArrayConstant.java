@@ -50,7 +50,7 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
         for (int dim = 0; dim < nDims; dim++) {
             array.setDimLen(dim, arrayIn.getDimLen(dim));
         }
-        array.applyShape(-1);
+        array.applyShape();
         arrayIn.appendToMemFlat(array.startMemoryA());
     }
 
@@ -58,7 +58,7 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
         this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
         array.setType(type);
         array.setDimLen(0, vals.length);
-        array.applyShape(-1);
+        array.applyShape();
         MemoryA memA = array.startMemoryA();
         for (int n = vals.length, i = 0; i < n; i++) {
             memA.putDouble(vals[i]);
@@ -70,7 +70,7 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
         array.setType(type);
         array.setDimLen(0, vals.length);
         array.setDimLen(1, vals[0].length);
-        array.applyShape(-1);
+        array.applyShape();
         MemoryA memA = array.startMemoryA();
         for (int n = vals.length, i = 0; i < n; i++) {
             for (int m = vals[0].length, j = 0; j < m; j++) {

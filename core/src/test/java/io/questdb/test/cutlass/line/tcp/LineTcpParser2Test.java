@@ -73,7 +73,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
             String array1 = "[1,2]";
             array.setType(ColumnType.encodeArrayType(ColumnType.LONG, 1));
             array.setDimLen(0, 2);
-            array.applyShape(1);
+            array.applyShape();
             array.putLong(0, 1);
             array.putLong(1, 2);
             Unsafe.getUnsafe().putByte(mem, LineTcpParser.ENTITY_TYPE_ARRAY);
@@ -86,7 +86,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
             array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2));
             array.setDimLen(0, 2);
             array.setDimLen(1, 3);
-            array.applyShape(-1);
+            array.applyShape();
             MemoryA memA = array.startMemoryA();
             memA.putDouble(1.1);
             memA.putDouble(2.1);

@@ -61,6 +61,10 @@ public final class DirectArray extends MutableArray implements Mutable {
         this.configuration = null;
     }
 
+    public void applyShape() {
+        applyShape(-1);
+    }
+
     public void applyShape(int errorPosition) {
         int maxArrayElementCount = configuration != null ? configuration.maxArrayElementCount() :
                 Integer.MAX_VALUE >> ColumnType.pow2SizeOf(ColumnType.decodeArrayElementType(this.type));

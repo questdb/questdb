@@ -65,7 +65,7 @@ public abstract class AbstractArray implements QuietCloseable {
         for (int dim = 0, size = shape.length; dim < size; dim++) {
             array.setDimLen(dim, shape[dim]);
         }
-        array.applyShape(-1);
+        array.applyShape();
         flatLength = array.getFlatViewLength();
     }
 
