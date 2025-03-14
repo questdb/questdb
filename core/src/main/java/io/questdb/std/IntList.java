@@ -48,6 +48,11 @@ public class IntList implements Mutable, Sinkable {
         this.data = capacity == 0 ? EMPTY_ARRAY : new int[initialCapacity];
     }
 
+    public IntList(IntList source) {
+        this(source.size());
+        addAll(source);
+    }
+
     public void add(int value) {
         checkCapacity(pos + 1);
         data[pos++] = value;
