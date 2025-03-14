@@ -171,16 +171,16 @@ mod tests {
             final String shortStr = "'abc'";
             final String longStr = "'Lorem ipsum dolor sit amet, consectetur tincidunt.'"; // 50 bytes
 
-            primaryMain.execute("create table x (s1 string, s2 string, timestamp_c timestamp) timestamp(timestamp_c) partition by day wal");
-            primaryMain.execute("insert into x (s1, s2, timestamp_c) values " +
+            qdb.execute("create table x (s1 string, s2 string, timestamp_c timestamp) timestamp(timestamp_c) partition by day wal");
+            qdb.execute("insert into x (s1, s2, timestamp_c) values " +
                 "(" + nullString + ", " + longStr + ", '2022-02-24T01:01:00')");
-            primaryMain.execute("insert into x (s1, s2, timestamp_c) values " +
+            qdb.execute("insert into x (s1, s2, timestamp_c) values " +
                 "(" + emptyString + ", " + nullString + ", '2022-02-24T01:01:01')");
-            primaryMain.execute("insert into x (s1, s2, timestamp_c) values " +
+            qdb.execute("insert into x (s1, s2, timestamp_c) values " +
                 "(" + shortStr + ", " + emptyString + ", '2022-02-24T01:01:02')");
-            primaryMain.execute("insert into x (s1, s2, timestamp_c) values " +
+            qdb.execute("insert into x (s1, s2, timestamp_c) values " +
                 "(" + longStr + ", " + longStr + ", '2022-02-24T01:01:03')");
-            primaryMain.execute("insert into x (s1, s2, timestamp_c) values " +
+            qdb.execute("insert into x (s1, s2, timestamp_c) values " +
                 "(" + nullString + ", " + longStr + ", '2022-02-24T01:01:04')");
 
         This gives the various columns different starting and ending patterns.

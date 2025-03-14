@@ -22,6 +22,7 @@
  *
  ******************************************************************************/
 mod binary;
+mod err;
 mod mapped;
 mod primitives;
 mod string;
