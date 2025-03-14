@@ -437,11 +437,10 @@ public class ExpressionParser {
                             break OUT;
                         }
                         scopeStack.pop();
-
+                        // paramCount tracks the number of preceding commas within the current brackets.
+                        // So, if the brackets are empty, arg count is zero, otherwise it's paramCount + 1
+                        int bracketArgCount = prevBranch == BRANCH_LEFT_BRACKET ? 0 : paramCount + 1;
                         thisBranch = BRANCH_RIGHT_BRACKET;
-                        if (prevBranch == BRANCH_LEFT_BRACKET) {
-                            throw SqlException.$(lastPos, "empty brackets");
-                        }
 
                         // Until the token at the top of the stack is a left bracket,
                         // pop operators off the stack onto the output queue.
@@ -454,15 +453,18 @@ public class ExpressionParser {
                         }
                         assert node != null : "opStack is empty at ']'";
                         if (node.token.equals("[")) {
+                            if (bracketArgCount == 0) {
+                                throw SqlException.$(lastPos, "empty brackets");
+                            }
                             node = expressionNodePool.next().of(
                                     ExpressionNode.ARRAY_ACCESS,
                                     "[]",
                                     2,
                                     node.position
                             );
-                            // paramCount counts commas in this case. For array access, the 1st arg is the array,
-                            // 2nd arg is the first index, etc. So, with no commas, there are already two args.
-                            node.paramCount = paramCount + 2;
+                            // For array access, the 1st arg is the array, 2nd arg is the first index, etc.
+                            // So, we must add one to the number of args within the brackets.
+                            node.paramCount = bracketArgCount + 1;
                             opStack.push(node);
                         } else {
                             assert node.token.equals("[[") : "token is neither '[' nor '[['";
@@ -472,8 +474,7 @@ public class ExpressionParser {
                                     2,
                                     node.position
                             );
-                            // paramCount counts commas in this case. So, with no commas, there's already 1 arg.
-                            node.paramCount = paramCount + 1;
+                            node.paramCount = bracketArgCount;
                             argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                         }
                         if (argStackDepthStack.notEmpty()) {

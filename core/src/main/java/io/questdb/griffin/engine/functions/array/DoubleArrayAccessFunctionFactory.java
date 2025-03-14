@@ -88,7 +88,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             }
             if (args == null) {
                 args = new ObjList<>(inputArgs);
-                argPositions = inputArgPositions;
+                argPositions = new IntList(inputArgPositions);
             }
 
             int nDims = ColumnType.decodeArrayDimensionality(arrayArg.getType());

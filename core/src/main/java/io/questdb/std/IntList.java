@@ -48,6 +48,11 @@ public class IntList implements Mutable, Sinkable {
         this.data = capacity == 0 ? EMPTY_ARRAY : new int[initialCapacity];
     }
 
+    public IntList(IntList source) {
+        this(source.size());
+        addAll(source);
+    }
+
     public void add(int value) {
         checkCapacity(pos + 1);
         data[pos++] = value;
@@ -151,7 +156,8 @@ public class IntList implements Mutable, Sinkable {
      * @return element at the specified position.
      */
     public int getQuick(int index) {
-        assert index < pos;
+        assert index >= 0 : "negative index";
+        assert index < pos : String.format("index %,d out of bounds for list size %,d", index, pos);
         return data[index];
     }
 

@@ -90,7 +90,6 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testArrayConstructInvalid() {
-        assertFail("ARRAY[]", 6, "empty brackets");
         assertFail("ARRAY[1", 5, "unbalanced [");
         assertFail("ARRAY[1, [1]", 5, "unbalanced [");
         assertFail("ARRAY[1 2]", 8, "dangling expression");
