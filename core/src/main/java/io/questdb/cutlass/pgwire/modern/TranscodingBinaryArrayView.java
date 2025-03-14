@@ -35,6 +35,8 @@ import io.questdb.std.Unsafe;
 
 public class TranscodingBinaryArrayView extends PGWireArrayView implements FlatArrayView, Mutable {
     private final MemoryAR mem;
+    // the same MemoryAR is used by multiple views, so we need to keep track of the initial offset
+    private long initialOffset;
 
     public TranscodingBinaryArrayView(MemoryAR mem) {
         this.mem = mem;
@@ -73,12 +75,12 @@ public class TranscodingBinaryArrayView extends PGWireArrayView implements FlatA
 
     @Override
     public double getDoubleAtAbsoluteIndex(int elemIndex) {
-        return mem.getDouble((long) elemIndex * Double.BYTES);
+        return mem.getDouble(initialOffset + (long) elemIndex * Double.BYTES);
     }
 
     @Override
     public long getLongAtAbsoluteIndex(int elemIndex) {
-        return mem.getLong((long) elemIndex * Long.BYTES);
+        return mem.getLong(initialOffset + (long) elemIndex * Long.BYTES);
     }
 
     @Override
@@ -89,6 +91,7 @@ public class TranscodingBinaryArrayView extends PGWireArrayView implements FlatA
     @Override
     void setPtrAndCalculateStrides(long lo, long hi, int pgOidType) {
         short componentNativeType;
+        initialOffset = mem.getAppendOffset();
         switch (pgOidType) {
             case PGOids.PG_FLOAT8:
                 componentNativeType = ColumnType.DOUBLE;

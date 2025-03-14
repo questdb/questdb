@@ -39,7 +39,7 @@ tests:
     description: Test inserting and selecting data with an array.
     prepare:
       - action: execute
-        query: "CREATE TABLE ${table_name} (id INT, arr double[]);"
+        query: "CREATE TABLE array_table (id INT, arr double[], arr2 double[]);"
     steps:
       - loop:
           range:
@@ -48,25 +48,27 @@ tests:
           as: id
           steps:
             - action: execute
-              query: "INSERT INTO ${table_name} (id, arr) VALUES ($[1], $[2]);"
+              query: "INSERT INTO array_table (id, arr, arr2) VALUES ($[1], $[2], $[3]);"
               parameters:
                 - value: "${id}"
                   type: "INT4"
                 - value: "{-1, 2, 3, NULL, 5.42}"
                   type: "ARRAY_FLOAT8"
+                - value: "{0, 1, 2, 3, 4, 5}"
+                  type: "ARRAY_FLOAT8"
               expect:
                 result:
                   - [ 1 ]
       - action: query
-        query: "SELECT * FROM ${table_name}"
+        query: "SELECT * FROM array_table"
         expect:
           result_contains:
-            - [ 1, "{-1.0,2.0,3.0,NULL,5.42}" ]
-            - [ 2, "{-1.0,2.0,3.0,NULL,5.42}" ]
-            - [ 10, "{-1.0,2.0,3.0,NULL,5.42}" ]
+            - [ 1, "{-1.0,2.0,3.0,NULL,5.42}",  "{0.0,1.0,2.0,3.0,4.0,5.0}" ]
+            - [ 2, "{-1.0,2.0,3.0,NULL,5.42}",  "{0.0,1.0,2.0,3.0,4.0,5.0}" ]
+            - [ 10, "{-1.0,2.0,3.0,NULL,5.42}", "{0.0,1.0,2.0,3.0,4.0,5.0}" ]
     teardown:
       - action: execute
-        query: "DROP TABLE IF EXISTS ${table_name};"
+        query: "DROP TABLE IF EXISTS array_table;"
 
   - name: Test non Vanilla Arrays
     description: Selecting sliced arrays
