@@ -47,6 +47,7 @@ final class PgNonNullBinaryArrayView extends PGWireArrayView implements FlatArra
         switch (ColumnType.decodeArrayElementType(type)) {
             case ColumnType.LONG:
             case ColumnType.DOUBLE:
+                // TODO optimize to Vect.memcpy()
                 for (int i = 0; i < size; i++) {
                     mem.putLong(getLong(i));
                 }
