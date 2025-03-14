@@ -196,9 +196,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-            if (!isDataMapBuilt) {
-                buildDataMap();
-            }
+            buildMapConditionally();
             baseCursor.calculateSize(circuitBreaker, counter);
         }
 
@@ -215,17 +213,13 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            if (!isDataMapBuilt) {
-                buildDataMap();
-            }
+            buildMapConditionally();
             return super.hasNext();
         }
 
         @Override
         public void longTopK(DirectLongLongHeap heap, int columnIndex) {
-            if (!isDataMapBuilt) {
-                buildDataMap();
-            }
+            buildMapConditionally();
             ((MapRecordCursor) baseCursor).longTopK(heap, recordFunctions.getQuick(columnIndex));
         }
 
@@ -263,6 +257,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
             super.of(dataMap.getCursor());
             isDataMapBuilt = true;
+        }
+
+        private void buildMapConditionally() {
+            if (!isDataMapBuilt) {
+                buildDataMap();
+            }
         }
     }
 }

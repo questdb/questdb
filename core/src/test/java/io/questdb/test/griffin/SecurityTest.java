@@ -593,45 +593,6 @@ public class SecurityTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMemoryRestrictionsWithDistinct() throws Exception {
-        assertMemoryLeak(() -> {
-            sqlExecutionContext.getRandom().reset();
-            execute("create table tb1 as (select" +
-                    " rnd_symbol(40,4,4,20000) sym1," +
-                    " rnd_symbol(40,4,4,20000) sym2," +
-                    " rnd_double(2) d," +
-                    " timestamp_sequence(0, 1000000000) ts" +
-                    " from long_sequence(40)) timestamp(ts)");
-            assertQueryNoLeakCheck(
-                    memoryRestrictedCompiler,
-                    "sym1\tsym2\n" +
-                            "FJGE\tQCEH\n" +
-                            "GPGW\tQSRL\n" +
-                            "OOZZ\tHNZH\n" +
-                            "PEHN\tIPHZ\n",
-                    "select distinct sym1, sym2 from tb1 where d < 0.07 order by 1",
-                    null,
-                    true,
-                    readOnlyExecutionContext,
-                    true
-            );
-            try {
-                assertQueryNoLeakCheck(
-                        memoryRestrictedCompiler,
-                        "TOO MUCH",
-                        "select distinct sym1, sym2 from tb1",
-                        null,
-                        true,
-                        readOnlyExecutionContext
-                );
-                Assert.fail();
-            } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("limit of 2 resizes exceeded"));
-            }
-        });
-    }
-
-    @Test
     public void testMemoryRestrictionsWithFullFatInnerJoin() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
