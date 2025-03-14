@@ -43,22 +43,19 @@ import static org.junit.Assert.assertEquals;
 
 public class ArrayTest extends AbstractCairoTest {
 
-    public static long arrayViewToBinaryFormat(DirectArray view, long addr) {
-        long size = 0;
-        Unsafe.getUnsafe().putByte(addr, (byte) ColumnType.decodeArrayElementType(view.getType()));
-        addr++;
-        size++;
-        Unsafe.getUnsafe().putByte(addr, (byte) ColumnType.decodeArrayDimensionality(view.getType()));
-        addr++;
-        size++;
-        for (int i = 0, dims = view.getDimCount(); i < dims; i++) {
-            Unsafe.getUnsafe().putInt(addr, view.getDimLen(i));
-            addr += 4;
-            size += 4;
+    public static long arrayViewToBinaryFormat(DirectArray array, long addr) {
+        long offset = 0;
+        Unsafe.getUnsafe().putByte(addr + offset, (byte) ColumnType.decodeArrayElementType(array.getType()));
+        offset++;
+        Unsafe.getUnsafe().putByte(addr + offset, (byte) ColumnType.decodeArrayDimensionality(array.getType()));
+        offset++;
+        for (int i = 0, dims = array.getDimCount(); i < dims; i++) {
+            Unsafe.getUnsafe().putInt(addr + offset, array.getDimLen(i));
+            offset += 4;
         }
-        Vect.memcpy(addr, view.ptr(), view.size());
-        size += view.size();
-        return size;
+        int flatSize = array.borrowedFlatView().size();
+        Vect.memcpy(addr + offset, array.ptr(), flatSize);
+        return offset + flatSize;
     }
 
     @Test
