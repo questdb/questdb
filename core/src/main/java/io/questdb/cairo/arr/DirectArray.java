@@ -67,7 +67,7 @@ public final class DirectArray extends MutableArray implements Mutable {
         resetToDefaultStrides(maxArrayElementCount, errorPosition);
         short elemType = ColumnType.decodeArrayElementType(type);
         int byteSize = flatViewLength << ColumnType.pow2SizeOf(elemType);
-        ensureCapacity(byteSize);
+        ensureSize(byteSize);
         borrowedFlatView().of(ptr, elemType, flatViewLength);
     }
 
@@ -140,7 +140,7 @@ public final class DirectArray extends MutableArray implements Mutable {
         return flatViewMemory;
     }
 
-    private void ensureCapacity(long requiredCapacity) {
+    private void ensureSize(long requiredSize) {
         if (ptr == 0) {
             ptr = Unsafe.malloc(requiredCapacity, MEM_TAG);
             Vect.memset(ptr, requiredCapacity, 0);
