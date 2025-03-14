@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.wal.*;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
 import io.questdb.std.str.*;
@@ -220,6 +221,113 @@ public class WalWriterTest extends AbstractCairoTest {
                 assertFalse(eventCursor.hasNext());
             }
         });
+    }
+
+    @Test
+    public void testAddManyColumnsExistingSegments() throws Exception {
+        assertMemoryLeak(() -> {
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            int threadCount = 2 + rnd.nextInt(1);
+            int columnAddLimit = 10 + rnd.nextInt(5);
+
+            node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 30);
+
+            TableToken tableToken = createTable(new TableModel(configuration, testName.getMethodName(), PartitionBy.HOUR)
+                    .col("cluster", ColumnType.SYMBOL)
+                    .col("hostName", ColumnType.SYMBOL)
+                    .col("desk", ColumnType.SYMBOL)
+                    .timestamp("instanceName")
+                    .wal()
+            );
+
+            ObjList<Thread> writerThreads = new ObjList<>();
+
+            AtomicInteger error = new AtomicInteger();
+
+            long initialTimestamp = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T00:40:00.000Z");
+            long tsIncrement = rnd.nextLong(1000_0000L);
+            for (int th = 0; th < threadCount; th++) {
+                Rnd threadRnd = new Rnd(rnd.nextLong(), rnd.nextLong());
+
+                writerThreads.add(new Thread(() -> {
+                    try (WalWriter writer = engine.getWalWriter(tableToken)) {
+                        int columnNum = 1;
+                        long timestamp = initialTimestamp;
+
+                        while (columnNum < columnAddLimit) {
+                            int rowCount = 10 + threadRnd.nextInt(10);
+                            boolean addColumn = threadRnd.nextInt(20) == 0;
+                            if (addColumn) {
+                                rowCount = 30 + threadRnd.nextInt(10);
+                            }
+                            int initialRows = addColumn ? rnd.nextInt(rowCount) : Integer.MAX_VALUE;
+
+                            for (int r = 0; r < rowCount; r++) {
+                                generateRow(writer, threadRnd, timestamp);
+                                timestamp += tsIncrement;
+                                if (r == initialRows) {
+                                    while (true) {
+                                        String columnName = rnd.nextBoolean() ? "d" : "D" + (columnNum++);
+                                        try {
+                                            int typeRnd = rnd.nextInt(3);
+                                            int columnType;
+                                            switch (typeRnd) {
+                                                case 0:
+                                                case 1:
+                                                    columnType = ColumnType.DOUBLE;
+                                                    break;
+                                                default:
+                                                    columnType = ColumnType.STRING;
+                                                    break;
+                                            }
+                                            addColumn(writer, columnName, columnType);
+                                            break;
+                                        } catch (CairoException e) {
+                                            int columnWriterIndex = writer.getMetadata().getColumnIndexQuiet(columnName);
+                                            if (columnWriterIndex < 0) {
+                                                // the column is still not there, something must be wrong
+                                                throw e;
+                                            }
+                                            // all good, someone added the column concurrently
+                                            columnNum++;
+                                        }
+                                    }
+                                }
+                            }
+                            writer.commit();
+
+                            if (rnd.nextInt(20) == 0) {
+                                String columnName = rnd.nextBoolean() ? "d" : "D" + (1 + rnd.nextInt(columnNum));
+                                try {
+                                    AlterOperationBuilder removeColumnOperation = new AlterOperationBuilder().ofDropColumn(0, writer.getTableToken(), 0);
+                                    removeColumnOperation.ofDropColumn(columnName);
+                                    writer.apply(removeColumnOperation.build(), true);
+                                } catch (CairoException ex) {
+                                    if (ex.getMessage().contains("column does not exist")) {
+                                        // all good, someone removed the column concurrently
+                                        continue;
+                                    }
+                                    throw ex;
+                                }
+                            }
+                        }
+                    } catch (Throwable e) {
+                        error.incrementAndGet();
+                        throw e;
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }));
+                writerThreads.getLast().start();
+            }
+
+            for (int i = 0; i < writerThreads.size(); i++) {
+                writerThreads.getQuick(i).join();
+            }
+
+            Assert.assertEquals(0, error.get());
+        });
+
     }
 
     @Test
@@ -1302,7 +1410,7 @@ public class WalWriterTest extends AbstractCairoTest {
             engine.load();
 
             try {
-                var lastTxn = engine.getTableSequencerAPI().lastTxn(tableToken);
+                engine.getTableSequencerAPI().lastTxn(tableToken);
                 assertExceptionNoLeakCheck("Exception expected");
             } catch (CairoException e) {
                 // The table is not dropped in the table registry, the exception should not be table dropped exception
@@ -3048,7 +3156,7 @@ public class WalWriterTest extends AbstractCairoTest {
             };
 
             try {
-                var lastTxn = engine.getTableSequencerAPI().lastTxn(tableToken);
+                engine.getTableSequencerAPI().lastTxn(tableToken);
                 Assert.fail("Exception expected");
             } catch (CairoException e) {
                 // We should receive table is dropped error
@@ -3278,6 +3386,35 @@ public class WalWriterTest extends AbstractCairoTest {
         } finally {
             path.trimTo(pathLen);
         }
+    }
+
+    private void generateRow(WalWriter writer, Rnd threadRnd, long timestamp) {
+        var row = writer.newRow(timestamp);
+        var meta = writer.getMetadata();
+        for (int c = 0, n = meta.getColumnCount(); c < n; c++) {
+            int type = meta.getColumnType(c);
+            if (type > 0) {
+                if (threadRnd.nextInt(10) > 0) {
+                    switch (type) {
+                        case ColumnType.SYMBOL:
+                            row.putSym(c, threadRnd.nextChars(2));
+                            break;
+                        case ColumnType.DOUBLE:
+                            if (threadRnd.nextInt(50) != 0) {
+                                row.putDouble(c, threadRnd.nextDouble());
+                            }
+                            break;
+                        case ColumnType.STRING:
+                            row.putStr(c, threadRnd.nextChars(6));
+                            break;
+                        case ColumnType.LONG:
+                            row.putLong(c, threadRnd.nextLong());
+                            break;
+                    }
+                }
+            }
+        }
+        row.append();
     }
 
     private void testDesignatedTimestampIncludesSegmentRowNumber(int[] timestampOffsets, boolean expectedOutOfOrder) throws Exception {

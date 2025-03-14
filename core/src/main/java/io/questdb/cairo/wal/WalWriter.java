@@ -1876,7 +1876,7 @@ public class WalWriter implements TableWriterAPI {
                 throw CairoException.nonCritical().put("invalid column name: ").put(columnName);
             }
             if (metadata.getColumnIndexQuiet(columnName) > -1) {
-                throw CairoException.nonCritical().put("duplicate column name: ").put(columnName);
+                throw CairoException.duplicateColumn("duplicate column name: ").put(columnName);
             }
         }
 
