@@ -38,6 +38,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -47,6 +48,9 @@ import static io.questdb.cairo.ColumnType.commonWideningType;
 import static io.questdb.cairo.ColumnType.decodeArrayElementType;
 
 public class ArrayCreateFunctionFactory implements FunctionFactory {
+
+    private static final double[] EMPTY_DOUBLES_1D = new double[0];
+
     @Override
     public String getSignature() {
         return "array(V)";
@@ -60,7 +64,10 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        int outerDimLen = args.size();
+        int outerDimLen = args == null ? 0 : args.size();
+        if (outerDimLen == 0) {
+            return new ArrayConstant(EMPTY_DOUBLES_1D);
+        }
         Function arg0 = args.getQuick(0);
         int arg0Pos = argPositions.getQuick(0);
         short type0 = (short) arg0.getType();
@@ -105,11 +112,11 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
             isConstant &= argI.isConstant();
         }
 
-        FUNCTION_ARRAY:
+        function_array:
         if (arg0 instanceof FunctionArrayFunction) {
             for (int i = 1; i < outerDimLen; i++) {
                 if (!(args.getQuick(i) instanceof FunctionArrayFunction)) {
-                    break FUNCTION_ARRAY;
+                    break function_array;
                 }
             }
             // All arguments are of type FunctionArrayFunction, we can gather all their
@@ -141,7 +148,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         return new ArrayFunctionArrayFunction(
                 configuration,
                 new ObjList<>(args),
-                argPositions,
+                new IntList(argPositions),
                 commonElemType,
                 nestedNDims,
                 isConstant

@@ -526,6 +526,28 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertEmptyArrays2d() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][])");
+            execute("INSERT INTO tango VALUES (ARRAY[[]])");
+            execute("INSERT INTO tango VALUES (ARRAY[[],[]])");
+            execute("INSERT INTO tango VALUES (ARRAY[[],[],[]])");
+            assertSql("arr\n[]\n[]\n[]\n", "tango");
+        });
+    }
+
+    @Test
+    public void testInsertEmptyArrays3d() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][][])");
+            execute("INSERT INTO tango VALUES (ARRAY[[[]]])");
+            execute("INSERT INTO tango VALUES (ARRAY[[[]],[[]]])");
+            execute("INSERT INTO tango VALUES (ARRAY[[[],[]]])");
+            assertSql("arr\n[]\n[]\n[]\n", "tango");
+        });
+    }
+
+    @Test
     public void testInsertTransposedArray() throws Exception {
         assertMemoryLeak(() -> {
             String original = "[[1.0,2.0],[3.0,4.0],[5.0,6.0]]";
