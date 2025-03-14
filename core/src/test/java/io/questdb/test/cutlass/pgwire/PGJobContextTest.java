@@ -1397,17 +1397,13 @@ public class PGJobContextTest extends BasePGTest {
                 Array arr = connection.createArrayOf("float8", new Double[]{1d, 2d, 3d, null, 5d});
                 stmt.setArray(1, arr);
                 stmt.execute();
-            }
-
-            try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
-                sink.clear();
-                try (ResultSet rs = stmt.executeQuery()) {
-                    assertResultSet("al[ARRAY]\n" +
-                                    "{1.0,2.0,3.0,null,5.0}\n",
-                            sink,
-                            rs
-                    );
-                }
+                Assert.fail("Nulls in arrays are not supported");
+            } catch (SQLException e) {
+                String msg = e.getMessage();
+                // why asserting 2 different messages?
+                // in some modes PG JDBC sends array as string and relies in implicit casting. in this case we get a more generic 'inconvertible value' error
+                // in other modes PG JDBC sends array as binary array and server does not do implicit casting. in this case we get a more specific 'nulls not supported in arrays' error
+                Assert.assertTrue("'" + msg + "' does not contain the expected error", msg.contains("nulls not supported in arrays") || msg.contains("inconvertible value"));
             }
         });
     }

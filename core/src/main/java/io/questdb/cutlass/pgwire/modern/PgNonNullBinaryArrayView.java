@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.pgwire.modern;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.vm.api.MemoryA;
@@ -47,7 +48,6 @@ final class PgNonNullBinaryArrayView extends PGWireArrayView implements FlatArra
         switch (ColumnType.decodeArrayElementType(type)) {
             case ColumnType.LONG:
             case ColumnType.DOUBLE:
-                // TODO optimize to Vect.memcpy()
                 for (int i = 0; i < size; i++) {
                     mem.putLong(getLong(i));
                 }
@@ -96,15 +96,26 @@ final class PgNonNullBinaryArrayView extends PGWireArrayView implements FlatArra
     @Override
     void setPtrAndCalculateStrides(long lo, long hi, int pgOidType) {
         short componentNativeType;
+        int elementSize;
         switch (pgOidType) {
             case PGOids.PG_INT8:
                 componentNativeType = ColumnType.LONG;
+                elementSize = Long.BYTES;
                 break;
             case PGOids.PG_FLOAT8:
                 componentNativeType = ColumnType.DOUBLE;
+                elementSize = Double.BYTES;
                 break;
             default:
                 throw new UnsupportedOperationException("not implemented yet");
+        }
+
+        // validate that there are no nulls in the array
+        for (long p = lo; p < hi; p += Integer.BYTES + elementSize) {
+            // non need to swap bytes since -1 is always -1, regardless of endianness
+            if (Unsafe.getUnsafe().getInt(p) == -1) {
+                throw CairoException.nonCritical().put("nulls not supported in arrays");
+            }
         }
         this.lo = lo;
         this.hi = hi;

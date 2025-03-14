@@ -151,9 +151,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private final IntList pgResultSetColumnTypes;
     private final ObjList<CharSequence> portalNames = new ObjList<>();
-    // todo: configurable maxPageSize
-    private final MemoryAR transcodedArrayMemory = new MemoryCARWImpl(4096, 10000, MemoryTag.NATIVE_PGW_PIPELINE);
-    private final ObjectPool<TranscodingBinaryArrayView> transcodingBinaryArrayViewPool = new ObjectPool<>(() -> new TranscodingBinaryArrayView(transcodedArrayMemory), 1);
+    private final ObjectPool<PgNonNullBinaryArrayView> arrayViewPool = new ObjectPool<>(PgNonNullBinaryArrayView::new, 1);
     boolean isCopy;
     private boolean cacheHit = false;    // extended protocol cursor resume callback
     private CompiledQueryImpl compiledQuery;
@@ -337,8 +335,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateSync = SYNC_PARSE;
         tai = null;
         tas = null;
-        transcodedArrayMemory.close();
-        transcodingBinaryArrayViewPool.clear();
+        arrayViewPool.clear();
     }
 
     public void commit(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) throws BadProtocolException {
@@ -1245,12 +1242,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, utf8String);
             }
             lo += valueSize;
-        }
-
-        for (int i = 0, n = transcodingBinaryArrayViewPool.getPos(); i < n; i++) {
-            // intentionally not closing the view, it will be closed when the pool is cleared
-            TranscodingBinaryArrayView view = transcodingBinaryArrayViewPool.peekQuick(i);
-            view.afterMemoryFixed();
         }
     }
 
@@ -2535,13 +2526,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         valueSize -= Integer.BYTES;
 
         int hasNull = getInt(lo, msgLimit, "malformed array null flag");
-        // todo: clarify the exact semantic of this flag; apparently python asyncpg client sends it as 0,
-        // even when there are NULL elements in the array
-//        if (hasNull == 1) {
-        arrayView = transcodingBinaryArrayViewPool.next();
-//        } else {
-//            arrayView = pgNonNullBinaryArrayViewPool.next();
-//        }
+        // hasNull flag is not a reliable indicator of a null element, since some clients
+        // send it as 0 even if the array element is null. we need to manually check for null
         lo += Integer.BYTES;
         valueSize -= Integer.BYTES;
 
@@ -2549,6 +2535,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         lo += Integer.BYTES;
         valueSize -= Integer.BYTES;
 
+        arrayView = arrayViewPool.next();
         IntList dimensionSizes = new IntList();
         for (int j = 0; j < dimensions; j++) {
             int dimensionSize = getInt(lo, msgLimit, "malformed array dimension size");
@@ -2909,7 +2896,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateDesc = SYNC_DESC_NONE;
         stateExec = false;
         stateClosed = false;
-        transcodingBinaryArrayViewPool.clear();
+        arrayViewPool.clear();
     }
 
     void copyStateFrom(PGPipelineEntry that) {

@@ -447,9 +447,9 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("cast\n" +
                     "[[1.0,2.0],[3.0,4.0]]\n", "SELECT '{{1,2}, {3, 4}}'::double[][] FROM long_sequence(1)");
 
-            // 2D array with null
+            // 2D array with null - nulls are not allowed, casting fails and explicit casting produces NULL on the output
             assertSql("cast\n" +
-                    "[[1.0,2.0],[3.0,null]]\n", "SELECT '{{1,2}, {3, NULL}}'::double[][] FROM long_sequence(1)");
+                    "null\n", "SELECT '{{1,2}, {3, NULL}}'::double[][] FROM long_sequence(1)");
 
             // empty arrays are always printed as [], regardless of dimensionality. at least of now. this may change.
             assertSql("cast\n" +
