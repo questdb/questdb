@@ -69,15 +69,15 @@ public class LineTcpSenderV2 extends AbstractLineTcpSender implements MemoryA {
     }
 
     @Override
-    public Sender doubleArray(CharSequence name, DoubleArray values) {
-        if (processNullArray(name, values)) {
+    public Sender doubleArray(CharSequence name, DoubleArray array) {
+        if (processNullArray(name, array)) {
             return this;
         }
         writeFieldName(name)
                 .putAsciiInternal('=')
                 .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ARRAY binary format
                 .put((byte) ColumnType.DOUBLE); // element type
-        values.appendToBufPtr(this);
+        array.appendToBufPtr(this);
         return this;
     }
 

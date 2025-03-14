@@ -110,15 +110,15 @@ public class LineHttpSenderV2 extends AbstractLineHttpSender {
     }
 
     @Override
-    public Sender doubleArray(CharSequence name, DoubleArray values) {
-        if (processNullArray(name, values)) {
+    public Sender doubleArray(CharSequence name, DoubleArray array) {
+        if (processNullArray(name, array)) {
             return this;
         }
         writeFieldName(name)
                 .putAscii('=') // binary format flag
                 .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ND_ARRAY binary format
                 .put((byte) ColumnType.DOUBLE); // element type
-        values.appendToBufPtr(request);
+        array.appendToBufPtr(request);
         return this;
     }
 

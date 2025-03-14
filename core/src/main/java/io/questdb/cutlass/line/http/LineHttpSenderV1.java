@@ -100,7 +100,7 @@ public class LineHttpSenderV1 extends AbstractLineHttpSender {
     }
 
     @Override
-    public Sender doubleArray(CharSequence name, DoubleArray values) {
+    public Sender doubleArray(CharSequence name, DoubleArray array) {
         throw new LineSenderException("current protocol version does not support double-array");
     }
 
