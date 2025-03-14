@@ -63,7 +63,7 @@ import java.io.Closeable;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 
-public final class LineHttpSender implements Sender {
+public abstract class AbstractLineHttpSender implements Sender {
     private static final String PATH = "/write?precision=n";
     private static final int RETRY_BACKOFF_MULTIPLIER = 2;
     private static final int RETRY_INITIAL_BACKOFF_MS = 10;
@@ -93,7 +93,7 @@ public final class LineHttpSender implements Sender {
     private int rowBookmark;
     private RequestState state = RequestState.EMPTY;
 
-    public LineHttpSender(
+    protected AbstractLineHttpSender(
             String host,
             int port,
             HttpClientConfiguration clientConfiguration,
@@ -122,7 +122,7 @@ public final class LineHttpSender implements Sender {
         );
     }
 
-    public LineHttpSender(
+    protected AbstractLineHttpSender(
             String host,
             int port,
             String path,

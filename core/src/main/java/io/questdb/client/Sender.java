@@ -413,6 +413,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = 100 * 1024 * 1024;
         private static final long DEFAULT_MAX_RETRY_NANOS = TimeUnit.SECONDS.toNanos(10); // keep sync with the contract of the configuration method
         private static final long DEFAULT_MIN_REQUEST_THROUGHPUT = 100 * 1024; // 100KB/s, keep in sync with the contract of the configuration method
+        private static final int DEFAULT_PROTOCOL_VERSION = 2;
         private static final int DEFAULT_TCP_PORT = 9009;
         private static final int MIN_BUFFER_SIZE = 512 + 1; // challenge size + 1;
         // The PARAMETER_NOT_SET_EXPLICITLY constant is used to detect if a parameter was set explicitly in configuration parameters
@@ -452,6 +453,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         private int port = PARAMETER_NOT_SET_EXPLICITLY;
         private PrivateKey privateKey;
         private int protocol = PARAMETER_NOT_SET_EXPLICITLY;
+        private int protocolVersion = DEFAULT_PROTOCOL_VERSION;
         private int retryTimeoutMillis = PARAMETER_NOT_SET_EXPLICITLY;
         private boolean shouldDestroyPrivKey;
         private boolean tlsEnabled;
@@ -938,6 +940,19 @@ public interface Sender extends Closeable, ArraySender<Sender> {
             return this;
         }
 
+        // todo, add auto-detect instead of need to set explicit.
+        public LineSenderBuilder protocolVersion(int protocolVersion) {
+            if (this.protocolVersion != PARAMETER_NOT_SET_EXPLICITLY) {
+                throw new LineSenderException("protocol version was already configured ")
+                        .put("[protocolVersion=").put(this.protocolVersion).put("]");
+            }
+            if (protocolVersion < 1 || protocolVersion > 2) {
+                throw new LineSenderException("current client only supports protocol version 1(text format for all datatypes) or 2(binary format for part datatypes)");
+            }
+            this.protocolVersion = protocolVersion;
+            return this;
+        }
+
         /**
          * Configures the maximum time the Sender will spend retrying upon receiving a recoverable error from the server.
          * <br>
@@ -1017,6 +1032,9 @@ public interface Sender extends Closeable, ArraySender<Sender> {
             }
             if (tlsValidationMode == null) {
                 tlsValidationMode = TlsValidationMode.DEFAULT;
+            }
+            if (protocolVersion == PARAMETER_NOT_SET_EXPLICITLY) {
+                protocolVersion = DEFAULT_PROTOCOL_VERSION;
             }
         }
 
@@ -1228,6 +1246,10 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                     pos = getValue(configurationString, pos, sink, "request_min_throughput");
                     int requestMinThroughput = parseIntValue(sink, "request_min_throughput");
                     minRequestThroughput(requestMinThroughput);
+                } else if (Chars.equals("protocol_version", sink)) {
+                    pos = getValue(configurationString, pos, sink, "protocol_version");
+                    int protocolVersion = parseIntValue(sink, "protocol_version");
+                    protocolVersion(protocolVersion);
                 } else {
                     // ignore unknown keys, unless they are malformed
                     if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
