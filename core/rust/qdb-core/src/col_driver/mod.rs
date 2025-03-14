@@ -51,6 +51,8 @@ pub trait ColumnDriver {
         col: &MappedColumn,
         row_count: u64,
     ) -> CoreResult<(u64, Option<u64>)>;
+
+    fn tag(&self) -> ColumnTypeTag;
 }
 
 pub const fn lookup_driver(tag: ColumnTypeTag) -> &'static dyn ColumnDriver {

@@ -21,8 +21,10 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+use crate::col_driver::err;
 use crate::col_driver::util::cast_slice;
 use crate::col_driver::{ColumnDriver, MappedColumn};
+use crate::col_type::ColumnTypeTag;
 use crate::error::{CoreErrorExt, CoreResult};
 
 /// Type driver for the Varchar column type.
@@ -91,6 +93,10 @@ impl ColumnDriver for VarcharDriver {
         let (data_size, aux_size) = data_and_aux_size_at(col, row_count)?;
         Ok((data_size, Some(aux_size)))
     }
+
+    fn tag(&self) -> ColumnTypeTag {
+        ColumnTypeTag::Varchar
+    }
 }
 
 #[repr(transparent)]
@@ -131,50 +137,6 @@ impl VarcharAuxEntry {
     }
 }
 
-pub(super) mod err {
-    use crate::col_driver::MappedColumn;
-    use crate::error::{CoreError, fmt_err};
-
-    pub(super) fn missing_aux(col: &MappedColumn) -> CoreError {
-        fmt_err!(
-            InvalidColumnData,
-            "varchar driver expects aux mapping, but missing for {} column {} in {}",
-            col.col_type,
-            col.col_name,
-            col.parent_path.display()
-        )
-    }
-
-    pub(super) fn bad_aux_layout(col: &MappedColumn) -> String {
-        format!(
-            "bad layout of varchar aux column {} in {}",
-            col.col_name,
-            col.parent_path.display()
-        )
-    }
-
-    pub(super) fn not_found(col: &MappedColumn, index: u64) -> CoreError {
-        fmt_err!(
-            InvalidColumnData,
-            "varchar row index {} not found in aux for column {} in {}",
-            index,
-            col.col_name,
-            col.parent_path.display()
-        )
-    }
-
-    pub(super) fn bad_data_size(col: &MappedColumn, data_size: u64) -> CoreError {
-        fmt_err!(
-            InvalidColumnData,
-            "varchar required data size {} exceeds data mmap len {} for column {} in {}",
-            data_size,
-            col.data.len(),
-            col.col_name,
-            col.parent_path.display()
-        )
-    }
-}
-
 /// Return (data_size, aux_size).
 fn data_and_aux_size_at(col: &MappedColumn, row_count: u64) -> CoreResult<(u64, u64)> {
     if row_count == 0 {
@@ -184,12 +146,15 @@ fn data_and_aux_size_at(col: &MappedColumn, row_count: u64) -> CoreResult<(u64, 
     // store the row index just before.
     let row_index = row_count - 1;
 
-    let aux_mmap = col.aux.as_ref().ok_or_else(|| err::missing_aux(col))?;
+    let aux_mmap = col
+        .aux
+        .as_ref()
+        .ok_or_else(|| err::missing_aux(&VarcharDriver, col))?;
     let data_mmap = &col.data;
     let aux: &[VarcharAuxEntry] =
-        cast_slice(&aux_mmap[..]).with_context(|_| err::bad_aux_layout(col))?;
+        cast_slice(&aux_mmap[..]).with_context(|_| err::bad_aux_layout(&VarcharDriver, col))?;
     let Some(aux_entry) = aux.get((row_index) as usize) else {
-        return Err(err::not_found(col, row_index));
+        return Err(err::not_found(&VarcharDriver, col, row_index));
     };
 
     let aux_size = (row_index + 1) * size_of::<VarcharAuxEntry>() as u64;
@@ -200,7 +165,7 @@ fn data_and_aux_size_at(col: &MappedColumn, row_count: u64) -> CoreResult<(u64, 
         offset + aux_entry.size() as u64
     };
     if (data_mmap.len() as u64) < data_size {
-        return Err(err::bad_data_size(col, data_size));
+        return Err(err::bad_data_size(&VarcharDriver, col, data_size));
     }
     Ok((data_size, aux_size))
 }
@@ -280,7 +245,7 @@ mod tests {
         let err = VarcharDriver.col_sizes_for_size(&col, 6).unwrap_err();
         let msg = format!("{:#}", err);
         assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
-        assert!(msg.contains("varchar row index 5 not found in aux for column v1 in"));
+        assert!(msg.contains("varchar entry index 5 not found in aux for column v1 in"));
     }
 
     #[test]
@@ -320,7 +285,7 @@ mod tests {
         let err = VarcharDriver.col_sizes_for_size(&col, 6).unwrap_err();
         let msg = format!("{:#}", err);
         assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
-        assert!(msg.contains("varchar row index 5 not found in aux for column v2 in"));
+        assert!(msg.contains("varchar entry index 5 not found in aux for column v2 in"));
     }
 
     #[test]
@@ -360,7 +325,7 @@ mod tests {
         let err = VarcharDriver.col_sizes_for_size(&col, 6).unwrap_err();
         let msg = format!("{:#}", err);
         assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
-        assert!(msg.contains("varchar row index 5 not found in aux for column v3 in"));
+        assert!(msg.contains("varchar entry index 5 not found in aux for column v3 in"));
     }
 
     #[test]
@@ -400,7 +365,7 @@ mod tests {
         let err = VarcharDriver.col_sizes_for_size(&col, 6).unwrap_err();
         let msg = format!("{:#}", err);
         assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
-        assert!(msg.contains("varchar row index 5 not found in aux for column v4 in"));
+        assert!(msg.contains("varchar entry index 5 not found in aux for column v4 in"));
     }
 
     #[test]
@@ -415,6 +380,6 @@ mod tests {
         let err = VarcharDriver.col_sizes_for_size(&col, 1).unwrap_err();
         let msg = format!("{:#}", err);
         assert!(matches!(err.get_cause(), CoreErrorCause::InvalidColumnData));
-        assert!(msg.contains("varchar row index 0 not found in aux for column vempty in"));
+        assert!(msg.contains("varchar entry index 0 not found in aux for column vempty in"));
     }
 }

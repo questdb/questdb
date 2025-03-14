@@ -88,6 +88,33 @@ impl ColumnTypeTag {
         }
     }
 
+    pub const fn name(self) -> &'static str {
+        match self {
+            ColumnTypeTag::Boolean => "boolean",
+            ColumnTypeTag::Byte => "byte",
+            ColumnTypeTag::Short => "short",
+            ColumnTypeTag::Char => "char",
+            ColumnTypeTag::Int => "int",
+            ColumnTypeTag::Long => "long",
+            ColumnTypeTag::Date => "date",
+            ColumnTypeTag::Timestamp => "timestamp",
+            ColumnTypeTag::Float => "float",
+            ColumnTypeTag::Double => "double",
+            ColumnTypeTag::String => "string",
+            ColumnTypeTag::Symbol => "symbol",
+            ColumnTypeTag::Long256 => "long256",
+            ColumnTypeTag::GeoByte => "geobyte",
+            ColumnTypeTag::GeoShort => "geoshort",
+            ColumnTypeTag::GeoInt => "geoint",
+            ColumnTypeTag::GeoLong => "geolong",
+            ColumnTypeTag::Binary => "binary",
+            ColumnTypeTag::Uuid => "uuid",
+            ColumnTypeTag::Long128 => "long128",
+            ColumnTypeTag::IPv4 => "ipv4",
+            ColumnTypeTag::Varchar => "varchar",
+        }
+    }
+
     // Don't expose this in the general API, as it heightens the risk
     // of constructing an invalid `ColumnType`, e.g. one without the appropriate
     // extra type info for Geo types.
@@ -169,7 +196,7 @@ impl ColumnType {
 
 impl Display for ColumnType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} ({:?})", self.code, self.tag())
+        write!(f, "{} ({})", self.code, self.tag().name())
     }
 }
 

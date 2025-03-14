@@ -49,6 +49,10 @@ macro_rules! impl_primitive_type_driver {
                     }
                     Ok((data_size, None))
                 }
+
+                fn tag(&self) -> ColumnTypeTag {
+                    ColumnTypeTag::$tag
+                }
             }
         }
     };

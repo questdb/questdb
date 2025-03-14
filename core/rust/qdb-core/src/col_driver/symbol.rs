@@ -22,6 +22,7 @@
  *
  ******************************************************************************/
 use crate::col_driver::{ColumnDriver, MappedColumn};
+use crate::col_type::ColumnTypeTag;
 use crate::error::CoreResult;
 
 pub struct SymbolDriver;
@@ -33,5 +34,9 @@ impl ColumnDriver for SymbolDriver {
         _row_count: u64,
     ) -> CoreResult<(u64, Option<u64>)> {
         todo!()
+    }
+
+    fn tag(&self) -> ColumnTypeTag {
+        ColumnTypeTag::Symbol
     }
 }
