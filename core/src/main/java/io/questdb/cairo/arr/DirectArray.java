@@ -125,7 +125,7 @@ public final class DirectArray extends MutableArray implements Mutable {
      */
     public void putLong(int flatIndex, long value) {
         assert ColumnType.decodeArrayElementType(type) == ColumnType.LONG : "putting LONG to a non-LONG array";
-        assert flatIndex >= 0 : "negative flatIndex";
+        assert flatIndex >= 0 && flatIndex < flatViewLength : "flatIndex out of bounds";
         long offset = flatIndex * LONG_BYTES;
         assert size >= offset + LONG_BYTES : "size < offset + LONG_BYTES";
         Unsafe.getUnsafe().putLong(ptr + offset, value);
