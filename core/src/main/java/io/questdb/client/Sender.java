@@ -29,10 +29,13 @@ import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.HttpClientConfiguration;
 import io.questdb.client.impl.ConfStringParser;
 import io.questdb.cutlass.auth.AuthUtils;
+import io.questdb.cutlass.line.AbstractLineTcpSender;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.cutlass.line.LineTcpSender;
-import io.questdb.cutlass.line.http.LineHttpSender;
+import io.questdb.cutlass.line.LineTcpSenderV1;
+import io.questdb.cutlass.line.LineTcpSenderV2;
+import io.questdb.cutlass.line.http.LineHttpSenderV1;
+import io.questdb.cutlass.line.http.LineHttpSenderV2;
 import io.questdb.cutlass.line.tcp.DelegatingTlsChannel;
 import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
 import io.questdb.network.NetworkFacade;
@@ -80,6 +83,9 @@ import java.util.concurrent.TimeUnit;
  * Error-handling: Most errors throw an instance of {@link LineSenderException}.
  */
 public interface Sender extends Closeable, ArraySender<Sender> {
+
+    int PROTOCOL_VERSION_V1 = 1;
+    int PROTOCOL_VERSION_V2 = 2;
 
     /**
      * Create a Sender builder instance from a configuration string.
@@ -413,7 +419,6 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         private static final int DEFAULT_MAXIMUM_BUFFER_CAPACITY = 100 * 1024 * 1024;
         private static final long DEFAULT_MAX_RETRY_NANOS = TimeUnit.SECONDS.toNanos(10); // keep sync with the contract of the configuration method
         private static final long DEFAULT_MIN_REQUEST_THROUGHPUT = 100 * 1024; // 100KB/s, keep in sync with the contract of the configuration method
-        private static final int DEFAULT_PROTOCOL_VERSION = 2;
         private static final int DEFAULT_TCP_PORT = 9009;
         private static final int MIN_BUFFER_SIZE = 512 + 1; // challenge size + 1;
         // The PARAMETER_NOT_SET_EXPLICITLY constant is used to detect if a parameter was set explicitly in configuration parameters
@@ -453,7 +458,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
         private int port = PARAMETER_NOT_SET_EXPLICITLY;
         private PrivateKey privateKey;
         private int protocol = PARAMETER_NOT_SET_EXPLICITLY;
-        private int protocolVersion = DEFAULT_PROTOCOL_VERSION;
+        private int protocolVersion = PARAMETER_NOT_SET_EXPLICITLY;
         private int retryTimeoutMillis = PARAMETER_NOT_SET_EXPLICITLY;
         private boolean shouldDestroyPrivKey;
         private boolean tlsEnabled;
@@ -659,11 +664,15 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                     assert (trustStorePath == null) == (trustStorePassword == null); //either both null or both non-null
                     tlsConfig = new ClientTlsConfiguration(trustStorePath, trustStorePassword, tlsValidationMode == TlsValidationMode.DEFAULT ? ClientTlsConfiguration.TLS_VALIDATION_MODE_FULL : ClientTlsConfiguration.TLS_VALIDATION_MODE_NONE);
                 }
-                return new LineHttpSender(host, port, httpPath, httpClientConfiguration, tlsConfig, actualAutoFlushRows, httpToken, username, password, actualMaxRetriesNanos, actualMinRequestThroughput, actualAutoFlushIntervalMillis);
+                if (protocolVersion == PROTOCOL_VERSION_V1) {
+                    return new LineHttpSenderV1(host, port, httpPath, httpClientConfiguration, tlsConfig, actualAutoFlushRows, httpToken, username, password, actualMaxRetriesNanos, actualMinRequestThroughput, actualAutoFlushIntervalMillis);
+                } else {
+                    return new LineHttpSenderV2(host, port, httpPath, httpClientConfiguration, tlsConfig, actualAutoFlushRows, httpToken, username, password, actualMaxRetriesNanos, actualMinRequestThroughput, actualAutoFlushIntervalMillis);
+                }
             }
             assert protocol == PROTOCOL_TCP;
             LineChannel channel = new PlainTcpLineChannel(nf, host, port, bufferCapacity * 2);
-            LineTcpSender sender;
+            AbstractLineTcpSender sender;
             if (tlsEnabled) {
                 DelegatingTlsChannel tlsChannel;
                 try {
@@ -675,7 +684,11 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                 channel = tlsChannel;
             }
             try {
-                sender = new LineTcpSender(channel, bufferCapacity);
+                if (protocolVersion == PROTOCOL_VERSION_V1) {
+                    sender = new LineTcpSenderV1(channel, bufferCapacity);
+                } else {
+                    sender = new LineTcpSenderV2(channel, bufferCapacity);
+                }
             } catch (Throwable t) {
                 channel.close();
                 throw rethrow(t);
@@ -946,7 +959,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                 throw new LineSenderException("protocol version was already configured ")
                         .put("[protocolVersion=").put(this.protocolVersion).put("]");
             }
-            if (protocolVersion < 1 || protocolVersion > 2) {
+            if (protocolVersion < PROTOCOL_VERSION_V1 || protocolVersion > PROTOCOL_VERSION_V2) {
                 throw new LineSenderException("current client only supports protocol version 1(text format for all datatypes) or 2(binary format for part datatypes)");
             }
             this.protocolVersion = protocolVersion;
@@ -1034,7 +1047,7 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                 tlsValidationMode = TlsValidationMode.DEFAULT;
             }
             if (protocolVersion == PARAMETER_NOT_SET_EXPLICITLY) {
-                protocolVersion = DEFAULT_PROTOCOL_VERSION;
+                protocolVersion = PROTOCOL_VERSION_V2;
             }
         }
 
@@ -1360,6 +1373,9 @@ public interface Sender extends Closeable, ArraySender<Sender> {
                 }
                 if (autoFlushIntervalMillis != PARAMETER_NOT_SET_EXPLICITLY) {
                     throw new LineSenderException("auto flush interval is not supported for TCP protocol");
+                }
+                if (protocolVersion < PROTOCOL_VERSION_V1 || protocolVersion > PROTOCOL_VERSION_V2) {
+                    throw new LineSenderException("current client only supports protocol version 1(text format for all datatypes) or 2(binary format for part datatypes)");
                 }
             } else {
                 throw new LineSenderException("unsupported protocol ")

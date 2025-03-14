@@ -31,9 +31,10 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.auth.AuthUtils;
+import io.questdb.cutlass.line.AbstractLineTcpSender;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.cutlass.line.LineTcpSender;
+import io.questdb.cutlass.line.LineTcpSenderV2;
 import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.griffin.model.IntervalUtils;
@@ -147,7 +148,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         runInContext(r -> {
             int bufferCapacity = 256 * 1024;
 
-            try (LineTcpSender sender = LineTcpSender.newSender(HOST, bindPort, bufferCapacity)) {
+            try (AbstractLineTcpSender sender = AbstractLineTcpSender.newSender(HOST, bindPort, bufferCapacity)) {
                 sender.authenticate(authKeyId, AUTH_PRIVATE_KEY1);
                 sender.metric("mytable").field("my int field", 42).$();
                 sender.flush();
@@ -163,7 +164,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         runInContext(r -> {
             int bufferCapacity = 2048;
 
-            try (LineTcpSender sender = LineTcpSender.newSender(HOST, bindPort, bufferCapacity)) {
+            try (AbstractLineTcpSender sender = AbstractLineTcpSender.newSender(HOST, bindPort, bufferCapacity)) {
                 sender.authenticate(AUTH_KEY_ID2_INVALID, AUTH_PRIVATE_KEY1);
                 //30 seconds should be enough even on a slow CI server
                 long deadline = Os.currentTimeNanos() + SECONDS.toNanos(30);
@@ -252,7 +253,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testCannotStartNewRowBeforeClosingTheExistingAfterValidationError() {
         StringChannel channel = new StringChannel();
-        try (Sender sender = new LineTcpSender(channel, 1000)) {
+        try (Sender sender = new LineTcpSenderV2(channel, 1000)) {
             sender.table("mytable");
             try {
                 sender.boolColumn("col\n", true);
@@ -273,7 +274,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testCloseIdempotent() {
         DummyLineChannel channel = new DummyLineChannel();
-        LineTcpSender sender = new LineTcpSender(channel, 1000);
+        AbstractLineTcpSender sender = new LineTcpSenderV2(channel, 1000);
         sender.close();
         sender.close();
         assertEquals(1, channel.closeCounter);
@@ -563,7 +564,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         authKeyId = AUTH_KEY_ID1;
         int tinyCapacity = 42;
         runInContext(r -> {
-            try (LineTcpSender sender = LineTcpSender.newSender(HOST, bindPort, tinyCapacity)) {
+            try (AbstractLineTcpSender sender = AbstractLineTcpSender.newSender(HOST, bindPort, tinyCapacity)) {
                 sender.authenticate(AUTH_KEY_ID1, AUTH_PRIVATE_KEY1);
                 fail();
             } catch (LineSenderException e) {
@@ -628,7 +629,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testUnfinishedRowDoesNotContainNewLine() {
         StringChannel channel = new StringChannel();
-        try (Sender sender = new LineTcpSender(channel, 1000)) {
+        try (Sender sender = new LineTcpSenderV2(channel, 1000)) {
             sender.table("mytable");
             sender.boolColumn("col\n", true);
         } catch (LineSenderException e) {
@@ -775,7 +776,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     private static void assertControlCharacterException() {
         DummyLineChannel channel = new DummyLineChannel();
-        try (Sender sender = new LineTcpSender(channel, 1000)) {
+        try (Sender sender = new LineTcpSenderV2(channel, 1000)) {
             sender.table("mytable");
             sender.boolColumn("col\u0001", true);
             fail("control character in column or table name must throw exception");
@@ -793,7 +794,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     private static void assertExceptionOnClosedSender(Consumer<Sender> beforeCloseAction, Consumer<Sender> afterCloseAction) {
         DummyLineChannel channel = new DummyLineChannel();
-        Sender sender = new LineTcpSender(channel, 1000);
+        Sender sender = new LineTcpSenderV2(channel, 1000);
         beforeCloseAction.accept(sender);
         sender.close();
         try {

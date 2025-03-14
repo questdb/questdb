@@ -24,7 +24,7 @@
 
 package org.questdb;
 
-import io.questdb.cutlass.line.LineTcpSender;
+import io.questdb.cutlass.line.AbstractLineTcpSender;
 import io.questdb.network.Net;
 import io.questdb.std.Rnd;
 
@@ -37,7 +37,7 @@ public class LineTCPSenderMainDupCols {
 
         final Rnd rnd = new Rnd();
         long start = System.nanoTime();
-        try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
+        try (AbstractLineTcpSender sender = AbstractLineTcpSender.newSender(Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
             for (int i = 0; i < count; i++) {
                 sender.metric("weather");
                 sender

@@ -27,7 +27,6 @@ package io.questdb.cutlass.line.http;
 import io.questdb.BuildInformationHolder;
 import io.questdb.ClientTlsConfiguration;
 import io.questdb.HttpClientConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.http.HttpConstants;
@@ -40,12 +39,6 @@ import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.json.JsonParser;
 import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.cutlass.line.array.ArrayDataAppender;
-import io.questdb.cutlass.line.array.ArrayShapeAppender;
-import io.questdb.cutlass.line.array.DoubleArray;
-import io.questdb.cutlass.line.array.FlattenArrayUtils;
-import io.questdb.cutlass.line.array.LongArray;
-import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.NanosecondClockImpl;
@@ -56,7 +49,6 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -84,12 +76,12 @@ public abstract class AbstractLineHttpSender implements Sender {
     private final StringSink sink = new StringSink();
     private final String url;
     private final String username;
+    protected HttpClient.Request request;
     private HttpClient client;
     private boolean closed;
     private long flushAfterNanos = Long.MAX_VALUE;
     private JsonErrorParser jsonErrorParser;
     private long pendingRows;
-    private HttpClient.Request request;
     private int rowBookmark;
     private RequestState state = RequestState.EMPTY;
 
@@ -193,7 +185,7 @@ public abstract class AbstractLineHttpSender implements Sender {
 
     @Override
     public Sender boolColumn(CharSequence name, boolean value) {
-        writeFieldName(name, false);
+        writeFieldName(name);
         request.put(value ? 't' : 'f');
         return this;
     }
@@ -224,87 +216,13 @@ public abstract class AbstractLineHttpSender implements Sender {
     }
 
     @Override
-    public Sender doubleArray(@NotNull CharSequence name, double[] values) {
-        return arrayColumn(name, ColumnType.DOUBLE, (byte) 1, values,
-                FlattenArrayUtils::putShapeToBuf,
-                FlattenArrayUtils::putDataToBuf);
-    }
-
-    @Override
-    public Sender doubleArray(@NotNull CharSequence name, double[][] values) {
-        return arrayColumn(name, ColumnType.DOUBLE, (byte) 2, values,
-                FlattenArrayUtils::putShapeToBuf,
-                FlattenArrayUtils::putDataToBuf);
-    }
-
-    @Override
-    public Sender doubleArray(@NotNull CharSequence name, double[][][] values) {
-        return arrayColumn(name, ColumnType.DOUBLE, (byte) 3, values,
-                FlattenArrayUtils::putShapeToBuf,
-                FlattenArrayUtils::putDataToBuf);
-    }
-
-    @Override
-    public Sender doubleArray(CharSequence name, DoubleArray array) {
-        if (processNullArray(name, array)) {
-            return this;
-        }
-        writeFieldName(name, true)
-                .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ND_ARRAY binary format
-                .put((byte) ColumnType.DOUBLE); // element type
-        array.appendToBufPtr(request);
-        return this;
-    }
-
-    @Override
-    public Sender doubleColumn(CharSequence name, double value) {
-        writeFieldName(name, true)
-                .put(LineTcpParser.ENTITY_TYPE_DOUBLE);
-        request.putDouble(value);
-        return this;
-    }
-
-    @Override
     public void flush() {
         flush0(false);
     }
 
     @Override
-    public Sender longArray(@NotNull CharSequence name, long[] values) {
-        return arrayColumn(name, ColumnType.LONG, (byte) 1, values,
-                FlattenArrayUtils::putShapeToBuf,
-                FlattenArrayUtils::putDataToBuf);
-    }
-
-    @Override
-    public Sender longArray(@NotNull CharSequence name, long[][] values) {
-        return arrayColumn(name, ColumnType.LONG, (byte) 2, values,
-                FlattenArrayUtils::putShapeToBuf,
-                FlattenArrayUtils::putDataToBuf);
-    }
-
-    @Override
-    public Sender longArray(@NotNull CharSequence name, long[][][] values) {
-        return arrayColumn(name, ColumnType.LONG, (byte) 3, values,
-                FlattenArrayUtils::putShapeToBuf,
-                FlattenArrayUtils::putDataToBuf);
-    }
-
-    @Override
-    public Sender longArray(@NotNull CharSequence name, LongArray values) {
-        if (processNullArray(name, values)) {
-            return this;
-        }
-        writeFieldName(name, true)
-                .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ND_ARRAY binary format
-                .put((byte) ColumnType.LONG); // element type
-        values.appendToBufPtr(request);
-        return this;
-    }
-
-    @Override
     public Sender longColumn(CharSequence name, long value) {
-        writeFieldName(name, false);
+        writeFieldName(name);
         request.put(value);
         request.put('i');
         return this;
@@ -321,7 +239,7 @@ public abstract class AbstractLineHttpSender implements Sender {
 
     @Override
     public Sender stringColumn(CharSequence name, CharSequence value) {
-        writeFieldName(name, false);
+        writeFieldName(name);
         request.put('"');
         escapeString(value);
         request.put('"');
@@ -371,14 +289,14 @@ public abstract class AbstractLineHttpSender implements Sender {
     @Override
     public Sender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
         // micros
-        writeFieldName(name, false).put(Timestamps.toMicros(value, unit)).put('t');
+        writeFieldName(name).put(Timestamps.toMicros(value, unit)).put('t');
         return this;
     }
 
     @Override
     public Sender timestampColumn(CharSequence name, Instant value) {
         // micros
-        writeFieldName(name, false)
+        writeFieldName(name)
                 .put((value.getEpochSecond() * Timestamps.SECOND_MICROS + value.getNano() / 1000L))
                 .put('t');
         return this;
@@ -404,25 +322,7 @@ public abstract class AbstractLineHttpSender implements Sender {
         return connectionHeader != null && Utf8s.equalsAscii("close", connectionHeader);
     }
 
-    private <T> Sender arrayColumn(
-            CharSequence name,
-            short columnType,
-            byte nDims,
-            T array,
-            ArrayShapeAppender<T> shapeAppender,
-            ArrayDataAppender<T> dataAppender
-    ) {
-        if (processNullArray(name, array)) {
-            return this;
-        }
-        writeFieldName(name, true)
-                .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ND_ARRAY binary format
-                .put((byte) columnType) // element type
-                .put(nDims); // dims.
-        shapeAppender.append(request, array);
-        dataAppender.append(request, array);
-        return this;
-    }
+
 
     private int backoff(int retryBackoff) {
         int jitter = rnd.nextInt(RETRY_MAX_JITTER_MS);
@@ -438,25 +338,6 @@ public abstract class AbstractLineHttpSender implements Sender {
         Response chunkedRsp = response.getResponse();
         while ((chunkedRsp.recv()) != null) {
             // we don't care about the response, just consume it, so it won't stay in the socket receive buffer
-        }
-    }
-
-    private void escapeQuotedString(CharSequence name) {
-        for (int i = 0, n = name.length(); i < n; i++) {
-            char c = name.charAt(i);
-            switch (c) {
-                case ' ':
-                case ',':
-                case '=':
-                case '\n':
-                case '\r':
-                case '\\':
-                    request.put((byte) '\\').put((byte) c);
-                    break;
-                default:
-                    request.put(c);
-                    break;
-            }
         }
     }
 
@@ -600,15 +481,6 @@ public abstract class AbstractLineHttpSender implements Sender {
         return r;
     }
 
-    private boolean processNullArray(CharSequence name, Object value) {
-        if (value == null) {
-            writeFieldName(name, true);
-            request.put(LineTcpParser.ENTITY_TYPE_ARRAY) // ND_ARRAY binary format
-                    .put((byte) ColumnType.NULL); // element type
-            return true;
-        }
-        return false;
-    }
 
     /**
      * @return true if flush is required
@@ -666,14 +538,6 @@ public abstract class AbstractLineHttpSender implements Sender {
         throw new LineSenderException(sink);
     }
 
-    private void validateColumnName(CharSequence name) {
-        if (!TableUtils.isValidColumnName(name, Integer.MAX_VALUE)) {
-            throw new LineSenderException("column name contains an illegal char: '\\n', '\\r', '?', '.', ','" +
-                    ", ''', '\"', '\\', '/', ':', ')', '(', '+', '-', '*' '%%', '~', or a non-printable char: ")
-                    .putAsPrintable(name);
-        }
-    }
-
     private void validateNotClosed() {
         if (closed) {
             throw new LineSenderException("sender already closed");
@@ -688,7 +552,34 @@ public abstract class AbstractLineHttpSender implements Sender {
         }
     }
 
-    private HttpClient.Request writeFieldName(CharSequence name, boolean binaryFormat) {
+    protected void escapeQuotedString(CharSequence name) {
+        for (int i = 0, n = name.length(); i < n; i++) {
+            char c = name.charAt(i);
+            switch (c) {
+                case ' ':
+                case ',':
+                case '=':
+                case '\n':
+                case '\r':
+                case '\\':
+                    request.put((byte) '\\').put((byte) c);
+                    break;
+                default:
+                    request.put(c);
+                    break;
+            }
+        }
+    }
+
+    protected void validateColumnName(CharSequence name) {
+        if (!TableUtils.isValidColumnName(name, Integer.MAX_VALUE)) {
+            throw new LineSenderException("column name contains an illegal char: '\\n', '\\r', '?', '.', ','" +
+                    ", ''', '\"', '\\', '/', ':', ')', '(', '+', '-', '*' '%%', '~', or a non-printable char: ")
+                    .putAsPrintable(name);
+        }
+    }
+
+    protected HttpClient.Request writeFieldName(CharSequence name) {
         validateColumnName(name);
         switch (state) {
             case EMPTY:
@@ -705,9 +596,6 @@ public abstract class AbstractLineHttpSender implements Sender {
         }
         escapeQuotedString(name);
         request.put('=');
-        if (binaryFormat) {
-            request.put('=');
-        }
         return request;
     }
 
