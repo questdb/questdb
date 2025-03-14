@@ -151,7 +151,8 @@ public class IntList implements Mutable, Sinkable {
      * @return element at the specified position.
      */
     public int getQuick(int index) {
-        assert index < pos;
+        assert index >= 0 : "negative index";
+        assert index < pos : String.format("index %,d out of bounds for list size %,d", index, pos);
         return data[index];
     }
 
