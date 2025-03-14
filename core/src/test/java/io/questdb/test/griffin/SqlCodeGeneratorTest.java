@@ -769,21 +769,21 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testDistinctFunctionColumn() throws Exception {
         final String expected = "v\n" +
-                "8.0\n" +
+                "0.0\n" +
                 "1.0\n" +
-                "7.0\n" +
                 "2.0\n" +
                 "3.0\n" +
                 "4.0\n" +
-                "0.0\n" +
-                "6.0\n" +
-                "9.0\n" +
                 "5.0\n" +
+                "6.0\n" +
+                "7.0\n" +
+                "8.0\n" +
+                "9.0\n" +
                 "10.0\n";
 
         assertQuery(
                 expected,
-                "select distinct round(val*10, 0) v from prices",
+                "select distinct round(val*10, 0) v from prices order by 1",
                 "create table prices as " +
                         "(" +
                         " SELECT \n" +
@@ -792,6 +792,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " long_sequence(1200000)" +
                         ")",
                 null,
+                true,
                 true
         );
     }
@@ -799,21 +800,21 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testDistinctOperatorColumn() throws Exception {
         final String expected = "v\n" +
-                "10.0\n" +
+                "2.0\n" +
                 "3.0\n" +
-                "9.0\n" +
                 "4.0\n" +
                 "5.0\n" +
                 "6.0\n" +
-                "2.0\n" +
-                "8.0\n" +
-                "11.0\n" +
                 "7.0\n" +
+                "8.0\n" +
+                "9.0\n" +
+                "10.0\n" +
+                "11.0\n" +
                 "12.0\n";
 
         assertQuery(
                 expected,
-                "select distinct 2+round(val*10,0) v from prices",
+                "select distinct 2+round(val*10,0) v from prices order by 1",
                 "create table prices as " +
                         "(" +
                         " SELECT \n" +
@@ -822,6 +823,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " long_sequence(1200000)" +
                         ")",
                 null,
+                true,
                 true
         );
     }
@@ -848,7 +850,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ")",
                 null,
                 true,
-                false
+                true
         );
     }
 
@@ -860,7 +862,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
         assertQuery(
                 expected,
-                "select distinct pair from prices where pair in ('A','B')",
+                "select distinct pair from prices where pair in ('A','B') order by 1",
                 "create table prices as " +
                         "(" +
                         " SELECT \n" +
@@ -872,6 +874,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " long_sequence(1200000)" +
                         ")",
                 null,
+                true,
                 true
         );
     }
@@ -7293,7 +7296,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 expected2,
                 true,
                 false,
-                false
+                true
         );
     }
 
@@ -7304,8 +7307,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = select("select distinct id as foo from my_table")) {
                 RecordMetadata metadata = factory.getMetadata();
                 Assert.assertEquals(ColumnType.LONG, metadata.getColumnType(0));
-                assertCursor("foo\n" +
-                        "1\n", factory, true, false);
+                assertCursor(
+                        "foo\n" +
+                        "1\n",
+                        factory,
+                        true,
+                        true
+                );
             }
         });
     }
@@ -7318,22 +7326,31 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 RecordMetadata metadata = factory.getMetadata();
                 Assert.assertEquals(ColumnType.LONG, metadata.getColumnType(0));
 
-                assertCursor("foo\n" +
-                        "1\n", factory, true, false);
+                assertCursor(
+                        "foo\n" +
+                        "1\n",
+                        factory,
+                        true,
+                        true
+                );
             }
         });
     }
 
     @Test
     public void testSelectDistinctWithColumnAliasOnExplicitJoin() throws Exception {
-        assertQuery("id\n" +
+        assertQuery(
+                "id\n" +
                         "1\n" +
                         "2\n",
                 "select distinct t1.id " +
                         "from  tab t1 " +
                         "join (select x as id from long_sequence(2)) t2 on (t1.id=t2.id)",
                 "create table tab as (select x as id from long_sequence(3))",
-                null, false, false
+
+                null,
+                true,
+                true
         );
     }
 
