@@ -1408,7 +1408,7 @@ public class WalWriterTest extends AbstractCairoTest {
             try (Path path = new Path(); TransactionLogCursor transactionLogCursor = engine.getTableSequencerAPI().getCursor(tableToken, 0)) {
                 for (int i = 0; i < 10; i++) {
                     path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-                    long txn = WalUtils.getRefreshTxn(path, i, transactionLogCursor, configuration.getFilesFacade());
+                    long txn = WalUtils.getRefreshTxn(path, transactionLogCursor, configuration.getFilesFacade());
                     assertEquals(refreshTxn + i, txn);
                 }
             }

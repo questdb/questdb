@@ -97,9 +97,8 @@ public class WalUtils {
         }
     }
 
-    public static long getRefreshTxn(Path tablePath, long tableTxn, TransactionLogCursor transactionLogCursor, FilesFacade ff) {
+    public static long getRefreshTxn(Path tablePath, TransactionLogCursor transactionLogCursor, FilesFacade ff) {
         long refreshTxn = -1; // full refresh if not extracted
-        transactionLogCursor.setPosition(tableTxn);
         if (transactionLogCursor.hasNext()) {
             final int walId = transactionLogCursor.getWalId();
             final int segmentId = transactionLogCursor.getSegmentId();
