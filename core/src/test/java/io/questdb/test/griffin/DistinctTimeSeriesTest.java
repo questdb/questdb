@@ -199,7 +199,7 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
                     "insert into x values (11, 'ibm', '1970-01-06T19:42:50.000000Z')",
                     expected,
                     true,
-                    false,
+                    true,
                     false
             );
         });
