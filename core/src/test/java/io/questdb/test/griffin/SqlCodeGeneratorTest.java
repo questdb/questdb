@@ -7309,7 +7309,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 Assert.assertEquals(ColumnType.LONG, metadata.getColumnType(0));
                 assertCursor(
                         "foo\n" +
-                        "1\n",
+                                "1\n",
                         factory,
                         true,
                         true
@@ -7328,7 +7328,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
                 assertCursor(
                         "foo\n" +
-                        "1\n",
+                                "1\n",
                         factory,
                         true,
                         true
