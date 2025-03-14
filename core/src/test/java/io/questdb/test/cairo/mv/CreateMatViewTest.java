@@ -73,6 +73,67 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBackwardCompatibleState() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                createTable(TABLE1);
+
+                final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+                execute("create materialized view test as (" + query + ") partition by day");
+
+                final TableToken matViewToken = engine.getTableTokenIfExists("test");
+                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                assertNotNull(matViewDefinition);
+                final MatViewRefreshState matViewRefreshState = engine.getMatViewGraph().getViewRefreshState(matViewToken);
+                assertNotNull(matViewRefreshState);
+
+                assertEquals(-1, matViewRefreshState.getSeqTxn());
+                assertEquals(-1, matViewRefreshState.getLastRefreshBaseTxn());
+                matViewRefreshState.setLastRefreshBaseTxn(41);
+                matViewRefreshState.setSeqTxn(42);
+                try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
+                    writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                    MatViewRefreshState.append(matViewRefreshState, writer);
+                }
+
+                try (BlockFileReader reader = new BlockFileReader(configuration)) {
+                    reader.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                    MatViewRefreshState actualState = new MatViewRefreshState(
+                            matViewDefinition,
+                            false,
+                            (event, tableToken, baseTableTxn, errorMessage, latencyUs) -> {
+                            }
+                    );
+                    MatViewRefreshState.readFrom(reader, actualState);
+                    // check we have two updated blocks in the file
+                    assertEquals(42, actualState.getSeqTxn());
+                    assertEquals(41, actualState.getLastRefreshBaseTxn());
+                }
+
+                // overwrite state file with old version
+                try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
+                    writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                    MatViewRefreshState.appendState(matViewRefreshState, writer.append());
+                    writer.commit();
+                }
+                try (BlockFileReader reader = new BlockFileReader(configuration)) {
+                    reader.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                    MatViewRefreshState actualState = new MatViewRefreshState(
+                            matViewDefinition,
+                            false,
+                            (event, tableToken, baseTableTxn, errorMessage, latencyUs) -> {
+                            }
+                    );
+                    MatViewRefreshState.readFrom(reader, actualState);
+                    // check we have old state block in the file
+                    assertEquals(-1, actualState.getSeqTxn());
+                    assertEquals(41, actualState.getLastRefreshBaseTxn());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCreateDropConcurrent() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -1016,11 +1077,20 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     // Add unknown block.
                     AppendableBlock block = writer.append();
                     block.putStr("foobar");
-                    block.commit(MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_TYPE + 1);
+                    block.commit(MatViewRefreshState.MAT_VIEW_STATE_BLOCK_TYPE + 100);
+                    // Then write mat view txn before the state block. (test the block order)
+                    block = writer.append();
+                    matViewRefreshState.setSeqTxn(42);
+                    MatViewRefreshState.appendMatViewTxn(matViewRefreshState, block);
+                    // Then unknown block again.
+                    block = writer.append();
+                    block.putStr("bar baz");
+                    block.commit(MatViewRefreshState.MAT_VIEW_STATE_BLOCK_TYPE + 200);
                     // Then write mat view state.
                     block = writer.append();
-                    MatViewRefreshState.append(matViewRefreshState, block);
-                    block.commit(MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_TYPE);
+                    matViewRefreshState.setLastRefreshBaseTxn(43);
+                    MatViewRefreshState.appendState(matViewRefreshState, block);
+
                     writer.commit();
                 }
 
@@ -1038,6 +1108,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     assertEquals(matViewRefreshState.isInvalid(), actualState.isInvalid());
                     assertEquals(matViewRefreshState.getLastRefreshBaseTxn(), actualState.getLastRefreshBaseTxn());
                     assertEquals(matViewRefreshState.getInvalidationReason(), actualState.getInvalidationReason());
+                    assertEquals(matViewRefreshState.getSeqTxn(), actualState.getSeqTxn());
                 }
             }
         });
@@ -1277,7 +1348,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     // Add unknown block.
                     AppendableBlock block = writer.append();
                     block.putStr("foobar");
-                    block.commit(MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_TYPE + 1);
+                    block.commit(MatViewRefreshState.MAT_VIEW_STATE_BLOCK_TYPE + 100);
                     writer.commit();
                 }
 

@@ -34,7 +34,15 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.*;
+import io.questdb.std.AtomicIntList;
+import io.questdb.std.BoolList;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
@@ -227,6 +235,17 @@ class WalEventWriter implements Closeable {
     }
 
     int appendData(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
+        return appendData(
+                startRowID,
+                endRowID,
+                minTimestamp,
+                maxTimestamp,
+                outOfOrder,
+                Long.MIN_VALUE
+        );
+    }
+
+    int appendData(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder, long mvRefreshTxn) {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.DATA);
@@ -236,6 +255,10 @@ class WalEventWriter implements Closeable {
         eventMem.putLong(maxTimestamp);
         eventMem.putBool(outOfOrder);
         writeSymbolMapDiffs();
+        if (mvRefreshTxn != Long.MIN_VALUE) {
+            // for backward compatibility should be placed after symbol map diffs
+            eventMem.putLong(mvRefreshTxn);
+        }
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
 
