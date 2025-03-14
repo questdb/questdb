@@ -26,7 +26,6 @@ mod err;
 mod mapped;
 mod primitives;
 mod string;
-mod symbol;
 mod util;
 mod varchar;
 
@@ -37,7 +36,6 @@ pub use binary::*;
 pub use mapped::*;
 pub use primitives::*;
 pub use string::*;
-pub use symbol::*;
 pub use varchar::*;
 
 pub const DATA_FILE_EXTENSION: &str = "d";

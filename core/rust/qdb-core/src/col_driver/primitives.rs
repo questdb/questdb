@@ -68,6 +68,7 @@ impl_primitive_type_driver!(Date);
 impl_primitive_type_driver!(Timestamp);
 impl_primitive_type_driver!(Float);
 impl_primitive_type_driver!(Double);
+impl_primitive_type_driver!(Symbol); // Treating as primitive is enough for the current needs
 impl_primitive_type_driver!(Long256);
 impl_primitive_type_driver!(GeoByte);
 impl_primitive_type_driver!(GeoShort);
