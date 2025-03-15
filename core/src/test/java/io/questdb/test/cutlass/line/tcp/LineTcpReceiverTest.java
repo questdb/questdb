@@ -311,7 +311,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 final int iteration = it;
                 final int maxIds = symbolCount++;
                 send(tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
-                    try (AbstractLineTcpSender sender = AbstractLineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                    try (AbstractLineTcpSender sender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
                         for (int i = 0; i < count; i++) {
                             String id = String.valueOf(i % maxIds);
                             sender.metric(tableName)
@@ -504,7 +504,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testFirstRowIsCancelled() throws Exception {
         runInContext((receiver) -> {
             send("table", WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (AbstractLineTcpSender lineTcpSender = AbstractLineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                try (AbstractLineTcpSender lineTcpSender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
                     lineTcpSender.disableValidation();
                     lineTcpSender
                             .metric("table")
@@ -615,7 +615,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testNewPartitionRowCancelledTwice() throws Exception {
         runInContext((receiver) -> {
             send("table", WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (AbstractLineTcpSender lineTcpSender = AbstractLineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                try (AbstractLineTcpSender lineTcpSender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
                     lineTcpSender.disableValidation();
                     lineTcpSender
                             .metric("table")
@@ -959,7 +959,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testStringsWithTcpSenderWithNewLineChars() throws Exception {
         runInContext((receiver) -> {
             send("table", WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (AbstractLineTcpSender lineTcpSender = AbstractLineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                try (AbstractLineTcpSender lineTcpSender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
                     lineTcpSender
                             .metric("table")
                             .tag("tag1", "value 1")
@@ -1279,7 +1279,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext((receiver) -> {
             String tableName = "table";
             send(tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (AbstractLineTcpSender lineTcpSender = AbstractLineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, 64)) {
+                try (AbstractLineTcpSender lineTcpSender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), bindPort, 64)) {
                     for (int i = 0; i < rowCount; i++) {
                         lineTcpSender
                                 .metric(tableName)
@@ -1304,7 +1304,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         runInContext((receiver) -> {
             String tableName = "ta ble";
             send(tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (AbstractLineTcpSender lineTcpSender = AbstractLineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                try (AbstractLineTcpSender lineTcpSender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
                     lineTcpSender
                             .metric(tableName)
                             .tag("tag1", "value 1")
@@ -1488,7 +1488,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testWithTcpSender() throws Exception {
         runInContext((receiver) -> {
             send("table", WAIT_ENGINE_TABLE_RELEASE, () -> {
-                try (AbstractLineTcpSender lineTcpSender = AbstractLineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+                try (AbstractLineTcpSender lineTcpSender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
                     lineTcpSender.disableValidation();
                     lineTcpSender
                             .metric("table")
@@ -1895,7 +1895,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
         final SOCountDownLatch finished = new SOCountDownLatch(1);
 
-        try (AbstractLineTcpSender sender = AbstractLineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
+        try (AbstractLineTcpSender sender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), bindPort, msgBufferSize)) {
             for (int i = 0; i < 1000; i++) {
                 sender.metric(tableName)
                         .field("id", i)
@@ -1953,7 +1953,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     ) throws Exception {
         test(authKeyId, msgBufferSize, nRows, expectDisconnect,
                 () -> {
-                    AbstractLineSender sender = AbstractLineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, 4096);
+                    AbstractLineSender sender = LineTcpSenderV2.newSender(Net.parseIPv4("127.0.0.1"), bindPort, 4096);
                     if (authKeyId != null) {
                         sender.authenticate(authKeyId, authPrivateKey);
                     }

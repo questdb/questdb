@@ -33,6 +33,8 @@ import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.FlattenArrayUtils;
 import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
+import io.questdb.cutlass.line.tcp.PlainTcpLineChannel;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Unsafe;
@@ -45,6 +47,29 @@ import org.jetbrains.annotations.Nullable;
 public class LineTcpSenderV2 extends AbstractLineTcpSender implements MemoryA {
     public LineTcpSenderV2(LineChannel channel, int bufferCapacity) {
         super(channel, bufferCapacity);
+    }
+
+    /**
+     * Create a new LineTcpSender.
+     * <br>
+     * IP address is encoded as <code>int</code> obtained via {@link io.questdb.network.Net#parseIPv4(CharSequence)}
+     * <br>
+     * This is meant to be used for testing only, it's not something most users want to use.
+     * See {@link Sender} instead
+     *
+     * @param ip             IP address of a server
+     * @param port           port where a server is listening
+     * @param bufferCapacity capacity of an internal buffer in bytes
+     * @return LineTcpSender instance of LineTcpSender
+     */
+    public static LineTcpSenderV2 newSender(int ip, int port, int bufferCapacity) {
+        PlainTcpLineChannel channel = new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE, ip, port, bufferCapacity * 2);
+        try {
+            return new LineTcpSenderV2(channel, bufferCapacity);
+        } catch (Throwable t) {
+            channel.close();
+            throw t;
+        }
     }
 
     @Override

@@ -25,6 +25,7 @@
 package org.questdb;
 
 import io.questdb.cutlass.line.AbstractLineTcpSender;
+import io.questdb.cutlass.line.LineTcpSenderV2;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.network.Net;
 import io.questdb.std.NumericException;
@@ -95,7 +96,7 @@ public class LineTCPSenderMainFileLimitSimulation {
         int port = 9009;
         int bufferCapacity = 8 * 1024;
 
-        try (AbstractLineTcpSender sender = AbstractLineTcpSender.newSender(Net.parseIPv4(hostid4v4), port, bufferCapacity)) {
+        try (AbstractLineTcpSender sender = LineTcpSenderV2.newSender(Net.parseIPv4(hostid4v4), port, bufferCapacity)) {
 //            fillDates(rnd, sender);
 
             long ts = Os.currentTimeNanos();

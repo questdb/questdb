@@ -953,7 +953,15 @@ public interface Sender extends Closeable, ArraySender<Sender> {
             return this;
         }
 
-        // todo, add auto-detect instead of need to set explicit.
+        /**
+         * Sets the protocol version used by the client to connect to the server.
+         * The client currently supports {@link #PROTOCOL_VERSION_V1} and {@link #PROTOCOL_VERSION_V2} (default).
+         * In most cases, this method should not be called. Set {@link #PROTOCOL_VERSION_V1} only when connecting to a legacy server.
+         * TODO: Implement automatic protocol version detection to eliminate the need for explicit setting.
+         *
+         * @param protocolVersion The desired protocol version.
+         * @return This instance for method chaining.
+         */
         public LineSenderBuilder protocolVersion(int protocolVersion) {
             if (this.protocolVersion != PARAMETER_NOT_SET_EXPLICITLY) {
                 throw new LineSenderException("protocol version was already configured ")
