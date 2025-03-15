@@ -1625,7 +1625,7 @@ public class SqlOptimiser implements Mutable {
             QueryModel outerModel,
             QueryModel distinctModel
     ) throws SqlException {
-        final ObjList<CharSequence> columnNames = srcModel.getBottomUpColumnAliases();
+        final ObjList<CharSequence> columnNames = srcModel.getWildcardColumnNames();
         for (int j = 0, z = columnNames.size(); j < z; j++) {
             CharSequence name = columnNames.getQuick(j);
             // this is a check to see if column has to be added to wildcard list
@@ -4121,6 +4121,102 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    /**
+     * Rewrites "select distinct a,b,c from tab" into "select a,b,c from (select a,b,c,d,count() from tab)".
+     * We will not rewrite distinct of group-by or windows functions.
+     *
+     * @param model input model, it will be validated for the rewrite possibility. If rewrite is impossible,
+     *              the input model will be returned verbatim.
+     * @return either the input model or newly rewritten model.
+     */
+    private QueryModel rewriteDistinct(QueryModel model) throws SqlException {
+        if (model == null) {
+            return null;
+        }
+
+        if (model.isDistinct()) {
+            // bingo
+            // create wrapper models
+            QueryModel wrapperNested = queryModelPool.next();
+            wrapperNested.setNestedModel(model);
+            QueryModel wrapperModel = queryModelPool.next();
+            wrapperModel.setNestedModel(wrapperNested);
+
+            ObjList<QueryColumn> bottomUpColumns = model.getBottomUpColumns();
+            // Columns might be aliased, if they are, we have to create a new
+            // column instance. We also check if we should abandon the rewrite
+            // in case we find counterproductive
+            boolean abandonRewrite = false;
+            for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
+                QueryColumn qc = bottomUpColumns.getQuick(i);
+                ExpressionNode ast = qc.getAst();
+                CharSequence alias = qc.getAlias();
+                if (qc.isWindowColumn() || (ast.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(ast.token))) {
+                    abandonRewrite = true;
+                    break;
+                }
+                if (alias == ast.token && ast.type != FUNCTION) {
+                    wrapperModel.addBottomUpColumn(qc);
+                } else {
+                    wrapperModel.addBottomUpColumn(queryColumnPool.next().of(alias, nextLiteral(alias)));
+                }
+            }
+
+            if (!abandonRewrite) {
+
+                // remove the distinct flag, model is not longer that
+                model.setDistinct(false);
+
+                // if we add "count" aggregate we will transform our model pair into
+                // simple group by with an extra column, that wasn't requested. But,
+                // it is a good start.
+
+                ExpressionNode countAst = expressionNodePool.next();
+                countAst.token = "count";
+                countAst.paramCount = 0;
+                countAst.type = FUNCTION;
+
+                QueryColumn countColumn = queryColumnPool.next();
+                countColumn.of(
+                        createColumnAlias("count", model),
+                        countAst,
+                        false,
+                        -1
+                );
+                model.getBottomUpColumns().add(countColumn);
+
+                // move model attributes to the wrapper
+                wrapperModel.setAlias(model.getAlias());
+                wrapperModel.setTimestamp(model.getTimestamp());
+
+                // before dispatching our rewrite, make sure our sub-query has also been re-written
+                // the immediate "nested" model is part of the "distinct" pair or model, we skip rewriting that
+                // and move onto it's nested model.
+                model.getNestedModel().setNestedModel(rewriteDistinct(model.getNestedModel().getNestedModel()));
+
+                // if the model has a union, we need to move this union to the wrapper and rewrite it
+                wrapperModel.setUnionModel(rewriteDistinct(model.getUnionModel()));
+                wrapperModel.setSetOperationType(model.getSetOperationType());
+                // also clear the union on the model we just wrapped
+                model.setUnionModel(null);
+
+                return wrapperModel;
+            }
+        }
+
+        // recurse into the model hierarchy
+        model.setNestedModel(rewriteDistinct(model.getNestedModel()));
+
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            joinModels.setQuick(i, rewriteDistinct(joinModels.getQuick(i)));
+        }
+
+        model.setUnionModel(rewriteDistinct(model.getUnionModel()));
+
+        return model;
+    }
+
     // push aggregate function calls to group by model, replace key column expressions with group by aliases
     // raise error if raw column usage doesn't match one of expressions on group by list
     private ExpressionNode rewriteGroupBySelectExpression(
@@ -6310,6 +6406,7 @@ public class SqlOptimiser implements Mutable {
             enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
             rewriteSampleByFromTo(rewrittenModel);
+            rewrittenModel = rewriteDistinct(rewrittenModel);
             rewrittenModel = rewriteSampleBy(rewrittenModel);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             rewriteCount(rewrittenModel);

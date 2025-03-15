@@ -212,6 +212,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             LongList rows,
             boolean fragmentedSymbolTables
     ) {
+        long cursorSizeBeforeFetch = cursor.size();
         if (expected == null) {
             Assert.assertFalse(cursor.hasNext());
             cursor.toTop();
@@ -247,6 +248,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
         if (cursorSize != -1) {
             Assert.assertEquals("Actual cursor records vs cursor.size()", count, cursorSize);
+            if (cursorSizeBeforeFetch != -1) {
+                Assert.assertEquals("Cursor size before fetch and after", cursorSizeBeforeFetch, cursorSize);
+            }
+//            RecordCursor.Counter counter = new RecordCursor.Counter();
+//            cursor.toTop();
+//            cursor.calculateSize(circuitBreaker, counter);
+//            Assert.assertEquals("calculateSize() vs size after fetch", counter.get(), cursorSize);
         }
 
         TestUtils.assertEquals(expected, sink);
