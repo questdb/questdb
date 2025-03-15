@@ -955,8 +955,11 @@ public interface Sender extends Closeable, ArraySender<Sender> {
 
         /**
          * Sets the protocol version used by the client to connect to the server.
+         * <p>
          * The client currently supports {@link #PROTOCOL_VERSION_V1} and {@link #PROTOCOL_VERSION_V2} (default).
+         * <p>
          * In most cases, this method should not be called. Set {@link #PROTOCOL_VERSION_V1} only when connecting to a legacy server.
+         * <p>
          * TODO: Implement automatic protocol version detection to eliminate the need for explicit setting.
          *
          * @param protocolVersion The desired protocol version.
