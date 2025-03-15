@@ -29,6 +29,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.CreateTableColumnModel;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
@@ -81,6 +82,11 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     @Override
     public CharSequence getTableName() {
         return createTableOperationBuilder.getTableName();
+    }
+
+    @Override
+    public ExpressionNode getTableNameExpr() {
+        return createTableOperationBuilder.getTableNameExpr();
     }
 
     public void setBaseTableName(String baseTableName) {
