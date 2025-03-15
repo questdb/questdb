@@ -240,7 +240,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext);
+            Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
         }
 
         @Override
@@ -461,7 +461,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             if (partitionByRecord != null) {
-                Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext);
+                Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
             }
         }
 

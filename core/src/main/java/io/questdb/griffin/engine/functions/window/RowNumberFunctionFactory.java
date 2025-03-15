@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.functions.window;
 
-import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.RecordSink;
@@ -45,7 +44,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
@@ -153,7 +151,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext);
+            Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
         }
 
         @Override

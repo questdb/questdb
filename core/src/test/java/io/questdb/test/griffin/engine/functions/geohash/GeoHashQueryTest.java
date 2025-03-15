@@ -389,6 +389,35 @@ public class GeoHashQueryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGeoHashJoinOnGeoHash1() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 as (select " +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(1c)) geo1," +
+                    "x " +
+                    "from long_sequence(10))");
+            execute("create table t2 as (select " +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(4c)) geo4," +
+                    "cast(rnd_str('quest', '1234', '3456') as geohash(1c)) geo1," +
+                    "x " +
+                    "from long_sequence(2))");
+
+            assertSql("geo4\tgeo1\tx\tgeo41\tgeo11\tx1\n" +
+                    "ques\tq\t1\tques\t3\t2\n" +
+                    "1234\t3\t2\t1234\tq\t1\n" +
+                    "ques\t1\t5\tques\t3\t2\n" +
+                    "1234\t3\t6\t1234\tq\t1\n" +
+                    "1234\t1\t7\t1234\tq\t1\n" +
+                    "1234\tq\t8\t1234\tq\t1\n" +
+                    "ques\t1\t9\tques\t3\t2\n" +
+                    "ques\t1\t10\tques\t3\t2\n", "with g1 as (select geo4, geo1, x from (select *, count() from t1))," +
+                    "g2 as (select geo4, geo1, x from (select *, count() from t2))" +
+                    "select * from g1 join g2 on g1.geo4 = g2.geo4"
+            );
+        });
+    }
+
+    @Test
     public void testGeoHashJoinOnGeoHash2() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 as (select " +
@@ -405,18 +434,19 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     "from long_sequence(2)) timestamp(ts)");
 
             assertSql("geo4\tgeo1\tx\tts\tgeo41\tgeo11\tx1\tts1\n" +
-                    "ques\tq\t1\t1970-01-01T00:00:00.000000Z\t\t\tnull\t\n" +
-                    "1234\t3\t2\t1970-01-01T00:00:01.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
-                    "3456\t3\t3\t1970-01-01T00:00:02.000000Z\t\t\tnull\t\n" +
-                    "3456\t1\t4\t1970-01-01T00:00:03.000000Z\t\t\tnull\t\n" +
-                    "ques\t1\t5\t1970-01-01T00:00:04.000000Z\tques\t3\t2\t1970-01-01T00:00:01.000000Z\n" +
-                    "1234\t3\t6\t1970-01-01T00:00:05.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
-                    "1234\t1\t7\t1970-01-01T00:00:06.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
-                    "1234\tq\t8\t1970-01-01T00:00:07.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
-                    "ques\t1\t9\t1970-01-01T00:00:08.000000Z\tques\t3\t2\t1970-01-01T00:00:01.000000Z\n" +
-                    "ques\t1\t10\t1970-01-01T00:00:09.000000Z\tques\t3\t2\t1970-01-01T00:00:01.000000Z\n", "with g1 as (select distinct * from t1)," +
-                    "g2 as (select distinct * from t2)" +
-                    "select * from g1 lt join g2 on g1.geo4 = g2.geo4"
+                            "ques\tq\t1\t1970-01-01T00:00:00.000000Z\t\t\tnull\t\n" +
+                            "1234\t3\t2\t1970-01-01T00:00:01.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
+                            "3456\t3\t3\t1970-01-01T00:00:02.000000Z\t\t\tnull\t\n" +
+                            "3456\t1\t4\t1970-01-01T00:00:03.000000Z\t\t\tnull\t\n" +
+                            "ques\t1\t5\t1970-01-01T00:00:04.000000Z\tques\t3\t2\t1970-01-01T00:00:01.000000Z\n" +
+                            "1234\t3\t6\t1970-01-01T00:00:05.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
+                            "1234\t1\t7\t1970-01-01T00:00:06.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
+                            "1234\tq\t8\t1970-01-01T00:00:07.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
+                            "ques\t1\t9\t1970-01-01T00:00:08.000000Z\tques\t3\t2\t1970-01-01T00:00:01.000000Z\n" +
+                            "ques\t1\t10\t1970-01-01T00:00:09.000000Z\tques\t3\t2\t1970-01-01T00:00:01.000000Z\n",
+                    "with g1 as (select distinct * from t1 order by ts)," +
+                            "g2 as (select distinct * from t2 order by ts)" +
+                            "select * from g1 lt join g2 on g1.geo4 = g2.geo4"
             );
         });
     }

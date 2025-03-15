@@ -300,7 +300,7 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertModel("select-distinct [symbol] symbol from (select-choose [symbol] symbol from (select [symbol] from trades timestamp (timestamp)))",
+            assertModel("select-choose symbol from (select-group-by [symbol] symbol, count() count from (select [symbol] from trades timestamp (timestamp)))",
                     "DECLARE @x := symbol SELECT DISTINCT symbol FROM trades", ExecutionModel.QUERY);
         });
     }

@@ -453,7 +453,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            Function.init(bindVarFunctions, symbolTableSource, executionContext);
+            Function.init(bindVarFunctions, symbolTableSource, executionContext, null);
             prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
         }
     }

@@ -201,7 +201,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
                     throw t;
                 }
             }
-            Function.init(functions, baseCursor, executionContext);
+            Function.init(functions, baseCursor, executionContext, null);
         }
 
         private void reopen(ObjList<Function> list) {

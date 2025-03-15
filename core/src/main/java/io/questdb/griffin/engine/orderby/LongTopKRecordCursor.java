@@ -81,10 +81,7 @@ class LongTopKRecordCursor implements RecordCursor {
 
     @Override
     public boolean hasNext() {
-        if (!initialized) {
-            topK();
-            initialized = true;
-        }
+        setupTopK();
         if (rowIdCursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             baseCursor.recordAt(baseRecord, rowIdCursor.index());
@@ -119,7 +116,7 @@ class LongTopKRecordCursor implements RecordCursor {
 
     @Override
     public long size() {
-        return baseCursor.size();
+        return initialized ? heap.size() : -1;
     }
 
     @Override
@@ -128,6 +125,13 @@ class LongTopKRecordCursor implements RecordCursor {
         if (!initialized) {
             heap.clear();
             baseCursor.toTop();
+        }
+    }
+
+    private void setupTopK() {
+        if (!initialized) {
+            topK();
+            initialized = true;
         }
     }
 

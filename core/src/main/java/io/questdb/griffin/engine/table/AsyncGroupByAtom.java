@@ -311,14 +311,14 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             final boolean current = executionContext.getCloneSymbolTables();
             executionContext.setCloneSymbolTables(true);
             try {
-                Function.init(perWorkerFilters, symbolTableSource, executionContext);
+                Function.init(perWorkerFilters, symbolTableSource, executionContext, ownerFilter);
             } finally {
                 executionContext.setCloneSymbolTables(current);
             }
         }
 
         if (ownerKeyFunctions != null) {
-            Function.init(ownerKeyFunctions, symbolTableSource, executionContext);
+            Function.init(ownerKeyFunctions, symbolTableSource, executionContext, null);
         }
 
         if (perWorkerKeyFunctions != null) {
@@ -326,7 +326,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             executionContext.setCloneSymbolTables(true);
             try {
                 for (int i = 0, n = perWorkerKeyFunctions.size(); i < n; i++) {
-                    Function.init(perWorkerKeyFunctions.getQuick(i), symbolTableSource, executionContext);
+                    Function.init(perWorkerKeyFunctions.getQuick(i), symbolTableSource, executionContext, null);
                 }
             } finally {
                 executionContext.setCloneSymbolTables(current);
@@ -338,7 +338,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             executionContext.setCloneSymbolTables(true);
             try {
                 for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                    Function.init(perWorkerGroupByFunctions.getQuick(i), symbolTableSource, executionContext);
+                    Function.init(perWorkerGroupByFunctions.getQuick(i), symbolTableSource, executionContext, null);
                 }
             } finally {
                 executionContext.setCloneSymbolTables(current);
@@ -346,20 +346,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
 
         if (bindVarFunctions != null) {
-            Function.init(bindVarFunctions, symbolTableSource, executionContext);
+            Function.init(bindVarFunctions, symbolTableSource, executionContext, null);
             prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
-        }
-    }
-
-    @Override
-    public void initCursor() {
-        if (ownerFilter != null) {
-            ownerFilter.initCursor();
-        }
-        if (perWorkerFilters != null) {
-            // Initialize all per-worker filters on the query owner thread to avoid
-            // DataUnavailableException thrown on worker threads when filtering.
-            Function.initCursor(perWorkerFilters);
         }
     }
 
@@ -641,8 +629,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             return shards;
         }
 
-        public boolean isSharded() {
-            return sharded;
+        public boolean isNotSharded() {
+            return !sharded;
         }
 
         public Map reopenMap() {

@@ -71,7 +71,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     private final char samplingIntervalUnit;
     private final int timestampIndex;
     private final Function toFunc;
-    private final ObjList<Function> valueFuncs;
+    private final ObjList<Function> fillValues;
 
     public FillRangeRecordCursorFactory(
             RecordMetadata metadata,
@@ -93,7 +93,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         this.samplingInterval = samplingInterval;
         this.samplingIntervalUnit = samplingIntervalUnit;
         this.timestampIndex = timestampIndex;
-        this.valueFuncs = fillValues;
+        this.fillValues = fillValues;
         this.cursor = new FillRangeRecordCursor(timestampSampler, fromFunc, toFunc, fillValues, timestampIndex);
     }
 
@@ -104,12 +104,12 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        if (getMetadata().getColumnCount() > valueFuncs.size() + 1) {
-            if (valueFuncs.size() == 1 && valueFuncs.getQuick(0).isNullConstant()) {
+        if (getMetadata().getColumnCount() > fillValues.size() + 1) {
+            if (fillValues.size() == 1 && fillValues.getQuick(0).isNullConstant()) {
                 final int diff = (getMetadata().getColumnCount() - 1);
                 // skip one entry as it should be the designated timestamp
                 for (int i = 1; i < diff; i++) {
-                    valueFuncs.add(NullConstant.NULL);
+                    fillValues.add(NullConstant.NULL);
                 }
             } else {
                 throw SqlException.$(-1, "not enough fill values");
@@ -142,14 +142,14 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         // print values omitting the timestamp column
         // since we added an extra artificial null
         sink.attr("values").val('[');
-        for (int i = 0; i < valueFuncs.size(); i++) {
+        for (int i = 0; i < fillValues.size(); i++) {
             if (i == timestampIndex) {
                 continue;
             }
 
-            sink.val(valueFuncs.getQuick(i));
+            sink.val(fillValues.getQuick(i));
 
-            if (i != 0 && i != valueFuncs.size() - 1) {
+            if (i != 0 && i != fillValues.size() - 1) {
                 sink.val(',');
             }
         }
@@ -173,7 +173,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         base.close();
         Misc.free(fromFunc);
         Misc.free(toFunc);
-        Misc.freeObjList(valueFuncs);
+        Misc.freeObjList(fillValues);
     }
 
     private static class FillRangeRecordCursor implements NoRandomAccessRecordCursor {
@@ -183,7 +183,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         private final int timestampIndex;
         private final TimestampSampler timestampSampler;
         private final Function toFunc;
-        private final ObjList<Function> valueFuncs;
+        private final ObjList<Function> fillValues;
         private RecordCursor baseCursor;
         private Record baseRecord;
         private boolean gapFilling;
@@ -201,13 +201,13 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 TimestampSampler timestampSampler,
                 @NotNull Function fromFunc,
                 @NotNull Function toFunc,
-                ObjList<Function> valueFuncs,
+                ObjList<Function> fillValues,
                 int timestampIndex
         ) {
             this.timestampSampler = timestampSampler;
             this.fromFunc = fromFunc;
             this.toFunc = toFunc;
-            this.valueFuncs = valueFuncs;
+            this.fillValues = fillValues;
             this.timestampIndex = timestampIndex;
         }
 
@@ -290,7 +290,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             if (col == timestampIndex) {
                 return fillingTimestampFunc;
             }
-            return valueFuncs.getQuick(col);
+            return fillValues.getQuick(col);
         }
 
         private void initTimestamps(Function fromFunc, Function toFunc) {
@@ -302,7 +302,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             // can't just check null, as we use this as the placeholder value
             if (valueFuncs.size() - 1 < timestampIndex) {
                 // timestamp is the last column, so we add it
-                valueFuncs.insert(timestampIndex, 1, null);
+                valueFuncs.extendAndSet(timestampIndex, NullConstant.NULL);
                 return;
             }
 
@@ -312,7 +312,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             // if it is a real function, i.e we've not added our placeholder null
             if (func != null) {
                 // then we insert at this position
-                valueFuncs.insert(timestampIndex, 1, null);
+                valueFuncs.insert(timestampIndex, 1, NullConstant.NULL);
             }
         }
 
@@ -321,7 +321,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 SqlExecutionContext executionContext
         ) throws SqlException {
             this.baseCursor = baseCursor;
-            Function.initNcFunctions(valueFuncs, baseCursor, executionContext);
+            Function.init(fillValues, baseCursor, executionContext, null);
             fromFunc.init(baseCursor, executionContext);
             toFunc.init(baseCursor, executionContext);
             initTimestamps(fromFunc, toFunc);
@@ -337,7 +337,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
                 presentTimestamps = new DirectLongList(capacity, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
             }
-            initValueFuncs(valueFuncs);
+            initValueFuncs(fillValues);
             baseRecord = baseCursor.getRecord();
             toTop();
         }

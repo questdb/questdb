@@ -56,7 +56,7 @@ public class InUUIDTest extends AbstractCairoTest {
                 "FROM 'MovementLog'\n" +
                 "WHERE movementBusinessDate=$1 AND slotId IN ('aa7dc4ec-cb68-446f-b37f-1ec82752c7d7', " +
                 "'b5b2159a-2356-4217-965d-4c984f0ffa8a', '4cd64b0b-0a34-4f8e-a698-c6c186b7571a')\n" +
-                "ORDER BY initParticipantId\n" +
+                "ORDER BY participantId\n" +
                 "LIMIT 0,6", tuples);
     }
 
@@ -85,7 +85,7 @@ public class InUUIDTest extends AbstractCairoTest {
         assertSql("SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType\n" +
                 "FROM 'MovementLog'\n" +
                 "WHERE movementBusinessDate=$1 AND slotId IN ($2, $3, $4)\n" +
-                "ORDER BY initParticipantId\n" +
+                "ORDER BY participantId\n" +
                 "LIMIT 0,6", tuples);
     }
 
