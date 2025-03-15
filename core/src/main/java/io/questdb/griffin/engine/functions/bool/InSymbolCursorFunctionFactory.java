@@ -265,7 +265,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
             cursorArg.init(symbolTableSource, executionContext);
             if (stateInherited) {
                 return;
-            }//testGroupBySymbolWithSubQueryFilter
+            }
             stateShared = false;
             symbolKeys.clear();
             RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
