@@ -192,6 +192,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         return tableNameExpr.token;
     }
 
+    @Override
     public ExpressionNode getTableNameExpr() {
         return tableNameExpr;
     }

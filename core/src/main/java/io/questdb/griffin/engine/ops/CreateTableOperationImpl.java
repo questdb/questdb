@@ -348,14 +348,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         return tableNamePosition;
     }
 
-    public String getTimestampColumnName() {
-        return timestampColumnName;
-    }
-
-    public int getTimestampColumnNamePosition() {
-        return timestampColumnNamePosition;
-    }
-
     @Override
     public int getTimestampIndex() {
         return timestampIndex;
@@ -632,5 +624,13 @@ public class CreateTableOperationImpl implements CreateTableOperation {
 
     private int getLowAt(int index) {
         return Numbers.decodeLowInt(columnBits.getQuick(index));
+    }
+
+    String getTimestampColumnName() {
+        return timestampColumnName;
+    }
+
+    int getTimestampColumnNamePosition() {
+        return timestampColumnNamePosition;
     }
 }
