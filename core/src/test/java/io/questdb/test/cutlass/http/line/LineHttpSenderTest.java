@@ -32,7 +32,8 @@ import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.LongArray;
-import io.questdb.cutlass.line.http.LineHttpSender;
+import io.questdb.cutlass.line.http.AbstractLineHttpSender;
+import io.questdb.cutlass.line.http.LineHttpSenderV2;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Chars;
@@ -167,7 +168,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 int totalCount = 100_000;
                 int autoFlushRows = 1000;
-                try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, autoFlushRows, null, null, null, 0, 0, Long.MAX_VALUE)) {
+                try (AbstractLineHttpSender sender = new LineHttpSenderV2("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, autoFlushRows, null, null, null, 0, 0, Long.MAX_VALUE)) {
                     for (int i = 0; i < totalCount; i++) {
                         if (i != 0 && i % autoFlushRows == 0) {
                             serverMain.awaitTable("table with space");
@@ -289,7 +290,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 int autoFlushRows = 1000;
                 String tableName = "accounts";
 
-                try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, autoFlushRows, null, null, null, 0, 0, Long.MAX_VALUE)) {
+                try (AbstractLineHttpSender sender = new LineHttpSenderV2("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, autoFlushRows, null, null, null, 0, 0, Long.MAX_VALUE)) {
                     for (int i = 0; i < totalCount; i++) {
                         // Add new symbol column with each second row
                         sender.table(tableName)
@@ -619,7 +620,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 int totalCount = 1_000;
-                try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, 100_000, null, null, null, 0, 0, Long.MAX_VALUE)) {
+                try (AbstractLineHttpSender sender = new LineHttpSenderV2("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, 100_000, null, null, null, 0, 0, Long.MAX_VALUE)) {
                     for (int i = 0; i < totalCount; i++) {
                         sender.table("table")
                                 .longColumn("lcol1", i)
@@ -753,7 +754,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 int httpPort = serverMain.getHttpServerPort();
 
                 int totalCount = 1_000_000;
-                try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, 100_000, null, null, null, 0, 0, Long.MAX_VALUE)) {
+                try (AbstractLineHttpSender sender = new LineHttpSenderV2("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, 100_000, null, null, null, 0, 0, Long.MAX_VALUE)) {
                     for (int i = 0; i < totalCount; i++) {
                         sender.table("table with space")
                                 .symbol("tag1", "value" + i % 10)

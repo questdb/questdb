@@ -24,44 +24,18 @@
 
 package io.questdb.cutlass.line;
 
-
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.cutlass.line.array.LongArray;
-import io.questdb.cutlass.line.udp.UdpLineChannel;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
-
-public class LineUdpSender extends AbstractLineSender {
-
-    public LineUdpSender(int interfaceIPv4Address, int sendToIPv4Address, int sendToPort, int bufferCapacity, int ttl) {
-        this(NetworkFacadeImpl.INSTANCE, interfaceIPv4Address, sendToIPv4Address, sendToPort, bufferCapacity, ttl);
+public class LineTcpSenderV1 extends AbstractLineTcpSender {
+    public LineTcpSenderV1(int ip, int port, int bufferCapacity) {
+        super(ip, port, bufferCapacity);
     }
 
-    public LineUdpSender(NetworkFacade nf, int interfaceIPv4Address, int sendToIPv4Address, int sendToPort, int capacity, int ttl) {
-        super(new UdpLineChannel(nf, interfaceIPv4Address, sendToIPv4Address, sendToPort, ttl), capacity);
-    }
-
-    @Override
-    public final void at(long timestamp, ChronoUnit unit) {
-        putAsciiInternal(' ').put(timestamp * unitToNanos(unit));
-        atNow();
-    }
-
-    @Override
-    public final void at(Instant timestamp) {
-        putAsciiInternal(' ').put(timestamp.getEpochSecond() * Timestamps.SECOND_NANOS + timestamp.getNano());
-        atNow();
-    }
-
-    @Override
-    public void cancelRow() {
-        throw new LineSenderException("cancelRow() not supported by UDP transport");
+    public LineTcpSenderV1(LineChannel channel, int bufferCapacity) {
+        super(channel, bufferCapacity);
     }
 
     @Override
@@ -108,17 +82,5 @@ public class LineUdpSender extends AbstractLineSender {
     @Override
     public Sender longArray(@NotNull CharSequence name, LongArray values) {
         throw new LineSenderException("current protocol version does not support long-array");
-    }
-
-    @Override
-    public final AbstractLineSender timestampColumn(CharSequence name, Instant value) {
-        writeFieldName(name).put((value.getEpochSecond() * Timestamps.SECOND_NANOS + value.getNano()) / 1000);
-        return this;
-    }
-
-    @Override
-    public final AbstractLineSender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
-        writeFieldName(name).put(Timestamps.toMicros(value, unit));
-        return this;
     }
 }
