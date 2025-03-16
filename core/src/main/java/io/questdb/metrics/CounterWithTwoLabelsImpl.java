@@ -26,7 +26,7 @@ package io.questdb.metrics;
 
 import io.questdb.std.Numbers;
 import io.questdb.std.str.BorrowableUtf8Sink;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.LongAdder;
@@ -73,22 +73,22 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
     }
 
     @Override
-    public void putName(StringSink sink) {
+    public void putName(Utf8Sink sink) {
         PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
     }
 
     @Override
-    public void putType(StringSink sink) {
+    public void putType(Utf8Sink sink) {
         sink.put("counter");
     }
 
     @Override
-    public void putValueAsString(StringSink sink) {
+    public void putValueAsVarchar(Utf8Sink sink) {
         sink.put("unsupported");
     }
 
     @Override
-    public void putValueType(StringSink sink) {
+    public void putValueType(Utf8Sink sink) {
         sink.put("unsupported");
     }
 

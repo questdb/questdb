@@ -28,7 +28,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -71,7 +71,7 @@ public class MemoryTagLongGauge implements LongGauge {
     }
 
     @Override
-    public void putName(StringSink sink) {
+    public void putName(Utf8Sink sink) {
         PrometheusFormatUtils.appendCounterNamePrefix(getName(), sink);
     }
 

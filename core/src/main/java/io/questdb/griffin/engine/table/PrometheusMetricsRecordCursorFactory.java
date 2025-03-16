@@ -37,7 +37,8 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.metrics.MetricsRegistry;
 import io.questdb.metrics.Target;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.Nullable;
 
 /// todo: handle labeled metrics, when we choose to expose them over prometheus
@@ -125,7 +126,7 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
         }
 
         public class PrometheusMetricsRecord implements Record {
-            StringSink sink = new StringSink();
+            Utf8StringSink sink = new Utf8StringSink();
             Target target;
 
             @Override
@@ -134,29 +135,19 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
             }
 
             @Override
-            public @Nullable CharSequence getStrA(int col) {
-                if (col == VALUE) {
-                    sink.clear();
-                    target.putValueAsString(sink);
-                    return sink;
-                }
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public int getStrLen(int col) {
-                if (col == VALUE) {
-                    sink.clear();
-                    target.putValueAsString(sink);
-                    return sink.length();
-                }
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
             public CharSequence getSymA(int col) {
                 sink.clear();
+
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public @Nullable Utf8Sequence getVarcharA(int col) {
+                sink.clear();
                 switch (col) {
+                    case VALUE:
+                        target.putValueAsVarchar(sink);
+                        return sink;
                     case NAME:
                         target.putName(sink);
                         return sink;
@@ -170,6 +161,16 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
                 throw new UnsupportedOperationException();
             }
 
+            @Override
+            public int getVarcharSize(int col) {
+                if (col == VALUE) {
+                    sink.clear();
+                    target.putValueAsVarchar(sink);
+                    return sink.size();
+                }
+                throw new UnsupportedOperationException();
+            }
+
             public void of(Target target) {
                 this.target = target;
             }
@@ -178,10 +179,10 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("name", ColumnType.SYMBOL));
-        metadata.add(new TableColumnMetadata("type", ColumnType.SYMBOL));
-        metadata.add(new TableColumnMetadata("value", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("kind", ColumnType.SYMBOL));
+        metadata.add(new TableColumnMetadata("name", ColumnType.VARCHAR));
+        metadata.add(new TableColumnMetadata("type", ColumnType.VARCHAR));
+        metadata.add(new TableColumnMetadata("value", ColumnType.VARCHAR));
+        metadata.add(new TableColumnMetadata("kind", ColumnType.VARCHAR));
         METADATA = metadata;
     }
 

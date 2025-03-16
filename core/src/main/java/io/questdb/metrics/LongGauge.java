@@ -25,7 +25,7 @@
 package io.questdb.metrics;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sink;
 
 public interface LongGauge extends Target {
 
@@ -39,20 +39,20 @@ public interface LongGauge extends Target {
 
     void inc();
 
-    void putName(StringSink sink);
+    void putName(Utf8Sink sink);
 
     @Override
-    default void putType(StringSink sink) {
+    default void putType(Utf8Sink sink) {
         sink.put("gauge");
     }
 
     @Override
-    default void putValueAsString(StringSink sink) {
+    default void putValueAsVarchar(Utf8Sink sink) {
         sink.put(getValue());
     }
 
     @Override
-    default void putValueType(StringSink sink) {
+    default void putValueType(Utf8Sink sink) {
         sink.put(ColumnType.nameOf(ColumnType.LONG));
     }
 
