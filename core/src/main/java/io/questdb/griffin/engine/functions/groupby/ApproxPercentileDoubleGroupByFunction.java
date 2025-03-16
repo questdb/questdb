@@ -46,6 +46,7 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     private final Function percentileFunc;
     private final int precision;
     private int histogramIndex;
+    private double percentile;
     private int valueIndex;
 
     public ApproxPercentileDoubleGroupByFunction(Function exprFunc, Function percentileFunc, int precision, int funcPosition) {
@@ -101,7 +102,7 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
         if (histogram.getTotalCount() == 0) {
             return Double.NaN;
         }
-        return histogram.getValueAtPercentile(percentileFunc.getDouble(null) * 100);
+        return histogram.getValueAtPercentile(percentile * 100);
     }
 
     @Override
@@ -128,7 +129,7 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         BinaryFunction.super.init(symbolTableSource, executionContext);
 
-        final double percentile = percentileFunc.getDouble(null);
+        percentile = percentileFunc.getDouble(null);
         if (Numbers.isNull(percentile) || percentile < 0 || percentile > 1) {
             throw SqlException.$(funcPosition, "percentile must be between 0.0 and 1.0");
         }
