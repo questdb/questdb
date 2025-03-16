@@ -28,6 +28,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -55,7 +56,7 @@ public class MemoryTagLongGauge implements LongGauge {
     }
 
     @Override
-    public String getName() {
+    public CharSequence getName() {
         return MemoryTag.nameOf(memoryTag);
     }
 
@@ -67,6 +68,11 @@ public class MemoryTagLongGauge implements LongGauge {
     @Override
     public void inc() {
         // do nothing as this gauge is RO view of memory tag stats
+    }
+
+    @Override
+    public void putName(StringSink sink) {
+        PrometheusFormatUtils.appendCounterNamePrefix(getName(), sink);
     }
 
     @Override
@@ -85,13 +91,13 @@ public class MemoryTagLongGauge implements LongGauge {
     private void appendMetricName(CharSink<?> sink) {
         sink.putAscii(PrometheusFormatUtils.METRIC_NAME_PREFIX);
         sink.putAscii(MEMORY_TAG_PREFIX);
-        sink.put(getName());
+        sink.put(this.getName());
     }
 
     private void appendType(CharSink<?> sink) {
         sink.putAscii(PrometheusFormatUtils.TYPE_PREFIX);
         sink.putAscii(MEMORY_TAG_PREFIX);
-        sink.put(getName());
+        sink.put(this.getName());
         sink.putAscii(" gauge\n");
     }
 }

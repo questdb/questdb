@@ -26,6 +26,7 @@ package io.questdb.metrics;
 
 import io.questdb.std.Numbers;
 import io.questdb.std.str.BorrowableUtf8Sink;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.LongAdder;
@@ -67,23 +68,28 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
     }
 
     @Override
-    public CharSequence getType() {
-        return "counter";
-    }
-
-    @Override
-    public CharSequence getValueAsString() {
-        return "unsupported";
-    }
-
-    @Override
-    public CharSequence getValueType() {
-        return "unsupported";
-    }
-
-    @Override
     public void inc(short label0, short label1) {
         counters[(label0 << shl) + label1].increment();
+    }
+
+    @Override
+    public void putName(StringSink sink) {
+        PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
+    }
+
+    @Override
+    public void putType(StringSink sink) {
+        sink.put("counter");
+    }
+
+    @Override
+    public void putValueAsString(StringSink sink) {
+        sink.put("unsupported");
+    }
+
+    @Override
+    public void putValueType(StringSink sink) {
+        sink.put("unsupported");
     }
 
     @Override

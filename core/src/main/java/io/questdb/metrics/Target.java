@@ -25,6 +25,7 @@
 package io.questdb.metrics;
 
 import io.questdb.std.str.BorrowableUtf8Sink;
+import io.questdb.std.str.StringSink;
 
 /**
  * Anything that can be scraped for Prometheus metrics.
@@ -35,16 +36,20 @@ public interface Target {
         return "unknown";
     }
 
-    default CharSequence getType() {
-        return "unknown";
+    default void putName(StringSink sink) {
+        sink.put("unknown");
     }
 
-    default CharSequence getValueAsString() {
-        return "unknown";
+    default void putType(StringSink sink) {
+        sink.put("unknown");
     }
 
-    default CharSequence getValueType() {
-        return "unknown";
+    default void putValueAsString(StringSink sink) {
+        sink.put("unknown");
+    }
+
+    default void putValueType(StringSink sink) {
+        sink.put("unknown");
     }
 
     // We need a sink that we can borrow from and append to in native code.

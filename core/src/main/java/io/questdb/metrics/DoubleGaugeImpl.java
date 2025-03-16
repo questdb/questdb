@@ -27,6 +27,7 @@ package io.questdb.metrics;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 public class DoubleGaugeImpl implements Target, DoubleGauge {
@@ -43,18 +44,23 @@ public class DoubleGaugeImpl implements Target, DoubleGauge {
     }
 
     @Override
-    public CharSequence getType() {
-        return "gauge";
+    public void putName(StringSink sink) {
+        appendMetricName(sink);
     }
 
     @Override
-    public CharSequence getValueAsString() {
-        return String.valueOf(value);
+    public void putType(StringSink sink) {
+        sink.put("gauge");
     }
 
     @Override
-    public CharSequence getValueType() {
-        return ColumnType.nameOf(ColumnType.DOUBLE);
+    public void putValueAsString(StringSink sink) {
+        sink.put(value);
+    }
+
+    @Override
+    public void putValueType(StringSink sink) {
+        sink.put(ColumnType.nameOf(ColumnType.DOUBLE));
     }
 
     @Override

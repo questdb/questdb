@@ -26,6 +26,7 @@
 package io.questdb.metrics;
 
 import io.questdb.std.str.BorrowableUtf8Sink;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.LongAdder;
@@ -52,6 +53,11 @@ public class CounterImpl implements Counter {
     @Override
     public long getValue() {
         return counter.sum();
+    }
+
+    @Override
+    public void putName(StringSink sink) {
+        PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
     }
 
     @Override

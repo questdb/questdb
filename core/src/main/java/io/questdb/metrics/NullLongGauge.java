@@ -25,6 +25,7 @@
 package io.questdb.metrics;
 
 import io.questdb.std.str.BorrowableUtf8Sink;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 public class NullLongGauge implements AtomicLongGauge {
@@ -43,7 +44,7 @@ public class NullLongGauge implements AtomicLongGauge {
 
     @Override
     public CharSequence getName() {
-        return null;
+        return "null";
     }
 
     @Override
@@ -58,6 +59,11 @@ public class NullLongGauge implements AtomicLongGauge {
     @Override
     public long incrementAndGet() {
         return 0;
+    }
+
+    @Override
+    public void putName(StringSink sink) {
+        sink.put("null");
     }
 
     @Override

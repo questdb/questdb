@@ -26,6 +26,7 @@ package io.questdb.metrics;
 
 import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 abstract class AbstractLongGauge implements LongGauge {
@@ -38,6 +39,11 @@ abstract class AbstractLongGauge implements LongGauge {
     @Override
     public CharSequence getName() {
         return name;
+    }
+
+    @Override
+    public void putName(StringSink sink) {
+        appendMetricName(sink);
     }
 
     @Override

@@ -25,6 +25,7 @@
 package io.questdb.metrics;
 
 import io.questdb.std.str.BorrowableUtf8Sink;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 public class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwoLabels {
@@ -39,7 +40,7 @@ public class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwo
 
     @Override
     public CharSequence getName() {
-        return null;
+        return "null";
     }
 
     @Override
@@ -57,6 +58,11 @@ public class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwo
 
     @Override
     public void inc(short label0, short label1) {
+    }
+
+    @Override
+    public void putName(StringSink sink) {
+        sink.put("null");
     }
 
     @Override

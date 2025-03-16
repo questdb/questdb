@@ -25,32 +25,34 @@
 package io.questdb.metrics;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.TestOnly;
 
 public interface Counter extends Target {
 
     void add(long value);
 
-    @Override
-    default String getType() {
-        return "counter";
-    }
+    public CharSequence getName();
 
     long getValue();
 
-    @Override
-    default String getValueAsString() {
-        return String.valueOf(getValue());
-    }
-
-    @Override
-    default CharSequence getValueType() {
-        return ColumnType.nameOf(ColumnType.LONG);
-    }
-
-
     default void inc() {
         add(1);
+    }
+
+    @Override
+    default void putType(StringSink sink) {
+        sink.put("counter");
+    }
+
+    @Override
+    default void putValueAsString(StringSink sink) {
+        sink.put(getValue());
+    }
+
+    @Override
+    default void putValueType(StringSink sink) {
+        sink.put(ColumnType.nameOf(ColumnType.LONG));
     }
 
     @TestOnly

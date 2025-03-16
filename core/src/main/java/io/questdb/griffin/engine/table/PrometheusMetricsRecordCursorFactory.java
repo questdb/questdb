@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.Metrics;
-import io.questdb.ServerMain;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
@@ -38,10 +37,10 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.metrics.MetricsRegistry;
 import io.questdb.metrics.Target;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
-// todo(nwoolmer): figure out how to handle labeled case
-// maybe requires some name mangling
+/// todo: handle labeled metrics, when we choose to expose them over prometheus
 public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final RecordMetadata METADATA;
     private final PrometheusMetricsCursor prometheusMetricsCursor = new PrometheusMetricsCursor();
@@ -53,6 +52,7 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
     @Override
     public RecordCursor getCursor(SqlExecutionContext sqlExecutionContext) {
         prometheusMetricsCursor.of(sqlExecutionContext.getCairoEngine().getMetrics());
+        prometheusMetricsCursor.toTop();
         return prometheusMetricsCursor;
     }
 
@@ -97,11 +97,8 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
         @Override
         public boolean hasNext() throws DataUnavailableException {
             pos++;
-            if (pos < size) {
+            if (pos < size - 1) {
                 record.of(registry.getTarget(pos));
-                if (record.target instanceof ServerMain) {
-                    return hasNext();
-                }
                 return true;
             }
             return false;
@@ -128,6 +125,7 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
         }
 
         public class PrometheusMetricsRecord implements Record {
+            StringSink sink = new StringSink();
             Target target;
 
             @Override
@@ -138,7 +136,9 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
             @Override
             public @Nullable CharSequence getStrA(int col) {
                 if (col == VALUE) {
-                    return target.getValueAsString();
+                    sink.clear();
+                    target.putValueAsString(sink);
+                    return sink;
                 }
                 throw new UnsupportedOperationException();
             }
@@ -146,20 +146,26 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
             @Override
             public int getStrLen(int col) {
                 if (col == VALUE) {
-                    return target.getValueAsString().length();
+                    sink.clear();
+                    target.putValueAsString(sink);
+                    return sink.length();
                 }
                 throw new UnsupportedOperationException();
             }
 
             @Override
             public CharSequence getSymA(int col) {
+                sink.clear();
                 switch (col) {
                     case NAME:
-                        return target.getName();
+                        target.putName(sink);
+                        return sink;
                     case TYPE:
-                        return target.getType();
+                        target.putType(sink);
+                        return sink;
                     case KIND:
-                        return target.getValueType();
+                        target.putValueType(sink);
+                        return sink;
                 }
                 throw new UnsupportedOperationException();
             }
