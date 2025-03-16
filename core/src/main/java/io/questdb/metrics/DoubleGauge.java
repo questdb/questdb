@@ -27,6 +27,6 @@ package io.questdb.metrics;
 public interface DoubleGauge {
     DoubleGauge INSTANCE = value -> {
     };
-    
+
     void setValue(double value);
 }
