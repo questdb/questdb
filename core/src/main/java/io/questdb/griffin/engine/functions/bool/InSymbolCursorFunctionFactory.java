@@ -118,6 +118,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         private boolean stateInherited = false;
         private boolean stateShared = false;
         private final CharSequenceHashSet valueSet = new CharSequenceHashSet();
+        private final StringSink sink = new StringSink();
 
         public StrInCursorFunc(Function valueArg, Function cursorArg, Record.CharSequenceFunction func) {
             this.valueArg = valueArg;
@@ -155,7 +156,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
             RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 final Record record = cursor.getRecord();
-                StringSink sink = Misc.getThreadLocalSink();
+                sink.clear();
                 while (cursor.hasNext()) {
                     CharSequence value = func.get(record, 0, sink);
                     if (value == null) {
