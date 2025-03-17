@@ -1510,7 +1510,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 String lockedReason = lockAll(tableToken, "createTable", true);
                 boolean locked = true;
                 if (lockedReason == null) {
-                    boolean tableCreated = false;
                     try {
                         if (inVolume) {
                             createTableOrMatViewInVolumeUnsafe(mem, blockFileWriter, path, struct, tableToken);
@@ -1521,20 +1520,18 @@ public class CairoEngine implements Closeable, WriterSource {
                         if (struct.isWalEnabled()) {
                             tableSequencerAPI.registerTable(tableToken.getTableId(), struct, tableToken);
                         }
-
                         if (!keepLock) {
-                            unlockTableUnsafe(tableToken, null, tableCreated);
+                            unlockTableUnsafe(tableToken, null, true);
                             locked = false;
                             LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
                         }
                         tableNameRegistry.registerName(tableToken);
-                        tableCreated = true;
                     } catch (Throwable e) {
                         keepLock = false;
                         throw e;
                     } finally {
                         if (!keepLock && locked) {
-                            unlockTableUnsafe(tableToken, null, tableCreated);
+                            unlockTableUnsafe(tableToken, null, false);
                             LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
                         }
                     }
