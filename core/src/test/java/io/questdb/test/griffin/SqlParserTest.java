@@ -2116,16 +2116,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCreateTableSupportedSynonymType() throws Exception {
-        assertCreateTable(
-                "create batch 1000000 table x as (select-choose * from (tab)), cast(b as INT:35)",
-                "create table x as (tab), cast(b as integer)",
-                modelOf("tab")
-                        .col("b", ColumnType.INT)
-        );
-    }
-
-    @Test
     public void testCreateTableDuplicateCast() throws Exception {
         assertSyntaxError(
                 "create table x as (tab), cast(b as double), cast(b as long)",
@@ -2661,14 +2651,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCreateTableValidSynonymColumnType() throws Exception {
-        assertCreateTable(
-                "create atomic table tab (a INT, b INT)",
-                "create table tab (a int, b integer)"
-        );
-    }
-
-    @Test
     public void testCreateTableInvalidPartitionBy() throws Exception {
         assertSyntaxError(
                 "create table x (" +
@@ -3029,6 +3011,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableSupportedSynonymType() throws Exception {
+        assertCreateTable(
+                "create batch 1000000 table x as (select-choose * from (tab)), cast(b as INT:35)",
+                "create table x as (tab), cast(b as integer)",
+                modelOf("tab")
+                        .col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testCreateTableSymbolCapacityHigh() throws Exception {
         assertSyntaxError(
                 "create table x (" +
@@ -3133,6 +3125,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " index",
                 116,
                 "unexpected token"
+        );
+    }
+
+    @Test
+    public void testCreateTableValidSynonymColumnType() throws Exception {
+        assertCreateTable(
+                "create atomic table tab (a INT, b INT)",
+                "create table tab (a int, b integer)"
         );
     }
 
