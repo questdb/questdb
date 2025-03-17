@@ -27,6 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.*;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -186,6 +187,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
                     e.printStackTrace();
                     errorCount.incrementAndGet();
                 } finally {
+                    Path.clearThreadLocals();
                     latch.countDown();
                 }
             }).start();
@@ -226,6 +228,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
                     e.printStackTrace();
                     errorCount.incrementAndGet();
                 } finally {
+                    Path.clearThreadLocals();
                     latch.countDown();
                 }
             }).start();

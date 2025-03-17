@@ -482,6 +482,10 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
             return next;
         }
 
+        public int getIndex() {
+            return index;
+        }
+
         public long getOwnerVolatile(int pos) {
             return Unsafe.arrayGetVolatile(allocations, pos);
         }

@@ -63,7 +63,7 @@ public class VacuumColumnVersions implements Closeable {
     public VacuumColumnVersions(CairoEngine engine) {
         try {
             this.engine = engine;
-            this.purgeExecution = new ColumnPurgeOperator(engine.getConfiguration());
+            this.purgeExecution = new ColumnPurgeOperator(engine);
             this.tableFiles = new DirectLongList(COLUMN_VERSION_LIST_CAPACITY, MemoryTag.NATIVE_SQL_COMPILER);
             this.ff = engine.getConfiguration().getFilesFacade();
         } catch (Throwable th) {

@@ -119,7 +119,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
             }
 
             this.writer = engine.getWriter(tableToken, "QuestDB system");
-            this.columnPurgeOperator = new ColumnPurgeOperator(configuration, this.writer, "completed");
+            this.columnPurgeOperator = new ColumnPurgeOperator(engine, this.writer, "completed");
             this.checkpointStatus = engine.getCheckpointStatus();
             processTableRecords(engine);
         } catch (Throwable th) {
@@ -371,7 +371,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         if (inErrorCount >= MAX_ERRORS) {
             return false;
         }
-        if (checkpointStatus.isInProgress()) {
+        if (checkpointStatus.partitionsLocked()) {
             // do not purge anything before checkpoint is released
             return false;
         }

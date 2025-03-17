@@ -88,7 +88,7 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
                                      String expected,
                                      Consumer<AbstractLineSender> senderConsumer,
                                      String... expectedExtraStringColumns) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 final SOCountDownLatch waitForData = new SOCountDownLatch(1);
                 engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {

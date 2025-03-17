@@ -26,33 +26,16 @@ package io.questdb.cairo;
 
 import java.io.Closeable;
 
-public interface TxnScoreboard extends Closeable {
-    int CHECKPOINT_ID = -1;
+public interface TxnScoreboardPool extends Closeable {
+    void clear();
 
-    boolean acquireTxn(int id, long txn);
+    default void close() {
+        clear();
+    }
 
-    @Override
-    void close();
+    void remove(TableToken token);
 
-    int getEntryCount();
+    TxnScoreboard getTxnScoreboard(TableToken token);
 
-    boolean hasEarlierTxnLocks(long maxTxn);
-
-    boolean isRangeAvailable(long fromTxn, long toTxn);
-
-    boolean isTxnAvailable(long txn);
-
-    long releaseTxn(int id, long txn);
-
-    TableToken getTableToken();
-
-    boolean isMax(long txn);
-
-    /**
-     * Ignores min/max txn values and increments the counter. Must be called only when there is already
-     * an active reader that already acquired this txn.
-     * <p>
-     * Used by {@link io.questdb.cairo.pool.ReaderPool#getCopyOf(TableReader)}.
-     */
-    boolean incrementTxn(int id, long txn);
+    boolean releaseInactive();
 }

@@ -192,42 +192,42 @@ public:
 
 extern "C" {
 
-JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_acquireTxn0
+JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboardV1_acquireTxn0
         (JAVA_STATIC, jlong p_txn_scoreboard, jlong txn) {
     return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->txn_acquire(txn);
 }
 
-JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_TxnScoreboard_incrementTxn0
+JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_TxnScoreboardV1_incrementTxn0
         (JAVA_STATIC, jlong p_txn_scoreboard, jlong txn) {
     return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->txn_increment(txn);
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_releaseTxn0
+JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboardV1_releaseTxn0
         (JAVA_STATIC, jlong p_txn_scoreboard, jlong txn) {
     return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->txn_release(txn);
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getCount
+JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboardV1_getCount
         (JAVA_STATIC, jlong p_txn_scoreboard, jlong txn) {
     return (jlong) (reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard))->get_count(txn);
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getMin
+JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboardV1_getMin
         (JAVA_STATIC, jlong p_txn_scoreboard) {
     return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->get_clean_min();
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboard_getScoreboardSize
+JNIEXPORT jlong JNICALL Java_io_questdb_cairo_TxnScoreboardV1_getScoreboardSize
         (JAVA_STATIC, jlong entryCount) {
     return (jlong) sizeof(txn_scoreboard_t<COUNTER_T>) + entryCount * (jlong) sizeof(std::atomic<COUNTER_T>);
 }
 
-JNIEXPORT void JNICALL Java_io_questdb_cairo_TxnScoreboard_init
+JNIEXPORT void JNICALL Java_io_questdb_cairo_TxnScoreboardV1_init
         (JAVA_STATIC, jlong p_txn_scoreboard, jlong entryCount) {
     reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->init(entryCount);
 }
 
-JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_TxnScoreboard_isRangeAvailable0
+JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_TxnScoreboardV1_isRangeAvailable0
         (JAVA_STATIC, jlong p_txn_scoreboard, jlong from, jlong to) {
     return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->is_range_available(from, to);
 }

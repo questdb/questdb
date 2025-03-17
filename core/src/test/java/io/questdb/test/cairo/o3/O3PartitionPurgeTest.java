@@ -55,24 +55,48 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
+@RunWith(Parameterized.class)
 public class O3PartitionPurgeTest extends AbstractCairoTest {
+    private static int SCOREBOARD_FORMAT = 1;
     private static O3PartitionPurgeJob purgeJob;
 
-    @BeforeClass
-    public static void begin() {
-        purgeJob = new O3PartitionPurgeJob(engine, 1);
+    public O3PartitionPurgeTest(int version) throws Exception {
+        if (version != SCOREBOARD_FORMAT) {
+            SCOREBOARD_FORMAT = version;
+            tearDownStatic();
+            setUpStatic();
+        }
     }
 
     @AfterClass
     public static void end() {
         purgeJob = Misc.free(purgeJob);
+    }
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        setProperty(PropertyKey.CAIRO_TXN_SCOREBOARD_FORMAT, SCOREBOARD_FORMAT);
+        AbstractCairoTest.setUpStatic();
+        purgeJob = new O3PartitionPurgeJob(engine, 1);
+    }
+
+    @Parameterized.Parameters(name = "V{0}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {1},
+                {2},
+        });
     }
 
     @Test
@@ -184,6 +208,43 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 readThread.join();
             } finally {
                 Misc.freeObjList(readers);
+            }
+        });
+    }
+
+    @Test
+    public void testCheckpointDoesNotBlockPurge() throws Exception {
+        Assume.assumeTrue(SCOREBOARD_FORMAT == 2 && Os.type != Os.WINDOWS);
+
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+
+                execute("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY");
+
+                path.concat(engine.getConfiguration().getDbRoot()).concat(engine.verifyTableName("tbl")).concat("1970-01-10");
+                int len = path.size();
+
+                // OOO insert
+                execute("insert into tbl select 4, '1970-01-10T09'");
+
+                // This should lock partition 1970-01-10.1 from being deleted from disk
+                engine.checkpointCreate(sqlExecutionContext);
+                runPartitionPurgeJobs();
+                testPartitionExist(path, len, true, false, false);
+
+                // OOO insert
+                execute("insert into tbl select 2, '1970-01-10T09'");
+                runPartitionPurgeJobs();
+                testPartitionExist(path, len, true, true, false);
+
+                // OOO insert
+                execute("insert into tbl select 4, '1970-01-10T08'");
+                runPartitionPurgeJobs();
+                testPartitionExist(path, len, true, false, true);
+
+                engine.checkpointRelease();
+                runPartitionPurgeJobs();
+                testPartitionExist(path, len, false, false, true);
             }
         });
     }
@@ -788,7 +849,6 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
         });
     }
 
-
     @Test
     public void testTableWriterDeletePartitionWhenNoReadersOpen() throws Exception {
         String tableName = "tbl";
@@ -884,6 +944,13 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
             }
         });
+    }
+
+    private static void testPartitionExist(Path path, int len, boolean... existance) {
+        for (int i = 0, n = existance.length; i < n; i++) {
+            path.trimTo(len).put(".").put(Integer.toString(i + 1)).concat("x.d").$();
+            Assert.assertEquals(Utf8s.toString(path), existance[i], Files.exists(path.$()));
+        }
     }
 
     private void runPartitionPurgeJobs() {

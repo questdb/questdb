@@ -33,6 +33,7 @@ import io.questdb.cairo.DefaultLifecycleManager;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxnScoreboardPoolFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -125,7 +126,7 @@ public class TableReaderReloadBenchmark {
         appendRow(TimestampFormatUtils.parseTimestamp("2012-03-09T00:00:00.000000Z"));
         appendRow(TimestampFormatUtils.parseTimestamp("2012-03-10T00:00:00.000000Z"));
         writer.commit();
-        reader = new TableReader(configuration, tableToken);
+        reader = new TableReader(0, configuration, tableToken, TxnScoreboardPoolFactory.createPool(configuration));
 
         // ensure reader opens all partitions and maps all data
         for (int i = 0; i < reader.getPartitionCount(); i++) {
