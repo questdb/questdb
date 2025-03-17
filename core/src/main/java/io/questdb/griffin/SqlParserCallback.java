@@ -43,7 +43,9 @@ import org.jetbrains.annotations.Nullable;
 public interface SqlParserCallback {
 
     static @NotNull TableToken getMatViewToken(ExpressionNode tableNameExpr, SqlExecutionContext executionContext, Path path) throws SqlException {
-        final TableToken viewToken = getTableToken(tableNameExpr, executionContext, path);
+        final TableToken viewToken = getTableToken(tableNameExpr, executionContext, path,
+                SqlException.matViewDoesNotExist(tableNameExpr.position, tableNameExpr.token)
+        );
         if (!viewToken.isMatView()) {
             throw SqlException.$(tableNameExpr.position, "materialized view name expected, got table name");
         }
@@ -51,11 +53,9 @@ public interface SqlParserCallback {
     }
 
     static TableToken getTableToken(ExpressionNode tableNameExpr, SqlExecutionContext executionContext, Path path) throws SqlException {
-        final TableToken tableToken = executionContext.getTableTokenIfExists(tableNameExpr.token);
-        if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
-            throw SqlException.tableDoesNotExist(tableNameExpr.position, tableNameExpr.token);
-        }
-        return tableToken;
+        return getTableToken(tableNameExpr, executionContext, path,
+                SqlException.tableDoesNotExist(tableNameExpr.position, tableNameExpr.token)
+        );
     }
 
     default RecordCursorFactory generateShowCreateMatViewFactory(QueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
@@ -104,5 +104,13 @@ public interface SqlParserCallback {
             ObjectPool<ExpressionNode> expressionNodePool
     ) throws SqlException {
         return -1;
+    }
+
+    private static TableToken getTableToken(ExpressionNode tableNameExpr, SqlExecutionContext executionContext, Path path, SqlException notExistsError) throws SqlException {
+        final TableToken tableToken = executionContext.getTableTokenIfExists(tableNameExpr.token);
+        if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
+            throw notExistsError;
+        }
+        return tableToken;
     }
 }

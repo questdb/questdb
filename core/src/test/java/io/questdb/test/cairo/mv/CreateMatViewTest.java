@@ -1211,7 +1211,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertException(
                 "show create materialized view 'test';",
                 30,
-                "table does not exist [table=test]"
+                "materialized view does not exist [view=test]"
         );
     }
 
