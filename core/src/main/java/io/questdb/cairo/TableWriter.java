@@ -1116,9 +1116,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     committed = blockSize > 0;
                     seqTxn += blockSize - 1;
                 } catch (CairoException e) {
-                    if (e.isApplyBlockError()) {
-                        pressureControl.onApplyBlockError();
-                        pressureControl.updateInflightTxnBlockSize(
+                    if (e.isBlockApplyError()) {
+                        pressureControl.onBlockApplyError();
+                        pressureControl.updateInflightTxnBlockLength(
                                 1,
                                 Math.max(1, walTxnDetails.getSegmentRowHi(seqTxn) - walTxnDetails.getSegmentRowLo(seqTxn))
                         );
@@ -3728,7 +3728,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private int calculateInsertTransactionBlock(long seqTxn, TableWriterPressureControl pressureControl) {
         if (txWriter.getLagRowCount() > 0) {
-            pressureControl.updateInflightTxnBlockSize(
+            pressureControl.updateInflightTxnBlockLength(
                     1,
                     Math.max(1, walTxnDetails.getSegmentRowHi(seqTxn) - walTxnDetails.getSegmentRowLo(seqTxn))
             );

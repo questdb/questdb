@@ -78,7 +78,7 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
     }
 
     @Override
-    public void onApplyBlockError() {
+    public void onBlockApplyError() {
         maxBlockRowCount = inflightBlockRowCount / TXN_COUNT_SCALE_DOWN_FACTOR;
         inflightBlockRowCount = 1;
     }
@@ -154,7 +154,7 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
     }
 
     @Override
-    public void updateInflightTxnBlockSize(long txnCount, long rowCount) {
+    public void updateInflightTxnBlockLength(long txnCount, long rowCount) {
         inflightBlockRowCount = rowCount;
         inflightTxnCount = txnCount;
     }

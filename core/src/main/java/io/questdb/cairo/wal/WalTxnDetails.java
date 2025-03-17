@@ -234,7 +234,7 @@ public class WalTxnDetails implements QuietCloseable {
 
         // to force switch to 1 by 1 txn commit, uncomment the following line
         // return 1;
-        pressureControl.updateInflightTxnBlockSize(blockSize, totalRowCount);
+        pressureControl.updateInflightTxnBlockLength(blockSize, totalRowCount);
         return blockSize;
     }
 

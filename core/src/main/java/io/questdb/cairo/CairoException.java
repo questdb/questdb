@@ -48,7 +48,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static final int PARTITION_MANIPULATION_RECOVERABLE = METADATA_VALIDATION_RECOVERABLE - 1;
     public static final int TABLE_DOES_NOT_EXIST = PARTITION_MANIPULATION_RECOVERABLE - 1;
     public static final int MAT_VIEW_DOES_NOT_EXIST = TABLE_DOES_NOT_EXIST - 1;
-    public static final int APPLY_TXN_BLOCK_FAILED = MAT_VIEW_DOES_NOT_EXIST - 1;
+    public static final int TXN_BLOCK_APPLY_FAILED = MAT_VIEW_DOES_NOT_EXIST - 1;
     public static final int NON_CRITICAL = -1;
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
@@ -169,13 +169,13 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public static CairoException txnApplyBlockError(TableToken tableToken) {
-        return critical(APPLY_TXN_BLOCK_FAILED)
+        return critical(TXN_BLOCK_APPLY_FAILED)
                 .put("sorting transaction block failed, need to be re-run in 1 by 1 apply mode [dirName=").put(tableToken.getDirName())
                 .put(", tableName=").put(tableToken.getTableName()).put(']');
     }
 
     public static CairoException txnApplyBlockError(CharSequence errorDetails) {
-        return critical(APPLY_TXN_BLOCK_FAILED)
+        return critical(TXN_BLOCK_APPLY_FAILED)
                 .put("sorting transaction block failed, need to be re-run in 1 by 1 apply mode. ").put(errorDetails);
     }
 
@@ -220,12 +220,12 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return result;
     }
 
-    public boolean isApplyBlockError() {
-        return errno == APPLY_TXN_BLOCK_FAILED;
-    }
-
     public boolean isAuthorizationError() {
         return authorizationError;
+    }
+
+    public boolean isBlockApplyError() {
+        return errno == TXN_BLOCK_APPLY_FAILED;
     }
 
     public boolean isCacheable() {

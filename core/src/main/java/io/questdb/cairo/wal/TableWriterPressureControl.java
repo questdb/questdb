@@ -54,9 +54,9 @@ public interface TableWriterPressureControl {
 
     void setMaxBlockRowCount(int count);
 
-    void updateInflightTxnBlockSize(long txnCount, long rowCount);
+    void updateInflightTxnBlockLength(long txnCount, long rowCount);
 
-    void onApplyBlockError();
+    void onBlockApplyError();
 
     class NoPressureControl implements TableWriterPressureControl {
         @Override
@@ -97,11 +97,11 @@ public interface TableWriterPressureControl {
         }
 
         @Override
-        public void updateInflightTxnBlockSize(long txnCount, long rowCount) {
+        public void updateInflightTxnBlockLength(long txnCount, long rowCount) {
         }
 
         @Override
-        public void onApplyBlockError() {
+        public void onBlockApplyError() {
         }
     }
 }
