@@ -2118,7 +2118,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableSupportedSynonymType() throws Exception {
         assertCreateTable(
-                "create batch 1000000 table x as (select-choose b from (select [b] from tab)), cast(b as INT:35)",
+                "create batch 1000000 table x as (select-choose * from (tab)), cast(b as INT:35)",
                 "create table x as (tab), cast(b as integer)",
                 modelOf("tab")
                         .col("b", ColumnType.INT)
