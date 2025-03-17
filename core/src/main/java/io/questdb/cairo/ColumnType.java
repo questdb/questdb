@@ -537,6 +537,7 @@ public final class ColumnType {
         nameTypeMap.put("double", DOUBLE);
         nameTypeMap.put("float", FLOAT);
         nameTypeMap.put("int", INT);
+        nameTypeMap.put("integer", INT);
         nameTypeMap.put("long", LONG);
         nameTypeMap.put("short", SHORT);
         nameTypeMap.put("char", CHAR);
