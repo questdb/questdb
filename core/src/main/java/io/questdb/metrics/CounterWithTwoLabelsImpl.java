@@ -97,7 +97,7 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
                 sink.put(',');
                 PrometheusFormatUtils.appendLabel(sink, labelName1, labelValues1[j]);
                 sink.put('}');
-                PrometheusFormatUtils.appendSampleLineSuffix(sink, counters[(i * 1) + j].longValue());
+                PrometheusFormatUtils.appendSampleLineSuffix(sink, counters[(i * labelValues0.length) + j].longValue());
             }
         }
         PrometheusFormatUtils.appendNewLine(sink);
