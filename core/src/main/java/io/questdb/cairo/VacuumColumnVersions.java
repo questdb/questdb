@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.PropertyKey;
+import io.questdb.griffin.PurgingOperator;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Sequence;
@@ -224,10 +225,14 @@ public class VacuumColumnVersions implements Closeable {
                                 && !Utf8s.containsAscii(fileNameSink, ".i.")
                                 && !Utf8s.containsAscii(fileNameSink, ".k.")
                                 && !Utf8s.containsAscii(fileNameSink, ".v.")
+                                && !Utf8s.containsAscii(fileNameSink, ".c.")
+                                && !Utf8s.containsAscii(fileNameSink, ".o.")
                                 && !Utf8s.endsWithAscii(fileNameSink, ".d")
                                 && !Utf8s.endsWithAscii(fileNameSink, ".i")
                                 && !Utf8s.endsWithAscii(fileNameSink, ".k")
-                                && !Utf8s.endsWithAscii(fileNameSink, ".v")) {
+                                && !Utf8s.endsWithAscii(fileNameSink, ".v")
+                                && !Utf8s.endsWithAscii(fileNameSink, ".c")
+                                && !Utf8s.endsWithAscii(fileNameSink, ".o")) {
                             LOG.critical().$("file does not belong to the table, will be left on disk [name=").$(fileNameSink).$(", path=").$(path2).I$();
                             return;
                         }
@@ -297,6 +302,10 @@ public class VacuumColumnVersions implements Closeable {
             path2.concat(pUtf8NameZ);
             LOG.info().$("enumerating files at ").$(path2).$();
             ff.iterateDir(path2.$(), visitTableFiles);
+        } else {
+            // Table root
+            partitionTimestamp = PurgingOperator.TABLE_ROOT_PARTITION;
+            visitTableFiles(pUtf8NameZ, type);
         }
     }
 }

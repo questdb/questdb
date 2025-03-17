@@ -224,9 +224,11 @@ public class ColumnPurgeOperator implements Closeable {
                 final long updateRowId = updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_UPDATE_ROW_ID);
                 int columnTypeRaw = task.getColumnType();
                 int columnType = Math.abs(columnTypeRaw);
-                boolean isSymbolRootFiles = ColumnType.isSymbol(columnType)
-                        && partitionTimestamp == PurgingOperator.TABLE_ROOT_PARTITION;
+                // We don't know the type of the column, the files are found on the disk but column
+                // does not exist in the table metadata (e.g. column was dropped)
                 boolean columnTypeRogue = columnTypeRaw == ColumnType.UNDEFINED;
+                boolean isSymbolRootFiles = (ColumnType.isSymbol(columnType) || columnTypeRogue)
+                        && partitionTimestamp == PurgingOperator.TABLE_ROOT_PARTITION;
 
                 int pathTrimToPartition;
                 CharSequence columnName = task.getColumnName();

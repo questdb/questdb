@@ -164,6 +164,48 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVacuumRogueSymbolFilesInTableRoot() throws Exception {
+        FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                execute(
+                        "create table testPurge as" +
+                                " (select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
+                                " x," +
+                                " rnd_str('a', 'b', 'c', 'd') str," +
+                                " rnd_symbol('A', 'B', 'C', 'D') sym1," +
+                                " rnd_symbol('1', '2', '3', '4') sym2" +
+                                " from long_sequence(5)), index(sym2)" +
+                                " timestamp(ts) PARTITION BY DAY"
+                );
+
+                String[] partitions = new String[]{"."};
+                String[] files = {"rog_sym.c", "rog_sym.o", "rog_sym.k", "rog_sym.v"};
+                assertFilesExist(partitions, "testPurge", files, "", false);
+
+                Path path = Path.getThreadLocal(configuration.getDbRoot());
+                path.concat(engine.verifyTableName("testPurge"));
+                int pathLen = path.size();
+
+                path.trimTo(pathLen).concat("rog_sym.c").$();
+                ff.touch(path.$());
+                path.trimTo(pathLen).concat("rog_sym.o").$();
+                ff.touch(path.$());
+                path.trimTo(pathLen).concat("rog_sym.k").$();
+                ff.touch(path.$());
+                path.trimTo(pathLen).concat("rog_sym.v").$();
+                ff.touch(path.$());
+                assertFilesExist(partitions, "testPurge", files, "", true);
+
+                runTableVacuum("testPurge");
+                runPurgeJob(purgeJob);
+
+                assertFilesExist(partitions, "testPurge", files, "", false);
+            }
+        });
+    }
+
+    @Test
     public void testVacuumErrorWhenCheckpointInProgress() throws Exception {
         Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(() -> {
