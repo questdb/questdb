@@ -24,6 +24,8 @@
 
 package io.questdb.metrics;
 
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory;
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor.PrometheusMetricsRecord;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Mutable;
 import io.questdb.std.str.BorrowableUtf8Sink;
@@ -84,6 +86,11 @@ public class GCMetrics implements Target, Mutable {
         PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
         PrometheusFormatUtils.appendSampleLineSuffix(sink, value);
         PrometheusFormatUtils.appendNewLine(sink);
+    }
+
+    @Override
+    public int scrapeIntoRecord(PrometheusMetricsRecord record) {
+        throw new UnsupportedOperationException();
     }
 
     static {

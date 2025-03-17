@@ -24,6 +24,8 @@
 
 package io.questdb.metrics;
 
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory;
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor.PrometheusMetricsRecord;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
@@ -57,23 +59,19 @@ public class CounterWithOneLabelImpl implements CounterWithOneLabel {
     }
 
     @Override
-    public void putName(Utf8Sink sink) {
-        PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
+    public int scrapeIntoRecord(PrometheusMetricsRecord record) {
+        scrapeIntoRecord(record, 0);
+        return counters.length;
     }
 
     @Override
-    public void putType(Utf8Sink sink) {
-        sink.put("counter");
-    }
-
-    @Override
-    public void putValueAsVarchar(Utf8Sink sink) {
-        sink.put("unsupported");
-    }
-
-    @Override
-    public void putValueType(Utf8Sink sink) {
-        sink.put("unsupported");
+    public void scrapeIntoRecord(PrometheusMetricsRecord record, int label) {
+        record
+                .setCounterName(getName())
+                .setType("counter")
+                .setValue(counters[label].longValue())
+                .setKind("LONG")
+                .setLabels(labelName0, labelValues0[label]);
     }
 
     @Override

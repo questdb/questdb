@@ -54,12 +54,7 @@ public class CounterImpl implements Counter {
     public long getValue() {
         return counter.sum();
     }
-
-    @Override
-    public void putName(Utf8Sink sink) {
-        PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
-    }
-
+    
     @Override
     public void reset() {
         counter.reset();

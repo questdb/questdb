@@ -25,6 +25,8 @@
 package io.questdb.metrics;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory;
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor.PrometheusMetricsRecord;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sink;
@@ -44,23 +46,13 @@ public class DoubleGaugeImpl implements Target, DoubleGauge {
     }
 
     @Override
-    public void putName(Utf8Sink sink) {
-        appendMetricName(sink);
-    }
-
-    @Override
-    public void putType(Utf8Sink sink) {
-        sink.put("gauge");
-    }
-
-    @Override
-    public void putValueAsVarchar(Utf8Sink sink) {
-        sink.put(value);
-    }
-
-    @Override
-    public void putValueType(Utf8Sink sink) {
-        sink.put(ColumnType.nameOf(ColumnType.DOUBLE));
+    public int scrapeIntoRecord(PrometheusMetricsRecord record) {
+        record
+                .setGaugeName(getName())
+                .setType("gauge")
+                .setValue(value)
+                .setKind("DOUBLE");
+        return 1;
     }
 
     @Override

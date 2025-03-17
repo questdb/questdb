@@ -30,6 +30,8 @@ import io.questdb.cutlass.http.processors.HttpMetrics;
 import io.questdb.cutlass.http.processors.JsonQueryMetrics;
 import io.questdb.cutlass.line.LineMetrics;
 import io.questdb.cutlass.pgwire.PGWireMetrics;
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory;
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor.PrometheusMetricsRecord;
 import io.questdb.metrics.GCMetrics;
 import io.questdb.metrics.HealthMetricsImpl;
 import io.questdb.metrics.MetricsRegistry;
@@ -162,5 +164,10 @@ public class Metrics implements Target, Mutable {
 
     void addScrapable(Target target) {
         metricsRegistry.addTarget(target);
+    }
+
+    @Override
+    public int scrapeIntoRecord(PrometheusMetricsRecord record) {
+        throw new UnsupportedOperationException();
     }
 }

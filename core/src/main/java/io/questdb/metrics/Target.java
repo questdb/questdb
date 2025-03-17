@@ -24,8 +24,12 @@
 
 package io.questdb.metrics;
 
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory;
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor.PrometheusMetricsRecord;
 import io.questdb.std.str.BorrowableUtf8Sink;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8StringSink;
 
 /**
  * Anything that can be scraped for Prometheus metrics.
@@ -33,24 +37,15 @@ import io.questdb.std.str.Utf8Sink;
 public interface Target {
 
     default CharSequence getName() {
-        return "unknown";
+        throw new UnsupportedOperationException();
+    };
+
+    default int scrapeIntoRecord(PrometheusMetricsRecord record) {
+        throw new UnsupportedOperationException();
     }
 
-    default void putName(Utf8Sink sink) {
-        sink.put("unknown");
-    }
-
-    default void putType(Utf8Sink sink) {
-        sink.put("unknown");
-    }
-
-    default void putValueAsVarchar(Utf8Sink sink) {
-        sink.put("unknown");
-        Utf8Sink utf8Sink;
-    }
-
-    default void putValueType(Utf8Sink sink) {
-        sink.put("unknown");
+    default void scrapeIntoRecord(PrometheusMetricsRecord record, int label) {
+        throw new UnsupportedOperationException();
     }
 
     // We need a sink that we can borrow from and append to in native code.

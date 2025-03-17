@@ -24,6 +24,8 @@
 
 package io.questdb.metrics;
 
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory;
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor.PrometheusMetricsRecord;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.std.str.Utf8Sink;
@@ -38,7 +40,6 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
     private final CharSequence[] labelValues0;
     private final CharSequence[] labelValues1;
     private final CharSequence name;
-    private final int shl;
 
     CounterWithTwoLabelsImpl(
             CharSequence name,
@@ -52,13 +53,9 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
         this.labelName1 = labelName1;
         this.labelValues0 = labelValues0;
         this.labelValues1 = labelValues1;
-        int labelValues0Capacity = Numbers.ceilPow2(labelValues0.length);
-        this.shl = Numbers.msb(labelValues0Capacity);
-        this.counters = new LongAdder[labelValues0Capacity * labelValues1.length];
-        for (int i = 0, n = labelValues0.length; i < n; i++) {
-            for (int j = 0, k = labelValues1.length; j < k; j++) {
-                counters[(i << shl) + j] = new LongAdder();
-            }
+        this.counters = new LongAdder[labelValues0.length * labelValues1.length];
+        for (int i = 0, n = this.counters.length; i < n; i++) {
+            counters[i] = new LongAdder();
         }
     }
 
@@ -68,30 +65,27 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
     }
 
     @Override
-    public void inc(short label0, short label1) {
-        counters[(label0 << shl) + label1].increment();
+    public void inc(int label0, int label1) {
+        counters[(label0 * labelValues0.length) + label1].increment();
     }
 
     @Override
-    public void putName(Utf8Sink sink) {
-        PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
+    public int scrapeIntoRecord(PrometheusMetricsRecord record) {
+        scrapeIntoRecord(record, 0);
+        return counters.length;
     }
 
     @Override
-    public void putType(Utf8Sink sink) {
-        sink.put("counter");
+    public void scrapeIntoRecord(PrometheusMetricsRecord record, int label) {
+        int i1 = label / labelValues0.length;
+        int i2 = label % labelValues0.length;
+        record
+                .setCounterName(getName())
+                .setType("counter")
+                .setValue(counters[label].longValue())
+                .setKind("LONG")
+                .setLabels(labelName0, labelValues0[i1], labelName1, labelValues1[i2]);
     }
-
-    @Override
-    public void putValueAsVarchar(Utf8Sink sink) {
-        sink.put("unsupported");
-    }
-
-    @Override
-    public void putValueType(Utf8Sink sink) {
-        sink.put("unsupported");
-    }
-
     @Override
     public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
         PrometheusFormatUtils.appendCounterType(name, sink);
@@ -103,7 +97,7 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
                 sink.put(',');
                 PrometheusFormatUtils.appendLabel(sink, labelName1, labelValues1[j]);
                 sink.put('}');
-                PrometheusFormatUtils.appendSampleLineSuffix(sink, counters[(i << shl) + j].longValue());
+                PrometheusFormatUtils.appendSampleLineSuffix(sink, counters[(i * 1) + j].longValue());
             }
         }
         PrometheusFormatUtils.appendNewLine(sink);

@@ -27,12 +27,12 @@ package io.questdb.metrics;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sink;
 
-class PrometheusFormatUtils {
+public class PrometheusFormatUtils {
     static final char LF = '\n';
-    static final CharSequence METRIC_NAME_PREFIX = "questdb_";
+    public static final CharSequence METRIC_NAME_PREFIX = "questdb_";
     static final CharSequence TYPE_PREFIX = "# TYPE questdb_";
 
-    static void appendCounterNamePrefix(CharSequence name, CharSink<?> sink) {
+    public static void appendCounterNamePrefix(CharSequence name, CharSink<?> sink) {
         sink.putAscii(METRIC_NAME_PREFIX);
         sink.put(name);
         sink.putAscii("_total");

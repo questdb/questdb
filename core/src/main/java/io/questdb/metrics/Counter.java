@@ -25,6 +25,7 @@
 package io.questdb.metrics;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory;
 import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.TestOnly;
 
@@ -41,18 +42,13 @@ public interface Counter extends Target {
     }
 
     @Override
-    default void putType(Utf8Sink sink) {
-        sink.put("counter");
-    }
-
-    @Override
-    default void putValueAsVarchar(Utf8Sink sink) {
-        sink.put(getValue());
-    }
-
-    @Override
-    default void putValueType(Utf8Sink sink) {
-        sink.put(ColumnType.nameOf(ColumnType.LONG));
+    default int scrapeIntoRecord(PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor.PrometheusMetricsRecord record) {
+        record
+                .setCounterName(getName())
+                .setType("counter")
+                .setValue(getValue())
+                .setKind("LONG");
+        return 1;
     }
 
     @TestOnly

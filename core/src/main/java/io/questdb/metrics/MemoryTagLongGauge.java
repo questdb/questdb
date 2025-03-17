@@ -24,6 +24,8 @@
 
 package io.questdb.metrics;
 
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory;
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor.PrometheusMetricsRecord;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.BorrowableUtf8Sink;
@@ -36,7 +38,7 @@ import org.jetbrains.annotations.NotNull;
  */
 public class MemoryTagLongGauge implements LongGauge {
 
-    private static final String MEMORY_TAG_PREFIX = "memory_tag_";
+    public static final String MEMORY_TAG_PREFIX = "memory_tag_";
 
     private final int memoryTag;
 
@@ -71,9 +73,15 @@ public class MemoryTagLongGauge implements LongGauge {
     }
 
     @Override
-    public void putName(Utf8Sink sink) {
-        PrometheusFormatUtils.appendCounterNamePrefix(getName(), sink);
+    public int scrapeIntoRecord(PrometheusMetricsRecord record) {
+        record
+                .setType("gauge")
+                .setMemoryTagName(getName())
+                .setValue(getValue())
+                .setKind("LONG");
+        return 1;
     }
+
 
     @Override
     public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {

@@ -42,11 +42,6 @@ abstract class AbstractLongGauge implements LongGauge {
     }
 
     @Override
-    public void putName(Utf8Sink sink) {
-        appendMetricName(sink);
-    }
-
-    @Override
     public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
         appendType(sink);
         appendMetricName(sink);

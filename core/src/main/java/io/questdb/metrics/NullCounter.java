@@ -57,18 +57,12 @@ public class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwo
     }
 
     @Override
-    public void inc(short label0, short label1) {
-    }
-
-    @Override
-    public void putName(Utf8Sink sink) {
-        sink.put("null");
+    public void inc(int label0, int label1) {
     }
 
     @Override
     public void reset() {
     }
-
 
     @Override
     public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {

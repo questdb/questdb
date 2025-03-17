@@ -62,11 +62,6 @@ public class NullLongGauge implements AtomicLongGauge {
     }
 
     @Override
-    public void putName(Utf8Sink sink) {
-        sink.put("null");
-    }
-
-    @Override
     public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
     }
 
