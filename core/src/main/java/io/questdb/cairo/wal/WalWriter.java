@@ -81,7 +81,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Utf8StringIntHashMap;
 import io.questdb.std.Uuid;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.LPSZ;
@@ -95,6 +94,7 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.TableWriter.validatePartitioningTimestampBounds;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 
@@ -455,15 +455,12 @@ public class WalWriter implements TableWriterAPI {
     @Override
     public TableWriter.Row newRow(long timestamp) {
         checkDistressed();
-        if (timestamp < Timestamps.O3_MIN_TS) {
-            throw CairoException.nonCritical().put("timestamp before 1970-01-01 is not allowed");
-        }
+        validatePartitioningTimestampBounds(timestamp);
         try {
             if (rollSegmentOnNextRow) {
                 rollSegment();
                 rollSegmentOnNextRow = false;
             }
-
             if (timestampIndex != -1) {
                 row.setTimestamp(timestamp);
             }
@@ -2469,7 +2466,6 @@ public class WalWriter implements TableWriterAPI {
         }
 
         private void setTimestamp(long value) {
-            // avoid lookups by having a designated field with primaryColumn
             getPrimaryColumn(timestampIndex).putLong128(value, segmentRowCount);
             setRowValueNotNull(timestampIndex);
             this.timestamp = value;
