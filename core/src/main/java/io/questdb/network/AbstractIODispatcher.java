@@ -139,7 +139,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
         try {
             createListenerFd();
-        } catch(Throwable th) {
+        } catch (Throwable th) {
             close();
             throw th;
         }

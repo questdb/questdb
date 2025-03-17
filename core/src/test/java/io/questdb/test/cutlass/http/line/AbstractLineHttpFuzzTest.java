@@ -221,16 +221,16 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                         PropertyKey.PG_LEGACY_MODE_ENABLED.getEnvVarName(), "false",
                         PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
                         PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
-                    PropertyKey.PG_ENABLED.getEnvVarName(), "false",
-                    PropertyKey.PG_LEGACY_MODE_ENABLED.getEnvVarName(), "false",
-                    PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
-                    PropertyKey.HTTP_BIND_TO.getEnvVarName(), "127.0.0.1:" + httpPortRandom
-            )) {
-                Assert.assertEquals(0, tables.size());
-                for (int i = 0; i < numOfTables; i++) {
-                    final CharSequence tableName = getTableName(i);
-                    tables.put(tableName, new TableData(tableName));
-                }
+                        PropertyKey.PG_ENABLED.getEnvVarName(), "false",
+                        PropertyKey.PG_LEGACY_MODE_ENABLED.getEnvVarName(), "false",
+                        PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
+                        PropertyKey.HTTP_BIND_TO.getEnvVarName(), "127.0.0.1:" + httpPortRandom
+                )) {
+                    Assert.assertEquals(0, tables.size());
+                    for (int i = 0; i < numOfTables; i++) {
+                        final CharSequence tableName = getTableName(i);
+                        tables.put(tableName, new TableData(tableName));
+                    }
 
                     try {
                         ingest(serverMain.getEngine(), serverMain.getHttpServerPort());
