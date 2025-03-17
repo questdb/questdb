@@ -59,7 +59,7 @@ public class CopyNoMangleTest extends AbstractCairoTest {
                 "select left(message, 83) message from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
                 null,
                 true,
-                false
+                true
         );
 
         CopyTest.testCopy(stmt, test);

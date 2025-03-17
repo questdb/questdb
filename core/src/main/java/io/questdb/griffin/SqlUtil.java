@@ -648,6 +648,10 @@ public class SqlUtil {
         }
     }
 
+    public static long implicitCastSymbolAsTimestamp(CharSequence value) {
+        return implicitCastStrVarcharAsTimestamp0(value, ColumnType.SYMBOL);
+    }
+
     public static boolean implicitCastUuidAsStr(long lo, long hi, CharSink<?> sink) {
         if (Uuid.isNull(lo, hi)) {
             return false;
@@ -771,6 +775,10 @@ public class SqlUtil {
         return true;
     }
 
+    public static ExpressionNode nextExpr(ObjectPool<ExpressionNode> pool, int exprNodeType, CharSequence token, int position) {
+        return pool.next().of(exprNodeType, token, 0, position);
+    }
+
     /**
      * Parses partial representation of timestamp with time zone.
      *
@@ -810,7 +818,7 @@ public class SqlUtil {
     }
 
     private static long implicitCastStrVarcharAsTimestamp0(CharSequence value, int columnType) {
-        assert columnType == ColumnType.STRING || columnType == ColumnType.VARCHAR;
+        assert columnType == ColumnType.STRING || columnType == ColumnType.VARCHAR || columnType == ColumnType.SYMBOL;
 
         if (value != null) {
             try {
@@ -836,10 +844,6 @@ public class SqlUtil {
             throw ImplicitCastException.inconvertibleValue(value, columnType, ColumnType.TIMESTAMP);
         }
         return Numbers.LONG_NULL;
-    }
-
-    private static ExpressionNode nextExpr(ObjectPool<ExpressionNode> pool, int exprNodeType, CharSequence token, int position) {
-        return pool.next().of(exprNodeType, token, 0, position);
     }
 
     static CharSequence createColumnAlias(

@@ -72,6 +72,7 @@ import io.questdb.cutlass.text.CopyContext;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.FunctionFactoryCacheBuilder;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerFactory;
@@ -84,6 +85,7 @@ import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.Job;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
@@ -113,7 +115,6 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.Map;
-import java.util.ServiceLoader;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -169,7 +170,7 @@ public class CairoEngine implements Closeable, WriterSource {
         try {
             ffCache = new FunctionFactoryCache(
                     configuration,
-                    ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
+                    getFunctionFactories()
             );
             this.tableFlagResolver = newTableFlagResolver(configuration);
             this.configuration = configuration;
@@ -184,11 +185,11 @@ public class CairoEngine implements Closeable, WriterSource {
             this.tableMetadataPool = new TableMetadataPool(configuration);
             this.walWriterPool = new WalWriterPool(configuration, this);
             this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
-            this.telemetry = new Telemetry<>(TelemetryTask.TELEMETRY, configuration);
-            this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMETRY, configuration);
-            this.telemetryMatView = new Telemetry<>(TelemetryMatViewTask.MAT_VIEW_TELEMETRY, configuration);
+            this.telemetry = createTelemetry(TelemetryTask.TELEMETRY, configuration);
+            this.telemetryWal = createTelemetry(TelemetryWalTask.WAL_TELEMETRY, configuration);
+            this.telemetryMatView = createTelemetry(TelemetryMatViewTask.MAT_VIEW_TELEMETRY, configuration);
             this.telemetries = new ObjList<>(telemetry, telemetryWal, telemetryMatView);
-            this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
+            this.tableIdGenerator = IDGeneratorFactory.newIDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME, 1);
             this.checkpointAgent = new DatabaseCheckpointAgent(this);
             this.queryRegistry = new QueryRegistry(configuration);
             this.rootExecutionContext = new SqlExecutionContextImpl(this, 1)
@@ -446,8 +447,8 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableToken;
     }
 
+    // The reader will ignore close() calls until attached back.
     public void detachReader(TableReader reader) {
-        // Ignore the object close() call until attached back
         readerPool.detach(reader);
     }
 
@@ -641,6 +642,24 @@ public class CairoEngine implements Closeable, WriterSource {
         return reader;
     }
 
+    /**
+     * Returns a pooled table reader that is pointed at the same transaction number
+     * as the source reader.
+     * <p>
+     * If the source reader is detached and not in use, returns the source reader.
+     * The source reader must be used only through calling this method.
+     */
+    public TableReader getReaderAtTxn(TableReader srcReader) {
+        assert srcReader.isOpen() && srcReader.isActive();
+        // Fast path: go with the base reader if it's not in-use.
+        if (readerPool.isDetached(srcReader) && readerPool.getDetachedRefCount(srcReader) == 0) {
+            readerPool.incDetachedRefCount(srcReader);
+            return srcReader;
+        }
+        // Slow path: obtain a base reader copy from the pool.
+        return readerPool.getCopyOf(srcReader);
+    }
+
     public Map<CharSequence, AbstractMultiTenantPool.Entry<ReaderPool.R>> getReaderPoolEntries() {
         return readerPool.entries();
     }
@@ -661,8 +680,8 @@ public class CairoEngine implements Closeable, WriterSource {
         } catch (CairoException e) {
             LOG.critical()
                     .$("could not open reader [table=").$(tableToken)
+                    .$(", msg=").$(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
-                    .$(", error=").$(e.getFlyweightMessage())
                     .I$();
             throw e;
         }
@@ -1382,17 +1401,21 @@ public class CairoEngine implements Closeable, WriterSource {
         final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
         getTableTokens(tableTokenBucket, false);
 
-        Path path = Path.getThreadLocal(configuration.getDbRoot());
-        final int pathLen = path.size();
         try (
+                Path path = new Path();
                 BlockFileReader reader = new BlockFileReader(configuration);
                 BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())
         ) {
+            path.of(configuration.getDbRoot());
+            final int pathLen = path.size();
+
             for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
                 final TableToken tableToken = tableTokenBucket.get(i);
                 if (tableToken.isMatView() && TableUtils.isMatViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
                     try {
-                        final MatViewDefinition matViewDefinition = MatViewDefinition.readFrom(
+                        final MatViewDefinition matViewDefinition = new MatViewDefinition();
+                        MatViewDefinition.readFrom(
+                                matViewDefinition,
                                 reader,
                                 path,
                                 pathLen,
@@ -1407,24 +1430,34 @@ public class CairoEngine implements Closeable, WriterSource {
                         }
 
                         final MatViewRefreshState state = matViewGraph.addView(matViewDefinition);
-                        final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, tableToken.getDirName());
-                        path.trimTo(pathLen).concat(tableToken.getDirName()).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
-                        if (isMatViewStateExists) {
-                            reader.of(path.$());
-                            MatViewRefreshState.readFrom(reader, state);
-                        } else {
-                            blockFileWriter.of(path.$());
-                            MatViewRefreshState.append(state, blockFileWriter);
-                        }
+                        // Can be null if the graph implementation is no-op.
+                        // The no-op graph does nothing on view creation and other operations
+                        // and is used when mat views are disabled.
+                        if (state != null) {
+                            final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, tableToken.getDirName());
+                            path.trimTo(pathLen).concat(tableToken.getDirName()).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
+                            if (isMatViewStateExists) {
+                                reader.of(path.$());
+                                MatViewRefreshState.readFrom(reader, state);
+                            } else {
+                                blockFileWriter.of(path.$());
+                                MatViewRefreshState.append(state, blockFileWriter);
+                            }
 
-                        if (!state.isInvalid()) {
-                            matViewGraph.enqueueIncrementalRefresh(tableToken);
+                            if (!state.isInvalid()) {
+                                matViewGraph.enqueueIncrementalRefresh(tableToken);
+                            }
                         }
-                    } catch (CairoException e) {
-                        LOG.error().$("could not load materialized view definition [view=").utf8(tableToken.getTableName())
-                                .$(", errno=").$(e.getErrno())
-                                .$(", error=").$(e.getFlyweightMessage())
-                                .I$();
+                    } catch (Throwable th) {
+                        final LogRecord rec = LOG.error().$("could not load materialized view definition [view=").utf8(tableToken.getTableName());
+                        if (th instanceof CairoException) {
+                            final CairoException ce = (CairoException) th;
+                            rec.$(", msg=").$(ce.getFlyweightMessage())
+                                    .$(", errno=").$(ce.getErrno());
+                        } else {
+                            rec.$(", msg=").$(th.getMessage());
+                        }
+                        rec.I$();
                     }
                 }
             }
@@ -1655,6 +1688,16 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.tableDoesNotExist(tableName);
         }
         return token;
+    }
+
+    protected @NotNull <T extends AbstractTelemetryTask> Telemetry<T> createTelemetry(
+            Telemetry.TelemetryTypeBuilder<T> builder, CairoConfiguration configuration
+    ) {
+        return new Telemetry<>(builder, configuration);
+    }
+
+    protected Iterable<FunctionFactory> getFunctionFactories() {
+        return new FunctionFactoryCacheBuilder().scan(LOG).build();
     }
 
     protected TableFlagResolver newTableFlagResolver(CairoConfiguration configuration) {

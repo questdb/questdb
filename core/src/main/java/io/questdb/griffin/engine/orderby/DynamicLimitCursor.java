@@ -22,11 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.cast;
+package io.questdb.griffin.engine.orderby;
 
-public class CastByteToByteFunctionFactory extends AbstractEntityCastFunctionFactory {
-    @Override
-    public String getSignature() {
-        return "cast(Bb)";
-    }
+public interface DynamicLimitCursor {
+    void updateLimits(long limit, long skipFirst, long skipLast);
 }

@@ -231,6 +231,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long httpWorkerSleepThreshold;
     private final long httpWorkerSleepTimeout;
     private final long httpWorkerYieldThreshold;
+    private final int idGenerateBatchStep;
     private final long idleCheckInterval;
     private final boolean ilpAutoCreateNewColumns;
     private final boolean ilpAutoCreateNewTables;
@@ -447,6 +448,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long systemWriterDataAppendPageSize;
     private final boolean tableTypeConversionEnabled;
     private final TelemetryConfiguration telemetryConfiguration = new PropTelemetryConfiguration();
+    private final long telemetryDbSizeEstimateTimeout;
     private final boolean telemetryDisableCompletely;
     private final boolean telemetryEnabled;
     private final boolean telemetryHideTables;
@@ -1278,6 +1280,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.defaultSymbolCapacity = getInt(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_CAPACITY, 256);
             this.fileOperationRetryCount = getInt(properties, env, PropertyKey.CAIRO_FILE_OPERATION_RETRY_COUNT, 30);
             this.idleCheckInterval = getMillis(properties, env, PropertyKey.CAIRO_IDLE_CHECK_INTERVAL, 5 * 60 * 1000L);
+            this.idGenerateBatchStep = getInt(properties, env, PropertyKey.CAIRO_ID_GENERATE_STEP, 512);
             this.inactiveReaderMaxOpenPartitions = getInt(properties, env, PropertyKey.CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS, 10000);
             this.inactiveReaderTTL = getMillis(properties, env, PropertyKey.CAIRO_INACTIVE_READER_TTL, 120_000);
             this.inactiveWriterTTL = getMillis(properties, env, PropertyKey.CAIRO_INACTIVE_WRITER_TTL, 600_000);
@@ -1471,6 +1474,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.telemetryDisableCompletely = getBoolean(properties, env, PropertyKey.TELEMETRY_DISABLE_COMPLETELY, false);
             this.telemetryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.TELEMETRY_QUEUE_CAPACITY, 512));
             this.telemetryHideTables = getBoolean(properties, env, PropertyKey.TELEMETRY_HIDE_TABLES, true);
+            this.telemetryDbSizeEstimateTimeout = getLong(properties, env, PropertyKey.TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT, Timestamps.SECOND_MILLIS);
             this.o3PartitionPurgeListCapacity = getInt(properties, env, PropertyKey.CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY, 1);
             this.ioURingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_IO_URING_ENABLED, true);
             this.cairoMaxCrashFiles = getInt(properties, env, PropertyKey.CAIRO_MAX_CRASH_FILES, 100);
@@ -2810,6 +2814,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getGroupByShardingThreshold() {
             return cairoGroupByShardingThreshold;
+        }
+
+        @Override
+        public int getIdGenerateBatchStep() {
+            return idGenerateBatchStep;
         }
 
         @Override
@@ -5274,6 +5283,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private class PropTelemetryConfiguration implements TelemetryConfiguration {
+
+        @Override
+        public long getDbSizeEstimateTimeout() {
+            return telemetryDbSizeEstimateTimeout;
+        }
 
         @Override
         public boolean getDisableCompletely() {

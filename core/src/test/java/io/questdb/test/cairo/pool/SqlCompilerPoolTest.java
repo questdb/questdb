@@ -22,12 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.cast;
+package io.questdb.test.cairo.pool;
 
-public class CastIPv4ToIPv4FunctionFactory extends AbstractEntityCastFunctionFactory {
+import io.questdb.cairo.pool.SqlCompilerPool;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
+import org.junit.Test;
 
-    @Override
-    public String getSignature() {
-        return "cast(Xx)";
+public class SqlCompilerPoolTest extends AbstractCairoTest {
+
+    @Test
+    public void testDoesNotSupportRefreshAt() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    SqlCompiler compiler1 = engine.getSqlCompiler();
+                    SqlCompiler compiler2 = engine.getSqlCompiler()
+            ) {
+                SqlCompilerPool.C c1 = (SqlCompilerPool.C) compiler1;
+                SqlCompilerPool.C c2 = (SqlCompilerPool.C) compiler2;
+                try {
+                    c1.refreshAt(null, c2);
+                    Assert.fail();
+                } catch (UnsupportedOperationException ignore) {
+                }
+            }
+        });
     }
 }
