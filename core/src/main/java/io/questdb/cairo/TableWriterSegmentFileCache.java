@@ -80,8 +80,10 @@ public class TableWriterSegmentFileCache {
     }
 
     public void closeWalFiles(boolean isLastSegmentUsage, long walSegmentId, int lo) {
-        LOG.debug().$("closing wal columns [table=").$(tableToken.getDirName()).$(", walSegmentId=").$(walSegmentId)
-                .$(", isLastSegmentUsage=").$(isLastSegmentUsage).I$();
+        LOG.debug().$("closing wal columns [table=").$(tableToken.getDirName())
+                .$(", walSegmentId=").$(walSegmentId)
+                .$(", isLastSegmentUsage=").$(isLastSegmentUsage)
+                .I$();
 
         int key = walFdCache.keyIndex(walSegmentId);
         boolean cacheIsFull = walFdCacheSize >= configuration.getWalMaxSegmentFileDescriptorsCache();

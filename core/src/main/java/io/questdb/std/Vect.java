@@ -250,22 +250,6 @@ public final class Vect {
 
     public static native long mergeShuffleVarcharColumnFromManyAddresses(long indexFormat, long primaryAddressList, long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndex, long destVarOffset, long destDataSize);
 
-    public static native long radixSortManySegmentsIndexAsc(
-            long tsOutAddr,
-            long tsOutAddrCopy,
-            long segmentAddresses,
-            int segmentCount,
-            long txnInfo,
-            long txnCount,
-            long maxSegmentRowCount,
-            long tsLagRowAddr,
-            long tsLagRowCount,
-            long minTimestamp,
-            long maxTimestamp,
-            long totalRows,
-            byte resultFormat
-    );
-
     public static native long mergeTwoLongIndexesAsc(long pTs, long tsIndexLo, long tsCount, long pIndex2, long index2Count, long pIndexDest);
 
     public static native double minDouble(long pDouble, long count);
@@ -316,26 +300,43 @@ public final class Vect {
 
     public static native void quickSortLongIndexAscInPlace(long pLongData, long count);
 
-    public static native void radixSortABLongIndexAsc(long pDataA, long countA, long pDataB, long countB, long pDataDest, long pDataCpy,
-                                                      long minTimestamp, long maxTimestamp);
+    public static native void radixSortABLongIndexAsc(
+            long pDataA,
+            long countA,
+            long pDataB,
+            long countB,
+            long pDataDest,
+            long pDataCpy,
+            long minTimestamp,
+            long maxTimestamp
+    );
 
     // This is not In Place sort, to be renamed later
     public static native void radixSortLongIndexAscInPlace(long pLongData, long count, long pCpy);
 
     public static native void radixSortLongIndexAscInPlaceBounded(long pLongData, long count, long pCpy, long min, long max);
 
+    public static native long radixSortManySegmentsIndexAsc(
+            long tsOutAddr,
+            long tsOutAddrCopy,
+            long segmentAddresses,
+            int segmentCount,
+            long txnInfo,
+            long txnCount,
+            long maxSegmentRowCount,
+            long tsLagRowAddr,
+            long tsLagRowCount,
+            long minTimestamp,
+            long maxTimestamp,
+            long totalRows,
+            byte resultFormat
+    );
+
     public static long readIndexResultRowCount(long indexFormat) {
         return indexFormat & 0xFFFFFFFFFFFFL;
     }
 
     public static native long remapSymbolColumnFromManyAddresses(long srcAddresses, long dstAddress, long txnInfo, long txnCount, long symbolMapAddress);
-
-    public static native long shuffleSymbolColumnByReverseIndex(
-            long indexFormat,
-            long srcAddresses,
-            long dstAddress,
-            long mergeIndex
-    );
 
     public static native void resetPerformanceCounters();
 
@@ -360,6 +361,13 @@ public final class Vect {
     public static native void shiftCopyVarcharColumnAux(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr);
 
     public static native long shiftTimestampIndex(long pSrc, long count, long pDest);
+
+    public static native long shuffleSymbolColumnByReverseIndex(
+            long indexFormat,
+            long srcAddresses,
+            long dstAddress,
+            long mergeIndex
+    );
 
     /**
      * Sorts assuming 128-bit integers.

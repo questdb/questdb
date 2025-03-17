@@ -2653,7 +2653,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long rowHi = walTxnDetails.getSegmentRowHi(seqTxn);
         boolean inOrder = walTxnDetails.getTxnInOrder(seqTxn);
 
-        LOG.info().$("processing WAL [path=").$substr(pathRootSize, walPath).$(", roLo=").$(rowLo)
+        LOG.info().$("processing WAL [path=").$substr(pathRootSize, walPath)
+                .$(", roLo=").$(rowLo)
                 .$(", roHi=").$(rowHi)
                 .$(", seqTxn=").$(seqTxn)
                 .$(", tsMin=").$ts(txnMinTs).$(", tsMax=").$ts(txnMaxTs)
