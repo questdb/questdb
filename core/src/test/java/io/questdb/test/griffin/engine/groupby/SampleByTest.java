@@ -13096,6 +13096,61 @@ public class SampleByTest extends AbstractCairoTest {
         );
     }
 
+    @Test
+    public void testSampleByNegativeTimestamp() throws Exception {
+        execute("create table test ( ts TIMESTAMP, value float );");
+        execute("insert into test VALUES\n" +
+                "    ('1968-10-01T01:00:00.0Z', 5),\n" +
+                "    ('1968-10-02T01:00:00.0Z', 10),\n" +
+                "    ('1968-10-03T01:00:00.0Z', 15),\n" +
+                "    ('1968-10-04T01:00:00.0Z', 20);");
+        assertQueryNoLeakCheck(
+                "ts\tavg\n" +
+                        "1968-10-01T00:00:00.000000Z\t5.0\n" +
+                        "1968-10-02T00:00:00.000000Z\t10.0\n" +
+                        "1968-10-03T00:00:00.000000Z\t15.0\n" +
+                        "1968-10-04T00:00:00.000000Z\t20.0\n",
+                "SELECT ts, avg(value) FROM(select ts, value from test order by ts asc) sample BY 1d FILL(NULL);",
+                "ts"
+        );
+        assertQueryNoLeakCheck(
+                "ts\tavg\n" +
+                        "1968-09-30T02:00:00.000000Z\t5.0\n" +
+                        "1968-10-01T02:00:00.000000Z\t10.0\n" +
+                        "1968-10-02T02:00:00.000000Z\t15.0\n" +
+                        "1968-10-03T02:00:00.000000Z\t20.0\n",
+                "SELECT ts, avg(value) FROM(select ts, value from test order by ts asc)" +
+                        " sample BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '02:00';",
+                "ts"
+        );
+    }
+
+    @Test
+    public void testSampleByNegativeTimestampEdgeCase() throws Exception {
+        execute("create table test ( ts TIMESTAMP, value float );");
+        execute("insert into test VALUES\n" +
+                "    ('1969-12-31T23:00:00.0Z', 5),\n" +
+                "    ('1970-01-01T00:00:00.0Z', 10),\n" +
+                "    ('1970-01-01T01:00:00.0Z', 15),\n" +
+                "    ('1970-01-01T02:00:00.0Z', 20)," +
+                "    ('1970-01-01T03:00:00.0Z', 25);");
+        assertQueryNoLeakCheck(
+                "ts\tavg\n" +
+                        "1969-12-31T00:00:00.000000Z\t5.0\n" +
+                        "1970-01-01T00:00:00.000000Z\t17.5\n",
+                "SELECT ts, avg(value) FROM(select ts, value from test order by ts asc) sample BY 1d FILL(NULL);",
+                "ts"
+        );
+        assertQueryNoLeakCheck(
+                "ts\tavg\n" +
+                        "1969-12-31T02:00:00.000000Z\t10.0\n" +
+                        "1970-01-01T02:00:00.000000Z\t22.5\n",
+                "SELECT ts, avg(value) FROM(select ts, value from test order by ts asc)" +
+                        " sample BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '02:00';",
+                "ts"
+        );
+    }
+
     @NotNull
     private static CairoConfiguration createMmapFailingConfiguration(int x) {
         FilesFacade ff = new TestFilesFacadeImpl() {

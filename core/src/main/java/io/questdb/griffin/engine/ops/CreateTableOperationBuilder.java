@@ -28,6 +28,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.model.QueryModel;
 
 public interface CreateTableOperationBuilder extends ExecutionModel {
     int COLUMN_FLAG_CACHED = 1;
@@ -44,4 +45,6 @@ public interface CreateTableOperationBuilder extends ExecutionModel {
     default int getModelType() {
         return CREATE_TABLE;
     }
+
+    void setSelectModel(QueryModel selectModel);
 }

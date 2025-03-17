@@ -75,6 +75,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Before
     public void setUp() {
+        super.setUp();
         node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
     }
@@ -124,8 +125,8 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                     );
                 }
 
-                // todo: funny behaviour when the string too small
-                // it might indicate a bug
+                // TODO: funny behaviour when the string is too small
+                //       it might indicate a bug
                 selectStatement.setObject(1, "bad, bad value");
                 try {
                     selectStatement.executeQuery();

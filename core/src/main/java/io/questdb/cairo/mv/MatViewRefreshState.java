@@ -63,7 +63,7 @@ public class MatViewRefreshState implements QuietCloseable {
     private RecordToRowCopier recordToRowCopier;
 
     public MatViewRefreshState(
-            MatViewDefinition viewDefinition,
+            @NotNull MatViewDefinition viewDefinition,
             boolean invalid,
             MatViewTelemetryFacade telemetryFacade
     ) {
@@ -80,6 +80,18 @@ public class MatViewRefreshState implements QuietCloseable {
         writer.commit();
     }
 
+    public static void append(@Nullable MatViewRefreshState refreshState, @NotNull AppendableBlock block) {
+        if (refreshState == null) {
+            block.putBool(false);
+            block.putLong(-1);
+            block.putStr(null);
+            return;
+        }
+        block.putBool(refreshState.isInvalid());
+        block.putLong(refreshState.lastRefreshBaseTxn);
+        block.putStr(refreshState.getInvalidationReason());
+    }
+
     public static void readFrom(@NotNull BlockFileReader reader, @NotNull MatViewRefreshState refreshState) {
         final BlockFileReader.BlockCursor cursor = reader.getCursor();
         // Iterate through the block until we find the one we recognize.
@@ -94,22 +106,10 @@ public class MatViewRefreshState implements QuietCloseable {
             refreshState.invalidationReason = Chars.toString(block.getStr(Long.BYTES + Byte.BYTES));
             return;
         }
-        final TableToken matViewToken = refreshState.getViewDefinition() != null ? refreshState.getViewDefinition().getMatViewToken() : null;
+        final TableToken matViewToken = refreshState.getViewDefinition().getMatViewToken();
         throw CairoException.critical(0).put("cannot read materialized view state, block not found [view=")
-                .put(matViewToken != null ? matViewToken.getTableName() : "N/A")
+                .put(matViewToken.getTableName())
                 .put(']');
-    }
-
-    public static void append(@Nullable MatViewRefreshState refreshState, @NotNull AppendableBlock block) {
-        if (refreshState == null) {
-            block.putBool(false);
-            block.putLong(-1);
-            block.putStr(null);
-            return;
-        }
-        block.putBool(refreshState.isInvalid());
-        block.putLong(refreshState.lastRefreshBaseTxn);
-        block.putStr(refreshState.getInvalidationReason());
     }
 
     public RecordCursorFactory acquireRecordFactory() {
@@ -145,7 +145,7 @@ public class MatViewRefreshState implements QuietCloseable {
         return recordToRowCopier;
     }
 
-    public MatViewDefinition getViewDefinition() {
+    public @NotNull MatViewDefinition getViewDefinition() {
         return viewDefinition;
     }
 
@@ -174,11 +174,11 @@ public class MatViewRefreshState implements QuietCloseable {
         telemetryFacade.store(MAT_VIEW_DROP, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, null, 0);
     }
 
-    public void markAsInvalid(@NotNull BlockFileWriter blockFileWriter, @NotNull Path dbRoot, @Nullable CharSequence invalidationReason) {
+    public void markAsInvalid(@NotNull BlockFileWriter blockFileWriter, @NotNull Path dbRoot, @Nullable String invalidationReason) {
         final boolean wasValid = !invalid;
         final boolean invalidationReasonChanged = Chars.compare(this.invalidationReason, invalidationReason) != 0;
         if (invalidationReasonChanged) {
-            this.invalidationReason = Chars.toString(invalidationReason);
+            this.invalidationReason = invalidationReason;
         }
         this.invalid = true;
         if (wasValid || invalidationReasonChanged) {
@@ -201,7 +201,7 @@ public class MatViewRefreshState implements QuietCloseable {
         }
     }
 
-    public void refreshFail(@NotNull BlockFileWriter blockFileWriter, @NotNull Path dbRoot, long refreshTimestamp, CharSequence errorMessage) {
+    public void refreshFail(@NotNull BlockFileWriter blockFileWriter, @NotNull Path dbRoot, long refreshTimestamp, String errorMessage) {
         assert latch.get();
         markAsInvalid(blockFileWriter, dbRoot, errorMessage);
         this.lastRefreshTimestamp = refreshTimestamp;

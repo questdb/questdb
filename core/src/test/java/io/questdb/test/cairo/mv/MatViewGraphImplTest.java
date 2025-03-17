@@ -24,12 +24,15 @@
 
 package io.questdb.test.cairo.mv;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraphImpl;
+import io.questdb.cairo.mv.MatViewRefreshState;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -44,6 +47,39 @@ public class MatViewGraphImplTest extends AbstractCairoTest {
         tableTokens.clear();
         ordered.clear();
         graph.clear();
+    }
+
+    @Test
+    public void testAddSameViewTwice() {
+        TableToken table1 = newTableToken("table1");
+        TableToken view1 = newViewToken("view1");
+
+        MatViewDefinition viewDefinition = createDefinition(view1, table1);
+        try {
+            graph.addView(viewDefinition);
+            graph.addView(viewDefinition);
+            Assert.fail("exception expected");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "materialized view state already exists");
+        }
+    }
+
+    @Test
+    public void testDroppedState() {
+        TableToken table1 = newTableToken("table1");
+        TableToken view1 = newViewToken("view1");
+        MatViewDefinition viewDefinition = createDefinition(view1, table1);
+        MatViewRefreshState state = graph.addView(viewDefinition);
+        Assert.assertNotNull(state);
+        state.markAsDropped();
+        state = graph.getViewRefreshState(view1);
+        Assert.assertNotNull(state);
+        MatViewDefinition def = graph.getViewDefinition(view1);
+        Assert.assertNull(def);
+        state = graph.getViewRefreshState(view1);
+        Assert.assertNull(state);
+        def = graph.getViewDefinition(view1);
+        Assert.assertNull(def);
     }
 
     @Test
@@ -99,8 +135,23 @@ public class MatViewGraphImplTest extends AbstractCairoTest {
     }
 
     private void addDefinition(TableToken viewToken, TableToken baseTableToken) {
-        MatViewDefinition def = new MatViewDefinition(viewToken, "x", baseTableToken.getTableName(), 0, 'm', null, null);
-        graph.addView(def);
+        MatViewDefinition viewDefinition = createDefinition(viewToken, baseTableToken);
+        graph.addView(viewDefinition);
+    }
+
+    private MatViewDefinition createDefinition(TableToken viewToken, TableToken baseTableToken) {
+        MatViewDefinition viewDefinition = new MatViewDefinition();
+        viewDefinition.init(
+                MatViewDefinition.INCREMENTAL_REFRESH_TYPE,
+                viewToken,
+                "x",
+                baseTableToken.getTableName(),
+                0,
+                'm',
+                null,
+                null
+        );
+        return viewDefinition;
     }
 
     private TableToken newTableToken(String tableName) {

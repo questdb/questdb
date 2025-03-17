@@ -29,12 +29,16 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class PowerBiSqlTest extends AbstractCairoTest {
+
     @Test
-    public void testCharSet() throws SqlException {
-        assertSql(
+    public void testCharSet() throws Exception {
+        assertQuery(
                 "character_set_name\n" +
                         "UTF8\n",
-                "select character_set_name from INFORMATION_SCHEMA.character_sets"
+                "select character_set_name from INFORMATION_SCHEMA.character_sets",
+                null,
+                false,
+                true
         );
     }
 

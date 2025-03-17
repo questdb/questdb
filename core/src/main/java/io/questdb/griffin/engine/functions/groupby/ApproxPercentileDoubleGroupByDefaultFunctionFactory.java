@@ -32,6 +32,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
+import static io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoubleGroupByFunctionFactory.checkPercentile;
+
 public class ApproxPercentileDoubleGroupByDefaultFunctionFactory implements FunctionFactory {
     private static final int DEFAULT_PRECISION = 1;
 
@@ -56,9 +58,7 @@ public class ApproxPercentileDoubleGroupByDefaultFunctionFactory implements Func
         final Function exprFunc = args.getQuick(0);
         final Function percentileFunc = args.getQuick(1);
 
-        if (!percentileFunc.isConstant() && !percentileFunc.isRuntimeConstant()) {
-            throw SqlException.$(argPositions.getQuick(1), "percentile must be a constant");
-        }
+        checkPercentile(percentileFunc, argPositions.getQuick(1));
 
         return new ApproxPercentileDoubleGroupByFunction(exprFunc, percentileFunc, DEFAULT_PRECISION, position);
     }
