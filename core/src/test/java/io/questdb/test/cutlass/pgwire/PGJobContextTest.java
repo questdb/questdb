@@ -6047,13 +6047,13 @@ nodejs code:
                 TestUtils.assertContains(e.getMessage(), "element counts in sub-arrays don't match");
             }
 
-            // explicit cast if a jagged array produce null
+            // explicit cast of a jagged array produces null
             assertPgWireQuery(connection, "SELECT '{{1.0, 2}, {3, 4}, {5, 6, 7}}'::double[] arr FROM long_sequence(1)",
                     "arr[ARRAY]\n" +
                             "null\n");
 
-            execute("create table tab (arr double[][])");
 
+            execute("create table tab (arr double[][])");
 
             // implicit cast should fail
             try (Statement statement = connection.createStatement()) {
@@ -6070,6 +6070,46 @@ nodejs code:
             assertPgWireQuery(connection, "SELECT * from tab",
                     "arr[ARRAY]\n" +
                             "null\n");
+
+
+            // Issue: PostgreSQL JDBC driver doesn't validate jagged arrays (https://github.com/pgjdbc/pgjdbc/issues/3567)
+            // when used as a bind variable in a prepared statement.
+            // QuestDB server must validate and reject them instead.
+            //
+            // Validation approaches:
+            // 1. Text-encoded arrays: Simple - casting from string to array always includes jagged array checks
+            // 2. Binary protocol: More complex - we can only verify that the received binary array has the expected
+            //    number of elements based on the declared array shape.
+            //
+            // Binary protocol limitation example:
+            // For a jagged array like {{1.0, 2.0}, {3.0}, {5.0, 6.0, 7.0}}:
+            // - PG JDBC reports: 2D array, first dimension has 3 elements, second dimension has 2 elements
+            // - Server expects 6 elements total (3×2), and client message contains 6 elements
+            // - Server accepts the message and inserts as {{1.0, 2.0}, {3.0, 4.0}, {5.0, 6.0}}
+            // - No way to detect the original jaggedness :(
+            // Conclusion: Clients should validate arrays before sending to server
+            try (PreparedStatement stmt = connection.prepareStatement("insert into tab values (?)")) {
+                Array arr = connection.createArrayOf("double", new double[][]{{1.0, 2.0}, {3.0}, {3.0}});
+                stmt.setArray(1, arr);
+                try {
+                    stmt.execute();
+                    Assert.fail("jagged array should not be allowed");
+                } catch (SQLException e) {
+                    String msg = e.getMessage();
+                    Assert.assertTrue(Chars.contains(msg, "inconvertible value") || Chars.contains(msg, "unexpected array size"));
+                }
+            }
+            try (PreparedStatement stmt = connection.prepareStatement("insert into tab values (?)")) {
+                Array arr = connection.createArrayOf("double", new double[][]{{1.0}, {2.0, 3.0}, {4.0, 5.0}});
+                stmt.setArray(1, arr);
+                try {
+                    stmt.execute();
+                    Assert.fail("jagged array should not be allowed");
+                } catch (SQLException e) {
+                    String msg = e.getMessage();
+                    Assert.assertTrue(Chars.contains(msg, "inconvertible value") || Chars.contains(msg, "unexpected array size"));
+                }
+            }
         });
     }
 

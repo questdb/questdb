@@ -125,6 +125,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private static final int SYNC_DESCRIBE = 2;
     private static final int SYNC_DONE = 5;
     private static final int SYNC_PARSE = 0;
+    private final ObjectPool<PgNonNullBinaryArrayView> arrayViewPool = new ObjectPool<>(PgNonNullBinaryArrayView::new, 1);
     private final CompiledQueryImpl compiledQueryCopy;
     private final CairoEngine engine;
     private final StringSink errorMessageSink = new StringSink();
@@ -151,7 +152,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private final IntList pgResultSetColumnTypes;
     private final ObjList<CharSequence> portalNames = new ObjList<>();
-    private final ObjectPool<PgNonNullBinaryArrayView> arrayViewPool = new ObjectPool<>(PgNonNullBinaryArrayView::new, 1);
     boolean isCopy;
     private boolean cacheHit = false;    // extended protocol cursor resume callback
     private CompiledQueryImpl compiledQuery;
@@ -2547,7 +2547,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             lo += Integer.BYTES; // skip lower bound, it's always 1
             valueSize -= Integer.BYTES;
         }
-        arrayView.setPtrAndCalculateStrides(lo, lo + valueSize, componentOid);
+        arrayView.setPtrAndCalculateStrides(lo, lo + valueSize, componentOid, this);
         bindVariableService.setArray(i, arrayView);
     }
 

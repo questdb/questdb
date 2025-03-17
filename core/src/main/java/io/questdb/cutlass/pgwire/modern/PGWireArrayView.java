@@ -25,6 +25,7 @@
 package io.questdb.cutlass.pgwire.modern;
 
 import io.questdb.cairo.arr.MutableArray;
+import io.questdb.cutlass.pgwire.BadProtocolException;
 
 abstract class PGWireArrayView extends MutableArray {
     void addDimLen(int dimLen) {
@@ -32,5 +33,5 @@ abstract class PGWireArrayView extends MutableArray {
         flatViewLength *= dimLen;
     }
 
-    abstract void setPtrAndCalculateStrides(long lo, long hi, int componentOid);
+    abstract void setPtrAndCalculateStrides(long lo, long hi, int componentOid, PGPipelineEntry pipelineEntry) throws BadProtocolException;
 }

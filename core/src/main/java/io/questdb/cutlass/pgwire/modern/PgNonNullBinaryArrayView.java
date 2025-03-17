@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cutlass.pgwire.BadProtocolException;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -94,7 +95,7 @@ final class PgNonNullBinaryArrayView extends PGWireArrayView implements FlatArra
     }
 
     @Override
-    void setPtrAndCalculateStrides(long lo, long hi, int pgOidType) {
+    void setPtrAndCalculateStrides(long lo, long hi, int pgOidType, PGPipelineEntry pipelineEntry) throws BadProtocolException {
         short componentNativeType;
         int elementSize;
         switch (pgOidType) {
@@ -121,5 +122,10 @@ final class PgNonNullBinaryArrayView extends PGWireArrayView implements FlatArra
         this.hi = hi;
         this.type = ColumnType.encodeArrayType(componentNativeType, shape.size());
         resetToDefaultStrides();
+
+        long totalExpectedSizeBytes = (long) (elementSize + Integer.BYTES) * flatViewLength;
+        if (hi - lo != totalExpectedSizeBytes) {
+            throw BadProtocolException.instance(pipelineEntry).put("unexpected array size [expected=").put(totalExpectedSizeBytes).put(", actual=").put(hi - lo).put(']');
+        }
     }
 }
