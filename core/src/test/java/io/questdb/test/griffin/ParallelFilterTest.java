@@ -151,10 +151,11 @@ public class ParallelFilterTest extends AbstractCairoTest {
             "4171842711013652287\t\n" +
             "4290056275098552124\t=ܼDdjvsoߛ)*EB\n";
     private static final String nonStaticTableSymbolInCursorQueryLimit = "select v, s from x where concat(s,'')::symbol in (select rnd_varchar('C', 'B') from long_sequence(100)) order by v limit 10";
-    private static final String symbolInCursorQueryLimit = "select v, s from x where s in (select rnd_varchar('C', 'B')::string from long_sequence(100)) order by v limit 10";
+    private static final String symbolInCursorQueryLimit = "select v, s from x where s::string::symbol in (select rnd_varchar('C', 'B', null) from long_sequence(100)) order by v limit 10";
     private static final String symbolQueryNegativeLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L limit -10";
     private static final String symbolQueryNoLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L order by v";
     private static final String symbolQueryPositiveLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L limit 10";
+    private static final String symbolStaticInCursorQueryLimit = "select v, s from x where s in (select rnd_varchar('C', 'B') from long_sequence(100)) order by v limit 10";
     private static final String varcharQueryNoLimit = "select l, v from x where l > 3326086085493629941L and l < 4326086085493629941L order by l";
     private final boolean convertToParquet;
 
@@ -479,6 +480,11 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelStressSymbolMultipleThreadsMultipleWorkersNonStaticSymbolInVarcharCursorJitDisabled() throws Exception {
+        testParallelStressSymbol(symbolInCursorQueryLimit, expectedSymbolInCursorQueryLimit, 4, 4, SqlJitMode.JIT_MODE_DISABLED);
+    }
+
+    @Test
     public void testParallelStressSymbolMultipleThreadsMultipleWorkersPositiveLimitJitDisabled() throws Exception {
         testParallelStressSymbol(symbolQueryPositiveLimit, expectedPositiveLimit, 4, 4, SqlJitMode.JIT_MODE_DISABLED);
     }
@@ -492,13 +498,8 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParallelStressSymbolMultipleThreadsMultipleWorkersSymbolInVarcharCursorJitDisabled1() throws Exception {
-        testParallelStressSymbol(symbolInCursorQueryLimit, expectedSymbolInCursorQueryLimit, 4, 4, SqlJitMode.JIT_MODE_DISABLED);
-    }
-
-    @Test
-    public void testParallelStressSymbolMultipleThreadsMultipleWorkersSymbolInVarcharCursorJitDisabled2() throws Exception {
-        testParallelStressSymbol(nonStaticTableSymbolInCursorQueryLimit, expectedSymbolInCursorQueryLimit, 4, 4, SqlJitMode.JIT_MODE_DISABLED);
+    public void testParallelStressSymbolMultipleThreadsMultipleWorkersSymbolInVarcharCursorJitDisabled() throws Exception {
+        testParallelStressSymbol(symbolStaticInCursorQueryLimit, expectedSymbolInCursorQueryLimit, 4, 4, SqlJitMode.JIT_MODE_DISABLED);
     }
 
     @Test
