@@ -427,11 +427,11 @@ public class CairoEngine implements Closeable, WriterSource {
                                                     walEventReader
                                             );
                                         } catch (CairoException e) {
-                                            LOG.error().$("could not find last refresh base txn for materialized view [view=")
+                                            LOG.error().$("could not find last refresh base txn for materialized view, full refresh will be triggered [view=")
                                                     .utf8(tableToken.getTableName()).I$();
                                         }
                                     } catch (CairoException e) {
-                                        LOG.error().$("could not get transaction log cursor for materialized view [view=")
+                                        LOG.error().$("could not get transaction log cursor for materialized view, full refresh will be triggered [view=")
                                                 .utf8(tableToken.getTableName()).I$();
                                     }
 
