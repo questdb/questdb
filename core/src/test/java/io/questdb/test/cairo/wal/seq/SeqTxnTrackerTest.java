@@ -24,6 +24,8 @@
 
 package io.questdb.test.cairo.wal.seq;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.wal.seq.TableWriterPressureControlImpl;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.log.Log;
@@ -229,7 +231,10 @@ public class SeqTxnTrackerTest {
                 return time;
             }
         };
-        final var pressureControl = new TableWriterPressureControlImpl(4000, fixedClock);
+
+        CairoConfiguration configuration = getConfiguration(fixedClock);
+
+        final var pressureControl = new TableWriterPressureControlImpl(configuration);
 
         pressureControl.onOutOfMemory();
         assertFalse(pressureControl.isReadyToProcess());
@@ -256,11 +261,22 @@ public class SeqTxnTrackerTest {
 
     @NotNull
     private static TableWriterPressureControlImpl createPressureControl() {
-        return new TableWriterPressureControlImpl(4000, MillisecondClockImpl.INSTANCE);
+        CairoConfiguration configuration = getConfiguration(MillisecondClockImpl.INSTANCE);
+        return new TableWriterPressureControlImpl(configuration);
     }
 
     @NotNull
     private static SeqTxnTracker createSeqTracker() {
-        return new SeqTxnTracker(4000, MillisecondClockImpl.INSTANCE);
+        return new SeqTxnTracker(getConfiguration(MillisecondClockImpl.INSTANCE));
+    }
+
+    @NotNull
+    private static CairoConfiguration getConfiguration(MillisecondClock instance) {
+        return new DefaultCairoConfiguration(null) {
+            @Override
+            public @NotNull MillisecondClock getMillisecondClock() {
+                return instance;
+            }
+        };
     }
 }

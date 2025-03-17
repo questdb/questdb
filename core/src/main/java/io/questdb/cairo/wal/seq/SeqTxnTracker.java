@@ -24,10 +24,10 @@
 
 package io.questdb.cairo.wal.seq;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.TestOnly;
 
 public class SeqTxnTracker {
@@ -40,8 +40,8 @@ public class SeqTxnTracker {
     private volatile ErrorTag errorTag = ErrorTag.NONE;
     private final TableWriterPressureControlImpl pressureControl;
 
-    public SeqTxnTracker(int backOffOnMemPressureMs, MillisecondClock millisecondClock) {
-        this.pressureControl = new TableWriterPressureControlImpl(backOffOnMemPressureMs, millisecondClock);
+    public SeqTxnTracker(CairoConfiguration configuration) {
+        this.pressureControl = new TableWriterPressureControlImpl(configuration);
     }
 
     @SuppressWarnings("FieldMayBeFinal")
@@ -153,10 +153,6 @@ public class SeqTxnTracker {
      * @return true if Apply2Wal job should be notified
      */
     public synchronized boolean updateWriterTxns(long writerTxn, long dirtyWriterTxn) {
-        // This is only called under TableWriter lock inside Apply2Wal job
-        // with no threads race
-        // TODO: remove other calls and make the call non-synchronized. The calls to reset txn
-        // when queue is full seems like redundant after all the changes in CheckWalTransactionsJob
         long prevWriterTxn = this.writerTxn;
         long prevDirtyWriterTxn = this.dirtyWriterTxn;
         this.writerTxn = writerTxn;

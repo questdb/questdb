@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.wal.seq;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -38,7 +39,7 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
     private static final int PARTITION_COUNT_SCALE_UP_FACTOR = 4;
     private static final int TXN_COUNT_SCALE_DOWN_FACTOR = 4;
     private static final int TXN_COUNT_SCALE_UP_FACTOR = 1000;
-    private final int backOffWaiMs;
+    private final CairoConfiguration configuration;
     private final MillisecondClock millisecondClock;
     private long inflightBlockRowCount;
     private long inflightTxnCount;
@@ -49,9 +50,9 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
     private int memoryPressureRegulationValue = Integer.MAX_VALUE;
     private long walBackoffUntilEpochMs = Long.MIN_VALUE;
 
-    public TableWriterPressureControlImpl(int backOffWaiMs, MillisecondClock millisecondClock) {
-        this.backOffWaiMs = backOffWaiMs;
-        this.millisecondClock = millisecondClock;
+    public TableWriterPressureControlImpl(CairoConfiguration configuration) {
+        this.configuration = configuration;
+        this.millisecondClock = configuration.getMillisecondClock();
     }
 
     public long getMaxBlockRowCount() {
@@ -132,7 +133,7 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
                 // Increase backoff counter
                 memoryPressureRegulationValue--;
             }
-            int delayMillis = 1 + MEM_PRESSURE_RND.nextInt(backOffWaiMs - 1);
+            int delayMillis = 1 + MEM_PRESSURE_RND.nextInt(configuration.getWriteBackOffTimeoutOnMemPressureMs() - 1);
             walBackoffUntilEpochMs = getTicks() + delayMillis;
             return;
         }
