@@ -48,7 +48,6 @@ public interface QuaternaryFunction extends Function {
             getFunc2().offerStateTo(((QuaternaryFunction) that).getFunc2());
             getFunc3().offerStateTo(((QuaternaryFunction) that).getFunc3());
         }
-        Function.super.offerStateTo(that);
     }
 
     @Override

@@ -57,7 +57,7 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      * "prototype" function is the one that has already been fully initialized and it is ready to pass its state to
      * all the clones.
      * <p>
-     * Even though the prototype will be trying to pass its state, the clones do not have to accept it and chose to
+     * Even though the prototype will be trying to pass its state, the clones do not have to accept it and choose to
      * continue to calculate own state.
      *
      * @param clones            uniform function to initialize and accept state from the prototype, if prototype is not null

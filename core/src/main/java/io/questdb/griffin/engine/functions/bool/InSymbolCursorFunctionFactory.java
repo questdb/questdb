@@ -115,16 +115,13 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         private final Function cursorArg;
         private final Record.CharSequenceFunction func;
         private final Function valueArg;
-        private final CharSequenceHashSet valueSetA = new CharSequenceHashSet();
-        private final CharSequenceHashSet valueSetB = new CharSequenceHashSet();
         private boolean stateInherited = false;
         private boolean stateShared = false;
-        private CharSequenceHashSet valueSet;
+        private final CharSequenceHashSet valueSet = new CharSequenceHashSet();
 
         public StrInCursorFunc(Function valueArg, Function cursorArg, Record.CharSequenceFunction func) {
             this.valueArg = valueArg;
             this.cursorArg = cursorArg;
-            this.valueSet = valueSetA;
             this.func = func;
         }
 
@@ -153,15 +150,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
             }
 
             stateShared = false;
-            CharSequenceHashSet valueSet;
-            if (this.valueSet == this.valueSetA) {
-                valueSet = this.valueSetB;
-            } else {
-                valueSet = this.valueSetA;
-            }
-
             valueSet.clear();
-            this.valueSet = valueSet;
 
             RecordCursorFactory factory = cursorArg.getRecordCursorFactory();
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
@@ -190,9 +179,8 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         public void offerStateTo(Function that) {
             if (that instanceof StrInCursorFunc) {
                 StrInCursorFunc thatF = (StrInCursorFunc) that;
-                thatF.valueSetB.clear();
-                thatF.valueSetB.addAll(valueSet);
-                thatF.valueSet = valueSetA;
+                thatF.valueSet.clear();
+                thatF.valueSet.addAll(valueSet);
                 thatF.stateInherited = this.stateShared = true;
             }
             BinaryFunction.super.offerStateTo(that);

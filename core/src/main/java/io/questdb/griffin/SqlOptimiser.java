@@ -4164,7 +4164,7 @@ public class SqlOptimiser implements Mutable {
 
             if (!abandonRewrite) {
 
-                // remove the distinct flag, model is not longer that
+                // remove the distinct flag, model is no longer that
                 model.setDistinct(false);
 
                 // if we add "count" aggregate we will transform our model pair into
@@ -4191,7 +4191,7 @@ public class SqlOptimiser implements Mutable {
 
                 // before dispatching our rewrite, make sure our sub-query has also been re-written
                 // the immediate "nested" model is part of the "distinct" pair or model, we skip rewriting that
-                // and move onto it's nested model.
+                // and move onto its nested model.
                 model.getNestedModel().setNestedModel(rewriteDistinct(model.getNestedModel().getNestedModel()));
 
                 // if the model has a union, we need to move this union to the wrapper and rewrite it
@@ -4199,6 +4199,7 @@ public class SqlOptimiser implements Mutable {
                 wrapperModel.setSetOperationType(model.getSetOperationType());
                 // also clear the union on the model we just wrapped
                 model.setUnionModel(null);
+                model.setSetOperationType(SET_OPERATION_UNION_ALL);
 
                 return wrapperModel;
             }

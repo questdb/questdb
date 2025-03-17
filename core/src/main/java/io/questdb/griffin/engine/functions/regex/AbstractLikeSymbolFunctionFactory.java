@@ -211,7 +211,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public boolean isThreadSafe() {
-            return false;
+            return value.isThreadSafe();
         }
 
         @Override
