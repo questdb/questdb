@@ -1046,58 +1046,56 @@ public class CreateMatViewTest extends AbstractCairoTest {
     @Test
     public void testMatViewDefinitionInvalidTz() throws Exception {
         assertMemoryLeak(() -> {
-            try (Path path = new Path()) {
-                createTable(TABLE1);
-                final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
-                execute("create materialized view test as (" + query + ") partition by day");
-                final TableToken matViewToken = engine.getTableTokenIfExists("test");
-                MatViewDefinition def = new MatViewDefinition();
-                try {
-                    def.init(
-                            MatViewDefinition.INCREMENTAL_REFRESH_TYPE,
-                            matViewToken,
-                            query,
-                            TABLE1,
-                            30,
-                            'K',
-                            "Europe/Berlin",
-                            "00:00"
-                    );
-                    Assert.fail("exception expected");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid sampling interval and/or unit: 30, K");
-                }
+            createTable(TABLE1);
+            final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+            execute("create materialized view test as (" + query + ") partition by day");
+            final TableToken matViewToken = engine.getTableTokenIfExists("test");
+            MatViewDefinition def = new MatViewDefinition();
+            try {
+                def.init(
+                        MatViewDefinition.INCREMENTAL_REFRESH_TYPE,
+                        matViewToken,
+                        query,
+                        TABLE1,
+                        30,
+                        'K',
+                        "Europe/Berlin",
+                        "00:00"
+                );
+                Assert.fail("exception expected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid sampling interval and/or unit: 30, K");
+            }
 
-                try {
-                    def.init(
-                            MatViewDefinition.INCREMENTAL_REFRESH_TYPE,
-                            matViewToken,
-                            query,
-                            TABLE1,
-                            30,
-                            's',
-                            "Oceania",
-                            "00:00"
-                    );
-                    Assert.fail("exception expected");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: Oceania");
-                }
-                try {
-                    def.init(
-                            MatViewDefinition.INCREMENTAL_REFRESH_TYPE,
-                            matViewToken,
-                            query,
-                            TABLE1,
-                            30,
-                            's',
-                            "Europe/Berlin",
-                            "T00:00"
-                    );
-                    Assert.fail("exception expected");
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: T00:00");
-                }
+            try {
+                def.init(
+                        MatViewDefinition.INCREMENTAL_REFRESH_TYPE,
+                        matViewToken,
+                        query,
+                        TABLE1,
+                        30,
+                        's',
+                        "Oceania",
+                        "00:00"
+                );
+                Assert.fail("exception expected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: Oceania");
+            }
+            try {
+                def.init(
+                        MatViewDefinition.INCREMENTAL_REFRESH_TYPE,
+                        matViewToken,
+                        query,
+                        TABLE1,
+                        30,
+                        's',
+                        "Europe/Berlin",
+                        "T00:00"
+                );
+                Assert.fail("exception expected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: T00:00");
             }
         });
     }
