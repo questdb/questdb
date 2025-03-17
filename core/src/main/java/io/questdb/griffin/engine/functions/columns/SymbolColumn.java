@@ -84,7 +84,8 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         this.symbolTableSource = symbolTableSource;
         if (executionContext.getCloneSymbolTables()) {
-            if (symbolTable != null && ownSymbolTable) {
+            if (symbolTable != null) {
+                assert ownSymbolTable;
                 symbolTable = Misc.freeIfCloseable(symbolTable);
             }
             symbolTable = symbolTableSource.newSymbolTable(columnIndex);
