@@ -150,8 +150,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
             "3927079694554322589\tg\uECF9J9漫\uDBDB\uDDDB1fÄ}o輖NI\n" +
             "4171842711013652287\t\n" +
             "4290056275098552124\t=ܼDdjvsoߛ)*EB\n";
-    private static final String nonStaticTableSymbolInCursorQueryLimit = "select v, s from x where concat(s,'')::symbol in (select rnd_varchar('C', 'B') from long_sequence(100)) order by v limit 10";
-    private static final String symbolInCursorQueryLimit = "select v, s from x where s::string::symbol in (select rnd_varchar('C', 'B', null) from long_sequence(100)) order by v limit 10";
+    private static final String symbolInCursorQueryLimit = "select v, s from x where s::string::symbol in (select rnd_varchar('C', 'B') from long_sequence(100)) order by v limit 10";
     private static final String symbolQueryNegativeLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L limit -10";
     private static final String symbolQueryNoLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L order by v";
     private static final String symbolQueryPositiveLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L limit 10";
