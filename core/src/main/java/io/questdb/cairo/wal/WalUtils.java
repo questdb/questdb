@@ -97,7 +97,7 @@ public class WalUtils {
         }
     }
 
-    public static long getRefreshTxn(Path tablePath, TransactionLogCursor transactionLogCursor, FilesFacade ff) {
+    public static long getMatViewLastRefreshBaseTxn(Path tablePath, TransactionLogCursor transactionLogCursor, WalEventReader walEventReader) {
         long refreshTxn = -1; // full refresh if not extracted
         if (transactionLogCursor.hasNext()) {
             final int walId = transactionLogCursor.getWalId();
@@ -105,11 +105,9 @@ public class WalUtils {
             final int segmentTxn = transactionLogCursor.getSegmentTxn();
             if (walId > 0) {
                 tablePath.concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
-                try (WalEventReader eventReader = new WalEventReader(ff)) {
-                    WalEventCursor walEventCursor = eventReader.of(tablePath, WAL_FORMAT_VERSION, segmentTxn);
-                    if (walEventCursor.getType() == DATA) {
-                        refreshTxn = walEventCursor.getDataInfo().getMvRefreshTxn();
-                    }
+                WalEventCursor walEventCursor = walEventReader.of(tablePath, WAL_FORMAT_VERSION, segmentTxn);
+                if (walEventCursor.getType() == DATA) {
+                    refreshTxn = walEventCursor.getDataInfo().getMatViewLastRefreshBaseTxn();
                 }
             }
         }

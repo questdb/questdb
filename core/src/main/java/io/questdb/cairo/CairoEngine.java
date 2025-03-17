@@ -62,6 +62,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.DefaultWalListener;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
+import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalListener;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalUtils;
@@ -355,6 +356,7 @@ public class CairoEngine implements Closeable, WriterSource {
         try (
                 Path path = new Path();
                 BlockFileReader reader = new BlockFileReader(configuration);
+                WalEventReader walEventReader = new WalEventReader(configuration.getFilesFacade());
                 BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())
         ) {
             path.of(configuration.getDbRoot());
@@ -408,32 +410,34 @@ public class CairoEngine implements Closeable, WriterSource {
                                         .I$();
                             }
                             // this should be called only during replica to primary transition
-                            if (checkMatViewConsistency) {
-
+                            if (checkMatViewConsistency && baseTableExists && baseTableToken.isWal()) {
                                 long matViewLastTxn = getTableSequencerAPI().lastTxn(tableToken);
-                                long baseTableLastTxn = baseTableExists && baseTableToken.isWal()
-                                        ? getTableSequencerAPI().lastTxn(baseTableToken)
-                                        : Long.MAX_VALUE;
+                                long baseTableLastTxn = getTableSequencerAPI().lastTxn(baseTableToken);
                                 if (state.getSeqTxn() > matViewLastTxn || state.getLastRefreshBaseTxn() > baseTableLastTxn) {
                                     // Materialized view refresh state is ahead of the base table or the view itself.
                                     // This may happen when a read-only replica node which isn't fully caught up
                                     // was converted to primary.
+                                    long lastRefreshBaseTxn = MatViewRefreshState.MAT_VIEW_FULL_REFRESH_TXN_MARKER;
                                     try (TransactionLogCursor transactionLogCursor = getTableSequencerAPI().getCursor(tableToken, matViewLastTxn - 1)) {
                                         // slow-path, search for the last refresh base txn in the wal-e file
-                                        long refreshBaseTxn = -1;
                                         try {
-                                            refreshBaseTxn = WalUtils.getRefreshTxn(
+                                            lastRefreshBaseTxn = WalUtils.getMatViewLastRefreshBaseTxn(
                                                     path.trimTo(pathLen).concat(tableToken.getDirName()),
                                                     transactionLogCursor,
-                                                    configuration.getFilesFacade()
+                                                    walEventReader
                                             );
                                         } catch (CairoException e) {
                                             LOG.error().$("could not find last refresh base txn for materialized view [view=")
                                                     .utf8(tableToken.getTableName()).I$();
                                         }
-                                        refreshBaseTxn = refreshBaseTxn > baseTableLastTxn ? -1 : refreshBaseTxn;
-                                        state.setLastRefreshBaseTxn(refreshBaseTxn);
+                                    } catch (CairoException e) {
+                                        LOG.error().$("could not get transaction log cursor for materialized view [view=")
+                                                .utf8(tableToken.getTableName()).I$();
                                     }
+
+                                    lastRefreshBaseTxn = lastRefreshBaseTxn > baseTableLastTxn ?
+                                            MatViewRefreshState.MAT_VIEW_FULL_REFRESH_TXN_MARKER : lastRefreshBaseTxn;
+                                    state.setLastRefreshBaseTxn(lastRefreshBaseTxn);
                                 }
                             }
                             matViewGraph.enqueueIncrementalRefresh(tableToken);

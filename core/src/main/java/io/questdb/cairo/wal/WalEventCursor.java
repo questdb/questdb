@@ -33,6 +33,7 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 
@@ -319,12 +320,16 @@ public class WalEventCursor {
         private long endRowID;
         private long maxTimestamp;
         private long minTimestamp;
-        private long mvRefreshTxn = Long.MIN_VALUE;
+        private long mvLastRefreshBaseTxn = Numbers.LONG_NULL;
         private boolean outOfOrder;
         private long startRowID;
 
         public long getEndRowID() {
             return endRowID;
+        }
+
+        public long getMatViewLastRefreshBaseTxn() {
+            return mvLastRefreshBaseTxn;
         }
 
         public long getMaxTimestamp() {
@@ -333,10 +338,6 @@ public class WalEventCursor {
 
         public long getMinTimestamp() {
             return minTimestamp;
-        }
-
-        public long getMvRefreshTxn() {
-            return mvRefreshTxn;
         }
 
         public long getStartRowID() {
@@ -368,7 +369,7 @@ public class WalEventCursor {
 
             long symbolMapDiffOffset = calcSymbolMapDiffEndOffset(offset);
             if (symbolMapDiffOffset != offset && symbolMapDiffOffset <= nextOffset - Long.BYTES) {
-                mvRefreshTxn = eventMem.getLong(nextOffset - Long.BYTES);
+                mvLastRefreshBaseTxn = eventMem.getLong(nextOffset - Long.BYTES);
             }
         }
     }

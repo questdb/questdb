@@ -245,7 +245,7 @@ class WalEventWriter implements Closeable {
         );
     }
 
-    int appendData(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder, long mvRefreshTxn) {
+    int appendData(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder, long mvLastRefreshBaseTxn) {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.DATA);
@@ -255,9 +255,9 @@ class WalEventWriter implements Closeable {
         eventMem.putLong(maxTimestamp);
         eventMem.putBool(outOfOrder);
         writeSymbolMapDiffs();
-        if (mvRefreshTxn != Long.MIN_VALUE) {
+        if (mvLastRefreshBaseTxn != Long.MIN_VALUE) {
             // for backward compatibility should be placed after symbol map diffs
-            eventMem.putLong(mvRefreshTxn);
+            eventMem.putLong(mvLastRefreshBaseTxn);
         }
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);

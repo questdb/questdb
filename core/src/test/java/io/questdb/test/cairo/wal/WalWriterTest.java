@@ -1405,10 +1405,12 @@ public class WalWriterTest extends AbstractCairoTest {
                 }
             }
 
-            try (Path path = new Path(); TransactionLogCursor transactionLogCursor = engine.getTableSequencerAPI().getCursor(tableToken, 0)) {
+            try (Path path = new Path();
+                 WalEventReader walEventReader = new WalEventReader(configuration.getFilesFacade());
+                 TransactionLogCursor transactionLogCursor = engine.getTableSequencerAPI().getCursor(tableToken, 0)) {
                 for (int i = 0; i < 10; i++) {
                     path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-                    long txn = WalUtils.getRefreshTxn(path, transactionLogCursor, configuration.getFilesFacade());
+                    long txn = WalUtils.getMatViewLastRefreshBaseTxn(path, transactionLogCursor, walEventReader);
                     assertEquals(refreshTxn + i, txn);
                 }
             }
@@ -3377,7 +3379,7 @@ public class WalWriterTest extends AbstractCairoTest {
         assertEquals(0, dataInfo.getMinTimestamp());
         assertEquals(0, dataInfo.getMaxTimestamp());
         assertFalse(dataInfo.isOutOfOrder());
-        assertEquals(refreshTxn, dataInfo.getMvRefreshTxn());
+        assertEquals(refreshTxn, dataInfo.getMatViewLastRefreshBaseTxn());
 
         // sym
         SymbolMapDiff symbolMapDiff = dataInfo.nextSymbolMapDiff();

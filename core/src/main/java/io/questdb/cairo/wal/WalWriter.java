@@ -306,8 +306,8 @@ public class WalWriter implements TableWriterAPI {
         commit0(Long.MIN_VALUE);
     }
 
-    public void commitWithParams(long refreshTxn) {
-        commit0(refreshTxn);
+    public void commitWithParams(long mvLastRefreshBaseTxn) {
+        commit0(mvLastRefreshBaseTxn);
     }
 
     public void doClose(boolean truncate) {
@@ -903,13 +903,13 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private void commit0(long refreshTxn) {
+    private void commit0(long mvLastRefreshBaseTxn) {
         checkDistressed();
         try {
             if (inTransaction()) {
                 isCommittingData = true;
                 final long rowsToCommit = getUncommittedRowCount();
-                lastSegmentTxn = events.appendData(currentTxnStartRowNum, segmentRowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder, refreshTxn);
+                lastSegmentTxn = events.appendData(currentTxnStartRowNum, segmentRowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder, mvLastRefreshBaseTxn);
                 // flush disk before getting next txn
                 syncIfRequired();
                 final long seqTxn = getSequencerTxn();

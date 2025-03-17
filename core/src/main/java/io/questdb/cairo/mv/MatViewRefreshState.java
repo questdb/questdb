@@ -46,10 +46,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static io.questdb.TelemetrySystemEvent.*;
 
 public class MatViewRefreshState implements QuietCloseable {
+    public static final int MAT_VIEW_FULL_REFRESH_TXN_MARKER = -1;
     public static final int MAT_VIEW_STATE_BLOCK_TYPE = 0;
     public static final String MAT_VIEW_STATE_FILE_NAME = "_mv.s";
     public static final int MAT_VIEW_TXN_BLOCK_TYPE = 1;
-
     // used to avoid concurrent refresh runs
     private final AtomicBoolean latch = new AtomicBoolean(false);
     private final MatViewTelemetryFacade telemetryFacade;
@@ -58,9 +58,9 @@ public class MatViewRefreshState implements QuietCloseable {
     private volatile boolean dropped;
     private volatile boolean invalid;
     private volatile String invalidationReason;
-    private volatile long lastRefreshBaseTxn = -1;
+    private volatile long lastRefreshBaseTxn = MAT_VIEW_FULL_REFRESH_TXN_MARKER;
     private volatile long lastRefreshTimestamp = Numbers.LONG_NULL;
-    private volatile long matViewSeqTxn = -1;
+    private volatile long matViewSeqTxn = MAT_VIEW_FULL_REFRESH_TXN_MARKER;
     private volatile boolean pendingInvalidation;
     private long recordRowCopierMetadataVersion;
     private RecordToRowCopier recordToRowCopier;
@@ -106,7 +106,7 @@ public class MatViewRefreshState implements QuietCloseable {
 
     public static void readFrom(@NotNull BlockFileReader reader, @NotNull MatViewRefreshState refreshState) {
         final BlockFileReader.BlockCursor cursor = reader.getCursor();
-        refreshState.matViewSeqTxn = -1;
+        refreshState.matViewSeqTxn = MAT_VIEW_FULL_REFRESH_TXN_MARKER;
 
         boolean isStateBlockFound = false;
         while (cursor.hasNext()) {
