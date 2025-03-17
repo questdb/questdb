@@ -2354,7 +2354,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 rowAction = ROW_ACTION_SWITCH_PARTITION;
                 // fall thru
-            case ROW_ACTION_SWITCH_PARTITION: // switch partition
+            case ROW_ACTION_SWITCH_PARTITION:
                 validatePartitioningTimestampBounds(timestamp);
                 bumpMasterRef();
                 if (timestamp > partitionTimestampHi || timestamp < txWriter.getMaxTimestamp()) {
@@ -2374,7 +2374,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 updateMaxTimestamp(timestamp);
                 break;
             default:
-                throw new AssertionError("Invalid switch value");
+                throw new AssertionError("Invalid row action constant");
         }
         txWriter.append();
         return row;
