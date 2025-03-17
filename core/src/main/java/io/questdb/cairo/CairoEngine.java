@@ -1521,6 +1521,9 @@ public class CairoEngine implements Closeable, WriterSource {
                             tableSequencerAPI.registerTable(tableToken.getTableId(), struct, tableToken);
                         }
                         if (!keepLock) {
+                            // Unlock pools before registering the name
+                            // to avoid `table busy` errors when trying to use the table immediately after registration
+                            // in concurrent threads
                             unlockTableUnsafe(tableToken, null, true);
                             locked = false;
                             LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
