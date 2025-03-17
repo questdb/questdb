@@ -27,6 +27,7 @@ package io.questdb.cutlass.pgwire.modern;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.FlatArrayView;
+import io.questdb.cairo.arr.MutableArray;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cutlass.pgwire.BadProtocolException;
 import io.questdb.cutlass.pgwire.PGOids;
@@ -34,7 +35,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 
-final class PgNonNullBinaryArrayView extends PGWireArrayView implements FlatArrayView, Mutable {
+final class PgNonNullBinaryArrayView extends MutableArray implements FlatArrayView, Mutable {
     private long hi;
     private long lo;
 
@@ -94,7 +95,11 @@ final class PgNonNullBinaryArrayView extends PGWireArrayView implements FlatArra
         return 0;
     }
 
-    @Override
+    void addDimLen(int dimLen) {
+        shape.add(dimLen);
+        flatViewLength *= dimLen;
+    }
+
     void setPtrAndCalculateStrides(long lo, long hi, int pgOidType, PGPipelineEntry pipelineEntry) throws BadProtocolException {
         short componentNativeType;
         int elementSize;

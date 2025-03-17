@@ -2519,8 +2519,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void setBindVariableAsArray(int i, long lo, int valueSize, long msgLimit, BindVariableService bindVariableService) throws SqlException, BadProtocolException {
-        PGWireArrayView arrayView;
-
         int dimensions = getInt(lo, msgLimit, "malformed array dimensions");
         lo += Integer.BYTES;
         valueSize -= Integer.BYTES;
@@ -2535,12 +2533,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         lo += Integer.BYTES;
         valueSize -= Integer.BYTES;
 
-        arrayView = arrayViewPool.next();
-        IntList dimensionSizes = new IntList();
+        PgNonNullBinaryArrayView arrayView = arrayViewPool.next();
         for (int j = 0; j < dimensions; j++) {
             int dimensionSize = getInt(lo, msgLimit, "malformed array dimension size");
             arrayView.addDimLen(dimensionSize);
-            dimensionSizes.add(dimensionSize);
             lo += Integer.BYTES;
             valueSize -= Integer.BYTES;
 
