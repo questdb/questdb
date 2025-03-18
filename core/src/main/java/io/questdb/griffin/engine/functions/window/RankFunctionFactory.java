@@ -43,7 +43,6 @@ import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
@@ -110,7 +109,221 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
-    protected static class RankOverPartitionFunction extends LongFunction implements ScalarFunction, WindowFunction, Reopenable {
+    protected static class RankFunction extends LongFunction implements Function, WindowFunction, Reopenable {
+
+        private final CairoConfiguration configuration;
+        private final boolean dense;
+        private final String name;
+
+        private long rank;
+        private long count = 1;
+        private RecordComparator recordComparator;
+        private int columnIndex;
+        private SingleRecordSink singleRecordSinkA;
+        private SingleRecordSink singleRecordSinkB;
+        private long lastRecordOffset;
+        private RecordSink recordSink;
+
+        public RankFunction(CairoConfiguration configuration, boolean dense, String name) {
+            this.configuration = configuration;
+            this.dense = dense;
+            this.name = name;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            return rank;
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            SingleRecordSink singleRecordSink = count % 2 == 0 ? singleRecordSinkA : singleRecordSinkB;
+            singleRecordSink.clear();
+            recordSink.copy(record, singleRecordSink);
+            if (count == 1) {
+                rank = 1;
+            } else {
+                if (!singleRecordSinkA.memeq(singleRecordSinkB)) {
+                    rank = dense ? rank + 1 : count;
+                }
+            }
+            count++;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public void initRecordComparator(SqlCodeGenerator sqlGenerator,
+                                         RecordMetadata metadata,
+                                         ArrayColumnTypes chainTypes,
+                                         IntList orderIndices,
+                                         ObjList<ExpressionNode> orderBy,
+                                         IntList orderByDirection) throws SqlException {
+            if (chainTypes.getColumnCount() == 0) {
+                ListColumnFilter listColumnFilter = sqlGenerator.getIndexColumnFilter();
+                listColumnFilter.clear();
+                for (int i = 0, size = orderBy.size(); i < size; i++) {
+                    ExpressionNode tok = orderBy.getQuick(i);
+                    int index = metadata.getColumnIndexQuiet(tok.token);
+                    listColumnFilter.add(index + 1);
+                }
+
+                for (int i = 0, size = metadata.getColumnCount(); i < size; i++) {
+                    chainTypes.add(metadata.getColumnType(i));
+                }
+                recordSink = RecordSinkFactory.getInstance(sqlGenerator.getAsm(), chainTypes, listColumnFilter);
+                singleRecordSinkA = new SingleRecordSink((long) configuration.getSqlWindowStorePageSize() * configuration.getSqlWindowStoreMaxPages() / 2, MemoryTag.NATIVE_RECORD_CHAIN);
+                singleRecordSinkB = new SingleRecordSink((long) configuration.getSqlWindowStorePageSize() * configuration.getSqlWindowStoreMaxPages() / 2, MemoryTag.NATIVE_RECORD_CHAIN);
+            } else {
+                if (orderIndices == null) {
+                    orderIndices = sqlGenerator.toOrderIndices(metadata, orderBy, orderByDirection);
+                }
+                this.recordComparator = sqlGenerator.getRecordComparatorCompiler().compile(chainTypes, orderIndices);
+            }
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            if (count == 1) {
+                rank = 1;
+            } else {
+                recordComparator.setLeft(record);
+                if (recordComparator.compare(spi.getRecordAt(lastRecordOffset)) != 0) {
+                    rank = dense ? rank + 1 : count;
+                }
+            }
+            lastRecordOffset = recordOffset;
+            count++;
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), rank);
+        }
+
+        @Override
+        public void setColumnIndex(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public String getName() {
+            return name;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName());
+            sink.val("() over ()");
+        }
+
+        @Override
+        public void reopen() {
+            count = 1;
+            if (singleRecordSinkA != null) {
+                singleRecordSinkA.reopen();
+            }
+            if (singleRecordSinkB != null) {
+                singleRecordSinkB.reopen();
+            }
+        }
+
+        @Override
+        public void reset() {
+            count = 1;
+        }
+
+        @Override
+        public void toTop() {
+            count = 1;
+            super.toTop();
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            Misc.free(singleRecordSinkA);
+            Misc.free(singleRecordSinkB);
+        }
+    }
+
+    protected static class RankNoOrderFunction extends LongFunction implements Function, WindowFunction, Reopenable {
+
+        private final VirtualRecord partitionByRecord;
+        private final String name;
+
+        private int columnIndex;
+        private static final long RANK_CONST = 1;
+
+        public RankNoOrderFunction(VirtualRecord partitionByRecord, String name) {
+            this.partitionByRecord = partitionByRecord;
+            this.name = name;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            return RANK_CONST;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), RANK_CONST);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            if (partitionByRecord != null) {
+                Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
+            }
+        }
+
+        @Override
+        public void setColumnIndex(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public String getName() {
+            return name;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName());
+            sink.val("()");
+            if (partitionByRecord != null) {
+                sink.val(" over (");
+                sink.val("partition by ");
+                sink.val(partitionByRecord.getFunctions());
+                sink.val(')');
+            } else {
+                sink.val(" over ()");
+            }
+        }
+
+        @Override
+        public void reset() {
+        }
+
+        @Override
+        public void reopen() {
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            if (partitionByRecord != null) {
+                Misc.freeObjList(partitionByRecord.getFunctions());
+            }
+        }
+    }
+
+    protected static class RankOverPartitionFunction extends LongFunction implements Function, WindowFunction, Reopenable {
 
         private final VirtualRecord partitionByRecord;
         private final RecordSink partitionBySink;
@@ -289,220 +502,6 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             super.close();
             Misc.free(map);
             Misc.freeObjList(partitionByRecord.getFunctions());
-        }
-    }
-
-    protected static class RankFunction extends LongFunction implements ScalarFunction, WindowFunction, Reopenable {
-
-        private final CairoConfiguration configuration;
-        private final boolean dense;
-        private final String name;
-
-        private long rank;
-        private long count = 1;
-        private RecordComparator recordComparator;
-        private int columnIndex;
-        private SingleRecordSink singleRecordSinkA;
-        private SingleRecordSink singleRecordSinkB;
-        private long lastRecordOffset;
-        private RecordSink recordSink;
-
-        public RankFunction(CairoConfiguration configuration, boolean dense, String name) {
-            this.configuration = configuration;
-            this.dense = dense;
-            this.name = name;
-        }
-
-        @Override
-        public long getLong(Record rec) {
-            return rank;
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            SingleRecordSink singleRecordSink = count % 2 == 0 ? singleRecordSinkA : singleRecordSinkB;
-            singleRecordSink.clear();
-            recordSink.copy(record, singleRecordSink);
-            if (count == 1) {
-                rank = 1;
-            } else {
-                if (!singleRecordSinkA.memeq(singleRecordSinkB)) {
-                    rank = dense ? rank + 1 : count;
-                }
-            }
-            count++;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public void initRecordComparator(SqlCodeGenerator sqlGenerator,
-                                         RecordMetadata metadata,
-                                         ArrayColumnTypes chainTypes,
-                                         IntList orderIndices,
-                                         ObjList<ExpressionNode> orderBy,
-                                         IntList orderByDirection) throws SqlException {
-            if (chainTypes.getColumnCount() == 0) {
-                ListColumnFilter listColumnFilter = sqlGenerator.getIndexColumnFilter();
-                listColumnFilter.clear();
-                for (int i = 0, size = orderBy.size(); i < size; i++) {
-                    ExpressionNode tok = orderBy.getQuick(i);
-                    int index = metadata.getColumnIndexQuiet(tok.token);
-                    listColumnFilter.add(index + 1);
-                }
-
-                for (int i = 0, size = metadata.getColumnCount(); i < size; i++) {
-                    chainTypes.add(metadata.getColumnType(i));
-                }
-                recordSink = RecordSinkFactory.getInstance(sqlGenerator.getAsm(), chainTypes, listColumnFilter);
-                singleRecordSinkA = new SingleRecordSink((long) configuration.getSqlWindowStorePageSize() * configuration.getSqlWindowStoreMaxPages() / 2, MemoryTag.NATIVE_RECORD_CHAIN);
-                singleRecordSinkB = new SingleRecordSink((long) configuration.getSqlWindowStorePageSize() * configuration.getSqlWindowStoreMaxPages() / 2, MemoryTag.NATIVE_RECORD_CHAIN);
-            } else {
-                if (orderIndices == null) {
-                    orderIndices = sqlGenerator.toOrderIndices(metadata, orderBy, orderByDirection);
-                }
-                this.recordComparator = sqlGenerator.getRecordComparatorCompiler().compile(chainTypes, orderIndices);
-            }
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            if (count == 1) {
-                rank = 1;
-            } else {
-                recordComparator.setLeft(record);
-                if (recordComparator.compare(spi.getRecordAt(lastRecordOffset)) != 0) {
-                    rank = dense ? rank + 1 : count;
-                }
-            }
-            lastRecordOffset = recordOffset;
-            count++;
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), rank);
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public String getName() {
-            return name;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(getName());
-            sink.val("() over ()");
-        }
-
-        @Override
-        public void reopen() {
-            count = 1;
-            if (singleRecordSinkA != null) {
-                singleRecordSinkA.reopen();
-            }
-            if (singleRecordSinkB != null) {
-                singleRecordSinkB.reopen();
-            }
-        }
-
-        @Override
-        public void reset() {
-            count = 1;
-        }
-
-        @Override
-        public void toTop() {
-            count = 1;
-            super.toTop();
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            Misc.free(singleRecordSinkA);
-            Misc.free(singleRecordSinkB);
-        }
-    }
-
-    protected static class RankNoOrderFunction extends LongFunction implements ScalarFunction, WindowFunction, Reopenable {
-
-        private final VirtualRecord partitionByRecord;
-        private final String name;
-
-        private int columnIndex;
-        private static final long RANK_CONST = 1;
-
-        public RankNoOrderFunction(VirtualRecord partitionByRecord, String name) {
-            this.partitionByRecord = partitionByRecord;
-            this.name = name;
-        }
-
-        @Override
-        public long getLong(Record rec) {
-            return RANK_CONST;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), RANK_CONST);
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
-            if (partitionByRecord != null) {
-                Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
-            }
-        }
-
-        @Override
-        public void setColumnIndex(int columnIndex) {
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public String getName() {
-            return name;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(getName());
-            sink.val("()");
-            if (partitionByRecord != null) {
-                sink.val(" over (");
-                sink.val("partition by ");
-                sink.val(partitionByRecord.getFunctions());
-                sink.val(')');
-            } else {
-                sink.val(" over ()");
-            }
-        }
-
-        @Override
-        public void reset() {
-        }
-
-        @Override
-        public void reopen() {
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            if (partitionByRecord != null) {
-                Misc.freeObjList(partitionByRecord.getFunctions());
-            }
         }
     }
 

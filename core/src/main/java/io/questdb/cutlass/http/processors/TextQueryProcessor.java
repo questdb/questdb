@@ -180,6 +180,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                             }
                         }
                     }
+                    state.metadata = state.recordCursorFactory.getMetadata();
                     doResumeSend(context);
                 } catch (CairoException e) {
                     state.setQueryCacheable(e.isCacheable());
@@ -408,7 +409,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                             if (state.columnIndex > 0 && state.columnValueFullySent) {
                                 response.putAscii(state.delimiter);
                             }
-                            putValue(response, state.metadata.getColumnType(state.columnIndex), state.record, state.columnIndex);
+                            putValue(response, state);
                             state.columnIndex++;
                             response.bookmark();
                         }

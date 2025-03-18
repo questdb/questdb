@@ -27,6 +27,7 @@ package io.questdb.cutlass.http.processors;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpResponseArrayState;
 import io.questdb.std.Misc;
@@ -48,6 +49,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
     char delimiter = ',';
     String fileName;
     boolean hasNext;
+    RecordMetadata metadata;
     boolean noMeta = false;
     boolean pausedQuery = false;
     int queryState;
@@ -90,6 +92,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
         pausedQuery = false;
         arrayState.clear();
         columnValueFullySent = true;
+        metadata = null;
     }
 
     @Override
