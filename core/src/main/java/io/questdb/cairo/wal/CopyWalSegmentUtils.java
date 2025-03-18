@@ -51,7 +51,7 @@ public class CopyWalSegmentUtils {
             int columnType,
             long startRowNumber,
             long rowCount,
-            SegmentColumnRollSink newColumnFiles,
+            SegmentColumnRollSink columnRollSink,
             int commitMode,
             int newColumnType,
             @Nullable SymbolTable symbolTable,
@@ -60,7 +60,7 @@ public class CopyWalSegmentUtils {
         Path newSegPath = Path.PATH.get().of(walPath).slash().put(newSegment);
         int setPathRoot = newSegPath.size();
         long primaryFd = openRW(ff, dFile(newSegPath, columnName, COLUMN_NAME_TXN_NONE), LOG, options);
-        newColumnFiles.setDestPrimaryFd(primaryFd);
+        columnRollSink.setDestPrimaryFd(primaryFd);
 
         long secondaryFd;
         if (ColumnType.isVarSize(newColumnType)) {
@@ -68,7 +68,7 @@ public class CopyWalSegmentUtils {
         } else {
             secondaryFd = -1;
         }
-        newColumnFiles.setDestSecondaryFd(secondaryFd);
+        columnRollSink.setDestSecondaryFd(secondaryFd);
 
         boolean success;
         if (columnType == newColumnType) {
@@ -82,7 +82,7 @@ public class CopyWalSegmentUtils {
                         secondaryFd,
                         startRowNumber,
                         rowCount,
-                        newColumnFiles,
+                        columnRollSink,
                         commitMode
                 );
             } else if (columnType > 0) {
@@ -93,7 +93,7 @@ public class CopyWalSegmentUtils {
                         startRowNumber,
                         rowCount,
                         columnType,
-                        newColumnFiles,
+                        columnRollSink,
                         commitMode
                 );
             } else {
@@ -103,7 +103,7 @@ public class CopyWalSegmentUtils {
                         primaryFd,
                         startRowNumber,
                         rowCount,
-                        newColumnFiles,
+                        columnRollSink,
                         commitMode
                 );
             }
@@ -144,7 +144,7 @@ public class CopyWalSegmentUtils {
                         symbolMapWriter,
                         ff,
                         primaryColumn.getExtendSegmentSize(),
-                        newColumnFiles
+                        columnRollSink
                 );
                 if (commitMode != CommitMode.NOSYNC) {
                     ff.fsync(srcFixFd);
@@ -178,17 +178,18 @@ public class CopyWalSegmentUtils {
             long rowOffset,
             long rowCount,
             int columnType,
-            SegmentColumnRollSink newOffsets,
+            SegmentColumnRollSink columnRollSink,
             int commitMode
     ) {
         int shl = ColumnType.pow2SizeOf(columnType);
+        assert shl > -1;
         long offset = rowOffset << shl;
         long length = rowCount << shl;
 
         boolean success = ff.copyData(primaryColumn.getFd(), primaryFd, offset, length) == length;
         if (success) {
-            newOffsets.setSrcOffsets(offset, -1);
-            newOffsets.setDestSizes(length, -1);
+            columnRollSink.setSrcOffsets(offset, -1);
+            columnRollSink.setDestSizes(length, -1);
             if (commitMode != CommitMode.NOSYNC) {
                 ff.fsync(primaryFd);
             }
@@ -202,11 +203,11 @@ public class CopyWalSegmentUtils {
             long primaryFd,
             long rowOffset,
             long rowCount,
-            SegmentColumnRollSink newOffsets,
+            SegmentColumnRollSink columnRollSink,
             int commitMode
     ) {
         // Designated timestamp column is written as 2 long values
-        if (!copyFixLenFile(ff, primaryColumn, primaryFd, rowOffset, rowCount, ColumnType.LONG128, newOffsets, commitMode)) {
+        if (!copyFixLenFile(ff, primaryColumn, primaryFd, rowOffset, rowCount, ColumnType.LONG128, columnRollSink, commitMode)) {
             return false;
         }
         long size = rowCount << 4;
@@ -228,7 +229,7 @@ public class CopyWalSegmentUtils {
             long secondaryFd,
             long startRowNumber,
             long rowCount,
-            SegmentColumnRollSink newOffsets,
+            SegmentColumnRollSink columnRollSink,
             int commitMode
     ) {
         ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
@@ -261,8 +262,8 @@ public class CopyWalSegmentUtils {
                     newAuxMemSize
             );
 
-            newOffsets.setSrcOffsets(dataStartOffset, columnTypeDriver.getAuxVectorSize(startRowNumber));
-            newOffsets.setDestSizes(dataSize, newAuxMemSize);
+            columnRollSink.setSrcOffsets(dataStartOffset, columnTypeDriver.getAuxVectorSize(startRowNumber));
+            columnRollSink.setDestSizes(dataSize, newAuxMemSize);
 
             if (commitMode != CommitMode.NOSYNC) {
                 ff.msync(newAuxMemAddr, newAuxMemSize, commitMode == CommitMode.ASYNC);

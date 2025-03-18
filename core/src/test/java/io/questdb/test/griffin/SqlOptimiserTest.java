@@ -4074,7 +4074,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    Async Group By workers: 1\n" +
                             "      keys: [symbol,timestamp]\n" +
                             "      values: [last(price)]\n" +
-                            "      filter: symbol ~ BTC-USD\n" +
+                            "      filter: symbol ~ BTC-USD [state-shared]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Interval forward scan on: trades\n" +

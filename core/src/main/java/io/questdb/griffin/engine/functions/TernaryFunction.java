@@ -40,6 +40,15 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
+    default void offerStateTo(Function that) {
+        if (that instanceof TernaryFunction) {
+            getLeft().offerStateTo(((TernaryFunction) that).getLeft());
+            getCenter().offerStateTo(((TernaryFunction) that).getCenter());
+            getRight().offerStateTo(((TernaryFunction) that).getRight());
+        }
+    }
+
+    @Override
     default void cursorClosed() {
         getLeft().cursorClosed();
         getCenter().cursorClosed();
@@ -57,13 +66,6 @@ public interface TernaryFunction extends Function {
         getLeft().init(symbolTableSource, executionContext);
         getCenter().init(symbolTableSource, executionContext);
         getRight().init(symbolTableSource, executionContext);
-    }
-
-    @Override
-    default void initCursor() {
-        getLeft().initCursor();
-        getCenter().initCursor();
-        getRight().initCursor();
     }
 
     @Override

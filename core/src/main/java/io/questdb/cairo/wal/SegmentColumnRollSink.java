@@ -46,7 +46,7 @@ public class SegmentColumnRollSink implements ColumnConversionOffsetSink {
     }
 
     public long getDestAuxSize(int columnIndex) {
-        return (int) data.get(columnIndex * ENTRIES_PER_COLUMN + 5);
+        return data.get(columnIndex * ENTRIES_PER_COLUMN + 5);
     }
 
     public long getDestPrimaryFd(int columnIndex) {
@@ -54,15 +54,15 @@ public class SegmentColumnRollSink implements ColumnConversionOffsetSink {
     }
 
     public long getDestPrimarySize(int columnIndex) {
-        return (int) data.get(columnIndex * ENTRIES_PER_COLUMN + 4);
+        return data.get(columnIndex * ENTRIES_PER_COLUMN + 4);
     }
 
     public long getSrcAuxOffset(int c) {
-        return (int) data.get(c * ENTRIES_PER_COLUMN + 3);
+        return data.get(c * ENTRIES_PER_COLUMN + 3);
     }
 
     public long getSrcPrimaryOffset(int columnIndex) {
-        return (int) data.get(columnIndex * ENTRIES_PER_COLUMN + 2);
+        return data.get(columnIndex * ENTRIES_PER_COLUMN + 2);
     }
 
     public void nextColumn() {

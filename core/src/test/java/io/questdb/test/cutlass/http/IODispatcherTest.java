@@ -8655,10 +8655,6 @@ public class IODispatcherTest extends AbstractTest {
                         TestCase testCase = testCases.getQuick(i);
                         // http does not support bind variables yet
                         if (testCase.getBindVariableValues().length == 0) {
-                            System.out.println("************** SQL " + i + " ******************");
-                            System.out.println(testCase.getQuery());
-                            System.out.println("*************************************");
-
                             engine.releaseAllReaders();
                             engine.setReaderListener(null);
 

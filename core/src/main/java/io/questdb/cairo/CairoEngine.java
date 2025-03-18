@@ -192,8 +192,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.tableIdGenerator = IDGeneratorFactory.newIDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME, 1);
             this.checkpointAgent = new DatabaseCheckpointAgent(this);
             this.queryRegistry = new QueryRegistry(configuration);
-            this.rootExecutionContext = new SqlExecutionContextImpl(this, 1)
-                    .with(AllowAllSecurityContext.INSTANCE);
+            this.rootExecutionContext = createRootExecutionContext();
 
             tableIdGenerator.open();
             checkpointRecover();
@@ -1541,8 +1540,8 @@ public class CairoEngine implements Closeable, WriterSource {
             }
             try {
                 String lockedReason = lockAll(tableToken, "createTable", true);
+                boolean locked = true;
                 if (lockedReason == null) {
-                    boolean tableCreated = false;
                     try {
                         if (inVolume) {
                             createTableOrMatViewInVolumeUnsafe(mem, blockFileWriter, path, struct, tableToken);
@@ -1553,15 +1552,21 @@ public class CairoEngine implements Closeable, WriterSource {
                         if (struct.isWalEnabled()) {
                             tableSequencerAPI.registerTable(tableToken.getTableId(), struct, tableToken);
                         }
-
+                        if (!keepLock) {
+                            // Unlock pools before registering the name
+                            // to avoid `table busy` errors when trying to use the table immediately after registration
+                            // in concurrent threads
+                            unlockTableUnsafe(tableToken, null, true);
+                            locked = false;
+                            LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
+                        }
                         tableNameRegistry.registerName(tableToken);
-                        tableCreated = true;
                     } catch (Throwable e) {
                         keepLock = false;
                         throw e;
                     } finally {
-                        if (!keepLock) {
-                            unlockTableUnsafe(tableToken, null, tableCreated);
+                        if (!keepLock && locked) {
+                            unlockTableUnsafe(tableToken, null, false);
                             LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
                         }
                     }
@@ -1688,6 +1693,10 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.tableDoesNotExist(tableName);
         }
         return token;
+    }
+
+    protected SqlExecutionContext createRootExecutionContext() {
+        return new SqlExecutionContextImpl(this, 1).with(AllowAllSecurityContext.INSTANCE);
     }
 
     protected @NotNull <T extends AbstractTelemetryTask> Telemetry<T> createTelemetry(

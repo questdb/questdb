@@ -43,44 +43,53 @@ import java.io.Closeable;
 
 public interface Function extends Closeable, StatefulAtom, Plannable {
 
+    /**
+     * Initializes each function in the list of clones. It is assumed by this method that "clones" are copies of
+     * the same function.
+     * <p>
+     * Two-phase functions might need to perform certain transformations upfront, before SQL executes. This is to
+     * avoid doing those transformations on for every row/invocation. These transformations are done during the
+     * "init" phase.
+     * <p>
+     * During concurrent SQL execution it might be beneficial to split the "init" phase into per-SQL execution and
+     * per-thread. For example "init" could be a heavy SQL execution itself, which would benefit from executing once and
+     * copying state of this execution to clones, so that clones to not have to repeat that heavy SQL execution. The
+     * "prototype" function is the one that has already been fully initialized and it is ready to pass its state to
+     * all the clones.
+     * <p>
+     * Even though the prototype will be trying to pass its state, the clones do not have to accept it and choose to
+     * continue to calculate own state.
+     *
+     * @param clones            uniform function to initialize and accept state from the prototype, if prototype is not null
+     * @param symbolTableSource symbol table source to perform symbol value to key conversion
+     * @param executionContext  the execution context, bind variables etc
+     * @param prototypeFunction the prototype function, ready to donate its state
+     * @throws SqlException function are allowed to throw SQLException to indicate initialization error
+     */
     static void init(
-            ObjList<? extends Function> args,
+            ObjList<? extends Function> clones,
             SymbolTableSource symbolTableSource,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            @Nullable Function prototypeFunction
     ) throws SqlException {
-        for (int i = 0, n = args.size(); i < n; i++) {
-            args.getQuick(i).init(symbolTableSource, executionContext);
+        if (prototypeFunction != null) {
+            for (int i = 0, n = clones.size(); i < n; i++) {
+                prototypeFunction.offerStateTo(clones.getQuick(i));
+            }
         }
-    }
-
-    static void initCursor(ObjList<? extends Function> args) {
-        for (int i = 0, n = args.size(); i < n; i++) {
-            args.getQuick(i).initCursor();
+        for (int i = 0, n = clones.size(); i < n; i++) {
+            clones.getQuick(i).init(symbolTableSource, executionContext);
         }
     }
 
     static void initNc(
             ObjList<? extends Function> args,
             SymbolTableSource symbolTableSource,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            @Nullable Function prototypeFunction
     ) throws SqlException {
         if (args != null) {
-            init(args, symbolTableSource, executionContext);
-        }
-    }
-
-    static void initNcFunctions(
-            ObjList<? extends Function> args,
-            SymbolTableSource symbolTableSource,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        if (args != null) {
-            for (int i = 0, n = args.size(); i < n; i++) {
-                final Function arg = args.getQuiet(i);
-                if (arg != null) {
-                    arg.init(symbolTableSource, executionContext);
-                }
-            }
+            init(args, symbolTableSource, executionContext, prototypeFunction);
         }
     }
 
@@ -222,7 +231,7 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      * value is liable to change.
      * <p>
      * In practice this means that function arguments that are runtime constants can be
-     * evaluated in the functions {@link #init(ObjList, SymbolTableSource, SqlExecutionContext)} call.
+     * evaluated in the functions {@link #init(ObjList, SymbolTableSource, SqlExecutionContext, Function)} call.
      * <p>
      * It has be noted that the function cannot be both {@link #isConstant()} and runtime constant.
      *
@@ -254,6 +263,9 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     default boolean isUndefined() {
         return getType() == ColumnType.UNDEFINED;
+    }
+
+    default void offerStateTo(Function that) {
     }
 
     /**
