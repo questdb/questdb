@@ -1409,6 +1409,29 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
+    public void testArrayNonFinite() throws Exception {
+        skipOnWalRun();
+        skipInLegacyMode();
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement statement = connection.prepareStatement("select ?::double[] as arr from long_sequence(1);")) {
+                sink.clear();
+                double[] arr = new double[]{Double.NaN, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, 0.0};
+                PGConnection pgConnection = connection.unwrap(PGConnection.class);
+                Array pgArray = pgConnection.createArrayOf("float8", arr);
+
+                statement.setArray(1, pgArray);
+
+                try (ResultSet rs = statement.executeQuery()) {
+                    assertResultSet("arr[ARRAY]\n" +
+                                    "{NaN,-Infinity,Infinity,0.0}\n",
+                            sink, rs);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testArrayResultSet() throws Exception {
         skipOnWalRun();
         skipInLegacyMode();

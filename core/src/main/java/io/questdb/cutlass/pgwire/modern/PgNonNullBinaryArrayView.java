@@ -44,6 +44,7 @@ final class PgNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
     private long lo;
 
     public PgNonNullBinaryArrayView() {
+        this.isVanilla = false;
         this.flatViewLength = 1;
         this.flatView = this;
     }

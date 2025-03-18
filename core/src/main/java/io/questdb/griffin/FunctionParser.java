@@ -735,11 +735,15 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             // whatever happens to be the first cast function in the traversal order, and force
             // the bind variable to that type. This will then fail when an actual value is bound
             // to the variable, and it's most likely not that arbitrary type.
-            if (args.getQuick(0).isUndefined()) {
-                final Function undefinedArg = args.getQuick(0);
+            Function arg0 = args.getQuick(0);
+            if (
+                    arg0.isUndefined() // type not defined at all
+                            || arg0.getType() == ColumnType.ARRAY // array type, but unknown dimension/element type
+            ) {
                 final int castToType = args.getQuick(1).getType();
+                short castToTypeTag = ColumnType.tagOf(castToType);
                 final int assignType;
-                switch (castToType) {
+                switch (castToTypeTag) {
                     case ColumnType.VARCHAR:
                     case ColumnType.STRING:
                     case ColumnType.CHAR:
@@ -753,13 +757,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     case ColumnType.DOUBLE:
                         assignType = ColumnType.DOUBLE;
                         break;
+                    case ColumnType.ARRAY:
+                        assignType = castToType;
+                        break;
                     default:
                         break skipAssigningType;
                 }
-                undefinedArg.assignType(assignType, sqlExecutionContext.getBindVariableService());
+                arg0.assignType(assignType, sqlExecutionContext.getBindVariableService());
                 if (assignType == castToType) {
                     // Now that that type is assigned, we can return the first argument, no additional cast needed
-                    return undefinedArg;
+                    return arg0;
                 }
             }
         }
