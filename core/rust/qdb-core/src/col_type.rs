@@ -286,18 +286,18 @@ mod tests {
 
     #[test]
     fn test_is_var_size() {
-        assert_eq!(ColumnTypeTag::Byte.is_var_size(), false);
-        assert_eq!(ColumnTypeTag::Boolean.is_var_size(), false);
-        assert_eq!(ColumnTypeTag::Long.is_var_size(), false);
-        assert_eq!(ColumnTypeTag::Double.is_var_size(), false);
-        assert_eq!(ColumnTypeTag::String.is_var_size(), true);
+        assert!(!ColumnTypeTag::Byte.is_var_size());
+        assert!(!ColumnTypeTag::Boolean.is_var_size());
+        assert!(!ColumnTypeTag::Long.is_var_size());
+        assert!(!ColumnTypeTag::Double.is_var_size());
+        assert!(ColumnTypeTag::String.is_var_size());
 
         // Yes, symbols too.
-        assert_eq!(ColumnTypeTag::Symbol.is_var_size(), false);
+        assert!(!ColumnTypeTag::Symbol.is_var_size());
 
-        assert_eq!(ColumnTypeTag::Binary.is_var_size(), true);
-        assert_eq!(ColumnTypeTag::String.is_var_size(), true);
-        assert_eq!(ColumnTypeTag::Varchar.is_var_size(), true);
+        assert!(ColumnTypeTag::Binary.is_var_size());
+        assert!(ColumnTypeTag::String.is_var_size());
+        assert!(ColumnTypeTag::Varchar.is_var_size());
     }
 
     #[test]
