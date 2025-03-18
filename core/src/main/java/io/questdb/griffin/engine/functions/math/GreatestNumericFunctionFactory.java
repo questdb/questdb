@@ -35,11 +35,16 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
-import io.questdb.griffin.engine.functions.cast.*;
+import io.questdb.griffin.engine.functions.cast.CastDoubleToFloatFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLongToByteFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLongToIntFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLongToShortFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLongToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
@@ -55,8 +60,8 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
@@ -85,7 +90,8 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
             }
         }
 
-        final Function retVal = getGreatestFunction(args, argPositions, counters);
+        // have to copy, args is mutable
+        final Function retVal = getGreatestFunction(new ObjList<>(args), counters);
 
         // clear array so we don't need to reconstruct it
         clearCounters(counters);
@@ -104,47 +110,45 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         Arrays.fill(counters, 0);
     }
 
-    private static @Nullable Function getGreatestFunction(ObjList<Function> args, IntList argPositions, int[] counters) {
+    private static @Nullable Function getGreatestFunction(ObjList<Function> args, int[] counters) {
         Function retVal = null;
 
         if (counters[ColumnType.DOUBLE] > 0) {
-            retVal = new GreatestDoubleRecordFunction(args, argPositions);
+            retVal = new GreatestDoubleRecordFunction(args);
         }
 
         if (counters[ColumnType.FLOAT] > 0 && retVal == null) {
-            retVal = new CastDoubleToFloatFunctionFactory.CastDoubleToFloatFunction(new GreatestDoubleRecordFunction(args, argPositions));
+            retVal = new CastDoubleToFloatFunctionFactory.CastDoubleToFloatFunction(new GreatestDoubleRecordFunction(args));
         }
 
         if (counters[ColumnType.LONG] > 0 && retVal == null) {
-            retVal = new GreatestLongRecordFunction(args, argPositions);
+            retVal = new GreatestLongRecordFunction(args);
         }
 
         if (counters[ColumnType.TIMESTAMP] > 0 && retVal == null) {
-            retVal = new CastLongToTimestampFunctionFactory.CastLongToTimestampFunction(new GreatestLongRecordFunction(args, argPositions));
+            retVal = new CastLongToTimestampFunctionFactory.CastLongToTimestampFunction(new GreatestLongRecordFunction(args));
         }
 
         if (counters[ColumnType.INT] > 0 && retVal == null) {
-            retVal = new CastLongToIntFunctionFactory.CastLongToIntFunction(new GreatestLongRecordFunction(args, argPositions));
+            retVal = new CastLongToIntFunctionFactory.CastLongToIntFunction(new GreatestLongRecordFunction(args));
         }
 
         if (counters[ColumnType.SHORT] > 0 && retVal == null) {
-            retVal = new CastLongToShortFunctionFactory.CastLongToShortFunction(new GreatestLongRecordFunction(args, argPositions));
+            retVal = new CastLongToShortFunctionFactory.CastLongToShortFunction(new GreatestLongRecordFunction(args));
         }
 
         if (counters[ColumnType.BYTE] > 0 && retVal == null) {
-            retVal = new CastLongToByteFunctionFactory.CastLongToByteFunction(new GreatestLongRecordFunction(args, argPositions));
+            retVal = new CastLongToByteFunctionFactory.CastLongToByteFunction(new GreatestLongRecordFunction(args));
         }
         return retVal;
     }
 
 
     private static class GreatestDoubleRecordFunction extends DoubleFunction implements MultiArgFunction {
-        final IntList argPositions;
-        final ObjList<Function> args;
+        private final ObjList<Function> args;
 
-        public GreatestDoubleRecordFunction(ObjList<Function> args, IntList argPositions) {
+        public GreatestDoubleRecordFunction(ObjList<Function> args) {
             this.args = args;
-            this.argPositions = argPositions;
         }
 
         @Override
@@ -177,12 +181,10 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
     }
 
     private static class GreatestLongRecordFunction extends LongFunction implements MultiArgFunction {
-        final IntList argPositions;
-        final ObjList<Function> args;
+        private final ObjList<Function> args;
 
-        public GreatestLongRecordFunction(ObjList<Function> args, IntList argPositions) {
+        public GreatestLongRecordFunction(ObjList<Function> args) {
             this.args = args;
-            this.argPositions = argPositions;
         }
 
         @Override

@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.functions.finance;
+package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.math.GreatestNumericFunctionFactory;
@@ -30,6 +30,32 @@ import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryTest {
+
+    @Test
+    public void testArgsAreCopied() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (time_a long, time_b long, ts timestamp) timestamp(ts) partition by day;");
+            execute(
+                    "insert into test " +
+                            "select x, x, timestamp_sequence('2025-01-05T02:30', x) ts " +
+                            "from long_sequence(1000000);"
+            );
+
+            assertQuery(
+                    "time\ttime_a\ttime_b\tts\n",
+                    "SELECT * " +
+                            "FROM ( " +
+                            "  SELECT " +
+                            "    greatest(coalesce(time_a, time_b), coalesce(time_b, time_a)) AS time, * " +
+                            "  FROM test " +
+                            "  WHERE ts > '2025-01-05T00:00:00.000000Z' " +
+                            "    AND ts < '2025-02-05T00:00:00.000000Z' " +
+                            "    AND (time_a IS NOT NULL OR time_b IS NOT NULL) " +
+                            ") " +
+                            "WHERE time IS NULL;"
+            );
+        });
+    }
 
     @Test
     public void testGreatestNumericFunctionFactoryBytes() throws Exception {
