@@ -25,11 +25,8 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoException;
-import io.questdb.griffin.SqlException;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.AbstractCairoTest;
-import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
@@ -38,8 +35,6 @@ import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
 import java.util.Collection;
-
-import static io.questdb.test.tools.TestUtils.assertContains;
 
 @RunWith(Parameterized.class)
 public class TimestampBoundsTest extends AbstractCairoTest {
@@ -67,18 +62,8 @@ public class TimestampBoundsTest extends AbstractCairoTest {
         Assume.assumeFalse(walEnabled);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts)");
-            try {
-                execute("INSERT INTO tango VALUES (NULL)");
-                Assert.fail("Inserting NULL timestamp should have failed");
-            } catch (SqlException e) {
-                assertContains(e.getMessage(), "designated timestamp column cannot be NULL");
-            }
-            try {
-                execute("INSERT INTO tango VALUES (" + -1L + ")");
-                Assert.fail("Inserting negative timestamp should have failed");
-            } catch (CairoException e) {
-                assertContains(e.getMessage(), "designated timestamp before 1970-01-01 is not allowed");
-            }
+            assertException("INSERT INTO tango VALUES (NULL)", -1, "designated timestamp column cannot be NULL");
+            assertException("INSERT INTO tango VALUES (" + -1L + ")", -1, "designated timestamp before 1970-01-01 is not allowed");
             execute("INSERT INTO tango VALUES (" + Timestamps.YEAR_10000 + ")");
         });
     }
@@ -88,25 +73,10 @@ public class TimestampBoundsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR "
                     + (walEnabled ? "" : "BYPASS ") + "WAL");
-            try {
-                execute("INSERT INTO tango VALUES (NULL)");
-                Assert.fail("Inserting NULL timestamp should have failed");
-            } catch (SqlException e) {
-                assertContains(e.getMessage(), "designated timestamp column cannot be NULL");
-            }
-            try {
-                execute("INSERT INTO tango VALUES (" + -1L + ")");
-                Assert.fail("Inserting timestamp before 1970 should have failed");
-            } catch (CairoException e) {
-                assertContains(e.getMessage(), "designated timestamp before 1970-01-01 is not allowed");
-            }
-            try {
-                execute("INSERT INTO tango VALUES (" + Timestamps.YEAR_10000 + ")");
-                Assert.fail("Inserting designated timestamp in year 10,000 should have failed");
-            } catch (CairoException e) {
-                assertContains(e.getMessage(),
-                        "designated timestamp beyond 9999-12-31 is not allowed in a partitioned table");
-            }
+            assertException("INSERT INTO tango VALUES (NULL)", -1, "designated timestamp column cannot be NULL");
+            assertException("INSERT INTO tango VALUES (" + -1L + ")", -1, "designated timestamp before 1970-01-01 is not allowed");
+            assertException("INSERT INTO tango VALUES (" + Timestamps.YEAR_10000 + ")", -1,
+                    "designated timestamp beyond 9999-12-31 is not allowed in a partitioned table");
         });
     }
 
@@ -116,25 +86,10 @@ public class TimestampBoundsTest extends AbstractCairoTest {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR "
                     + (walEnabled ? "" : "BYPASS ") + "WAL");
             execute("INSERT INTO tango VALUES (" + 1L + ")");
-            try {
-                execute("INSERT INTO tango VALUES (NULL)");
-                Assert.fail("Inserting NULL timestamp should have failed");
-            } catch (SqlException e) {
-                assertContains(e.getMessage(), "designated timestamp column cannot be NULL");
-            }
-            try {
-                execute("INSERT INTO tango VALUES (" + -1L + ")");
-                Assert.fail("Inserting timestamp before 1970 should have failed");
-            } catch (CairoException e) {
-                assertContains(e.getMessage(), "designated timestamp before 1970-01-01 is not allowed");
-            }
-            try {
-                execute("INSERT INTO tango VALUES (" + Timestamps.YEAR_10000 + ")");
-                Assert.fail("Inserting designated timestamp in year 10,000 should have failed");
-            } catch (CairoException e) {
-                assertContains(e.getMessage(),
-                        "designated timestamp beyond 9999-12-31 is not allowed in a partitioned table");
-            }
+            assertException("INSERT INTO tango VALUES (NULL)", -1, "designated timestamp column cannot be NULL");
+            assertException("INSERT INTO tango VALUES (" + -1L + ")", -1, "designated timestamp before 1970-01-01 is not allowed");
+            assertException("INSERT INTO tango VALUES (" + Timestamps.YEAR_10000 + ")", -1,
+                    "designated timestamp beyond 9999-12-31 is not allowed in a partitioned table");
         });
     }
 
