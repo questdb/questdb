@@ -1414,13 +1414,15 @@ public class PGJobContextTest extends BasePGTest {
         skipInLegacyMode();
 
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+
+            // we have to explicitly cast to double[] since in the Simple Mode PG JDBC sends array as string:
+            // `select ('{"NaN","-Infinity","Infinity","0.0"}') as arr from long_sequence(1)`
+            // and the server has no way to tell it should be an array. casting forces server to treat it as an array
             try (PreparedStatement statement = connection.prepareStatement("select ?::double[] as arr from long_sequence(1);")) {
                 sink.clear();
                 double[] arr = new double[]{Double.NaN, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, 0.0};
                 PGConnection pgConnection = connection.unwrap(PGConnection.class);
-                Array pgArray = pgConnection.createArrayOf("float8", arr);
-
-                statement.setArray(1, pgArray);
+                statement.setArray(1, pgConnection.createArrayOf("float8", arr));
 
                 try (ResultSet rs = statement.executeQuery()) {
                     assertResultSet("arr[ARRAY]\n" +
