@@ -309,6 +309,23 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             } catch (Throwable e) {
                 TestUtils.assertContains(e.getMessage(), "unexpected filter error");
             }
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Radix sort light\n" +
+                            "  keys: [timestamp]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [timestamp]\n" +
+                            "      values: [count(*)]\n" +
+                            "      filter: (symbol ~ .*?.ETH [state-shared] and row_id!=100)\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n",
+                    "explain select timestamp, count() as trades" +
+                            " from x" +
+                            " where symbol like '%_ETH' and (row_id != 100)" +
+                            " sample by 1h"
+            );
         }, 4, 4);
     }
 
