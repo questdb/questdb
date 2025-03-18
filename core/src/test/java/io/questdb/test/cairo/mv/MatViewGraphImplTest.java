@@ -34,6 +34,8 @@ import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewGraphImpl;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshState;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
@@ -44,6 +46,8 @@ import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import static io.questdb.cairo.wal.WalUtils.EVENT_FILE_NAME;
+import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 
@@ -127,69 +131,16 @@ public class MatViewGraphImplTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMatViewConsistencyCheck() throws Exception {
+    public void testMatViewConsistencyOutOfSyncBase() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = "table_base";
-            String viewName = "test";
-            execute(
-                    "create table if not exists " + tableName +
-                            " (ts timestamp, k symbol, v long)" +
-                            " timestamp(ts) partition by day wal"
-            );
+            checkRefreshStateConsistency(true);
+        });
+    }
 
-            final String query = "select ts, v+v doubleV, avg(v) from " + tableName + " sample by 30s";
-            execute("create materialized view " + viewName + " as (" + query + ") partition by day");
-            refresh();
-
-            for (int i = 0; i < 9; i++) {
-                execute("insert into " + tableName + " values (" + (i * 10000000) + ", 'k" + i + "', " + i + ")");
-                refresh();
-            }
-
-            refresh();
-
-            final TableToken matViewToken = engine.getTableTokenIfExists(viewName);
-            final MatViewRefreshState matViewRefreshState = engine.getMatViewGraph().getViewRefreshState(matViewToken);
-            assertNotNull(matViewRefreshState);
-
-
-            final TableToken baseTable = engine.getTableTokenIfExists(tableName);
-            long baseWalTxn = engine.getTableSequencerAPI().getTxnTracker(baseTable).getSeqTxn();
-            long viewWalTxn = engine.getTableSequencerAPI().getTxnTracker(matViewToken).getSeqTxn();
-
-            matViewRefreshState.setLastRefreshBaseTxn(baseWalTxn + 4);
-            matViewRefreshState.setSeqTxn(viewWalTxn + 2);
-
-            try (Path path = new Path()) {
-                try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
-                    writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                    MatViewRefreshState.append(matViewRefreshState, writer);
-                }
-
-                try (BlockFileReader reader = new BlockFileReader(configuration)) {
-                    reader.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                    MatViewDefinition def = engine.getMatViewGraph().getViewDefinition(matViewToken);
-                    assertNotNull(def);
-                    MatViewRefreshState actualState = new MatViewRefreshState(
-                            def,
-                            false,
-                            (event, tableToken, baseTableTxn, errorMessage, latencyUs) -> {
-                            }
-                    );
-                    MatViewRefreshState.readFrom(reader, actualState);
-                    assertEquals(viewWalTxn + 2, actualState.getSeqTxn());
-                    assertEquals(baseWalTxn + 4, actualState.getLastRefreshBaseTxn());
-                }
-                MatViewGraph matViewGraph = engine.getMatViewGraph();
-                matViewGraph.clear();
-                engine.buildMatViewGraph(true);
-                refresh();
-
-                final MatViewRefreshState newState = engine.getMatViewGraph().getViewRefreshState(matViewToken);
-                assertNotNull(newState);
-                // basWalTxn recovered from wal-e
-                assertEquals(baseWalTxn, newState.getLastRefreshBaseTxn());
-            }
+    @Test
+    public void testMatViewConsistencyOutOfSyncView() throws Exception {
+        assertMemoryLeak(() -> {
+            checkRefreshStateConsistency(false);
         });
     }
 
@@ -232,6 +183,123 @@ public class MatViewGraphImplTest extends AbstractCairoTest {
     private void addDefinition(TableToken viewToken, TableToken baseTableToken) {
         MatViewDefinition viewDefinition = createDefinition(viewToken, baseTableToken);
         graph.addView(viewDefinition);
+    }
+
+    private void checkRefreshStateConsistency(boolean baseOutOfSync) throws SqlException {
+        String tableName = "table_base";
+        String viewName = "test";
+        execute(
+                "create table if not exists " + tableName +
+                        " (ts timestamp, k symbol, v long)" +
+                        " timestamp(ts) partition by day wal"
+        );
+
+        final String query = "select ts, v+v doubleV, avg(v) from " + tableName + " sample by 30s";
+        execute("create materialized view " + viewName + " as (" + query + ") partition by day");
+        refresh();
+
+        final long txns = 14;
+        final long adv = 4;
+        for (int i = 0; i < txns; i++) {
+            execute("insert into " + tableName + " values (" + (i * 10000000) + ", 'k" + i + "', " + i + ")");
+            refresh();
+        }
+
+        refresh();
+
+        final TableToken matViewToken = engine.getTableTokenIfExists(viewName);
+        final MatViewRefreshState matViewRefreshState = engine.getMatViewGraph().getViewRefreshState(matViewToken);
+        assertNotNull(matViewRefreshState);
+
+        final TableToken baseTable = engine.getTableTokenIfExists(tableName);
+        long baseWalTxn = engine.getTableSequencerAPI().getTxnTracker(baseTable).getSeqTxn();
+        long viewWalTxn = engine.getTableSequencerAPI().getTxnTracker(matViewToken).getSeqTxn();
+
+        try (Path path = new Path()) {
+
+            // overwrite refresh state file
+            if (baseOutOfSync) {
+                matViewRefreshState.setLastRefreshBaseTxn(baseWalTxn + adv);
+            } else {
+                matViewRefreshState.setSeqTxn(viewWalTxn + adv);
+            }
+
+            try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
+                writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                MatViewRefreshState.append(matViewRefreshState, writer);
+            }
+
+            try (BlockFileReader reader = new BlockFileReader(configuration)) {
+                reader.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                MatViewDefinition def = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                assertNotNull(def);
+                MatViewRefreshState actualState = new MatViewRefreshState(
+                        def,
+                        false,
+                        (event, tableToken, baseTableTxn, errorMessage, latencyUs) -> {
+                        }
+                );
+                MatViewRefreshState.readFrom(reader, actualState);
+                if (baseOutOfSync) {
+                    assertEquals(baseWalTxn + adv, actualState.getLastRefreshBaseTxn());
+                } else {
+                    assertEquals(viewWalTxn + adv, actualState.getSeqTxn());
+                }
+            }
+
+            MatViewGraph matViewGraph = engine.getMatViewGraph();
+            matViewGraph.clear();
+            engine.buildMatViewGraph(true);
+            refresh();
+
+            MatViewRefreshState newState = engine.getMatViewGraph().getViewRefreshState(matViewToken);
+            assertNotNull(newState);
+
+            // case 1: refresh txn recovered from wal-e
+            assertSql(
+                    "view_name\tview_status\tinvalidation_reason\tbase_table_txn\tapplied_base_table_txn\n" +
+                            "test\tvalid\t\t" + txns + "\t" + txns + "\n",
+                    "select view_name, view_status, invalidation_reason, base_table_txn, applied_base_table_txn from materialized_views"
+            );
+
+            // case 2: failed to recover refresh txn due to wal-e error
+            path.of(configuration.getDbRoot()).concat(matViewToken).concat(WAL_NAME_BASE).put(1).slash().put(0).concat(EVENT_FILE_NAME);
+            configuration.getFilesFacade().remove(path.$());
+
+            matViewGraph = engine.getMatViewGraph();
+            matViewGraph.clear();
+            engine.buildMatViewGraph(true);
+            refresh();
+
+            newState = engine.getMatViewGraph().getViewRefreshState(matViewToken);
+            assertNotNull(newState);
+
+            String inv = baseOutOfSync ? "base table" : "materialized view";
+            long txn = baseOutOfSync ? baseWalTxn + adv : viewWalTxn;
+            assertSql(
+                    "view_name\tview_status\tinvalidation_reason\tbase_table_txn\tapplied_base_table_txn\n" +
+                            "test\tinvalid\trefresh state out of sync with " + inv + "\t" + txn + "\t" + txns + "\n",
+                    "select view_name, view_status, invalidation_reason, base_table_txn, applied_base_table_txn from materialized_views"
+            );
+
+            // case 3: failed to recover refresh txn due to txn log error
+            path.of(configuration.getDbRoot()).concat(matViewToken).concat(WalUtils.SEQ_DIR).concat(WalUtils.TXNLOG_FILE_NAME);
+            configuration.getFilesFacade().remove(path.$());
+
+            matViewGraph = engine.getMatViewGraph();
+            matViewGraph.clear();
+            engine.buildMatViewGraph(true);
+            refresh();
+
+            newState = engine.getMatViewGraph().getViewRefreshState(matViewToken);
+            assertNotNull(newState);
+
+            assertSql(
+                    "view_name\tview_status\tinvalidation_reason\tbase_table_txn\tapplied_base_table_txn\n" +
+                            "test\tinvalid\trefresh state out of sync with " + inv + "\t" + txn + "\t" + txns + "\n",
+                    "select view_name, view_status, invalidation_reason, base_table_txn, applied_base_table_txn from materialized_views"
+            );
+        }
     }
 
     private MatViewDefinition createDefinition(TableToken viewToken, TableToken baseTableToken) {

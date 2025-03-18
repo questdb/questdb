@@ -427,17 +427,30 @@ public class CairoEngine implements Closeable, WriterSource {
                                                     walEventReader
                                             );
                                         } catch (CairoException e) {
-                                            LOG.error().$("could not find last refresh base txn for materialized view, full refresh will be triggered [view=")
-                                                    .utf8(tableToken.getTableName()).I$();
+                                            LOG.error().$("could not find last refresh base txn for materialized view [view=")
+                                                    .utf8(tableToken.getTableName())
+                                                    .$(", errorCode=").$(e.getErrno())
+                                                    .$(", errorMsg=").$(e.getFlyweightMessage())
+                                                    .I$();
                                         }
                                     } catch (CairoException e) {
-                                        LOG.error().$("could not get transaction log cursor for materialized view, full refresh will be triggered [view=")
-                                                .utf8(tableToken.getTableName()).I$();
+                                        LOG.error().$("could not get transaction log cursor for materialized view [view=")
+                                                .utf8(tableToken.getTableName())
+                                                .$(",errorCode=").$(e.getErrno())
+                                                .$(",errorMsg=").$(e.getFlyweightMessage())
+                                                .I$();
                                     }
 
-                                    lastRefreshBaseTxn = lastRefreshBaseTxn > baseTableLastTxn ?
-                                            MatViewRefreshState.MAT_VIEW_FULL_REFRESH_TXN_MARKER : lastRefreshBaseTxn;
-                                    state.setLastRefreshBaseTxn(lastRefreshBaseTxn);
+                                    if (lastRefreshBaseTxn == MatViewRefreshState.MAT_VIEW_FULL_REFRESH_TXN_MARKER || lastRefreshBaseTxn > baseTableLastTxn) {
+                                        String reason = (lastRefreshBaseTxn == MatViewRefreshState.MAT_VIEW_FULL_REFRESH_TXN_MARKER && state.getSeqTxn() > matViewLastTxn)
+                                                ? "refresh state out of sync with materialized view"
+                                                : "refresh state out of sync with base table";
+
+                                        matViewGraph.enqueueInvalidate(tableToken, reason);
+                                        continue; // do not refresh the view
+                                    } else {
+                                        state.setLastRefreshBaseTxn(lastRefreshBaseTxn);
+                                    }
                                 }
                             }
                             matViewGraph.enqueueIncrementalRefresh(tableToken);
