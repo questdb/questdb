@@ -85,7 +85,10 @@ public class CastStrToDoubleArrayFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(getArg()).val("::double[]");
+            sink.val(getArg()).val("::double");
+            for (int i = 0; i < dims; i++) {
+                sink.val("[]");
+            }
         }
     }
 }

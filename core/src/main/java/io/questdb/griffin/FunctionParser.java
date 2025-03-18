@@ -646,18 +646,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         // type constant for 'CAST' operation
-
-        final short columnType = ColumnType.tagOf(tok);
+        final int columnType = ColumnType.typeOf(tok);
+        final short columnTag = ColumnType.tagOf(columnType);
         if (
-                (columnType >= ColumnType.BOOLEAN && columnType <= ColumnType.BINARY)
-                        || columnType == ColumnType.REGCLASS
-                        || columnType == ColumnType.REGPROCEDURE
-                        || columnType == ColumnType.ARRAY_STRING
-                        || columnType == ColumnType.UUID
-                        || columnType == ColumnType.IPv4
-                        || columnType == ColumnType.VARCHAR
-                        || columnType == ColumnType.INTERVAL
-                        || ColumnType.tagOf(columnType) == ColumnType.ARRAY // todo: this is not great, we should be more specific
+                (columnTag >= ColumnType.BOOLEAN && columnTag <= ColumnType.BINARY)
+                        || columnTag == ColumnType.REGCLASS
+                        || columnTag == ColumnType.REGPROCEDURE
+                        || columnTag == ColumnType.ARRAY_STRING
+                        || columnTag == ColumnType.UUID
+                        || columnTag == ColumnType.IPv4
+                        || columnTag == ColumnType.VARCHAR
+                        || columnTag == ColumnType.INTERVAL
+                        || columnTag == ColumnType.ARRAY
         ) {
             return Constants.getTypeConstant(columnType);
         }

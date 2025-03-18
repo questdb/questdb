@@ -10250,6 +10250,26 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStringToDoubleArrayPlanDimensionality() throws Exception {
+        assertMemoryLeak(() -> {
+            assertPlanNoLeakCheck(
+                    "select '{}'::double[] from long_sequence(1)",
+                    "VirtualRecord\n" +
+                            "  functions: ['{}'::double[]]\n" +
+                            "    long_sequence count: 1\n"
+            );
+
+
+            assertPlanNoLeakCheck(
+                    "select '{}'::double[][][] from long_sequence(1)",
+                    "VirtualRecord\n" +
+                            "  functions: ['{}'::double[][][]]\n" +
+                            "    long_sequence count: 1\n"
+            );
+        });
+    }
+
+    @Test
     public void testTimestampEqSubQueryFilter1() throws Exception {
         assertPlan(
                 "create table x (l long, ts timestamp)",

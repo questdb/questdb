@@ -488,11 +488,14 @@ public final class ColumnType {
     }
 
     public static short tagOf(int type) {
+        if (type == -1) {
+            return (short) type;
+        }
         return (short) (type & 0xFF);
     }
 
     public static short tagOf(CharSequence name) {
-        return (short) nameTypeMap.get(name);
+        return tagOf(nameTypeMap.get(name));
     }
 
     public static int typeOf(CharSequence name) {
