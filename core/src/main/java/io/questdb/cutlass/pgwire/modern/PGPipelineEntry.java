@@ -1702,7 +1702,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         if (array.isVanilla()) {
             FlatArrayView flatView = array.flatView();
             int len = flatView.length();
-            // todo: check if JIT can remove switch from the loop body
+            // Note that we rely on a HotSpot optimization: Loop-invariant code motion
+            // it moves the switch outside the loop.
             for (int i = 0; i < len; i++) {
                 switch (elemType) {
                     case ColumnType.LONG:
