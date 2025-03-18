@@ -99,6 +99,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.MutableCharSink;
@@ -127,6 +128,7 @@ public class CairoEngine implements Closeable, WriterSource {
     public static final String REASON_CHECKPOINT_IN_PROGRESS = "checkpointInProgress";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
     private static final int MAX_SLEEP_MILLIS = 250;
+    private static final ThreadLocal<MatViewRefreshTask> tlMatViewRefreshTask = new ThreadLocal<>(MatViewRefreshTask::new);
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
     private final DatabaseCheckpointAgent checkpointAgent;
@@ -457,6 +459,12 @@ public class CairoEngine implements Closeable, WriterSource {
             if (tableNameRegistry.dropTable(tableToken)) {
                 tableSequencerAPI.dropTable(tableToken, false);
                 matViewGraph.dropViewIfExists(tableToken);
+
+                final MatViewRefreshTask matViewRefreshTask = tlMatViewRefreshTask.get();
+                matViewRefreshTask.clear();
+                matViewRefreshTask.baseTableToken = tableToken;
+                matViewRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
+                notifyMatViewBaseCommit(matViewRefreshTask, tableSequencerAPI.lastTxn(tableToken));
             } else {
                 LOG.info().$("table is already dropped [table=").$(tableToken)
                         .$(", dirName=").$(tableToken.getDirName()).I$();
