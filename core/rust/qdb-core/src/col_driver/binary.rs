@@ -91,8 +91,8 @@ impl ColumnDriver for BinaryDriver {
         Ok((data_size, Some(aux_size)))
     }
 
-    fn tag(&self) -> ColumnTypeTag {
-        ColumnTypeTag::Binary
+    fn descr(&self) -> &'static str {
+        ColumnTypeTag::Binary.name()
     }
 }
 

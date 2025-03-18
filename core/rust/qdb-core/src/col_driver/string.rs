@@ -91,8 +91,8 @@ impl ColumnDriver for StringDriver {
         Ok((data_size, Some(aux_size)))
     }
 
-    fn tag(&self) -> ColumnTypeTag {
-        ColumnTypeTag::String
+    fn descr(&self) -> &'static str {
+        ColumnTypeTag::String.name()
     }
 }
 

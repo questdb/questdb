@@ -21,7 +21,7 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-use crate::error::{CoreError, CoreErrorExt, fmt_err};
+use crate::error::{CoreError, CoreErrorExt, CoreResult, fmt_err};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt::{Debug, Display, Formatter};
 use std::num::NonZeroI32;
@@ -165,6 +165,8 @@ fn tag_of(col_type: i32) -> u8 {
     (col_type & 0xFF) as u8
 }
 
+const TYPE_FLAG_DESIGNATED_TIMESTAMP: i32 = 1i32 << 17;
+
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Serialize, Ord, PartialOrd, Eq)]
 #[serde(transparent)]
@@ -183,6 +185,22 @@ impl ColumnType {
 
     pub fn code(&self) -> i32 {
         self.code.get()
+    }
+
+    pub fn is_designated(&self) -> bool {
+        (self.code.get() & TYPE_FLAG_DESIGNATED_TIMESTAMP) > 0
+    }
+
+    pub fn into_designated(self) -> CoreResult<ColumnType> {
+        if self.tag() != ColumnTypeTag::Timestamp {
+            return Err(fmt_err!(
+                InvalidType,
+                "invalid column type {}, only timestamp columns can be marked as designated",
+                self
+            ));
+        }
+        let code = NonZeroI32::new(self.code() | TYPE_FLAG_DESIGNATED_TIMESTAMP).unwrap();
+        Ok(Self { code })
     }
 
     pub fn tag(&self) -> ColumnTypeTag {

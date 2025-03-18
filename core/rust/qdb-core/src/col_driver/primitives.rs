@@ -35,7 +35,7 @@ macro_rules! impl_primitive_type_driver {
                 fn col_sizes_for_size(&self, col: &MappedColumn, row_count: u64) -> CoreResult<(u64, Option<u64>)> {
                     assert!(!ColumnTypeTag::$tag.is_var_size());
                     let row_size = ColumnTypeTag::$tag.fixed_size().expect("fixed size column") as u64;
-                    let data_size = (row_size * row_count);
+                    let data_size = row_size * row_count;
                     if data_size > col.data.len() as u64 {
                         return Err(fmt_err!(
                             InvalidLayout,
@@ -50,8 +50,8 @@ macro_rules! impl_primitive_type_driver {
                     Ok((data_size, None))
                 }
 
-                fn tag(&self) -> ColumnTypeTag {
-                    ColumnTypeTag::$tag
+                fn descr(&self) -> &'static str {
+                    ColumnTypeTag::$tag.name()
                 }
             }
         }

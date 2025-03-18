@@ -94,8 +94,8 @@ impl ColumnDriver for VarcharDriver {
         Ok((data_size, Some(aux_size)))
     }
 
-    fn tag(&self) -> ColumnTypeTag {
-        ColumnTypeTag::Varchar
+    fn descr(&self) -> &'static str {
+        ColumnTypeTag::Varchar.name()
     }
 }
 

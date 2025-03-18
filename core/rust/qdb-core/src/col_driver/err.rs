@@ -5,7 +5,7 @@ pub(super) fn missing_aux(driver: &impl ColumnDriver, col: &MappedColumn) -> Cor
     fmt_err!(
         InvalidLayout,
         "{} driver expects aux mapping, but missing for {} column {} in {}",
-        driver.tag().name(),
+        driver.descr(),
         col.col_type,
         col.col_name,
         col.parent_path.display()
@@ -15,7 +15,7 @@ pub(super) fn missing_aux(driver: &impl ColumnDriver, col: &MappedColumn) -> Cor
 pub(super) fn bad_aux_layout(driver: &impl ColumnDriver, col: &MappedColumn) -> String {
     format!(
         "bad layout of {} aux column {} in {}",
-        driver.tag().name(),
+        driver.descr(),
         col.col_name,
         col.parent_path.display()
     )
@@ -25,7 +25,7 @@ pub(super) fn not_found(driver: &impl ColumnDriver, col: &MappedColumn, index: u
     fmt_err!(
         InvalidLayout,
         "{} entry index {} not found in aux for column {} in {}",
-        driver.tag().name(),
+        driver.descr(),
         index,
         col.col_name,
         col.parent_path.display()
@@ -40,7 +40,7 @@ pub(super) fn bad_data_size(
     fmt_err!(
         InvalidLayout,
         "{} required data size {} exceeds data mmap len {} for column {} in {}",
-        driver.tag().name(),
+        driver.descr(),
         data_size,
         col.data.len(),
         col.col_name,

@@ -22,16 +22,18 @@
  *
  ******************************************************************************/
 mod binary;
+mod designated_timestamp;
 mod err;
 mod mapped;
 mod primitives;
 mod string;
 mod varchar;
 
-use crate::col_type::ColumnTypeTag;
+use crate::col_type::{ColumnType, ColumnTypeTag};
 use crate::error::CoreResult;
 
 pub use binary::*;
+pub use designated_timestamp::*;
 pub use mapped::*;
 pub use primitives::*;
 pub use string::*;
@@ -49,32 +51,33 @@ pub trait ColumnDriver {
         row_count: u64,
     ) -> CoreResult<(u64, Option<u64>)>;
 
-    fn tag(&self) -> ColumnTypeTag;
+    fn descr(&self) -> &'static str;
 }
 
-pub const fn lookup_driver(tag: ColumnTypeTag) -> &'static dyn ColumnDriver {
-    match tag {
-        ColumnTypeTag::Boolean => &BooleanDriver,
-        ColumnTypeTag::Byte => &ByteDriver,
-        ColumnTypeTag::Short => &ShortDriver,
-        ColumnTypeTag::Char => &CharDriver,
-        ColumnTypeTag::Int => &IntDriver,
-        ColumnTypeTag::Long => &LongDriver,
-        ColumnTypeTag::Date => &DateDriver,
-        ColumnTypeTag::Timestamp => &TimestampDriver,
-        ColumnTypeTag::Float => &FloatDriver,
-        ColumnTypeTag::Double => &DoubleDriver,
-        ColumnTypeTag::String => &StringDriver,
-        ColumnTypeTag::Symbol => &SymbolDriver,
-        ColumnTypeTag::Long256 => &Long256Driver,
-        ColumnTypeTag::GeoByte => &GeoByteDriver,
-        ColumnTypeTag::GeoShort => &GeoShortDriver,
-        ColumnTypeTag::GeoInt => &GeoIntDriver,
-        ColumnTypeTag::GeoLong => &GeoLongDriver,
-        ColumnTypeTag::Binary => &BinaryDriver,
-        ColumnTypeTag::Uuid => &UuidDriver,
-        ColumnTypeTag::Long128 => &Long128Driver,
-        ColumnTypeTag::IPv4 => &IPv4Driver,
-        ColumnTypeTag::Varchar => &VarcharDriver,
+pub fn lookup_driver(col_type: ColumnType) -> &'static dyn ColumnDriver {
+    match (col_type.tag(), col_type.is_designated()) {
+        (ColumnTypeTag::Boolean, _) => &BooleanDriver,
+        (ColumnTypeTag::Byte, _) => &ByteDriver,
+        (ColumnTypeTag::Short, _) => &ShortDriver,
+        (ColumnTypeTag::Char, _) => &CharDriver,
+        (ColumnTypeTag::Int, _) => &IntDriver,
+        (ColumnTypeTag::Long, _) => &LongDriver,
+        (ColumnTypeTag::Date, _) => &DateDriver,
+        (ColumnTypeTag::Timestamp, false) => &TimestampDriver,
+        (ColumnTypeTag::Timestamp, true) => &DesignatedTimestampDriver,
+        (ColumnTypeTag::Float, _) => &FloatDriver,
+        (ColumnTypeTag::Double, _) => &DoubleDriver,
+        (ColumnTypeTag::String, _) => &StringDriver,
+        (ColumnTypeTag::Symbol, _) => &SymbolDriver,
+        (ColumnTypeTag::Long256, _) => &Long256Driver,
+        (ColumnTypeTag::GeoByte, _) => &GeoByteDriver,
+        (ColumnTypeTag::GeoShort, _) => &GeoShortDriver,
+        (ColumnTypeTag::GeoInt, _) => &GeoIntDriver,
+        (ColumnTypeTag::GeoLong, _) => &GeoLongDriver,
+        (ColumnTypeTag::Binary, _) => &BinaryDriver,
+        (ColumnTypeTag::Uuid, _) => &UuidDriver,
+        (ColumnTypeTag::Long128, _) => &Long128Driver,
+        (ColumnTypeTag::IPv4, _) => &IPv4Driver,
+        (ColumnTypeTag::Varchar, _) => &VarcharDriver,
     }
 }
