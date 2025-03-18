@@ -746,45 +746,83 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testPivotWithTradesDataAndOrderBy() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(ddlTrades);
-            execute(dmlTrades);
-            drainWalQueue();
+    public void testPivotWithTradesDataAndOrderByAsc() throws Exception {
+        assertQueryAndPlan(
+                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n",
+                "(trades where symbol in 'ETH-USDT')\n" +
+                        "  pivot (\n" +
+                        "    sum(price)\n" +
+                        "    FOR \"symbol\" IN ('ETH-USDT')\n" +
+                        "        side in ('buy', 'sell')\n" +
+                        "    GROUP BY timestamp\n" +
+                        "    ORDER BY timestamp ASC\n" +
+                        "  );",
+                ddlTrades,
+                "timestamp###ASC",
+                dmlTrades,
+                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
+                        "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n" +
+                        "2024-12-19T08:10:00.736000Z\tnull\t3678.25\n" +
+                        "2024-12-19T08:10:00.759000Z\tnull\t3678.0\n" +
+                        "2024-12-19T08:10:00.772999Z\tnull\t3678.0\n" +
+                        "2024-12-19T08:10:00.887000Z\t3678.01\tnull\n" +
+                        "2024-12-19T08:10:00.950000Z\tnull\t3678.0\n",
+                true,
+                true,
+                false,
+                "Radix sort light\n" +
+                        "  keys: [timestamp]\n" +
+                        "    GroupBy vectorized: false\n" +
+                        "      keys: [timestamp]\n" +
+                        "      values: [sum(case([(symbol='ETH-USDT' and side='buy'),sum,null])),sum(case([(symbol='ETH-USDT' and side='sell'),sum,null]))]\n" +
+                        "        Async Group By workers: 1\n" +
+                        "          keys: [timestamp,symbol,side]\n" +
+                        "          values: [sum(price)]\n" +
+                        "          filter: (symbol in [ETH-USDT] and symbol in [ETH-USDT])\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: trades\n"
+        );
+    }
 
-            String pivotQuery = " select * from (select * from trades where symbol in 'ETH-USDT')\n" +
-                    "  pivot (\n" +
-                    "    sum(price)\n" +
-                    "    FOR \"symbol\" IN ('ETH-USDT')\n" +
-                    "        side in ('buy', 'sell')\n" +
-                    "    GROUP BY timestamp\n" +
-                    "    ORDER BY timestamp ASC\n" +
-                    "  );";
-
-            assertQuery("timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
-                            "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n" +
-                            "2024-12-19T08:10:00.736000Z\tnull\t3678.25\n" +
-                            "2024-12-19T08:10:00.759000Z\tnull\t3678.0\n" +
-                            "2024-12-19T08:10:00.772999Z\tnull\t3678.0\n" +
-                            "2024-12-19T08:10:00.887000Z\t3678.01\tnull\n" +
-                            "2024-12-19T08:10:00.950000Z\tnull\t3678.0\n",
-                    pivotQuery,
-                    "timestamp###ASC",
-                    true,
-                    true);
-
-            assertQuery("timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
-                            "2024-12-19T08:10:00.950000Z\tnull\t3678.0\n" +
-                            "2024-12-19T08:10:00.887000Z\t3678.01\tnull\n" +
-                            "2024-12-19T08:10:00.772999Z\tnull\t3678.0\n" +
-                            "2024-12-19T08:10:00.759000Z\tnull\t3678.0\n" +
-                            "2024-12-19T08:10:00.736000Z\tnull\t3678.25\n" +
-                            "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n",
-                    pivotQuery.replace("ASC", "DESC"),
-                    null,
-                    true,
-                    true);
-        });
+    @Test
+    public void testPivotWithTradesDataAndOrderByDesc() throws Exception {
+        assertQueryAndPlan(
+                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n",
+                "(trades where symbol in 'ETH-USDT')\n" +
+                        "  pivot (\n" +
+                        "    sum(price)\n" +
+                        "    FOR \"symbol\" IN ('ETH-USDT')\n" +
+                        "        side in ('buy', 'sell')\n" +
+                        "    GROUP BY timestamp\n" +
+                        "    ORDER BY timestamp DESC\n" +
+                        "  );",
+                ddlTrades,
+                "timestamp###DESC",
+                dmlTrades,
+                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
+                        "2024-12-19T08:10:00.950000Z\tnull\t3678.0\n" +
+                        "2024-12-19T08:10:00.887000Z\t3678.01\tnull\n" +
+                        "2024-12-19T08:10:00.772999Z\tnull\t3678.0\n" +
+                        "2024-12-19T08:10:00.759000Z\tnull\t3678.0\n" +
+                        "2024-12-19T08:10:00.736000Z\tnull\t3678.25\n" +
+                        "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n",
+                true,
+                true,
+                false,
+                "Radix sort light\n" +
+                        "  keys: [timestamp desc]\n" +
+                        "    GroupBy vectorized: false\n" +
+                        "      keys: [timestamp]\n" +
+                        "      values: [sum(case([(symbol='ETH-USDT' and side='buy'),sum,null])),sum(case([(symbol='ETH-USDT' and side='sell'),sum,null]))]\n" +
+                        "        Async Group By workers: 1\n" +
+                        "          keys: [timestamp,symbol,side]\n" +
+                        "          values: [sum(price)]\n" +
+                        "          filter: (symbol in [ETH-USDT] and symbol in [ETH-USDT])\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: trades\n"
+        );
     }
 
     @Test

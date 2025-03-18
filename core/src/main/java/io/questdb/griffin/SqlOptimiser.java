@@ -6550,7 +6550,7 @@ public class SqlOptimiser implements Mutable {
             // todo(nwoolmer): pass through columns properly, so we can handle non '*' selects
             // clear out the '*'
             model.getBottomUpColumns().clear();
-            model.getBottomUpColumnAliases().clear();
+            model.getWildcardColumnNames().clear();
 
             // add sample by if needed
             if (timestampColumn != null) {
