@@ -1690,7 +1690,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // array header
         long sizePtr = utf8Sink.skipInt();
         utf8Sink.putNetworkInt(nDims);
-        long hasNullPtr = utf8Sink.skipInt();
+
+        utf8Sink.putIntDirect(0); // null flag: questdb does not support null elements in arrays so we always set this to 0
         utf8Sink.putNetworkInt(componentTypeOid);
 
         // Write dimension information
@@ -1700,54 +1701,41 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
 
         // todo: optimize for vanilla arrays, vanilla arrays do not require recursive processing
-        boolean hasNulls = outColBinArrRecursive(utf8Sink, array, elemType, 0, 0);
-        Unsafe.getUnsafe().putInt(hasNullPtr, Numbers.bswap(hasNulls ? 1 : 0));
+        outColBinArrRecursive(utf8Sink, array, elemType, 0, 0);
         utf8Sink.putLenEx(sizePtr);
     }
 
-    private boolean outColBinArrRecursive(
+    private void outColBinArrRecursive(
             PGResponseSink utf8Sink, ArrayView array, short elemType, int dim, int flatIndex
     ) {
         final int count = array.getDimLen(dim);
         final int stride = array.getStride(dim);
-        boolean hasNulls = false;
         final boolean atDeepestDim = dim == array.getDimCount() - 1;
         if (atDeepestDim) {
             switch (elemType) {
                 case ColumnType.LONG:
                     for (int i = 0; i < count; i++) {
                         long val = array.getLong(flatIndex);
-                        if (val == Numbers.LONG_NULL) {
-                            hasNulls = true;
-                            utf8Sink.setNullValue();
-                        } else {
-                            utf8Sink.putNetworkInt(Long.BYTES);
-                            utf8Sink.putNetworkLong(val);
-                        }
+                        utf8Sink.putNetworkInt(Long.BYTES);
+                        utf8Sink.putNetworkLong(val);
                         flatIndex += stride;
                     }
                     break;
                 case ColumnType.DOUBLE:
                     for (int i = 0; i < count; i++) {
                         double val = array.getDouble(flatIndex);
-                        if (Double.isNaN(val)) {
-                            hasNulls = true;
-                            utf8Sink.setNullValue();
-                        } else {
-                            utf8Sink.putNetworkInt(Double.BYTES);
-                            utf8Sink.putNetworkDouble(val);
-                        }
+                        utf8Sink.putNetworkInt(Double.BYTES);
+                        utf8Sink.putNetworkDouble(val);
                         flatIndex += stride;
                     }
                     break;
             }
         } else {
             for (int i = 0; i < count; i++) {
-                hasNulls |= outColBinArrRecursive(utf8Sink, array, elemType, dim + 1, flatIndex);
+                outColBinArrRecursive(utf8Sink, array, elemType, dim + 1, flatIndex);
                 flatIndex += stride;
             }
         }
-        return hasNulls;
     }
 
     private void outColBinBool(PGResponseSink utf8Sink, Record record, int columnIndex) {
