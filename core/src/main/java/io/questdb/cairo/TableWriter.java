@@ -274,6 +274,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private LifecycleManager lifecycleManager;
     private long lockFd = -2;
     private long masterRef = 0L;
+    // A flag that during WAL processing o3MemColumns1 or o3MemColumns2 were
+    // set to a "shifted" state and the state has to be cleaned.
+    private boolean memColumnShifted;
     private int metaPrevIndex;
     private final FragileCode RECOVER_FROM_TODO_WRITE_FAILURE = this::recoverFromTodoWriteFailure;
     private int metaSwapIndex;
@@ -2639,6 +2642,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             success = false;
             throw th;
         } finally {
+            if (memColumnShifted) {
+                clearMemColumnShifts();
+            }
             walPath.trimTo(walRootPathLen);
             segmentFileCache.closeWalFiles(isLastSegmentUsage || !success, walIdSegmentId, initialSize);
         }
@@ -3070,6 +3076,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         } finally {
             r.cancel();
+        }
+    }
+
+    private static void clearMemColumnShifts(ObjList<MemoryCARW> memColumns) {
+        for (int i = 0, n = memColumns.size(); i < n; i++) {
+            MemoryCARW col = memColumns.get(i);
+            if (col != null) {
+                col.shiftAddressRight(0);
+            }
         }
     }
 
@@ -3790,6 +3805,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .put(']');
             }
         }
+    }
+
+    private void clearMemColumnShifts() {
+        clearMemColumnShifts(o3MemColumns1);
+        clearMemColumnShifts(o3MemColumns2);
+        memColumnShifted = false;
     }
 
     private void clearO3() {
@@ -6920,7 +6941,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long o3LoHi;
 
             if (!isDeduplicationEnabled() && segmentCopyInfo.getAllTxnDataInOrder() && segmentCopyInfo.getSegmentCount() == 1) {
-                LOG.info().$("all data in order, single segment, processing optmised [table=").$(tableToken.getDirName()).I$();
+                LOG.info().$("all data in order, single segment, processing optimised [table=").$(tableToken.getDirName()).I$();
                 // all data comes from a single segment and is already sorted
                 if (denseSymbolMapWriters.size() > 0) {
                     segmentFileCache.mmapWalColsEager();
@@ -8016,6 +8037,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         symbolColumnDest.putInt((rowId - rowLo) << 2, symKey);
                     }
                     symbolColumnDest.shiftAddressRight(rowLo << 2);
+                    this.memColumnShifted |= (rowLo != 0);
                 }
             }
         }
