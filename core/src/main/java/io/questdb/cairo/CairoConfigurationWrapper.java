@@ -1295,7 +1295,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getWriteBackOffTimeoutOnMemPressureMs() {
+    public long getWriteBackOffTimeoutOnMemPressureMs() {
         return getDelegate().getWriteBackOffTimeoutOnMemPressureMs();
     }
 

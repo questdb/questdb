@@ -133,7 +133,7 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
                 // Increase backoff counter
                 memoryPressureRegulationValue--;
             }
-            int delayMillis = 1 + MEM_PRESSURE_RND.nextInt(configuration.getWriteBackOffTimeoutOnMemPressureMs() - 1);
+            long delayMillis = 1 + MEM_PRESSURE_RND.nextLong(configuration.getWriteBackOffTimeoutOnMemPressureMs() - 1);
             walBackoffUntilEpochMs = getTicks() + delayMillis;
             return;
         }

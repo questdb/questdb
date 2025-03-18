@@ -1310,7 +1310,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getWriteBackOffTimeoutOnMemPressureMs() {
+    public long getWriteBackOffTimeoutOnMemPressureMs() {
         return 4000;
     }
 }
