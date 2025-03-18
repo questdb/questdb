@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileReader;
@@ -153,11 +154,47 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewDisabled() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "false");
+            createTable(TABLE1);
+            try {
+                execute("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "materialized views are disabled");
+            }
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
     public void testCreateMatViewExpressionKey() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
             final String query = "select ts, k || '10' as k, max(v) as v_max from " + TABLE1 + " sample by 30s";
+            execute("CREATE MATERIALIZED VIEW test AS (" + query + ") PARTITION BY WEEK TTL 3 WEEKS;");
+            assertMatViewDefinition("test", query, TABLE1, 30, 's');
+            assertMatViewMetadata("test", query, TABLE1, 30, 's');
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
+                assertEquals(0, metadata.getTimestampIndex());
+                assertTrue(metadata.isDedupKey(0));
+                assertTrue(metadata.isDedupKey(1));
+                assertFalse(metadata.isDedupKey(2));
+                assertEquals(3 * 7 * 24, metadata.getTtlHoursOrMonths());
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewExpressionKeyCaseInsensitivity() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            // notice upper-case column names
+            final String query = "select TS, K || '10' as k, max(v) as v_max from " + TABLE1 + " sample by 30s";
             execute("CREATE MATERIALIZED VIEW test AS (" + query + ") PARTITION BY WEEK TTL 3 WEEKS;");
             assertMatViewDefinition("test", query, TABLE1, 30, 's');
             assertMatViewMetadata("test", query, TABLE1, 30, 's');
@@ -274,8 +311,9 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertEquals(ExecutionModel.CREATE_MAT_VIEW, model.getModelType());
                 ((Sinkable) model).toSink(sink);
                 TestUtils.assertEquals(
-                        "create materialized view test with base table1 as (" + query +
-                                "), index(k capacity 1024) timestamp(ts) partition by DAY TTL 3 DAYS" +
+                        "create materialized view test as (" +
+                                "select-choose ts, k, avg(v) avg from (table1 sample by 30s align to calendar with offset '00:00')" +
+                                "), index(k capacity 1024) partition by DAY TTL 3 DAYS" +
                                 (Os.isWindows() ? "" : " in volume 'vol1'"),
                         sink
                 );
@@ -359,7 +397,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (select * from " + TABLE1 + " where v % 2 = 0) partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Materialized view query requires a sampling interval");
+                TestUtils.assertContains(e.getFlyweightMessage(), "materialized view query requires a sampling interval");
             }
             assertNull(getMatViewDefinition("test"));
         });
@@ -499,7 +537,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (" + fill + ") partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "FILL is not supported for materialized view");
+                TestUtils.assertContains(e.getFlyweightMessage(), "FILL is not supported for materialized views");
             }
         });
     }
@@ -514,13 +552,48 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (" + from + ") partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "FROM is not supported for materialized view");
+                TestUtils.assertContains(e.getFlyweightMessage(), "FROM-TO is not supported for materialized views");
             }
             try {
                 execute("create materialized view test as (" + to + ") partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "TO is not supported for materialized view");
+                TestUtils.assertContains(e.getFlyweightMessage(), "FROM-TO is not supported for materialized views");
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewSampleByNestedFill() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE2);
+            final String fill = "with t as ( select ts, avg(v) from " + TABLE2 + " sample by 1d fill(null)) select ts, avg(v) from t sample by 1d";
+            try {
+                execute("create materialized view test as (" + fill + ") partition by day");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "FILL is not supported for materialized views");
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewSampleByNestedFromTo() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE2);
+            final String from = "with t as (select ts, avg(v) from " + TABLE2 + " sample by 1d from '2024-03-01') select ts, avg(v) from t sample by 1d";
+            final String to = "with t as (select ts, avg(v) from " + TABLE2 + " sample by 1d to '2024-06-30') select ts, avg(v) from t sample by 1d";
+            try {
+                execute("create materialized view test as (" + from + ") partition by day");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "FROM-TO is not supported for materialized views");
+            }
+            try {
+                execute("create materialized view test as (" + to + ") partition by day");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "FROM-TO is not supported for materialized views");
             }
         });
     }
@@ -611,14 +684,14 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view " + TABLE2 + " as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "a table already exists with the requested name");
+                TestUtils.assertContains(e.getFlyweightMessage(), "table with the requested name already exists");
             }
 
             try {
                 execute("create materialized view if not exists " + TABLE2 + " as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "a table already exists with the requested name");
+                TestUtils.assertContains(e.getFlyweightMessage(), "table with the requested name already exists");
             }
 
             final String query = "select ts, avg(v) from " + TABLE2 + " sample by 4h";
@@ -641,7 +714,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create table test(ts timestamp, col varchar) timestamp(ts) partition by day wal");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "a materialized view already exists with the requested name");
+                TestUtils.assertContains(e.getFlyweightMessage(), "materialized view with the requested name already exists");
             }
         });
     }
@@ -698,7 +771,11 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     "create materialized view test with base x as (select t1.ts, t1.k2, avg(t1.v) from x as t1 join y as t2 on v sample by 1m) partition by day",
                     "create materialized view test with base x as (select t1.ts, t2.k1, avg(t1.v) from x as t1 join y as t2 on v sample by 1m) partition by day",
                     "create materialized view test with base x as (select \"t1\".\"ts\", \"t2\".\"k1\", avg(\"t1\".\"v\") from \"x\" as \"t1\" join \"y\" as \"t2\" on \"v\" sample by 1m) partition by day",
+                    // test table alias case-insensitivity
+                    "create materialized view test with base x as (select \"t1\".\"ts\", \"t2\".\"k1\", avg(\"t1\".\"v\") from \"x\" as \"T1\" join \"y\" as \"T2\" on \"v\" sample by 1m) partition by day",
                     "create materialized view test with base x as (select t1.ts, t2.k1, avg(t1.v) from x as t1 join y as t2 on v sample by 1m) partition by day",
+                    // test table name case-insensitivity
+                    "create materialized view test with base x as (select t1.ts, t2.k1, avg(t1.v) from x as T1 join y as T2 on v sample by 1m) partition by day",
             };
 
             for (String query : queries) {
@@ -792,6 +869,84 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEmptyBaseTableSqlInDefinitionBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                createTable(TABLE1);
+
+                final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+                execute("create materialized view test as (" + query + ") partition by day");
+
+                final TableToken matViewToken = engine.getTableTokenIfExists("test");
+                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                assertNotNull(matViewDefinition);
+
+                try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
+                    writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                    AppendableBlock block = writer.append();
+                    block.putInt(matViewDefinition.getRefreshType());
+                    block.putStr(null);
+                    block.putLong(matViewDefinition.getSamplingInterval());
+                    block.putChar(matViewDefinition.getSamplingIntervalUnit());
+                    block.putStr(matViewDefinition.getTimeZone());
+                    block.putStr(matViewDefinition.getTimeZoneOffset());
+                    block.putStr(matViewDefinition.getMatViewSql());
+                    block.commit(MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE);
+                    writer.commit();
+                }
+
+                // Reader should fail to load unknown definition file.
+                try (BlockFileReader reader = new BlockFileReader(configuration)) {
+                    path.of(configuration.getDbRoot());
+                    final int rootLen = path.size();
+                    MatViewDefinition actualDefinition = new MatViewDefinition();
+                    MatViewDefinition.readFrom(
+                            actualDefinition,
+                            reader,
+                            path,
+                            rootLen,
+                            matViewToken
+                    );
+                    Assert.fail("exception expected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "base table name for materialized view is empty");
+                }
+
+                try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
+                    writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                    AppendableBlock block = writer.append();
+                    block.putInt(matViewDefinition.getRefreshType());
+                    block.putStr(matViewDefinition.getBaseTableName());
+                    block.putLong(matViewDefinition.getSamplingInterval());
+                    block.putChar(matViewDefinition.getSamplingIntervalUnit());
+                    block.putStr(matViewDefinition.getTimeZone());
+                    block.putStr(matViewDefinition.getTimeZoneOffset());
+                    block.putStr(null);
+                    block.commit(MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE);
+                    writer.commit();
+                }
+
+                // Reader should fail to load unknown definition file.
+                try (BlockFileReader reader = new BlockFileReader(configuration)) {
+                    path.of(configuration.getDbRoot());
+                    final int rootLen = path.size();
+                    MatViewDefinition actualDefinition = new MatViewDefinition();
+                    MatViewDefinition.readFrom(
+                            actualDefinition,
+                            reader,
+                            path,
+                            rootLen,
+                            matViewToken
+                    );
+                    Assert.fail("exception expected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "materialized view SQL is empty");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testIgnoreUnknownDefinitionBlock() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path()) {
@@ -821,7 +976,9 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 try (BlockFileReader reader = new BlockFileReader(configuration)) {
                     path.of(configuration.getDbRoot());
                     final int rootLen = path.size();
-                    MatViewDefinition actualDefinition = MatViewDefinition.readFrom(
+                    MatViewDefinition actualDefinition = new MatViewDefinition();
+                    MatViewDefinition.readFrom(
+                            actualDefinition,
                             reader,
                             path,
                             rootLen,
@@ -886,6 +1043,260 @@ public class CreateMatViewTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testMatViewDefinitionInvalidTz() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+            execute("create materialized view test as (" + query + ") partition by day");
+            final TableToken matViewToken = engine.getTableTokenIfExists("test");
+            MatViewDefinition def = new MatViewDefinition();
+            try {
+                def.init(
+                        MatViewDefinition.INCREMENTAL_REFRESH_TYPE,
+                        matViewToken,
+                        query,
+                        TABLE1,
+                        30,
+                        'K',
+                        "Europe/Berlin",
+                        "00:00"
+                );
+                Assert.fail("exception expected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid sampling interval and/or unit: 30, K");
+            }
+
+            try {
+                def.init(
+                        MatViewDefinition.INCREMENTAL_REFRESH_TYPE,
+                        matViewToken,
+                        query,
+                        TABLE1,
+                        30,
+                        's',
+                        "Oceania",
+                        "00:00"
+                );
+                Assert.fail("exception expected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone: Oceania");
+            }
+            try {
+                def.init(
+                        MatViewDefinition.INCREMENTAL_REFRESH_TYPE,
+                        matViewToken,
+                        query,
+                        TABLE1,
+                        30,
+                        's',
+                        "Europe/Berlin",
+                        "T00:00"
+                );
+                Assert.fail("exception expected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: T00:00");
+            }
+        });
+    }
+
+    @Test
+    public void testReadDefinitionThrowsOnUnknownRefreshType() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                createTable(TABLE1);
+
+                final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+                execute("create materialized view test as (" + query + ") partition by day");
+
+                final TableToken matViewToken = engine.getTableTokenIfExists("test");
+                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                assertNotNull(matViewDefinition);
+
+                try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
+                    writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                    MatViewDefinition unknownDefinition = new MatViewDefinition();
+                    unknownDefinition.init(
+                            MatViewDefinition.INCREMENTAL_REFRESH_TYPE + 1,
+                            matViewToken,
+                            matViewDefinition.getMatViewSql(),
+                            TABLE1,
+                            matViewDefinition.getSamplingInterval(),
+                            matViewDefinition.getSamplingIntervalUnit(),
+                            matViewDefinition.getTimeZone(),
+                            matViewDefinition.getTimeZoneOffset()
+                    );
+                    AppendableBlock block = writer.append();
+                    MatViewDefinition.append(unknownDefinition, block);
+                    block.commit(MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE);
+                    writer.commit();
+                }
+
+                // Reader should throw due to unknown refresh type.
+                try (BlockFileReader reader = new BlockFileReader(configuration)) {
+                    path.of(configuration.getDbRoot());
+                    final int rootLen = path.size();
+                    try {
+                        MatViewDefinition.readFrom(
+                                new MatViewDefinition(),
+                                reader,
+                                path,
+                                rootLen,
+                                matViewToken
+                        );
+                        Assert.fail();
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "unsupported refresh type");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testShowCreateMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+            execute("create materialized view test as (" + query + ") partition by day TTL 3 WEEKS");
+            assertQueryNoLeakCheck(
+                    "ddl\n" +
+                            "CREATE MATERIALIZED VIEW 'test' WITH BASE 'table1' REFRESH INCREMENTAL AS ( \n" +
+                            "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
+                            ") PARTITION BY DAY TTL 3 WEEKS;\n",
+                    "show create materialized view test",
+                    null,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testShowCreateMatViewFail() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+            execute("create materialized view test as (" + query + ") partition by day");
+            try {
+                assertSql(
+                        "ddl\n" +
+                                "CREATE MATERIALIZED VIEW 'test' with base 'table1' as ( \n" +
+                                "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
+                                ") timestamp(ts) PARTITION BY DAY WAL;\n",
+                        "show create materialized test"
+                );
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "'view' expected");
+            }
+        });
+    }
+
+    @Test
+    public void testShowCreateMatViewFail2() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            assertExceptionNoLeakCheck(
+                    "show create materialized view " + TABLE1,
+                    30,
+                    "materialized view name expected, got table name"
+            );
+        });
+    }
+
+    @Test
+    public void testShowCreateMatViewFail3() throws Exception {
+        assertException(
+                "show create materialized view 'test';",
+                30,
+                "materialized view does not exist [view=test]"
+        );
+    }
+
+    @Test
+    public void testUnknownDefinitionBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                createTable(TABLE1);
+
+                final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+                execute("create materialized view test as (" + query + ") partition by day");
+
+                final TableToken matViewToken = engine.getTableTokenIfExists("test");
+                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                assertNotNull(matViewDefinition);
+
+                try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
+                    writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                    // Add unknown block.
+                    AppendableBlock block = writer.append();
+                    block.putStr("foobar");
+                    block.commit(MatViewDefinition.MAT_VIEW_DEFINITION_FORMAT_MSG_TYPE + 1);
+                    writer.commit();
+                }
+
+                // Reader should fail to load unknown definition file.
+                try (BlockFileReader reader = new BlockFileReader(configuration)) {
+                    path.of(configuration.getDbRoot());
+                    final int rootLen = path.size();
+                    MatViewDefinition actualDefinition = new MatViewDefinition();
+                    MatViewDefinition.readFrom(
+                            actualDefinition,
+                            reader,
+                            path,
+                            rootLen,
+                            matViewToken
+                    );
+                    Assert.fail("exception expected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot read materialized view definition, block not found");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUnknownStateBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                createTable(TABLE1);
+
+                final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+                execute("create materialized view test as (" + query + ") partition by day");
+
+                final TableToken matViewToken = engine.getTableTokenIfExists("test");
+                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                assertNotNull(matViewDefinition);
+                final MatViewRefreshState matViewRefreshState = engine.getMatViewGraph().getViewRefreshState(matViewToken);
+                assertNotNull(matViewRefreshState);
+
+                try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
+                    writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                    // Add unknown block.
+                    AppendableBlock block = writer.append();
+                    block.putStr("foobar");
+                    block.commit(MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_TYPE + 1);
+                    writer.commit();
+                }
+
+                // Reader should fail to load unknown state file.
+                try (BlockFileReader reader = new BlockFileReader(configuration)) {
+                    reader.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                    MatViewRefreshState actualState = new MatViewRefreshState(
+                            matViewDefinition,
+                            false,
+                            (event, tableToken, baseTableTxn, errorMessage, latencyUs) -> {
+                            }
+                    );
+                    MatViewRefreshState.readFrom(reader, actualState);
+                    Assert.fail("exception expected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot read materialized view state, block not found");
+                }
+            }
+        });
+    }
+
     private static void assertMatViewDefinition(
             String name,
             String query,
@@ -897,6 +1308,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     ) {
         final MatViewDefinition matViewDefinition = getMatViewDefinition(name);
         assertNotNull(matViewDefinition);
+        assertEquals(MatViewDefinition.INCREMENTAL_REFRESH_TYPE, matViewDefinition.getRefreshType());
         assertTrue(matViewDefinition.getMatViewToken().isMatView());
         assertTrue(matViewDefinition.getMatViewToken().isWal());
         assertEquals(query, matViewDefinition.getMatViewSql());
@@ -928,20 +1340,22 @@ public class CreateMatViewTest extends AbstractCairoTest {
         try (BlockFileReader reader = new BlockFileReader(configuration); Path path = new Path()) {
             path.of(configuration.getDbRoot());
             final int rootLen = path.size();
-            MatViewDefinition mvd = MatViewDefinition.readFrom(
+            MatViewDefinition matViewDefinition = new MatViewDefinition();
+            MatViewDefinition.readFrom(
+                    matViewDefinition,
                     reader,
                     path,
                     rootLen,
                     matViewToken
             );
 
-            assertEquals(mvd.getMatViewSql(), query);
+            assertEquals(matViewDefinition.getMatViewSql(), query);
 
-            assertEquals(mvd.getBaseTableName(), baseTableName);
-            assertEquals(mvd.getSamplingInterval(), samplingInterval);
-            assertEquals(mvd.getSamplingIntervalUnit(), samplingIntervalUnit);
-            assertEquals(Chars.toString(mvd.getTimeZone()), timeZone);
-            assertEquals(mvd.getTimeZoneOffset(), timeZoneOffset != null ? timeZoneOffset : "00:00");
+            assertEquals(matViewDefinition.getBaseTableName(), baseTableName);
+            assertEquals(matViewDefinition.getSamplingInterval(), samplingInterval);
+            assertEquals(matViewDefinition.getSamplingIntervalUnit(), samplingIntervalUnit);
+            assertEquals(Chars.toString(matViewDefinition.getTimeZone()), timeZone);
+            assertEquals(matViewDefinition.getTimeZoneOffset(), timeZoneOffset != null ? timeZoneOffset : "00:00");
         }
     }
 

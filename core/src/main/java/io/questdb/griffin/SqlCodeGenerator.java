@@ -301,8 +301,8 @@ import static io.questdb.cairo.ColumnType.getGeoHashBits;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.QUERY;
 import static io.questdb.griffin.model.QueryModel.*;
+import static io.questdb.griffin.model.QueryModel.QUERY;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_HOUR_INT = 1;
@@ -533,8 +533,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     public RecordCursorFactory generateExplain(@Transient ExplainModel model, @Transient SqlExecutionContext executionContext) throws SqlException {
-        ExecutionModel innerModel = model.getInnerExecutionModel();
-        QueryModel queryModel = innerModel.getQueryModel();
+        final ExecutionModel innerModel = model.getInnerExecutionModel();
+        final QueryModel queryModel = innerModel.getQueryModel();
         RecordCursorFactory factory;
         if (queryModel != null) {
             factory = generate(queryModel, executionContext);
@@ -611,7 +611,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (symbolToken == null) {
                         symbolToken = node.token;
                     } else if (!Chars.equalsIgnoreCase(symbolToken, node.token)) {
-                        return false; //more than one key symbol column
+                        return false; // more than one key symbol column
                     }
                 } else {
                     return false;
@@ -3151,9 +3151,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             listColumnFilterA.add(-index - 1);
                         } else {
                             listColumnFilterA.add(index + 1);
-                            if (i == 0 && metadata.getColumnType(index) == ColumnType.TIMESTAMP) {
-                                orderedByTimestampIndex = index;
-                            }
+                        }
+                        if (i == 0 && metadata.getColumnType(index) == ColumnType.TIMESTAMP) {
+                            orderedByTimestampIndex = index;
                         }
                     }
                 }
@@ -3230,9 +3230,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         );
                     } else {
                         final int columnType = orderedMetadata.getColumnType(firstOrderByColumnIndex);
-                        if (configuration.isSqlOrderBySortEnabled()
-                                && orderByColumnNames.size() == 1
-                                && LongSortedLightRecordCursorFactory.isSupportedColumnType(columnType)) {
+                        if (
+                                configuration.isSqlOrderBySortEnabled()
+                                        && orderByColumnNames.size() == 1
+                                        && LongSortedLightRecordCursorFactory.isSupportedColumnType(columnType)
+                        ) {
                             return new LongSortedLightRecordCursorFactory(
                                     configuration,
                                     orderedMetadata,
@@ -5271,7 +5273,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             0,
                             metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag(),
                             metadata.getColumnMetadata(columnIndex).getSymbolCapacity()
-
                     ));
 
                     if (columnIndex == readerTimestampIndex) {
@@ -5346,10 +5347,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final IntrinsicModel intrinsicModel;
             if (withinExtracted != null) {
                 CharSequence preferredKeyColumn = null;
-
                 if (latestByColumnCount == 1) {
                     final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
-
                     if (ColumnType.isSymbol(myMeta.getColumnType(latestByIndex))) {
                         preferredKeyColumn = latestBy.getQuick(0).token;
                     }

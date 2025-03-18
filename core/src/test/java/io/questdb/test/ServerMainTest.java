@@ -89,12 +89,12 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 try {
                     serverMain.getEngine();
                 } catch (IllegalStateException ex) {
-                    assertContains("close was called", ex.getMessage());
+                    assertContains(ex.getMessage(), "close was called");
                 }
                 try {
                     serverMain.getWorkerPoolManager();
                 } catch (IllegalStateException ex) {
-                    assertContains("close was called", ex.getMessage());
+                    assertContains(ex.getMessage(), "close was called");
                 }
                 serverMain.start(); // <== no effect
                 serverMain.close(); // <== no effect
@@ -172,7 +172,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
 
                 try (SqlCompiler compiler = serverMain.getEngine().getSqlCompiler()) {
                     final StringSink actualSink = new StringSink();
-                    printSql(compiler, executionContext,
+                    printSql(
+                            compiler,
+                            executionContext,
                             "(show parameters) where property_path not in (" +
                                     "'cairo.root', 'cairo.sql.backup.root', 'cairo.sql.copy.root', 'cairo.sql.copy.work.root', " +
                                     "'cairo.writer.misc.append.page.size', 'line.tcp.io.worker.count', " +
@@ -182,8 +184,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                     );
                     final Set<String> actualProps = new HashSet<>(asList(actualSink.toString().split("\n")));
 
-                    final String[] expectedProps =
-                            ("property_path\tenv_var_name\tvalue\tvalue_source\tsensitive\treloadable\n" +
+                    final String[] expectedProps = (
+                            "property_path\tenv_var_name\tvalue\tvalue_source\tsensitive\treloadable\n" +
                                     "binarydata.encoding.maxlength\tQDB_BINARYDATA_ENCODING_MAXLENGTH\t32768\tdefault\tfalse\tfalse\n" +
                                     "cairo.attach.partition.copy\tQDB_CAIRO_ATTACH_PARTITION_COPY\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.attach.partition.suffix\tQDB_CAIRO_ATTACH_PARTITION_SUFFIX\t.attachable\tdefault\tfalse\tfalse\n" +
@@ -369,7 +371,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.wal.purge.interval\tQDB_CAIRO_WAL_PURGE_INTERVAL\t30000\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.recreate.distressed.sequencer.attempts\tQDB_CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS\t3\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.segment.rollover.row.count\tQDB_CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT\t200000\tdefault\tfalse\tfalse\n" +
-                                    "cairo.wal.segment.rollover.size\tQDB_CAIRO_WAL_SEGMENT_ROLLOVER_SIZE\t0\tdefault\tfalse\tfalse\n" +
+                                    "cairo.wal.segment.rollover.size\tQDB_CAIRO_WAL_SEGMENT_ROLLOVER_SIZE\t52428800\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.squash.uncommitted.rows.multiplier\tQDB_CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER\t20.0\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.supported\tQDB_CAIRO_WAL_SUPPORTED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.temp.pending.rename.table.prefix\tQDB_CAIRO_WAL_TEMP_PENDING_RENAME_TABLE_PREFIX\ttemp_5822f658-31f6-11ee-be56-0242ac120002\tdefault\tfalse\tfalse\n" +
@@ -538,8 +540,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "line.udp.timestamp\tQDB_LINE_UDP_TIMESTAMP\tn\tdefault\tfalse\tfalse\n" +
                                     "line.udp.unicast\tQDB_LINE_UDP_UNICAST\tfalse\tdefault\tfalse\tfalse\n" +
                                     "metrics.enabled\tQDB_METRICS_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
-                                    "cairo.mat.view.sql.max.recompile.attempts\tQDB_CAIRO_MAT_VIEW_SQL_MAX_RECOMPILE_ATTEMPTS\t10\tdefault\tfalse\tfalse\n" +
-                                    "cairo.mat.view.insert.as.select.batch.size\tQDB_CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE\t1000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.mat.view.sql.max.recompile.attempts\tQDB_CAIRO_MAT_VIEW_SQL_MAX_RECOMPILE_ATTEMPTS\t10\tdefault\tfalse\ttrue\n" +
+                                    "cairo.mat.view.insert.as.select.batch.size\tQDB_CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE\t1000000\tdefault\tfalse\ttrue\n" +
                                     "cairo.mat.view.parallel.sql.enabled\tQDB_CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.nap.threshold\tQDB_MAT_VIEW_REFRESH_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.affinity\tQDB_MAT_VIEW_REFRESH_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
@@ -657,8 +659,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.context.settings\tQDB_HTTP_CONTEXT_SETTINGS\t\tdefault\tfalse\tfalse\n" +
                                     "http.context.warnings\tQDB_HTTP_CONTEXT_WARNINGS\t\tdefault\tfalse\tfalse\n" +
                                     "telemetry.db.size.estimate.timeout\tQDB_TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT\t1000\tdefault\tfalse\tfalse\n"
-                            )
-                                    .split("\n");
+                    ).split("\n");
 
                     final Set<String> missingProps = new HashSet<>();
                     for (String property : expectedProps) {

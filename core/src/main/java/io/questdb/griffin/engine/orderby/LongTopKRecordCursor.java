@@ -44,7 +44,6 @@ class LongTopKRecordCursor implements RecordCursor {
     private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean initialized;
     private boolean isOpen;
-    private int lo;
 
     public LongTopKRecordCursor(int columnIndex, int lo, boolean ascending) {
         this.columnIndex = columnIndex;
@@ -53,7 +52,6 @@ class LongTopKRecordCursor implements RecordCursor {
                 ? new DirectLongLongMinHeap(lo, MemoryTag.NATIVE_DEFAULT)
                 : new DirectLongLongMaxHeap(lo, MemoryTag.NATIVE_DEFAULT);
         rowIdCursor = heap.getCursor();
-        this.lo = lo;
     }
 
     @Override
@@ -83,10 +81,7 @@ class LongTopKRecordCursor implements RecordCursor {
 
     @Override
     public boolean hasNext() {
-        if (!initialized) {
-            topK();
-            initialized = true;
-        }
+        setupTopK();
         if (rowIdCursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             baseCursor.recordAt(baseRecord, rowIdCursor.index());
@@ -121,7 +116,7 @@ class LongTopKRecordCursor implements RecordCursor {
 
     @Override
     public long size() {
-        return Math.min(baseCursor.size(), lo); // If the cursor is 3 in size, but limit is lo 1, the size is only 1
+        return initialized ? heap.size() : -1;
     }
 
     @Override
@@ -130,6 +125,13 @@ class LongTopKRecordCursor implements RecordCursor {
         if (!initialized) {
             heap.clear();
             baseCursor.toTop();
+        }
+    }
+
+    private void setupTopK() {
+        if (!initialized) {
+            topK();
+            initialized = true;
         }
     }
 

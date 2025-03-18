@@ -69,7 +69,6 @@ public class ReaderReloadTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(ff, () -> {
-
             execute("create table x as (select x, x as y, timestamp_sequence('2022-02-24', 1000000000) ts from long_sequence(100)) timestamp(ts) partition by DAY");
 
             TableToken xTableToken = engine.verifyTableName("x");
@@ -93,6 +92,30 @@ public class ReaderReloadTest extends AbstractCairoTest {
             failToOpen.set(false);
             try (TableReader reader2 = engine.getReader(xTableToken)) {
                 Assert.assertNotEquals(reader1, reader2);
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolNullFlagIsRefreshedOnReaderReload() throws Exception {
+        assertMemoryLeak(ff, () -> {
+            execute("create table x (sym symbol, ts timestamp) timestamp(ts) partition by year;");
+
+            TableToken tableToken = engine.verifyTableName("x");
+            try (TableReader reader = engine.getReader(tableToken)) {
+                Assert.assertFalse(reader.getSymbolMapReader(0).containsNullValue());
+
+                execute(
+                        "insert into x values ('foo', '2024-05-14T16:00:00.000000Z')," +
+                                "('bar', '2024-05-14T16:00:01.000000Z')," +
+                                "('baz', '2024-05-14T16:00:02.000000Z')," +
+                                "(null, '2024-05-14T16:00:02.000000Z');"
+                );
+
+                reader.goPassive();
+                reader.goActive();
+
+                Assert.assertTrue(reader.getSymbolMapReader(0).containsNullValue());
             }
         });
     }

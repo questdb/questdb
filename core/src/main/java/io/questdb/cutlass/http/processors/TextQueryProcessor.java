@@ -35,6 +35,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
@@ -78,8 +79,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     // Being asynchronous we may need to be able to return factory to the cache
     // by the same thread that executes the dispatcher.
     private static final LocalValue<TextQueryProcessorState> LV = new LocalValue<>();
-    @SuppressWarnings("FieldMayBeFinal")
-    private static Log LOG = LogFactory.getLog(TextQueryProcessor.class);
+    private static final Log LOG = LogFactory.getLog(TextQueryProcessor.class);
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final MillisecondClock clock;
     private final JsonQueryProcessorConfiguration configuration;
@@ -178,7 +178,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                             }
                         }
                     }
-                    state.metadata = state.recordCursorFactory.getMetadata();
                     doResumeSend(context);
                 } catch (CairoException e) {
                     state.setQueryCacheable(e.isCacheable());
@@ -340,7 +339,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
 
         final HttpChunkedResponse response = context.getChunkedResponse();
-        final int columnCount = state.metadata.getColumnCount();
+        final RecordMetadata metadata = state.recordCursorFactory.getMetadata();
+        final int columnCount = metadata.getColumnCount();
 
         OUT:
         while (true) {
@@ -360,7 +360,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                                 if (state.columnIndex > 0) {
                                     response.putAscii(state.delimiter);
                                 }
-                                response.putQuote().escapeCsvStr(state.metadata.getColumnName(state.columnIndex)).putQuote();
+                                response.putQuote().escapeCsvStr(metadata.getColumnName(state.columnIndex)).putQuote();
                                 state.columnIndex++;
                                 response.bookmark();
                             }
@@ -406,7 +406,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                             if (state.columnIndex > 0) {
                                 response.putAscii(state.delimiter);
                             }
-                            putValue(response, state.metadata.getColumnType(state.columnIndex), state.record, state.columnIndex);
+                            putValue(response, metadata.getColumnType(state.columnIndex), state.record, state.columnIndex);
                             state.columnIndex++;
                             response.bookmark();
                         }

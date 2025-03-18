@@ -108,12 +108,6 @@ public class TableStructureAdapter implements TableStructure {
     }
 
     @Override
-    public long getMetadataVersion() {
-        // new table only
-        return 0;
-    }
-
-    @Override
     public long getO3MaxLag() {
         return cairoConfiguration.getO3MaxLag();
     }

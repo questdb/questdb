@@ -29,8 +29,9 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.CreateTableColumnModel;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.CharSink;
@@ -41,48 +42,32 @@ import static io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory
 
 public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperationBuilder, Mutable, Sinkable {
     public static final ObjectFactory<CreateMatViewOperationBuilderImpl> FACTORY = CreateMatViewOperationBuilderImpl::new;
-    private final CharSequenceHashSet baseKeyColumnNames = new CharSequenceHashSet();
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
     private String baseTableName;
-    private long samplingInterval = -1;
-    private char samplingIntervalUnit = '\0';
+    private int refreshType = -1;
     private String timeZone;
     private String timeZoneOffset;
-    private String viewSql;
 
     @Override
     public CreateMatViewOperation build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sqlText) throws SqlException {
-        final CreateTableOperation createTableOperation = createTableOperationBuilder.build(compiler, sqlExecutionContext, sqlText);
+        final CreateTableOperationImpl createTableOperation = createTableOperationBuilder.build(compiler, sqlExecutionContext, sqlText);
         return new CreateMatViewOperationImpl(
+                Chars.toString(sqlText),
                 createTableOperation,
+                refreshType,
                 baseTableName,
-                baseKeyColumnNames,
-                samplingInterval,
-                samplingIntervalUnit,
                 timeZone,
-                timeZoneOffset,
-                viewSql
+                timeZoneOffset
         );
     }
 
     @Override
     public void clear() {
         createTableOperationBuilder.clear();
-        baseKeyColumnNames.clear();
+        refreshType = -1;
         baseTableName = null;
-        samplingInterval = -1;
-        samplingIntervalUnit = '\0';
         timeZone = null;
         timeZoneOffset = null;
-        viewSql = null;
-    }
-
-    public CharSequenceHashSet getBaseKeyColumnNames() {
-        return baseKeyColumnNames;
-    }
-
-    public String getBaseTableName() {
-        return baseTableName;
     }
 
     public CreateTableOperationBuilderImpl getCreateTableOperationBuilder() {
@@ -99,16 +84,22 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         return createTableOperationBuilder.getTableName();
     }
 
+    @Override
+    public ExpressionNode getTableNameExpr() {
+        return createTableOperationBuilder.getTableNameExpr();
+    }
+
     public void setBaseTableName(String baseTableName) {
         this.baseTableName = baseTableName;
     }
 
-    public void setSamplingInterval(long samplingInterval) {
-        this.samplingInterval = samplingInterval;
+    public void setRefreshType(int refreshType) {
+        this.refreshType = refreshType;
     }
 
-    public void setSamplingIntervalUnit(char samplingIntervalUnit) {
-        this.samplingIntervalUnit = samplingIntervalUnit;
+    @Override
+    public void setSelectModel(QueryModel selectModel) {
+        createTableOperationBuilder.setSelectModel(selectModel);
     }
 
     public void setTimeZone(String timeZone) {
@@ -119,18 +110,18 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         this.timeZoneOffset = timeZoneOffset;
     }
 
-    public void setViewSql(String viewSql) {
-        this.viewSql = viewSql;
-    }
-
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii("create materialized view ");
         sink.put(createTableOperationBuilder.getTableName());
-        sink.putAscii(" with base ");
-        sink.put(baseTableName);
+        if (baseTableName != null) {
+            sink.putAscii(" with base ");
+            sink.put(baseTableName);
+        }
         sink.putAscii(" as (");
-        sink.put(viewSql);
+        if (createTableOperationBuilder.getQueryModel() != null) {
+            createTableOperationBuilder.getQueryModel().toSink(sink);
+        }
         sink.putAscii(')');
         for (int i = 0, n = createTableOperationBuilder.getColumnCount(); i < n; i++) {
             final CharSequence columnName = createTableOperationBuilder.getColumnName(i);
@@ -144,13 +135,15 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
             }
         }
 
-        sink.putAscii(" timestamp(");
-        sink.put(createTableOperationBuilder.getColumnName(createTableOperationBuilder.getTimestampIndex()));
-        sink.putAscii(')');
+        if (createTableOperationBuilder.getTimestampExpr() != null) {
+            sink.putAscii(" timestamp(");
+            createTableOperationBuilder.getTimestampExpr().toSink(sink);
+            sink.putAscii(')');
+        }
 
         sink.putAscii(" partition by ").put(PartitionBy.toString(createTableOperationBuilder.getPartitionByFromExpr()));
 
-        int ttlHoursOrMonths = createTableOperationBuilder.getTtlHoursOrMonths();
+        final int ttlHoursOrMonths = createTableOperationBuilder.getTtlHoursOrMonths();
         ttlToSink(ttlHoursOrMonths, sink);
 
         final CharSequence volumeAlias = createTableOperationBuilder.getVolumeAlias();

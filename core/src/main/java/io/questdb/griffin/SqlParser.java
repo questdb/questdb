@@ -27,11 +27,10 @@ package io.questdb.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
-import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
@@ -95,8 +94,6 @@ public class SqlParser {
     private final ExpressionParser expressionParser;
     private final ExpressionTreeBuilder expressionTreeBuilder;
     private final ObjectPool<InsertModel> insertModelPool;
-    private final CharSequenceHashSet matViewTables = new CharSequenceHashSet();
-    private final SqlOptimiser optimiser;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final ObjectPool<RenameTableModel> renameTableModelPool;
@@ -116,7 +113,6 @@ public class SqlParser {
 
     SqlParser(
             CairoConfiguration configuration,
-            SqlOptimiser optimiser,
             CharacterStore characterStore,
             ObjectPool<ExpressionNode> expressionNodePool,
             ObjectPool<QueryColumn> queryColumnPool,
@@ -137,7 +133,6 @@ public class SqlParser {
         this.configuration = configuration;
         this.traversalAlgo = traversalAlgo;
         this.characterStore = characterStore;
-        this.optimiser = optimiser;
         boolean tempCairoSqlLegacyOperatorPrecedence = configuration.getCairoSqlLegacyOperatorPrecedence();
         if (tempCairoSqlLegacyOperatorPrecedence) {
             this.expressionParser = new ExpressionParser(
@@ -158,6 +153,32 @@ public class SqlParser {
         }
         this.digit = 1;
         this.column = "column";
+    }
+
+    public static void collectTables(QueryModel model, CharSequenceHashSet tableNames) {
+        QueryModel m = model;
+        do {
+            final CharSequence t = m.getTableName();
+            if (t != null) {
+                tableNames.add(t);
+            }
+
+            final ObjList<QueryModel> joinModels = m.getJoinModels();
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final QueryModel joinModel = joinModels.getQuick(i);
+                if (joinModel == m) {
+                    continue;
+                }
+                collectTables(joinModel, tableNames);
+            }
+
+            final QueryModel unionModel = m.getUnionModel();
+            if (unionModel != null) {
+                collectTables(unionModel, tableNames);
+            }
+
+            m = m.getNestedModel();
+        } while (m != null);
     }
 
     public static boolean isFullSampleByPeriod(ExpressionNode n) {
@@ -258,90 +279,6 @@ public class SqlParser {
         }
 
         return visitor.visit(node);
-    }
-
-    private static void collectTables(QueryModel model, CharSequenceHashSet tableNames) {
-        QueryModel m = model;
-        do {
-            final CharSequence t = m.getTableName();
-            if (t != null) {
-                tableNames.add(t);
-            }
-
-            final ObjList<QueryModel> joinModels = m.getJoinModels();
-            for (int i = 0, n = joinModels.size(); i < n; i++) {
-                final QueryModel joinModel = joinModels.getQuick(i);
-                if (joinModel == m) {
-                    continue;
-                }
-                collectTables(joinModel, tableNames);
-            }
-
-            final QueryModel unionModel = m.getUnionModel();
-            if (unionModel != null) {
-                collectTables(unionModel, tableNames);
-            }
-
-            m = m.getNestedModel();
-        } while (m != null);
-    }
-
-    /**
-     * Copies base table column names present in the given node into the target set.
-     * The node may contain multiple columns/aliases, e.g. `concat(sym1, sym2)`, which are searched
-     * down to their names in the base table.
-     * <p>
-     * Used to find the list of base table columns used in mat view query keys (best effort validation).
-     */
-    private static void copyBaseTableColumnNames(
-            ExpressionNode node,
-            QueryModel model,
-            CharSequence baseTableName,
-            CharSequenceHashSet target
-    ) throws SqlException {
-        if (node != null && model != null) {
-            if (node.type == ExpressionNode.LITERAL) {
-                if (model.getTableName() != null) {
-                    // We've found a lowest-level model. Let's check if the column belongs to it.
-                    final int dotIndex = Chars.indexOf(node.token, '.');
-                    if (dotIndex > -1) {
-                        if (Chars.equals(model.getName(), node.token, 0, dotIndex)) {
-                            if (!Chars.equals(model.getTableName(), baseTableName)) {
-                                throw SqlException.$(node.position, "only base table columns can be used as keys").put(node.token);
-                            }
-                            target.add(Chars.toString(node.token, dotIndex + 1, node.token.length()));
-                            return;
-                        }
-                    } else {
-                        if (!Chars.equals(model.getTableName(), baseTableName)) {
-                            throw SqlException.$(node.position, "only base table columns can be used as keys").put(node.token);
-                        }
-                        target.add(node.token);
-                        return;
-                    }
-                } else {
-                    // Check nested model.
-                    final QueryColumn column = model.getAliasToColumnMap().get(node.token);
-                    copyBaseTableColumnNames(column != null ? column.getAst() : node, model.getNestedModel(), baseTableName, target);
-                }
-            }
-
-            // Check node children for functions/operators.
-            for (int i = 0, n = node.args.size(); i < n; i++) {
-                copyBaseTableColumnNames(node.args.getQuick(i), model, baseTableName, target);
-            }
-            if (node.lhs != null) {
-                copyBaseTableColumnNames(node.lhs, model, baseTableName, target);
-            }
-            if (node.rhs != null) {
-                copyBaseTableColumnNames(node.rhs, model, baseTableName, target);
-            }
-
-            // Check join models.
-            for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
-                copyBaseTableColumnNames(node, model.getJoinModels().getQuick(i), baseTableName, target);
-            }
-        }
     }
 
     private static SqlException err(GenericLexer lexer, @Nullable CharSequence tok, @NotNull String msg) {
@@ -814,7 +751,10 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
         final CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch' or 'materialized'");
-        if (isMaterializedKeyword(tok) && configuration.isMatViewEnabled()) {
+        if (isMaterializedKeyword(tok)) {
+            if (!configuration.isMatViewEnabled()) {
+                throw SqlException.$(lexer.lastTokenPosition(), "materialized views are disabled");
+            }
             return parseCreateMatView(lexer, executionContext, sqlParserCallback);
         }
         return parseCreateTable(lexer, tok, executionContext, sqlParserCallback);
@@ -825,106 +765,97 @@ public class SqlParser {
             SqlExecutionContext executionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        final CreateMatViewOperationBuilderImpl builder = createMatViewOperationBuilder;
-        builder.clear();
-        builder.getCreateTableOperationBuilder().setDefaultSymbolCapacity(configuration.getDefaultSymbolCapacity());
+        final CreateMatViewOperationBuilderImpl mvOpBuilder = createMatViewOperationBuilder;
+        final CreateTableOperationBuilderImpl tableOpBuilder = mvOpBuilder.getCreateTableOperationBuilder();
+        mvOpBuilder.clear(); // clears tableOpBuilder too
+        tableOpBuilder.setDefaultSymbolCapacity(configuration.getDefaultSymbolCapacity());
 
         expectTok(lexer, "view");
         CharSequence tok = tok(lexer, "view name or 'if'");
         if (isIfKeyword(tok)) {
             if (isNotKeyword(tok(lexer, "'not'")) && isExistsKeyword(tok(lexer, "'exists'"))) {
-                createTableOperationBuilder.setIgnoreIfExists(true);
+                tableOpBuilder.setIgnoreIfExists(true);
                 tok = tok(lexer, "view name");
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), "'if not exists' expected");
             }
         }
         assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
-        createTableOperationBuilder.setTableNameExpr(nextLiteral(
+        tableOpBuilder.setTableNameExpr(nextLiteral(
                 assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition()), lexer.lastTokenPosition()
         ));
 
-        CharSequence baseTableName = null;
-        boolean baseTableDefined = false;
-        boolean refreshDefined = false;
-        for (; ; ) {
-            tok = tok(lexer, "'as' or 'with' or 'refresh'");
-            if (isWithKeyword(tok)) {
-                expectTok(lexer, "base");
-                if (baseTableDefined) {
-                    throw SqlException.position(lexer.getPosition()).put("base table already defined");
-                }
-                baseTableName = Chars.toString(tok(lexer, "base table expected"));
-                baseTableDefined = true;
-            } else if (isRefreshKeyword(tok)) {
-                if (refreshDefined) {
-                    throw SqlException.position(lexer.getPosition()).put("refresh already defined");
-                }
-                tok = tok(lexer, "'incremental' or 'manual' or 'interval' expected");
-                if (isManualKeyword(tok)) {
-                    throw SqlException.position(lexer.lastTokenPosition()).put("manual refresh is not yet supported");
-                } else if (isIntervalKeyword(tok)) {
-                    throw SqlException.position(lexer.lastTokenPosition()).put("interval refresh is not yet supported");
-                } else if (!isIncrementalKeyword(tok)) {
-                    // For now, incremental refresh is the only supported behavior.
-                    throw SqlException.position(lexer.lastTokenPosition()).put("'incremental' or 'manual' or 'interval' expected");
-                }
-                refreshDefined = true;
-            } else {
-                break;
-            }
+        tok = tok(lexer, "'as' or 'with' or 'refresh'");
+        String baseTableName = null;
+        if (isWithKeyword(tok)) {
+            expectTok(lexer, "base");
+            baseTableName = Chars.toString(tok(lexer, "base table expected"));
+            tok = tok(lexer, "'as' or 'refresh'");
         }
+        mvOpBuilder.setBaseTableName(Chars.toString(baseTableName));
 
-        final QueryModel queryModel;
+        // For now, incremental refresh is the only supported refresh type.
+        int refreshType = MatViewDefinition.INCREMENTAL_REFRESH_TYPE;
+        if (isRefreshKeyword(tok)) {
+            tok = tok(lexer, "'incremental' or 'manual' or 'interval' expected");
+            if (isManualKeyword(tok)) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("manual refresh is not yet supported");
+            } else if (isIntervalKeyword(tok)) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("interval refresh is not yet supported");
+            } else if (!isIncrementalKeyword(tok)) {
+                throw SqlException.position(lexer.lastTokenPosition()).put("'incremental' or 'manual' or 'interval' expected");
+            }
+            tok = tok(lexer, "'as'");
+        }
+        mvOpBuilder.setRefreshType(refreshType);
+
         if (isAsKeyword(tok)) {
             expectTok(lexer, '(');
 
-            final int queryStartPos = lexer.getPosition();
-
-            // parse mat view query
-            final QueryModel qm = parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback, null);
-            final QueryModel nestedModel = qm.getNestedModel();
-            if (nestedModel.getSampleByFrom() != null) {
-                throw SqlException.position(lexer.getPosition()).put("FROM is not supported for materialized views");
+            // Parse SELECT for the sake of basic SQL validation.
+            // It'll be compiled and optimized later, at the execution phase.
+            final int startOfQuery = lexer.getPosition();
+            tok = tok(lexer, "'with' or 'select'");
+            if (isWithKeyword(tok)) {
+                parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, null);
+                // CTEs require SELECT to be specified
+                expectTok(lexer, "select");
             }
-            if (nestedModel.getSampleByTo() != null) {
-                throw SqlException.position(lexer.getPosition()).put("TO is not supported for materialized views");
-            }
+            lexer.unparseLast();
+            final QueryModel queryModel = parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback, null);
+            final int endOfQuery = lexer.getPosition() - 1;
 
-            if (nestedModel.getSampleByFill() != null && nestedModel.getSampleByFill().size() > 0) {
-                throw SqlException.position(lexer.getPosition()).put("FILL is not supported for materialized views");
-            }
-
-            if (nestedModel.getSampleByTimezoneName() != null) {
-                builder.setTimeZone(unquote(nestedModel.getSampleByTimezoneName().token).toString());
-            }
-            if (nestedModel.getSampleByOffset() != null) {
-                builder.setTimeZoneOffset(unquote(nestedModel.getSampleByOffset().token).toString());
-            }
-
-            // optimize mat view query
-            queryModel = optimiser.optimise(qm, executionContext, sqlParserCallback);
-            queryModel.setIsMatView(true);
-
-            // find mat view query
-            final String matViewSql = Chars.toString(lexer.getContent(), queryStartPos, lexer.getPosition() - 1);
-            builder.setViewSql(matViewSql);
-
-            // create view columns based on query
-            final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
-            assert columns.size() > 0;
-
-            // we do not know types of columns at this stage,
-            // compiler must put table together using query metadata
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                CreateTableColumnModel model = newCreateTableColumnModel(columns.getQuick(i).getName(), i);
-                model.setColumnType(ColumnType.UNDEFINED);
+            // Basic validation - check all nested models for FROM-TO or FILL.
+            final QueryModel nestedModel = queryModel.getNestedModel();
+            QueryModel m = nestedModel;
+            while (m != null) {
+                if (m.getSampleByFrom() != null || m.getSampleByTo() != null) {
+                    final int position = m.getSampleByFrom() != null ? m.getSampleByFrom().position : m.getSampleByTo().position;
+                    throw SqlException.position(position).put("FROM-TO is not supported for materialized views");
+                }
+                final ObjList<ExpressionNode> sampleByFill = m.getSampleByFill();
+                if (sampleByFill != null && sampleByFill.size() > 0) {
+                    throw SqlException.position(sampleByFill.get(0).position).put("FILL is not supported for materialized views");
+                }
+                m = m.getNestedModel();
             }
 
-            createTableOperationBuilder.setQueryModel(queryModel);
+            if (nestedModel != null) {
+                if (nestedModel.getSampleByTimezoneName() != null) {
+                    mvOpBuilder.setTimeZone(unquote(nestedModel.getSampleByTimezoneName().token).toString());
+                }
+                if (nestedModel.getSampleByOffset() != null) {
+                    mvOpBuilder.setTimeZoneOffset(unquote(nestedModel.getSampleByOffset().token).toString());
+                }
+            }
+
+            final String matViewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);
+            tableOpBuilder.setSelectText(matViewSql);
+            tableOpBuilder.setSelectModel(queryModel); // transient model, for toSink() purposes only
+
             expectTok(lexer, ')');
         } else {
-            throw SqlException.position(lexer.getPosition()).put("'as' or 'with' or 'refresh' expected");
+            throw SqlException.position(lexer.getPosition()).put("'as' expected");
         }
 
         while ((tok = optTok(lexer)) != null && Chars.equals(tok, ',')) {
@@ -938,16 +869,7 @@ public class SqlParser {
 
         final ExpressionNode timestamp = parseTimestamp(lexer, tok);
         if (timestamp != null) {
-            final CreateTableColumnModel timestampModel = getCreateTableColumnModel(timestamp.token);
-            if (timestampModel == null) {
-                throw SqlException.position(timestamp.position).put("TIMESTAMP column does not exist [name=").put(timestamp.token).put(']');
-            }
-            final int timestampType = timestampModel.getColumnType();
-            if (timestampType != ColumnType.TIMESTAMP && timestampType != ColumnType.UNDEFINED) { // type can be -1 for create table as select because types aren't known yet
-                throw SqlException.position(timestamp.position).put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampType)).put(']');
-            }
-            createTableOperationBuilder.setTimestampExpr(timestamp);
-            timestampModel.setIsDedupKey(); // set dedup for timestamp column
+            tableOpBuilder.setTimestampExpr(timestamp);
             tok = optTok(lexer);
         }
 
@@ -962,14 +884,14 @@ public class SqlParser {
         if (!PartitionBy.isPartitioned(partitionBy)) {
             throw SqlException.position(0).put("materialized view has to be partitioned");
         }
-        createTableOperationBuilder.setPartitionByExpr(partitionByExpr);
+        tableOpBuilder.setPartitionByExpr(partitionByExpr);
         tok = optTok(lexer);
 
         if (tok != null && isTtlKeyword(tok)) {
             int ttlValuePos = lexer.getPosition();
             int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
             PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, ttlValuePos);
-            createTableOperationBuilder.setTtlHoursOrMonths(ttlHoursOrMonths);
+            tableOpBuilder.setTtlHoursOrMonths(ttlHoursOrMonths);
             tok = optTok(lexer);
         }
 
@@ -979,90 +901,14 @@ public class SqlParser {
             if (Os.isWindows()) {
                 throw SqlException.position(lexer.getPosition()).put("'in volume' is not supported on Windows");
             }
-            createTableOperationBuilder.setVolumeAlias(GenericLexer.unquote(tok));
+            tableOpBuilder.setVolumeAlias(GenericLexer.unquote(tok));
             tok = optTok(lexer);
         }
 
-        // mat view is always WAL enabled
-        createTableOperationBuilder.setWalEnabled(true);
+        // Mat view is always WAL enabled.
+        tableOpBuilder.setWalEnabled(true);
 
-        // find base table if not set explicitly
-        if (baseTableName == null) {
-            matViewTables.clear();
-            collectTables(queryModel, matViewTables);
-            if (matViewTables.size() < 1) {
-                throw SqlException.$(lexer.lastTokenPosition(), "missing base table, materialized views have to be based on a table");
-            }
-            if (matViewTables.size() > 1) {
-                throw SqlException.$(lexer.lastTokenPosition(), "more than one table used in query, base table has to be set using 'WITH BASE'");
-            }
-            baseTableName = matViewTables.get(0);
-        }
-        final TableToken baseTableToken = executionContext.getTableTokenIfExists(baseTableName);
-        if (baseTableToken == null) {
-            throw SqlException.tableDoesNotExist(lexer.lastTokenPosition(), baseTableName);
-        }
-        if (!baseTableToken.isWal()) {
-            throw SqlException.$(lexer.lastTokenPosition(), "base table has to be WAL enabled");
-        }
-        builder.setBaseTableName(baseTableToken.getTableName());
-
-        // find sampling interval
-        CharSequence intervalExpr = null;
-        final ExpressionNode sampleBy = queryModel.getSampleBy();
-        if (sampleBy != null && sampleBy.type == ExpressionNode.CONSTANT) {
-            intervalExpr = sampleBy.token;
-        }
-
-        // GROUP BY timestamp_floor(ts) (optimized SAMPLE BY)
-        if (intervalExpr == null) {
-            final ObjList<QueryColumn> queryColumns = queryModel.getBottomUpColumns();
-            for (int i = 0, n = queryColumns.size(); i < n; i++) {
-                final QueryColumn queryColumn = queryColumns.getQuick(i);
-                final ExpressionNode ast = queryColumn.getAst();
-                if (ast.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase("timestamp_floor", ast.token)) {
-                    intervalExpr = ast.paramCount == 3 ? ast.args.getQuick(2).token : ast.lhs.token;
-                    if (timestamp == null) {
-                        createTableOperationBuilder.setTimestampExpr(nextLiteral(queryColumn.getName(), ast.position));
-                        final CreateTableColumnModel timestampModel = getCreateTableColumnModel(queryColumn.getName());
-                        if (timestampModel == null) {
-                            throw SqlException.position(ast.position).put("TIMESTAMP column does not exist [name=").put(queryColumn.getName()).put(']');
-                        }
-                        timestampModel.setIsDedupKey(); // set dedup for timestamp column
-                    }
-                    break;
-                }
-            }
-        }
-        if (intervalExpr == null) {
-            throw SqlException.$(lexer.lastTokenPosition(), "Materialized view query requires a sampling interval");
-        }
-
-        // parse sampling interval expression
-        intervalExpr = GenericLexer.unquote(intervalExpr);
-        final int samplingIntervalEnd = TimestampSamplerFactory.findIntervalEndIndex(intervalExpr, lexer.lastTokenPosition());
-        assert samplingIntervalEnd < intervalExpr.length();
-        final long samplingInterval = TimestampSamplerFactory.parseInterval(intervalExpr, samplingIntervalEnd, lexer.lastTokenPosition());
-        assert samplingInterval > 0;
-        final char samplingIntervalUnit = intervalExpr.charAt(samplingIntervalEnd);
-        builder.setSamplingInterval(samplingInterval);
-        builder.setSamplingIntervalUnit(samplingIntervalUnit);
-
-        final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            final QueryColumn column = columns.getQuick(i);
-            if (!optimiser.hasAggregates(column.getAst())) {
-                // sample by/group by key, add as dedup key
-                final CreateTableColumnModel model = createTableOperationBuilder.getColumnModel(column.getName());
-                if (model == null) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "missing column [name=" + column.getName() + "]");
-                }
-                model.setIsDedupKey();
-                // copy column names into builder to be validated later
-                copyBaseTableColumnNames(column.getAst(), queryModel, builder.getBaseTableName(), builder.getBaseKeyColumnNames());
-            }
-        }
-        return parseCreateMatViewExt(lexer, executionContext, sqlParserCallback, tok, builder);
+        return parseCreateMatViewExt(lexer, executionContext, sqlParserCallback, tok, mvOpBuilder);
     }
 
     private ExecutionModel parseCreateTable(
@@ -1120,7 +966,6 @@ public class SqlParser {
         } else {
             tableName = tok;
         }
-        // validate that table name is not a keyword
 
         assertTableNameIsQuotedOrNotAKeyword(tableName, lexer.lastTokenPosition());
 
@@ -1143,7 +988,7 @@ public class SqlParser {
             }
         } else if (isAsKeyword(tok)) {
             isDirectCreate = false;
-            parseCreateTableAsSelect(lexer, executionContext, sqlParserCallback);
+            parseCreateTableAsSelect(lexer, sqlParserCallback);
         } else {
             throw errUnexpected(lexer, tok);
         }
@@ -1352,24 +1197,20 @@ public class SqlParser {
         return parseCreateTableExt(lexer, executionContext, sqlParserCallback, tok, builder);
     }
 
-    private void parseCreateTableAsSelect(
-            GenericLexer lexer,
-            SqlExecutionContext executionContext,
-            SqlParserCallback sqlParserCallback
-    ) throws SqlException {
+    private void parseCreateTableAsSelect(GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
         expectTok(lexer, '(');
-        int startOfSelect = lexer.getPosition();
-        QueryModel selectModel = parseDml(lexer, null, startOfSelect, true, sqlParserCallback, null);
-        int endOfSelect = lexer.getPosition() - 1;
+        final int startOfSelect = lexer.getPosition();
+        // Parse SELECT for the sake of basic SQL validation.
+        // It'll be compiled and optimized later, at the execution phase.
+        final QueryModel selectModel = parseDml(lexer, null, startOfSelect, true, sqlParserCallback, null);
+        final int endOfSelect = lexer.getPosition() - 1;
         createTableOperationBuilder.setSelectText(lexer.getContent().subSequence(startOfSelect, endOfSelect));
-        QueryModel queryModel = optimiser.optimise(selectModel, executionContext, sqlParserCallback);
-        assert queryModel.getBottomUpColumns().size() > 0 : "parsing resulted in zero columns";
-        createTableOperationBuilder.setQueryModel(queryModel);
+        createTableOperationBuilder.setSelectModel(selectModel); // transient model, for toSink() purposes only
         expectTok(lexer, ')');
     }
 
     private void parseCreateTableCastDef(GenericLexer lexer) throws SqlException {
-        if (createTableOperationBuilder.getQueryModel() == null) {
+        if (createTableOperationBuilder.getSelectText() == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "cast is only supported in 'create table as ...' context");
         }
         expectTok(lexer, '(');
@@ -1708,8 +1549,7 @@ public class SqlParser {
             }
 
             // check for decls
-            if (prevModel.getDecls() != null && prevModel.getDecls().size() > 0
-                    && decls == null) {
+            if (prevModel.getDecls() != null && prevModel.getDecls().size() > 0 && decls == null) {
                 decls = prevModel.getDecls();
             }
         }
@@ -1761,7 +1601,7 @@ public class SqlParser {
                 tok = null;
             }
 
-            if (tok == null || Chars.equals(tok, ';') || Chars.equals(tok, ')')) { //token can also be ';' on query boundary
+            if (tok == null || Chars.equals(tok, ';') || Chars.equals(tok, ')')) { // token can also be ';' on query boundary
                 QueryModel nestedModel = queryModelPool.next();
                 nestedModel.setModelPosition(modelPosition);
                 ExpressionNode tableNameExpr = expressionNodePool.next().of(ExpressionNode.FUNCTION, "long_sequence", 0, lexer.lastTokenPosition());
@@ -1789,6 +1629,7 @@ public class SqlParser {
                 // show datestyle
                 // show time zone
                 // show create table tab
+                // show create materialized view tab
                 if (isTablesKeyword(tok)) {
                     showKind = QueryModel.SHOW_TABLES;
                 } else if (isColumnsKeyword(tok)) {
@@ -1822,8 +1663,17 @@ public class SqlParser {
                 } else if (isServerVersionNumKeyword(tok)) {
                     showKind = QueryModel.SHOW_SERVER_VERSION_NUM;
                 } else if (isCreateKeyword(tok)) {
-                    parseShowCreateTable(lexer, model);
-                    showKind = QueryModel.SHOW_CREATE_TABLE;
+                    tok = SqlUtil.fetchNext(lexer);
+                    if (tok != null && isTableKeyword(tok)) {
+                        parseTableName(lexer, model);
+                        showKind = QueryModel.SHOW_CREATE_TABLE;
+                    } else if (tok != null && isMaterializedKeyword(tok)) {
+                        expectTok(lexer, "view");
+                        parseTableName(lexer, model);
+                        showKind = QueryModel.SHOW_CREATE_MAT_VIEW;
+                    } else {
+                        throw SqlException.position(lexer.getPosition()).put("expected 'TABLE' or 'MATERIALIZED VIEW'");
+                    }
                 } else {
                     showKind = sqlParserCallback.parseShowSql(lexer, model, tok, expressionNodePool);
                 }
@@ -2068,7 +1918,6 @@ public class SqlParser {
                 tok = setModelAliasAndTimestamp(lexer, model);
             }
         } else {
-
             lexer.unparseLast();
             parseSelectFrom(lexer, model, masterModel.getWithClauses(), sqlParserCallback);
             tok = setModelAliasAndTimestamp(lexer, model);
@@ -3346,15 +3195,6 @@ public class SqlParser {
             default:
                 throw SqlException.$(expr.position, "function, literal or constant is expected");
         }
-    }
-
-    /**
-     * For use with `SHOW CREATE TABLE my_table`.
-     * Expects that we already checked the `CREATE`.
-     */
-    private void parseShowCreateTable(GenericLexer lexer, QueryModel model) throws SqlException {
-        expectTok(lexer, "table");
-        parseTableName(lexer, model);
     }
 
     private int parseSymbolCapacity(GenericLexer lexer) throws SqlException {

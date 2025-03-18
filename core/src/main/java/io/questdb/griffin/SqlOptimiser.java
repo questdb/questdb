@@ -1627,7 +1627,7 @@ public class SqlOptimiser implements Mutable {
             QueryModel outerModel,
             QueryModel distinctModel
     ) throws SqlException {
-        final ObjList<CharSequence> columnNames = srcModel.getBottomUpColumnAliases();
+        final ObjList<CharSequence> columnNames = srcModel.getWildcardColumnNames();
         for (int j = 0, z = columnNames.size(); j < z; j++) {
             CharSequence name = columnNames.getQuick(j);
             // this is a check to see if column has to be added to wildcard list
@@ -3325,6 +3325,9 @@ public class SqlOptimiser implements Mutable {
                 case QueryModel.SHOW_CREATE_TABLE:
                     tableFactory = sqlParserCallback.generateShowCreateTableFactory(model, executionContext, path);
                     break;
+                case QueryModel.SHOW_CREATE_MAT_VIEW:
+                    tableFactory = sqlParserCallback.generateShowCreateMatViewFactory(model, executionContext, path);
+                    break;
                 default:
                     tableFactory = sqlParserCallback.generateShowSqlFactory(model);
                     break;
@@ -4129,6 +4132,103 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    /**
+     * Rewrites "select distinct a,b,c from tab" into "select a,b,c from (select a,b,c,d,count() from tab)".
+     * We will not rewrite distinct of group-by or windows functions.
+     *
+     * @param model input model, it will be validated for the rewrite possibility. If rewrite is impossible,
+     *              the input model will be returned verbatim.
+     * @return either the input model or newly rewritten model.
+     */
+    private QueryModel rewriteDistinct(QueryModel model) throws SqlException {
+        if (model == null) {
+            return null;
+        }
+
+        if (model.isDistinct()) {
+            // bingo
+            // create wrapper models
+            QueryModel wrapperNested = queryModelPool.next();
+            wrapperNested.setNestedModel(model);
+            QueryModel wrapperModel = queryModelPool.next();
+            wrapperModel.setNestedModel(wrapperNested);
+
+            ObjList<QueryColumn> bottomUpColumns = model.getBottomUpColumns();
+            // Columns might be aliased, if they are, we have to create a new
+            // column instance. We also check if we should abandon the rewrite
+            // in case we find counterproductive
+            boolean abandonRewrite = false;
+            for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
+                QueryColumn qc = bottomUpColumns.getQuick(i);
+                ExpressionNode ast = qc.getAst();
+                CharSequence alias = qc.getAlias();
+                if (qc.isWindowColumn() || (ast.type == FUNCTION && functionParser.getFunctionFactoryCache().isGroupBy(ast.token))) {
+                    abandonRewrite = true;
+                    break;
+                }
+                if (alias == ast.token && ast.type != FUNCTION) {
+                    wrapperModel.addBottomUpColumn(qc);
+                } else {
+                    wrapperModel.addBottomUpColumn(queryColumnPool.next().of(alias, nextLiteral(alias)));
+                }
+            }
+
+            if (!abandonRewrite) {
+
+                // remove the distinct flag, model is no longer that
+                model.setDistinct(false);
+
+                // if we add "count" aggregate we will transform our model pair into
+                // simple group by with an extra column, that wasn't requested. But,
+                // it is a good start.
+
+                ExpressionNode countAst = expressionNodePool.next();
+                countAst.token = "count";
+                countAst.paramCount = 0;
+                countAst.type = FUNCTION;
+
+                QueryColumn countColumn = queryColumnPool.next();
+                countColumn.of(
+                        createColumnAlias("count", model),
+                        countAst,
+                        false,
+                        -1
+                );
+                model.getBottomUpColumns().add(countColumn);
+
+                // move model attributes to the wrapper
+                wrapperModel.setAlias(model.getAlias());
+                wrapperModel.setTimestamp(model.getTimestamp());
+
+                // before dispatching our rewrite, make sure our sub-query has also been re-written
+                // the immediate "nested" model is part of the "distinct" pair or model, we skip rewriting that
+                // and move onto its nested model.
+                model.getNestedModel().setNestedModel(rewriteDistinct(model.getNestedModel().getNestedModel()));
+
+                // if the model has a union, we need to move this union to the wrapper and rewrite it
+                wrapperModel.setUnionModel(rewriteDistinct(model.getUnionModel()));
+                wrapperModel.setSetOperationType(model.getSetOperationType());
+                // also clear the union on the model we just wrapped
+                model.setUnionModel(null);
+                model.setSetOperationType(SET_OPERATION_UNION_ALL);
+
+                return wrapperModel;
+            }
+        }
+
+        // recurse into the model hierarchy
+        model.setNestedModel(rewriteDistinct(model.getNestedModel()));
+
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            joinModels.setQuick(i, rewriteDistinct(joinModels.getQuick(i)));
+        }
+
+        model.setUnionModel(rewriteDistinct(model.getUnionModel()));
+
+        return model;
+    }
+
     // push aggregate function calls to group by model, replace key column expressions with group by aliases
     // raise error if raw column usage doesn't match one of expressions on group by list
     private ExpressionNode rewriteGroupBySelectExpression(
@@ -4638,9 +4738,16 @@ public class SqlOptimiser implements Mutable {
                 try {
                     final int position = Numbers.parseInt(column);
                     if (position < 1 || position > columnCount) {
-                        // maybe it is actually a name
-                        continue;
-//                        throw SqlException.$(orderBy.position, "order column position is out of range [max=").put(columnCount).put(']');
+                        // it could be out of range, or it could be intended as a column name. let's check for a
+                        // matching column.
+                        if (baseParent.getAliasToColumnMap().get(column) != null) {
+                            continue;
+                        } else {
+                            throw SqlException.$(orderBy.position,
+                                            "order column position is out of range [max=")
+                                    .put(columnCount)
+                                    .put(']');
+                        }
                     }
                     orderByNodes.setQuick(
                             i,
@@ -6338,6 +6445,7 @@ public class SqlOptimiser implements Mutable {
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
             rewrittenModel = rewritePivot(rewrittenModel);
             rewriteSampleByFromTo(rewrittenModel);
+            rewrittenModel = rewriteDistinct(rewrittenModel);
             rewrittenModel = rewriteSampleBy(rewrittenModel);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             rewriteCount(rewrittenModel);

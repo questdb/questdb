@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -231,8 +232,7 @@ public class TablesFunctionFactory implements FunctionFactory {
 
                 @Override
                 public int getStrLen(int col) {
-                    CharSequence str = getStrA(col);
-                    return str != null ? str.length() : -1;
+                    return TableUtils.lengthOf(getStrA(col));
                 }
 
                 private String getTtlUnit(int ttl) {
@@ -284,7 +284,7 @@ public class TablesFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("dedup", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("ttlValue", ColumnType.INT));
         metadata.add(new TableColumnMetadata("ttlUnit", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("isMatView", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("matView", ColumnType.BOOLEAN));
         METADATA = metadata;
     }
 }

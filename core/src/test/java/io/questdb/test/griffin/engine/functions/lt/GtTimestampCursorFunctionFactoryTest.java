@@ -40,8 +40,8 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
 
             assertSql(expected, "select * from x where ts > (select null)");
             assertSql(expected, "select * from x where ts > (select null::timestamp)");
-            assertSql(expected, "select * from x where ts < (select null::string)");
-            assertSql(expected, "select * from x where ts < (select null::varchar)");
+            assertSql(expected, "select * from x where ts > (select null::string)");
+            assertSql(expected, "select * from x where ts > (select null::varchar)");
             // no rows selected in the cursor
             assertSql(expected, "select * from x where ts > (select 1::timestamp from x where 1 <> 1)");
             assertSql(expected, "select * from x where ts > (select '11' from x where 1 <> 1)");
@@ -153,16 +153,177 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCompareTimestampWithVarcharNegated() throws Exception {
+    public void testCompareTimestampWithVarcharFromTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (" +
-                    "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(2)" +
+                    "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(100000)" +
                     ") timestamp(ts) partition by day");
+
+            assertQueryNoLeakCheck(
+                    "a\tts\n" +
+                            "8#3TsZ\t1970-01-01T00:00:02.500000Z\n" +
+                            "zV衞͛Ԉ龘и\uDA89\uDFA4~\t1970-01-01T00:00:05.000000Z\n" +
+                            "ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t1970-01-01T00:00:07.500000Z\n",
+                    "select * from x where ts > (select ts::varchar from x limit 2) limit 3",
+                    "ts",
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCompareTimestampWithVarcharNegated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x as (" +
+                            "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(2)" +
+                            ") timestamp(ts) partition by day"
+            );
 
             assertSql(
                     "a\tts\n" +
                             "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z\n",
                     "select * from x where ts <= (select '1970-01-01T00:00:00.000000Z'::varchar)"
+            );
+        });
+    }
+
+    @Test
+    public void testPlans() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "  select rnd_varchar() a, rnd_long(30000, 80000000, 1)::timestamp ts from long_sequence(10)" +
+                    ")");
+
+            // thread-safe
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts [thread-safe] > cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [null]\n" +
+                            "        long_sequence count: 1\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts > (select null)"
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts [thread-safe] <= cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [null]\n" +
+                            "        long_sequence count: 1\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts <= (select null)"
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts [thread-safe] > cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [1773100800000000]\n" +
+                            "        long_sequence count: 1\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts > (select '2026-03-10'::timestamp)"
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts [thread-safe] <= cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: ['2014-09-03']\n" +
+                            "        long_sequence count: 1\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts <= (select '2014-09-03'::string)"
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts [thread-safe] > cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: ['2020-02-21']\n" +
+                            "        long_sequence count: 1\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts > (select '2020-02-21'::varchar)"
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts [thread-safe] <= cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: ['2020-02-21']\n" +
+                            "        long_sequence count: 1\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts <= (select '2020-02-21'::varchar)"
+            );
+
+            // non-thread-safe
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts::varchar::timestamp > cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [null]\n" +
+                            "        long_sequence count: 1 [state-shared]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts::varchar::timestamp > (select null)"
+            );
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts::varchar::timestamp > cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [1773100800000000]\n" +
+                            "        long_sequence count: 1 [state-shared]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts::varchar::timestamp > (select '2026-03-10'::timestamp)"
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts::varchar::timestamp > cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: ['2014-09-03']\n" +
+                            "        long_sequence count: 1 [state-shared]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts::varchar::timestamp > (select '2014-09-03'::string)"
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts::varchar::timestamp > cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: ['2020-02-21']\n" +
+                            "        long_sequence count: 1 [state-shared]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts::varchar::timestamp > (select '2020-02-21'::varchar)"
             );
         });
     }

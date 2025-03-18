@@ -222,11 +222,15 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         } catch (EntryUnavailableException ex) {
             throw ex;
         } catch (CairoException e) {
-            final LogRecord log = e.isCritical() ? LOG.critical() : LOG.error();
+            boolean isCritical = e.isCritical();
+            // "duplicate column name:" is BAU when column is added from ILP, don't log it as an error
+            boolean isInfo = command == ADD_COLUMN && e.isMetadataValidation();
+
+            final LogRecord log = isCritical ? LOG.critical() : (isInfo ? LOG.info() : LOG.error());
             log.$("could not alter table [table=").$(svc.getTableToken())
                     .$(", command=").$(command)
+                    .$(", msg=").$(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
-                    .$(", message=`").$(e.getFlyweightMessage()).$('`')
                     .I$();
             throw e;
         } finally {
@@ -574,8 +578,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             svc.setMetaO3MaxLag(o3MaxLag);
         } catch (CairoException e) {
             LOG.error().$("could not change o3MaxLag [table=").utf8(getTableToken().getTableName())
+                    .$(", msg=").$(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
-                    .$(", error=").$(e.getFlyweightMessage())
                     .I$();
             throw e;
         }
