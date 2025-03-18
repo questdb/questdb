@@ -120,6 +120,24 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
         });
     }
 
+    @Test
+    public void testMultiLeastFunctionInSingleQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x( timestamp TIMESTAMP, symbol SYMBOL, price DOUBLE, amount DOUBLE ) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO x VALUES " +
+                    "('2021-10-05T11:31:35.878Z', 'AAPL', 245, 123.4), " +
+                    "('2021-10-05T12:31:35.878Z', 'AAPL', 245, 123.3), " +
+                    "('2021-10-05T13:31:35.878Z', 'AAPL', 250, 123.1), " +
+                    "('2021-10-05T14:31:35.878Z', 'AAPL', 250, 123.0);");
+            drainWalQueue();
+            assertSql("least\tleast1\n" +
+                    "245.0\t123.2\n" +
+                    "245.0\t123.2\n" +
+                    "247.0\t123.1\n" +
+                    "247.0\t123.0\n", "select least(price, 247), least(amount, 123.2) from x");
+        });
+    }
+
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new LeastNumericFunctionFactory();

@@ -189,7 +189,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private long sqlReturnRowCount = 0;
     // The row count sent to us by the client. This is the size of the batch the client wants to
     // receive from us.
-    // todo: rename to batch size perhaps or client fetch size
     private long sqlReturnRowCountLimit = 0;
     private long sqlReturnRowCountToBeSent = 0;
     private String sqlTag = null;
@@ -2114,12 +2113,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 stateSync = SYNC_DATA;
             case SYNC_DATA:
                 utf8Sink.bookmark();
-                outCursor(
-                        sqlExecutionContext,
-                        utf8Sink,
-                        cursor.getRecord(),
-                        factory.getMetadata().getColumnCount()
-                );
+                outCursor(sqlExecutionContext, utf8Sink, factory.getMetadata().getColumnCount());
                 break;
             default:
                 assert false;
@@ -2129,7 +2123,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private void outCursor(
             SqlExecutionContext sqlExecutionContext,
             PGResponseSink utf8Sink,
-            Record record,
             int columnCount
     ) throws QueryPausedException {
         if (!sqlExecutionContext.getCircuitBreaker().isTimerSet()) {
@@ -2138,6 +2131,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
         long recordStartAddress = utf8Sink.getSendBufferPtr();
         try {
+            final Record record = cursor.getRecord();
             if (outResendCursorRecord) {
                 outRecord(utf8Sink, record, columnCount);
                 recordStartAddress = utf8Sink.getSendBufferPtr();
@@ -2845,7 +2839,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // this is the first time we are setting up the result set
             // we can just copy the column types and names from factory, no need to validate
             assert pgResultSetColumnTypes.size() == 0;
-
             copyPgResultSetColumnTypesAndNames();
             return;
         }

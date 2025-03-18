@@ -136,7 +136,13 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         this.peerNoLinger = configuration.getPeerNoLinger();
         this.port = 0;
         this.heartbeatIntervalMs = configuration.getHeartbeatInterval() > 0 ? configuration.getHeartbeatInterval() : Long.MIN_VALUE;
-        createListenerFd();
+
+        try {
+            createListenerFd();
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
         listening = true;
     }
 

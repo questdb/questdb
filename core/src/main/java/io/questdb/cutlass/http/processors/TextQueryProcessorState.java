@@ -69,7 +69,6 @@ public class TextQueryProcessorState implements Mutable, Closeable {
     public void clear() {
         delimiter = ',';
         fileName = null;
-        metadata = null;
         rnd = null;
         record = null;
         cursor = Misc.free(cursor);
@@ -93,6 +92,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
         pausedQuery = false;
         arrayState.clear();
         columnValueFullySent = true;
+        metadata = null;
     }
 
     @Override

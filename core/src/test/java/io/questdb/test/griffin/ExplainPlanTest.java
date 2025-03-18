@@ -983,9 +983,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di order by 1 limit 10",
-                "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
-                        "    DistinctTimeSeries\n" +
-                        "      keys: ts\n" +
+                "Sort light lo: 10\n" +
+                        "  keys: [ts]\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [ts]\n" +
+                        "      filter: null\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: di\n"
@@ -999,11 +1001,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select distinct ts from di order by 1 desc limit 10",
                 "Sort light lo: 10\n" +
                         "  keys: [ts desc]\n" +
-                        "    DistinctTimeSeries\n" +
-                        "      keys: ts\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [ts]\n" +
+                        "      filter: null\n" +
                         "        PageFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: di\n"
+                        "            Row backward scan\n" +
+                        "            Frame backward scan on: di\n"
         );
     }
 
@@ -1013,8 +1016,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di limit 10",
                 "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
-                        "    DistinctTimeSeries\n" +
-                        "      keys: ts\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [ts]\n" +
+                        "      filter: null\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: di\n"
@@ -1027,8 +1031,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di limit -10",
                 "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
-                        "    DistinctTimeSeries\n" +
-                        "      keys: ts\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [ts]\n" +
+                        "      filter: null\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: di\n"
@@ -1041,14 +1046,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di where y = 5 limit 10",
                 "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
-                        "    DistinctTimeSeries\n" +
-                        "      keys: ts\n" +
-                        "        SelectedRecord\n" +
-                        "            Async JIT Filter workers: 1\n" +
-                        "              filter: y=5\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: di\n"
+                        "    Async JIT Group By workers: 1\n" +
+                        "      keys: [ts]\n" +
+                        "      filter: y=5\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1058,14 +1061,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di where y = 5 limit -10",
                 "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
-                        "    DistinctTimeSeries\n" +
-                        "      keys: ts\n" +
-                        "        SelectedRecord\n" +
-                        "            Async JIT Filter workers: 1\n" +
-                        "              filter: y=5\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: di\n"
+                        "    Async JIT Group By workers: 1\n" +
+                        "      keys: [ts]\n" +
+                        "      filter: y=5\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1075,14 +1076,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di where abs(y) = 5 limit 10",
                 "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
-                        "    DistinctTimeSeries\n" +
-                        "      keys: ts\n" +
-                        "        SelectedRecord\n" +
-                        "            Async Filter workers: 1\n" +
-                        "              filter: abs(y)=5\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: di\n"
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [ts]\n" +
+                        "      filter: abs(y)=5\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1092,14 +1091,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di where abs(y) = 5 limit -10",
                 "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
-                        "    DistinctTimeSeries\n" +
-                        "      keys: ts\n" +
-                        "        SelectedRecord\n" +
-                        "            Async Filter workers: 1\n" +
-                        "              filter: abs(y)=5\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: di\n"
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [ts]\n" +
+                        "      filter: abs(y)=5\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1109,14 +1106,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di where abs(y) = 5 limit 10, 20",
                 "Limit lo: 10 hi: 20 skip-over-rows: 10 limit: 10\n" +
-                        "    DistinctTimeSeries\n" +
-                        "      keys: ts\n" +
-                        "        SelectedRecord\n" +
-                        "            Async Filter workers: 1\n" +
-                        "              filter: abs(y)=5\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: di\n"
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [ts]\n" +
+                        "      filter: abs(y)=5\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1127,13 +1122,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select distinct x from di order by 1 limit 10",
                 "Sort light lo: 10\n" +
                         "  keys: [x]\n" +
-                        "    DistinctKey\n" +
-                        "        GroupBy vectorized: true workers: 1\n" +
-                        "          keys: [x]\n" +
-                        "          values: [count(*)]\n" +
-                        "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: di\n"
+                        "    GroupBy vectorized: true workers: 1\n" +
+                        "      keys: [x]\n" +
+                        "      values: [count(*)]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1144,13 +1138,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select distinct x from di order by 1 desc limit 10",
                 "Sort light lo: 10\n" +
                         "  keys: [x desc]\n" +
-                        "    DistinctKey\n" +
-                        "        GroupBy vectorized: true workers: 1\n" +
-                        "          keys: [x]\n" +
-                        "          values: [count(*)]\n" +
-                        "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: di\n"
+                        "    GroupBy vectorized: true workers: 1\n" +
+                        "      keys: [x]\n" +
+                        "      values: [count(*)]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1160,13 +1153,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select distinct x from di limit 10",
                 "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
-                        "    DistinctKey\n" +
-                        "        GroupBy vectorized: true workers: 1\n" +
-                        "          keys: [x]\n" +
-                        "          values: [count(*)]\n" +
-                        "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: di\n"
+                        "    GroupBy vectorized: true workers: 1\n" +
+                        "      keys: [x]\n" +
+                        "      values: [count(*)]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1176,13 +1168,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select distinct x from di limit -10",
                 "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
-                        "    DistinctKey\n" +
-                        "        GroupBy vectorized: true workers: 1\n" +
-                        "          keys: [x]\n" +
-                        "          values: [count(*)]\n" +
-                        "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: di\n"
+                        "    GroupBy vectorized: true workers: 1\n" +
+                        "      keys: [x]\n" +
+                        "      values: [count(*)]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1192,14 +1183,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select distinct x from di where y = 5 limit 10",
                 "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
-                        "    Distinct\n" +
-                        "      keys: x\n" +
-                        "        SelectedRecord\n" +
-                        "            Async JIT Filter workers: 1\n" +
-                        "              filter: y=5\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: di\n"
+                        "    Async JIT Group By workers: 1\n" +
+                        "      keys: [x]\n" +
+                        "      filter: y=5\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1209,14 +1198,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select distinct x from di where y = 5 limit -10",
                 "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
-                        "    Distinct\n" +
-                        "      keys: x\n" +
-                        "        SelectedRecord\n" +
-                        "            Async JIT Filter workers: 1\n" +
-                        "              filter: y=5\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: di\n"
+                        "    Async JIT Group By workers: 1\n" +
+                        "      keys: [x]\n" +
+                        "      filter: y=5\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1226,14 +1213,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select distinct x from di where abs(y) = 5 limit 10",
                 "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
-                        "    Distinct\n" +
-                        "      keys: x\n" +
-                        "        SelectedRecord\n" +
-                        "            Async Filter workers: 1\n" +
-                        "              filter: abs(y)=5\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: di\n"
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [x]\n" +
+                        "      filter: abs(y)=5\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1243,14 +1228,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select distinct x from di where abs(y) = 5 limit -10",
                 "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
-                        "    Distinct\n" +
-                        "      keys: x\n" +
-                        "        SelectedRecord\n" +
-                        "            Async Filter workers: 1\n" +
-                        "              filter: abs(y)=5\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: di\n"
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [x]\n" +
+                        "      filter: abs(y)=5\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1260,14 +1243,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select distinct x from di where abs(y) = 5 limit 10, 20",
                 "Limit lo: 10 hi: 20 skip-over-rows: 10 limit: 10\n" +
-                        "    Distinct\n" +
-                        "      keys: x\n" +
-                        "        SelectedRecord\n" +
-                        "            Async Filter workers: 1\n" +
-                        "              filter: abs(y)=5\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: di\n"
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [x]\n" +
+                        "      filter: abs(y)=5\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -3418,7 +3399,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    Filter filter: s='key'\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
-                        "            Frame forward scan on: a\n" +
+                        "            Frame forward scan on: a [state-shared]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -4151,7 +4132,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select s, i, ts from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s",
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
-                        "        DistinctSymbol\n" +
+                        "        GroupBy vectorized: true workers: 1\n" +
+                        "          keys: [s]\n" +
+                        "          values: [count(*)]\n" +
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
@@ -4168,7 +4151,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select s, i, ts from a where s in (select distinct s from a) latest on ts partition by s",
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
-                        "        DistinctSymbol\n" +
+                        "        GroupBy vectorized: true workers: 1\n" +
+                        "          keys: [s]\n" +
+                        "          values: [count(*)]\n" +
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
@@ -4184,7 +4169,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select i, ts, s from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s",
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
-                        "        DistinctSymbol\n" +
+                        "        GroupBy vectorized: true workers: 1\n" +
+                        "          keys: [s]\n" +
+                        "          values: [count(*)]\n" +
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
@@ -4201,7 +4188,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select i, ts, s from a where s in (select distinct s from a) latest on ts partition by s",
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
-                        "        DistinctSymbol\n" +
+                        "        GroupBy vectorized: true workers: 1\n" +
+                        "          keys: [s]\n" +
+                        "          values: [count(*)]\n" +
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
@@ -7750,8 +7739,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select distinct l, ts from tab",
-                "DistinctTimeSeries\n" +
-                        "  keys: l,ts\n" +
+                "Async Group By workers: 1\n" +
+                        "  keys: [l,ts]\n" +
+                        "  filter: null\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -7777,8 +7767,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select distinct(l) from tab",
-                "Distinct\n" +
-                        "  keys: l\n" +
+                "Async Group By workers: 1\n" +
+                        "  keys: [l]\n" +
+                        "  filter: null\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -7790,7 +7781,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( s symbol, ts timestamp);",
                 "select distinct(s) from tab",
-                "DistinctSymbol\n" +
+                "GroupBy vectorized: true workers: 1\n" +
+                        "  keys: [s]\n" +
+                        "  values: [count(*)]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -7802,7 +7795,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( s symbol index, ts timestamp);",
                 "select distinct(s) from tab",
-                "DistinctSymbol\n" +
+                "GroupBy vectorized: true workers: 1\n" +
+                        "  keys: [s]\n" +
+                        "  values: [count(*)]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -7814,8 +7809,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select distinct ts, l  from tab",
-                "Distinct\n" +
-                        "  keys: ts,l\n" +
+                "Async Group By workers: 1\n" +
+                        "  keys: [ts,l]\n" +
+                        "  filter: null\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -8735,13 +8731,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select distinct(i) from a limit -5",
                     "Limit lo: -5 skip-over-rows: 5 limit: 5\n" +
-                            "    DistinctKey\n" +
-                            "        GroupBy vectorized: true workers: 1\n" +
-                            "          keys: [i]\n" +
-                            "          values: [count(*)]\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: a\n"
+                            "    GroupBy vectorized: true workers: 1\n" +
+                            "      keys: [i]\n" +
+                            "      values: [count(*)]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n"
             );
         });
     }
@@ -10290,7 +10285,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table x (l long, ts timestamp)",
                 "select * from x where ts > (select min(ts) from x)",
                 "Async Filter workers: 1\n" +
-                        "  filter: ts>cursor \n" +
+                        "  filter: ts [thread-safe] > cursor \n" +
                         "    GroupBy vectorized: true workers: 1\n" +
                         "      values: [min(ts)]\n" +
                         "        PageFrame\n" +
@@ -10320,7 +10315,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table x (l long, ts timestamp)",
                 "select * from x where ts < (select max(ts) from x)",
                 "Async Filter workers: 1\n" +
-                        "  filter: ts<cursor \n" +
+                        "  filter: ts [thread-safe] < cursor \n" +
                         "    GroupBy vectorized: true workers: 1\n" +
                         "      values: [max(ts)]\n" +
                         "        PageFrame\n" +

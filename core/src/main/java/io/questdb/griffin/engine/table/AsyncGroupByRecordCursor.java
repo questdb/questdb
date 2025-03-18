@@ -93,9 +93,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
 
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-        if (!isDataMapBuilt) {
-            buildMap();
-        }
+        buildMapConditionally();
         mapCursor.calculateSize(circuitBreaker, counter);
     }
 
@@ -137,17 +135,13 @@ class AsyncGroupByRecordCursor implements RecordCursor {
 
     @Override
     public boolean hasNext() {
-        if (!isDataMapBuilt) {
-            buildMap();
-        }
+        buildMapConditionally();
         return mapCursor.hasNext();
     }
 
     @Override
     public void longTopK(DirectLongLongHeap heap, int columnIndex) {
-        if (!isDataMapBuilt) {
-            buildMap();
-        }
+        buildMapConditionally();
         mapCursor.longTopK(heap, recordFunctions.getQuick(columnIndex));
     }
 
@@ -245,6 +239,12 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         recordA.of(mapCursor.getRecord());
         recordB.of(mapCursor.getRecordB());
         isDataMapBuilt = true;
+    }
+
+    private void buildMapConditionally() {
+        if (!isDataMapBuilt) {
+            buildMap();
+        }
     }
 
     private ObjList<Map> mergeShards(AsyncGroupByAtom atom) {
@@ -352,7 +352,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         }
         this.frameSequence = frameSequence;
         this.circuitBreaker = executionContext.getCircuitBreaker();
-        Function.init(recordFunctions, frameSequence.getSymbolTableSource(), executionContext);
+        Function.init(recordFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
         isDataMapBuilt = false;
         frameLimit = -1;
     }

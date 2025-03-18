@@ -166,7 +166,7 @@ public class DistinctSymbolTest extends AbstractCairoTest {
                         " timestamp(ts) PARTITION BY MONTH",
                 null,
                 true,
-                false
+                true
         );
     }
 

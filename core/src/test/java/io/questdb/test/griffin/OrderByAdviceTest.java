@@ -68,7 +68,9 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         " x % 3 b" +
                         " from long_sequence(9)" +
                         ")",
-                null
+                null,
+                true,
+                true
         );
     }
 
@@ -103,7 +105,9 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                         " x % 3 b" +
                         " from long_sequence(9)" +
                         ")",
-                null
+                null,
+                true,
+                true
         );
     }
 
