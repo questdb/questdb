@@ -35,7 +35,11 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
-import io.questdb.griffin.engine.functions.cast.*;
+import io.questdb.griffin.engine.functions.cast.CastDoubleToFloatFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLongToByteFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLongToIntFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLongToShortFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLongToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -85,7 +89,7 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
             }
         }
 
-        final Function retVal = getLeastFunction(args, argPositions, counters);
+        final Function retVal = getLeastFunction(new ObjList<>(args), argPositions, counters);
 
         // clear array so we don't need to reconstruct it
         clearCounters(counters);
