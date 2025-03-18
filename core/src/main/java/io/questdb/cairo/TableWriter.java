@@ -6941,7 +6941,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 copiedToMemory = false;
             } else {
                 o3Lo = 0;
-                o3LoHi = processWalCommitBlockSortWalSegmentTimestamps();
+                o3LoHi = processWalCommitBlock_sortWalSegmentTimestamps();
                 timestampAddr = o3TimestampMem.getAddress();
                 copiedToMemory = true;
             }
@@ -6970,8 +6970,56 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private ObjList<MemoryCR> processWalCommitBlock_remapSymbols() {
+        var columnSegmentAddresses = getTempDirectMemoryList(2L * metadata.getColumnCount());
+        columnSegmentAddresses.setPos(2L * metadata.getColumnCount());
+
+        // Remap the symbols if there are any
+        long segmentColAddresses = columnSegmentAddresses.getAddress();
+        processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks(
+                0,
+                segmentCopyInfo.getTotalRows(),
+                segmentColAddresses,
+                1,
+                segmentCopyInfo.getRowLo(0),
+                true,
+                false,
+                cthMapSymbols
+        );
+
+        o3ColumnOverrides.clear();
+        o3ColumnOverrides.addAll(segmentFileCache.getWalMappedColumns());
+
+        // Take symbol columns from o3MemColumns2 if remapping happened
+        int tsColIndex = metadata.getTimestampIndex();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            int columnType = metadata.getColumnType(i);
+            if (i != tsColIndex && columnType > 0) {
+                if (ColumnType.isSymbol(columnType)) {
+                    // -1 is the indicator that column is remapped.
+                    // Otherwise, the symbol remapping did not happen because there were no new symbols
+                    if (Unsafe.getUnsafe().getLong(segmentColAddresses) == -1L) {
+                        int primaryColumnIndex = getPrimaryColumnIndex(i);
+                        MemoryCARW remappedColumn = o3MemColumns2.getQuick(primaryColumnIndex);
+                        assert remappedColumn.size() >= (segmentCopyInfo.getTotalRows() << ColumnType.pow2SizeOf(columnType));
+                        o3ColumnOverrides.setQuick(primaryColumnIndex, remappedColumn);
+
+                        LOG.info().$("using remapped column buffer [table=").$(tableToken)
+                                .$("name=").$(metadata.getColumnName(i)).$(", index=").$(i).I$();
+                    }
+                }
+                segmentColAddresses += Long.BYTES;
+                if (ColumnType.isVarSize(columnType)) {
+                    segmentColAddresses += Long.BYTES;
+                }
+            }
+        }
+        columnSegmentAddresses.resetCapacity();
+        return o3ColumnOverrides;
+    }
+
     // Name of the method starts from processWalCommitBlock to keep the methods close together after code formatting
-    private long processWalCommitBlockSortWalSegmentTimestamps() {
+    private long processWalCommitBlock_sortWalSegmentTimestamps() {
         int timestampIndex = metadata.getTimestampIndex();
         // Timestamp column is special, exclude it here
         int walColumnCountPerSegment = metadata.getColumnCount() * 2;
@@ -7117,54 +7165,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             tsAddresses.resetCapacity();
         }
-    }
-
-    private ObjList<MemoryCR> processWalCommitBlock_remapSymbols() {
-        var columnSegmentAddresses = getTempDirectMemoryList(2L * metadata.getColumnCount());
-        columnSegmentAddresses.setPos(2L * metadata.getColumnCount());
-
-        // Remap the symbols if there are any
-        long segmentColAddresses = columnSegmentAddresses.getAddress();
-        processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks(
-                0,
-                segmentCopyInfo.getTotalRows(),
-                segmentColAddresses,
-                1,
-                segmentCopyInfo.getRowLo(0),
-                true,
-                false,
-                cthMapSymbols
-        );
-
-        o3ColumnOverrides.clear();
-        o3ColumnOverrides.addAll(segmentFileCache.getWalMappedColumns());
-
-        // Take symbol columns from o3MemColumns2 if remapping happened
-        int tsColIndex = metadata.getTimestampIndex();
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            int columnType = metadata.getColumnType(i);
-            if (i != tsColIndex && columnType > 0) {
-                if (ColumnType.isSymbol(columnType)) {
-                    // -1 is the indicator that column is remapped.
-                    // Otherwise, the symbol remapping did not happen because there were no new symbols
-                    if (Unsafe.getUnsafe().getLong(segmentColAddresses) == -1L) {
-                        int primaryColumnIndex = getPrimaryColumnIndex(i);
-                        MemoryCARW remappedColumn = o3MemColumns2.getQuick(primaryColumnIndex);
-                        assert remappedColumn.size() >= (segmentCopyInfo.getTotalRows() << ColumnType.pow2SizeOf(columnType));
-                        o3ColumnOverrides.setQuick(primaryColumnIndex, remappedColumn);
-
-                        LOG.info().$("using remapped column buffer [table=").$(tableToken)
-                                .$("name=").$(metadata.getColumnName(i)).$(", index=").$(i).I$();
-                    }
-                }
-                segmentColAddresses += Long.BYTES;
-                if (ColumnType.isVarSize(columnType)) {
-                    segmentColAddresses += Long.BYTES;
-                }
-            }
-        }
-        columnSegmentAddresses.resetCapacity();
-        return o3ColumnOverrides;
     }
 
     private long processWalCommitBlock_sortWalSegmentTimestamps_deduplicateSortedIndexFromManyAddresses(

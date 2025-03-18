@@ -49,6 +49,9 @@ import static io.questdb.cairo.TableUtils.dFile;
 import static io.questdb.cairo.TableUtils.iFile;
 import static io.questdb.std.Files.SEPARATOR;
 
+// Opens and closes WAL segment column files.
+// This class also reduces file open/close operations by caching file descriptors.
+// when the segment is marked as not last segment usage.
 public class TableWriterSegmentFileCache {
     private static final ObjectFactory<MemoryCMOR> GET_MEMORY_CMOR = Vm::getMemoryCMOR;
     private static final Log LOG = LogFactory.getLog(TableWriterSegmentFileCache.class);
@@ -159,6 +162,7 @@ public class TableWriterSegmentFileCache {
         walFdCacheSize = 0;
     }
 
+    // Copies the address of the column in all the open segments into a dense pre-allocated buffer.
     public void createAddressBuffersPrimary(int columnIndex, int columnCount, int segmentCount, long mappedAddrBuffPrimary) {
         int walColumnCountPerSegment = columnCount * 2;
 

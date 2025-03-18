@@ -40,7 +40,7 @@ public class SymbolMapDiffImpl implements SymbolMapDiff {
     private int cleanSymbolCount;
     private int columnIndex = -1;
     private boolean nullFlag;
-    private int size;
+    private int recordCount;
 
     SymbolMapDiffImpl(WalEventCursor cursor) {
         this.cursor = cursor;
@@ -63,7 +63,7 @@ public class SymbolMapDiffImpl implements SymbolMapDiff {
 
     @Override
     public int getRecordCount() {
-        return size;
+        return recordCount;
     }
 
     @Override
@@ -79,7 +79,7 @@ public class SymbolMapDiffImpl implements SymbolMapDiff {
     void of(int columnIndex, int cleanSymbolCount, int size, boolean nullFlag) {
         this.columnIndex = columnIndex;
         this.cleanSymbolCount = cleanSymbolCount;
-        this.size = size;
+        this.recordCount = size;
         this.nullFlag = nullFlag;
         entry.clear();
     }
@@ -90,14 +90,14 @@ public class SymbolMapDiffImpl implements SymbolMapDiff {
         private long symbolOffset;
 
         @Override
-        public int getKey() {
-            return key;
-        }
-
-        @Override
         public void appendSymbolTo(MemoryARW symbolMem) {
             int len = memoryR.getInt(symbolOffset);
             symbolMem.putBlockOfBytes(memoryR.addressOf(symbolOffset), len < 0 ? STRING_LENGTH_BYTES : Vm.getStorageLength(len));
+        }
+
+        @Override
+        public int getKey() {
+            return key;
         }
 
         @Override
