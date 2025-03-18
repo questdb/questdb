@@ -188,7 +188,8 @@ impl ColumnType {
     }
 
     pub fn is_designated(&self) -> bool {
-        (self.code.get() & TYPE_FLAG_DESIGNATED_TIMESTAMP) > 0
+        (self.tag() == ColumnTypeTag::Timestamp)
+            && ((self.code.get() & TYPE_FLAG_DESIGNATED_TIMESTAMP) > 0)
     }
 
     pub fn into_designated(self) -> CoreResult<ColumnType> {
