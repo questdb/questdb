@@ -128,11 +128,8 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
      * @param frameRowCount total number of rows in the frame
      */
     public void preTouchColumns(PageFrameMemoryRecord record, DirectLongList rows, long frameRowCount) {
-        if (!preTouchEnabled || forceDisablePreTouch) {
-            return;
-        }
         // Only pre-touch if the filter selectivity is high, i.e. when reading the column values may involve random I/O.
-        if (rows.size() > frameRowCount * preTouchThreshold) {
+        if (!isPreTouchEnabled() || rows.size() > frameRowCount * preTouchThreshold) {
             return;
         }
         // We use a LongAdder as a black hole to make sure that the JVM JIT compiler keeps the load instructions in place.
@@ -220,5 +217,12 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     @Override
     public void toPlan(PlanSink sink) {
         sink.val(filter);
+        if (isPreTouchEnabled()) {
+            sink.val(" [pre-touch]");
+        }
+    }
+
+    private boolean isPreTouchEnabled() {
+        return preTouchEnabled && !forceDisablePreTouch;
     }
 }

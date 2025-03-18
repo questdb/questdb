@@ -125,7 +125,7 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
                                 "VirtualRecord\n" +
                                 "  functions: [dateadd('period',stride,ts,tz),dateadd('period',stride,null,tz),ts,period,stride,tz]\n" +
                                 "    Async JIT Filter workers: 1\n" +
-                                "      filter: ((stride!=null and tz!='unknown/unknown' and period is not null and tz is not null) and period!='x')\n" +
+                                "      filter: ((stride!=null and tz!='unknown/unknown' and period is not null and tz is not null) and period!='x') [pre-touch]\n" +
                                 "        PageFrame\n" +
                                 "            Row forward scan\n" +
                                 "            Frame forward scan on: test_tab\n",
