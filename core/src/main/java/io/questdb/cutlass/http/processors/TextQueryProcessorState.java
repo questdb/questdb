@@ -93,6 +93,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
         pausedQuery = false;
         arrayState.clear();
         columnValueFullySent = true;
+        metadata = null;
     }
 
     @Override
