@@ -35,6 +35,10 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 
+/**
+ * A view into a binary encoded array received from PGWire clients. The view is backed directly by the memory arena that
+ * holds data received along with BIND messages.
+ */
 final class PgNonNullBinaryArrayView extends MutableArray implements FlatArrayView, Mutable {
     private long hi;
     private long lo;
@@ -100,6 +104,27 @@ final class PgNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
         flatViewLength *= dimLen;
     }
 
+    /**
+     * Sets memory pointers to the PGWire binary array data and configures array structure.
+     *
+     * <p>This method initializes the view by:</p>
+     * <ol>
+     *   <li>Determining the element type based on PostgreSQL OID</li>
+     *   <li>Validating that the array contains no NULL elements</li>
+     *   <li>Setting memory bounds (lo and hi pointers)</li>
+     *   <li>Configuring array type information</li>
+     *   <li>Setting up array strides for multi-dimensional access</li>
+     *   <li>Validating the total memory size matches expected size based on dimensions</li>
+     * </ol>
+     * <p>After this method is called, the view is ready to be used to access array elements.</p>
+     *
+     * @param lo            Start address of the binary array data in memory
+     * @param hi            End address of the binary array data in memory (exclusive)
+     * @param pgOidType     PostgreSQL OID type identifier
+     * @param pipelineEntry The pipeline entry context for error reporting
+     * @throws BadProtocolException If array structure is invalid or contains unsupported elements
+     * @throws CairoException       If array contains NULL elements or has unsupported element type
+     */
     void setPtrAndCalculateStrides(long lo, long hi, int pgOidType, PGPipelineEntry pipelineEntry) throws BadProtocolException {
         short componentNativeType;
         int elementSize;
@@ -113,21 +138,26 @@ final class PgNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
                 elementSize = Double.BYTES;
                 break;
             default:
-                throw new UnsupportedOperationException("not implemented yet");
+                throw CairoException.nonCritical().put("unsupported array type, only arrays of int8 and float8 are supported [pgOid=").put(pgOidType).put(']');
         }
 
         // validate that there are no nulls in the array
         for (long p = lo; p < hi; p += Integer.BYTES + elementSize) {
-            // non need to swap bytes since -1 is always -1, regardless of endianness
+            // no need to swap bytes since -1 is always -1, regardless of endianness
             if (Unsafe.getUnsafe().getInt(p) == -1) {
-                throw CairoException.nonCritical().put("nulls not supported in arrays");
+                throw CairoException.nonCritical().put("null elements are not supported in arrays");
             }
         }
+
         this.lo = lo;
         this.hi = hi;
         this.type = ColumnType.encodeArrayType(componentNativeType, shape.size());
         resetToDefaultStrides();
 
+        // Check client is not misbehaving. buggy clients can send arrays with wrong size. see: https://github.com/pgjdbc/pgjdbc/issues/3567
+        // important: we have to validate that the array size is as expected only after we have checked for null elements.
+        // since a presence of nulls also affects the size of the array and we want to report null elements to user
+        // since that's more likely than a buggy client.
         long totalExpectedSizeBytes = (long) (elementSize + Integer.BYTES) * flatViewLength;
         if (hi - lo != totalExpectedSizeBytes) {
             throw BadProtocolException.instance(pipelineEntry).put("unexpected array size [expected=").put(totalExpectedSizeBytes).put(", actual=").put(hi - lo).put(']');

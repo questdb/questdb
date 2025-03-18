@@ -59,10 +59,10 @@ public class RndDoubleArrayFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         // The following forms are supported:
-        // - rnd_double_array(dimensionCount) - 1 arg, generates random dim lengths up to 16 and random element values. No nulls.
-        // - rnd_double_array(dimensionCount, nanRate) - 2 args, generates random dim lengths up to 16 and random element values. Null frequency is using (rndInt() % nanRate == 0)
+        // - rnd_double_array(dimensionCount) - 1 arg, generates random dim lengths up to 16 and random element values. No NaNs.
+        // - rnd_double_array(dimensionCount, nanRate) - 2 args, generates random dim lengths up to 16 and random element values. NaN frequency is using (rndInt() % nanRate == 0)
         // - rnd_double_array(dimensionCount, nanRate, maxDimLength) - 3 args, same as the previous, except maxDimLen is not 16 but whatever is provided as the arg
-        // - rnd_double_array(dimensionCount, nanRate, 0, dim1Len, dim2Len, dim3Len, ...) - 4+ args - generates fixed size array with random elements, null rate is as the above
+        // - rnd_double_array(dimensionCount, nanRate, 0, dim1Len, dim2Len, dim3Len, ...) - 4+ args - generates fixed size array with random elements, NaN rate is as the above
         int dimensionCount = args.getQuick(0).getInt(null);
         if (dimensionCount <= 0) {
             return NullConstant.NULL;

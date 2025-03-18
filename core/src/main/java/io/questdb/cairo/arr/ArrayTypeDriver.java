@@ -118,19 +118,28 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     public static final ArrayTypeDriver INSTANCE = new ArrayTypeDriver();
     public static final long OFFSET_MAX = (1L << 48) - 1L;
     private static final ArrayValueAppender VALUE_APPENDER_DOUBLE = ArrayTypeDriver::appendDoubleFromArrayToSink;
+    private static final ArrayValueAppender VALUE_APPENDER_DOUBLE_FINITE = ArrayTypeDriver::appendDoubleFromArrayToSinkFiniteOnly;
     private static final ArrayValueAppender VALUE_APPENDER_LONG = ArrayTypeDriver::appendLongFromArrayToSink;
 
     public static void appendDoubleFromArrayToSink(
             @NotNull ArrayView array,
             int index,
-            @NotNull CharSink<?> sink,
-            @NotNull String nullLiteral
+            @NotNull CharSink<?> sink
     ) {
         double d = array.getDouble(index);
-        if (!Numbers.isNull(d)) {
-            sink.put(d);
+        sink.put(d);
+    }
+
+    public static void appendDoubleFromArrayToSinkFiniteOnly(
+            @NotNull ArrayView array,
+            int index,
+            @NotNull CharSink<?> sink
+    ) {
+        double d = array.getDouble(index);
+        if (Numbers.isNull(d)) {
+            sink.putAscii("null");
         } else {
-            sink.putAscii(nullLiteral);
+            sink.put(d);
         }
     }
 
@@ -171,7 +180,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         if (arrayView == null) {
             sink.put("null");
         } else {
-            arrayToJson(arrayView, sink, resolveAppender(arrayView), arrayState);
+            arrayToJson(arrayView, sink, resolveAppender(arrayView, true), arrayState);
         }
     }
 
@@ -185,7 +194,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         arrayToText(
                 arrayView,
                 sink,
-                resolveAppender(arrayView),
+                resolveAppender(arrayView, false),
                 '{',
                 '}',
                 "NULL",
@@ -223,7 +232,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             sink.put(openChar).put(closeChar);
             return;
         }
-        arrayToText(array, 0, 0, sink, appender, openChar, closeChar, nullLiteral, arrayState);
+        arrayToText(array, 0, 0, sink, appender, openChar, closeChar, arrayState);
     }
 
     /**
@@ -573,7 +582,6 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             @NotNull ArrayValueAppender appender,
             char openChar,
             char closeChar,
-            @NotNull String nullLiteral,
             ArrayState arrayState
     ) {
         final int count = array.getDimLen(dim);
@@ -589,7 +597,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
                     arrayState.putAsciiIfNotRecorded(ArrayState.STATE_COMMA_VALUES, ++elementCommaCount, sink, ',');
                 }
                 if (arrayState.notRecorded(flatIndex)) {
-                    appender.appendFromFlatIndex(array, flatIndex, sink, nullLiteral);
+                    appender.appendFromFlatIndex(array, flatIndex, sink);
                     flatIndex += stride;
                     arrayState.record(flatIndex);
                 } else {
@@ -602,7 +610,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
                 if (i != 0) {
                     arrayState.putAsciiIfNotRecorded(ArrayState.STATE_COMMA_DIMS, ++dimCommaCount, sink, ',');
                 }
-                arrayToText(array, dim + 1, flatIndex, sink, appender, openChar, closeChar, nullLiteral, arrayState);
+                arrayToText(array, dim + 1, flatIndex, sink, appender, openChar, closeChar, arrayState);
                 flatIndex += stride;
             }
         }
@@ -650,11 +658,11 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return res;
     }
 
-    private static @NotNull ArrayValueAppender resolveAppender(@NotNull ArrayView array) {
+    private static @NotNull ArrayValueAppender resolveAppender(@NotNull ArrayView array, boolean convertNonFiniteToNull) {
         int elemType = ColumnType.decodeArrayElementType(array.getType());
         switch (elemType) {
             case ColumnType.DOUBLE:
-                return VALUE_APPENDER_DOUBLE;
+                return convertNonFiniteToNull ? VALUE_APPENDER_DOUBLE_FINITE : VALUE_APPENDER_DOUBLE;
             case ColumnType.LONG:
             case ColumnType.NULL:
                 return VALUE_APPENDER_LONG;
@@ -718,15 +726,10 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     static void appendLongFromArrayToSink(
             @NotNull ArrayView array,
             int index,
-            @NotNull CharSink<?> sink,
-            @NotNull String nullLiteral
+            @NotNull CharSink<?> sink
     ) {
         long d = array.getLong(index);
-        if (d != Numbers.LONG_NULL) {
-            sink.put(d);
-        } else {
-            sink.putAscii(nullLiteral);
-        }
+        sink.put(d);
     }
 
     @FunctionalInterface
@@ -734,8 +737,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         void appendFromFlatIndex(
                 @NotNull ArrayView array,
                 int index,
-                @NotNull CharSink<?> sink,
-                @NotNull String nulLiteral
+                @NotNull CharSink<?> sink
         );
     }
 }
