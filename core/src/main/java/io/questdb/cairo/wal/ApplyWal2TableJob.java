@@ -80,7 +80,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     public static final String WAL_2_TABLE_RESUME_REASON = "Resume WAL Data Application";
     private static final Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
     private static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
-    private final int RELOAD_TXN_DETAILS = -2;
     private final CairoEngine engine;
     private final int lookAheadTransactionCount;
     private final WalMetrics metrics;
@@ -408,7 +407,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 }
 
                                 isTerminating = runStatus.isTerminating();
-                                if (txnCommitted == RELOAD_TXN_DETAILS || isTerminating) {
+                                if (isTerminating) {
                                     // transaction cursor goes beyond prepared transactionMeta or termination requested. Re-run the loop.
                                     break WHILE_TRANSACTION_CURSOR;
                                 }
@@ -522,38 +521,33 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     ) {
         WalTxnDetails txnDetails = writer.getWalTnxDetails();
         final byte walTxnType = txnDetails.getWalTxnType(seqTxn);
+        final long start = microClock.getTicks();
+
         switch (walTxnType) {
             case DATA:
-                if (txnDetails.hasRecord(seqTxn)) {
-                    final long start = microClock.getTicks();
-                    walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);
-                    writer.commitWalInsertTransactions(
-                            walPath,
-                            seqTxn,
-                            pressureControl
-                    );
-                    final long latency = microClock.getTicks() - start;
-                    long totalPhysicalRowCount = writer.getPhysicallyWrittenRowsSinceLastCommit();
-                    long lastCommittedSeqTxn = writer.getAppliedSeqTxn();
-                    lastCommittedRows = 0;
-                    for (long s = seqTxn; s <= lastCommittedSeqTxn; s++) {
-                        long walRowCount = txnDetails.getSegmentRowHi(s) - txnDetails.getSegmentRowLo(s);
-                        long commitPhRowCount = s == lastCommittedSeqTxn ? totalPhysicalRowCount : 0;
-                        metrics.addApplyRowsWritten(walRowCount, commitPhRowCount, latency);
-                        walTelemetryFacade.store(WAL_TXN_DATA_APPLIED, writer.getTableToken(), walId, s, walRowCount, commitPhRowCount, latency);
-                        lastCommittedRows += walRowCount;
-                    }
-                    return (int) (writer.getAppliedSeqTxn() - seqTxn + 1);
-                } else {
-                    // re-build wal transaction details
-                    return RELOAD_TXN_DETAILS;
+                walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);
+                writer.commitWalInsertTransactions(
+                        walPath,
+                        seqTxn,
+                        pressureControl
+                );
+                final long latency = microClock.getTicks() - start;
+                long totalPhysicalRowCount = writer.getPhysicallyWrittenRowsSinceLastCommit();
+                long lastCommittedSeqTxn = writer.getAppliedSeqTxn();
+                lastCommittedRows = 0;
+                for (long s = seqTxn; s <= lastCommittedSeqTxn; s++) {
+                    long walRowCount = txnDetails.getSegmentRowHi(s) - txnDetails.getSegmentRowLo(s);
+                    long commitPhRowCount = s == lastCommittedSeqTxn ? totalPhysicalRowCount : 0;
+                    metrics.addApplyRowsWritten(walRowCount, commitPhRowCount, latency);
+                    walTelemetryFacade.store(WAL_TXN_DATA_APPLIED, writer.getTableToken(), walId, s, walRowCount, commitPhRowCount, latency);
+                    lastCommittedRows += walRowCount;
                 }
+                return (int) (writer.getAppliedSeqTxn() - seqTxn + 1);
 
             case SQL:
                 try (WalEventReader eventReader = walEventReader) {
                     final WalEventCursor walEventCursor = eventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
                     final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();
-                    final long start = microClock.getTicks();
                     walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);
                     processWalSql(writer, sqlInfo, operationExecutor, seqTxn);
                     walTelemetryFacade.store(WAL_TXN_SQL_APPLIED, writer.getTableToken(), walId, seqTxn, -1L, -1L, microClock.getTicks() - start);
