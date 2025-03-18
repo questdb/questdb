@@ -312,86 +312,101 @@ public class PivotTest extends AbstractSqlParserTest {
 
     @Test
     public void testPivotWithAliasedAggregate() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(ddlCities);
-            execute(dmlCities);
-
-            String pivotQuery =
-                    "SELECT *\n" +
-                            "FROM cities\n" +
-                            "PIVOT (\n" +
-                            "    SUM(population) as total\n" +
-                            "    FOR\n" +
-                            "        year IN (2000, 2010, 2020)\n" +
-                            "    GROUP BY country\n" +
-                            ");\n";
-            String rewrittenQuery =
-                    "SELECT \n" +
-                            "    country,\n" +
-                            "    SUM(CASE WHEN year = 2000 THEN population ELSE null END) AS \"2000_total\",\n" +
-                            "    SUM(CASE WHEN year = 2010 THEN population ELSE null END) AS \"2010_total\",\n" +
-                            "    SUM(CASE WHEN year = 2020 THEN population ELSE null END) AS \"2020_total\"\n" +
-                            "FROM cities\n" +
-                            "GROUP BY country;";
-
-//            String model = "select-group-by country, SUM(switch(year,2000,population,null)) 2000_total, SUM(switch(year,2010,population,null)) 2010_total, SUM(switch(year,2020,population,null)) 2020_total from (select [country, population, year] from cities)";
-//            assertModel(model, pivotQuery, ExecutionModel.QUERY);
-//            assertModel(model, rewrittenQuery, ExecutionModel.QUERY);
-
-            String result = "country\t2000_total\t2010_total\t2020_total\n" +
-                    "NL\t1005\t1065\t1158\n" +
-                    "US\t8579\t8783\t9510\n";
-
-            assertSql(result, pivotQuery);
-            assertSql(result, rewrittenQuery);
-        });
+        assertQueryAndPlan(
+                "country\t2000_total\t2010_total\t2020_total\n",
+                "cities\n" +
+                        "PIVOT (\n" +
+                        "    SUM(population) as total\n" +
+                        "    FOR\n" +
+                        "        year IN (2000, 2010, 2020)\n" +
+                        "    GROUP BY country\n" +
+                        ");\n",
+                ddlCities,
+                null,
+                dmlCities,
+                "country\t2000_total\t2010_total\t2020_total\n" +
+                        "NL\t1005\t1065\t1158\n" +
+                        "US\t8579\t8783\t9510\n",
+                true,
+                true,
+                false,
+                "GroupBy vectorized: false\n" +
+                        "  keys: [country]\n" +
+                        "  values: [sum(case([total,nullL,year])),sum(case([total,nullL,year])),sum(case([total,nullL,year]))]\n" +
+                        "    Async JIT Group By workers: 1\n" +
+                        "      keys: [country,year]\n" +
+                        "      values: [sum(population)]\n" +
+                        "      filter: year in [2000,2010,2020]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: cities\n");
     }
 
     @Test
     public void testPivotWithComplexInitialStatement() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(ddlCities);
-            execute(dmlCities);
-
-            String pivotQuery = "(cities\n" +
-                    "WHERE (population % 2) = 0)\n" +
-                    "PIVOT (\n" +
-                    "    SUM(population) as sum\n" +
-                    "    FOR\n" +
-                    "        year IN (2000, 2010, 2020)\n" +
-                    "    GROUP BY country, name\n" +
-                    ");";
-
-            String result = "country\tname\t2000_sum\t2010_sum\t2020_sum\n" +
-                    "NL\tAmsterdam\tnull\tnull\t1158\n" +
-                    "US\tSeattle\t564\t608\t738\n" +
-                    "US\tNew York City\tnull\tnull\t8772\n";
-
-            assertSql(result, pivotQuery);
-        });
+        assertQueryAndPlan(
+                "country\tname\t2000_sum\t2010_sum\t2020_sum\n",
+                "(cities\n" +
+                        "WHERE (population % 2) = 0)\n" +
+                        "PIVOT (\n" +
+                        "    SUM(population) as sum\n" +
+                        "    FOR\n" +
+                        "        year IN (2000, 2010, 2020)\n" +
+                        "    GROUP BY country, name\n" +
+                        ");",
+                ddlCities,
+                null,
+                dmlCities,
+                "country\tname\t2000_sum\t2010_sum\t2020_sum\n" +
+                        "NL\tAmsterdam\tnull\tnull\t1158\n" +
+                        "US\tSeattle\t564\t608\t738\n" +
+                        "US\tNew York City\tnull\tnull\t8772\n",
+                true,
+                true,
+                false,
+                "GroupBy vectorized: false\n" +
+                        "  keys: [country,name]\n" +
+                        "  values: [sum(case([sum,nullL,year])),sum(case([sum,nullL,year])),sum(case([sum,nullL,year]))]\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [country,name,year]\n" +
+                        "      values: [sum(population)]\n" +
+                        "      filter: (population%2=0 and year in [2000,2010,2020])\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: cities\n");
     }
 
     @Test
     public void testPivotWithGroupByAndLimit() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(ddlCities);
-            execute(dmlCities);
-
-            String pivotQuery = "SELECT *\n" +
-                    "FROM cities\n" +
-                    "PIVOT (\n" +
-                    "    SUM(population) as sum\n" +
-                    "    FOR\n" +
-                    "        year IN (2000, 2010, 2020)\n" +
-                    "    GROUP BY country, name\n" +
-                    "    LIMIT 1\n" +
-                    ");";
-
-            String result = "country\tname\t2000_sum\t2010_sum\t2020_sum\n" +
-                    "NL\tAmsterdam\t1005\t1065\t1158\n";
-
-            assertSql(result, pivotQuery);
-        });
+        assertQueryAndPlan(
+                "country\tname\t2000_sum\t2010_sum\t2020_sum\n",
+                "cities\n" +
+                        "PIVOT (\n" +
+                        "    SUM(population) as sum\n" +
+                        "    FOR\n" +
+                        "        year IN (2000, 2010, 2020)\n" +
+                        "    GROUP BY country, name\n" +
+                        "    LIMIT 1\n" +
+                        ");",
+                ddlCities,
+                null,
+                dmlCities,
+                "country\tname\t2000_sum\t2010_sum\t2020_sum\n" +
+                        "NL\tAmsterdam\t1005\t1065\t1158\n",
+                true,
+                true,
+                false,
+                "Limit lo: 1 skip-over-rows: 0 limit: 1\n" +
+                        "    GroupBy vectorized: false\n" +
+                        "      keys: [country,name]\n" +
+                        "      values: [sum(case([sum,nullL,year])),sum(case([sum,nullL,year])),sum(case([sum,nullL,year]))]\n" +
+                        "        Async JIT Group By workers: 1\n" +
+                        "          keys: [country,name,year]\n" +
+                        "          values: [sum(population)]\n" +
+                        "          filter: year in [2000,2010,2020]\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: cities\n");
     }
 
     @Test
@@ -469,134 +484,138 @@ public class PivotTest extends AbstractSqlParserTest {
 
     @Test
     public void testPivotWithMultipleAggregates() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(ddlCities);
-            execute(dmlCities);
-
-            String pivotQuery =
-                    "SELECT *\n" +
-                            "FROM cities\n" +
-                            "PIVOT (\n" +
-                            "    SUM(population),\n" +
-                            "    COUNT(population)\n" +
-                            "    FOR\n" +
-                            "        year IN (2000, 2010, 2020)\n" +
-//                            "    GROUP BY country\n" +
-                            ");\n";
-//            String rewrittenQuery =
-//                    "SELECT \n" +
-//                            "    country,\n" +
-//                            "    SUM(CASE WHEN year = 2000 THEN population ELSE null END) AS \"2000_SUM\",\n" +
-//                            "    COUNT(CASE WHEN year = 2000 THEN population ELSE null END) AS \"2000_COUNT\",\n" +
-//                            "    SUM(CASE WHEN year = 2010 THEN population ELSE null END) AS \"2010_SUM\",\n" +
-//                            "    COUNT(CASE WHEN year = 2010 THEN population ELSE null END) AS \"2010_COUNT\",\n" +
-//                            "    SUM(CASE WHEN year = 2020 THEN population ELSE null END) AS \"2020_SUM\",\n" +
-//                            "    COUNT(CASE WHEN year = 2020 THEN population ELSE null END) AS \"2020_COUNT\"\n" +
-//                            "FROM cities\n" +
-//                            "GROUP BY country;";
-
-//            String model = "select-group-by country, SUM(switch(year,2000,population,null)) 2000_SUM, COUNT(switch(year,2000,population,null)) 2000_COUNT, SUM(switch(year,2010,population,null)) 2010_SUM, COUNT(switch(year,2010,population,null)) 2010_COUNT, SUM(switch(year,2020,population,null)) 2020_SUM, COUNT(switch(year,2020,population,null)) 2020_COUNT from (select [country, population, year] from cities)";
-//            assertModel(model, pivotQuery, ExecutionModel.QUERY);
-//            assertModel(model, rewrittenQuery, ExecutionModel.QUERY);
-
-            assertPlanNoLeakCheck(pivotQuery, "abc");
-
-            String result = "country\t2000_SUM\t2000_COUNT\t2010_SUM\t2010_COUNT\t2020_SUM\t2020_COUNT\n" +
-                    "NL\t1005\t1\t1065\t1\t1158\t1\n" +
-                    "US\t8579\t2\t8783\t2\t9510\t2\n";
-
-            assertSql(result, pivotQuery);
-//            assertSql(result, rewrittenQuery);
-        });
+        assertQueryAndPlan(
+                "country\t2000_SUM\t2000_AVG\t2010_SUM\t2010_AVG\t2020_SUM\t2020_AVG\n",
+                "cities\n" +
+                        "PIVOT (\n" +
+                        "    SUM(population),\n" +
+                        "    AVG(population)\n" +
+                        "    FOR\n" +
+                        "        year IN (2000, 2010, 2020)\n" +
+                        "    GROUP BY country\n" +
+                        ");\n",
+                ddlCities,
+                null,
+                dmlCities,
+                "country\t2000_SUM\t2000_AVG\t2010_SUM\t2010_AVG\t2020_SUM\t2020_AVG\n" +
+                        "NL\t1005\t1005.0\t1065\t1065.0\t1158\t1158.0\n" +
+                        "US\t8579\t4289.5\t8783\t4391.5\t9510\t4755.0\n",
+                true,
+                true,
+                false,
+                "GroupBy vectorized: false\n" +
+                        "  keys: [country]\n" +
+                        "  values: [sum(case([SUM,nullL,year])),avg(case([AVG,NaN,year])),sum(case([SUM,nullL,year])),avg(case([AVG,NaN,year])),sum(case([SUM,nullL,year])),avg(case([AVG,NaN,year]))]\n" +
+                        "    Async JIT Group By workers: 1\n" +
+                        "      keys: [country,year]\n" +
+                        "      values: [sum(population),avg(population)]\n" +
+                        "      filter: year in [2000,2010,2020]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: cities\n"
+        );
     }
 
     @Test
     public void testPivotWithMultipleForExprs() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(ddlCities);
-            execute(dmlCities);
-
-            String pivotQuery =
-                    "SELECT *\n" +
-                            "FROM cities\n" +
-                            "PIVOT (\n" +
-                            "    SUM(population)\n" +
-                            "    FOR\n" +
-                            "        year IN (2000, 2010, 2020)\n" +
-                            "        country in ('NL', 'US')\n" +
-                            "    GROUP BY country\n" +
-                            ");\n";
-            String rewrittenQuery =
-                    "SELECT \n" +
-                            "    country,\n" +
-                            "    SUM(CASE WHEN year = 2000 AND country = 'NL' THEN population ELSE null END) AS \"2000_NL\",\n" +
-                            "    SUM(CASE WHEN year = 2000 AND country = 'US' THEN population ELSE null END) AS \"2000_US\",\n" +
-                            "    SUM(CASE WHEN year = 2010 AND country = 'NL' THEN population ELSE null END) AS \"2010_NL\",\n" +
-                            "    SUM(CASE WHEN year = 2010 AND country = 'US' THEN population ELSE null END) AS \"2010_US\",\n" +
-                            "    SUM(CASE WHEN year = 2020 AND country = 'NL' THEN population ELSE null END) AS \"2020_NL\",\n" +
-                            "    SUM(CASE WHEN year = 2020 AND country = 'US' THEN population ELSE null END) AS \"2020_US\",\n" +
-                            "FROM cities\n" +
-                            "GROUP BY country;";
-//
-//            String model = "select-group-by country, SUM(case(year = 2000 and country = 'NL',population,null)) 2000_NL, SUM(case(year = 2000 and country = 'US',population,null)) 2000_US, SUM(case(year = 2010 and country = 'NL',population,null)) 2010_NL, SUM(case(year = 2010 and country = 'US',population,null)) 2010_US, SUM(case(year = 2020 and country = 'NL',population,null)) 2020_NL, SUM(case(year = 2020 and country = 'US',population,null)) 2020_US from (select [country, population, year] from cities)";
-//            assertModel(model, pivotQuery, ExecutionModel.QUERY);
-//            assertModel(model, rewrittenQuery, ExecutionModel.QUERY);
-
-            String result = "country\t2000_NL\t2000_US\t2010_NL\t2010_US\t2020_NL\t2020_US\n" +
-                    "NL\t1005\tnull\t1065\tnull\t1158\tnull\n" +
-                    "US\tnull\t8579\tnull\t8783\tnull\t9510\n";
-
-            assertSql(result, pivotQuery);
-            assertSql(result, rewrittenQuery);
-        });
+        assertQueryAndPlan(
+                "name\t2000_NL\t2000_US\t2010_NL\t2010_US\t2020_NL\t2020_US\n",
+                "cities PIVOT (\n" +
+                        "    SUM(population)\n" +
+                        "    FOR\n" +
+                        "        year IN (2000, 2010, 2020)\n" +
+                        "        country in ('NL', 'US')\n" +
+                        "    GROUP BY name\n" +
+                        ");\n",
+                ddlCities,
+                null,
+                dmlCities,
+                "name\t2000_NL\t2000_US\t2010_NL\t2010_US\t2020_NL\t2020_US\n" +
+                        "Amsterdam\t1005\tnull\t1065\tnull\t1158\tnull\n" +
+                        "Seattle\tnull\t564\tnull\t608\tnull\t738\n" +
+                        "New York City\tnull\t8015\tnull\t8175\tnull\t8772\n",
+                true,
+                true,
+                false,
+                "GroupBy vectorized: false\n" +
+                        "  keys: [name]\n" +
+                        "  values: [sum(case([(year=2000 and country='NL'),SUM,null])),sum(case([(year=2000 and country='US'),SUM,null])),sum(case([(year=2010 and country='NL'),SUM,null])),sum(case([(year=2010 and country='US'),SUM,null])),sum(case([(year=2020 and country='NL'),SUM,null])),sum(case([(year=2020 and country='US'),SUM,null]))]\n" +
+                        "    Async JIT Group By workers: 1\n" +
+                        "      keys: [name,year,country]\n" +
+                        "      values: [sum(population)]\n" +
+                        "      filter: year in [2000,2010,2020]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: cities\n"
+        );
     }
 
     @Test
     public void testPivotWithMultipleForExprsAndMultipleAggregates() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(ddlCities);
-            execute(dmlCities);
+        assertQueryAndPlan(
+                "2000_Amsterdam_NL_SUM\t2000_Amsterdam_NL_COUNT\t2000_Amsterdam_US_SUM\t2000_Amsterdam_US_COUNT\t2000_Seattle_NL_SUM\t2000_Seattle_NL_COUNT\t2000_Seattle_US_SUM\t2000_Seattle_US_COUNT\t2000_New York City_NL_SUM\t2000_New York City_NL_COUNT\t2000_New York City_US_SUM\t2000_New York City_US_COUNT\t2010_Amsterdam_NL_SUM\t2010_Amsterdam_NL_COUNT\t2010_Amsterdam_US_SUM\t2010_Amsterdam_US_COUNT\t2010_Seattle_NL_SUM\t2010_Seattle_NL_COUNT\t2010_Seattle_US_SUM\t2010_Seattle_US_COUNT\t2010_New York City_NL_SUM\t2010_New York City_NL_COUNT\t2010_New York City_US_SUM\t2010_New York City_US_COUNT\t2020_Amsterdam_NL_SUM\t2020_Amsterdam_NL_COUNT\t2020_Amsterdam_US_SUM\t2020_Amsterdam_US_COUNT\t2020_Seattle_NL_SUM\t2020_Seattle_NL_COUNT\t2020_Seattle_US_SUM\t2020_Seattle_US_COUNT\t2020_New York City_NL_SUM\t2020_New York City_NL_COUNT\t2020_New York City_US_SUM\t2020_New York City_US_COUNT\n" +
+                        "null\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\n",
+                "cities\n" +
+                        "PIVOT (\n" +
+                        "    SUM(population),\n" +
+                        "    COUNT(population)\n" +
+                        "    FOR\n" +
+                        "        year IN (2000, 2010, 2020)\n" +
+                        "        name IN ( 'Amsterdam', 'Seattle', 'New York City')\n" +
+                        "        country in ('NL', 'US')\n" +
+                        ");\n",
+                ddlCities,
+                null,
+                dmlCities,
+                "2000_Amsterdam_NL_SUM\t2000_Amsterdam_NL_COUNT\t2000_Amsterdam_US_SUM\t2000_Amsterdam_US_COUNT\t2000_Seattle_NL_SUM\t2000_Seattle_NL_COUNT\t2000_Seattle_US_SUM\t2000_Seattle_US_COUNT\t2000_New York City_NL_SUM\t2000_New York City_NL_COUNT\t2000_New York City_US_SUM\t2000_New York City_US_COUNT\t2010_Amsterdam_NL_SUM\t2010_Amsterdam_NL_COUNT\t2010_Amsterdam_US_SUM\t2010_Amsterdam_US_COUNT\t2010_Seattle_NL_SUM\t2010_Seattle_NL_COUNT\t2010_Seattle_US_SUM\t2010_Seattle_US_COUNT\t2010_New York City_NL_SUM\t2010_New York City_NL_COUNT\t2010_New York City_US_SUM\t2010_New York City_US_COUNT\t2020_Amsterdam_NL_SUM\t2020_Amsterdam_NL_COUNT\t2020_Amsterdam_US_SUM\t2020_Amsterdam_US_COUNT\t2020_Seattle_NL_SUM\t2020_Seattle_NL_COUNT\t2020_Seattle_US_SUM\t2020_Seattle_US_COUNT\t2020_New York City_NL_SUM\t2020_New York City_NL_COUNT\t2020_New York City_US_SUM\t2020_New York City_US_COUNT\n" +
+                        "1005\t1\tnull\t0\tnull\t0\t564\t1\tnull\t0\t8015\t1\t1065\t1\tnull\t0\tnull\t0\t608\t1\tnull\t0\t8175\t1\t1158\t1\tnull\t0\tnull\t0\t738\t1\tnull\t0\t8772\t1\n",
+                false,
+                true,
+                false,
+                "GroupBy vectorized: false\n" +
+                        "  values: [sum(case([(year=2000 and name='Amsterdam' and country='NL'),SUM,null])),count(case([(year=2000 and name='Amsterdam' and country='NL'),COUNT,null])),sum(case([(year=2000 and name='Amsterdam' and country='US'),SUM,null])),count(case([(year=2000 and name='Amsterdam' and country='US'),COUNT,null])),sum(case([(year=2000 and name='Seattle' and country='NL'),SUM,null])),count(case([(year=2000 and name='Seattle' and country='NL'),COUNT,null])),sum(case([(year=2000 and name='Seattle' and country='US'),SUM,null])),count(case([(year=2000 and name='Seattle' and country='US'),COUNT,null])),sum(case([(year=2000 and name='New York City' and country='NL'),SUM,null])),count(case([(year=2000 and name='New York City' and country='NL'),COUNT,null])),sum(case([(year=2000 and name='New York City' and country='US'),SUM,null])),count(case([(year=2000 and name='New York City' and country='US'),COUNT,null])),sum(case([(year=2010 and name='Amsterdam' and country='NL'),SUM,null])),count(case([(year=2010 and name='Amsterdam' and country='NL'),COUNT,null])),sum(case([(year=2010 and name='Amsterdam' and country='US'),SUM,null])),count(case([(year=2010 and name='Amsterdam' and country='US'),COUNT,null])),sum(case([(year=2010 and name='Seattle' and country='NL'),SUM,null])),count(case([(year=2010 and name='Seattle' and country='NL'),COUNT,null])),sum(case([(year=2010 and name='Seattle' and country='US'),SUM,null])),count(case([(year=2010 and name='Seattle' and country='US'),COUNT,null])),sum(case([(year=2010 and name='New York City' and country='NL'),SUM,null])),count(case([(year=2010 and name='New York City' and country='NL'),COUNT,null])),sum(case([(year=2010 and name='New York City' and country='US'),SUM,null])),count(case([(year=2010 and name='New York City' and country='US'),COUNT,null])),sum(case([(year=2020 and name='Amsterdam' and country='NL'),SUM,null])),count(case([(year=2020 and name='Amsterdam' and country='NL'),COUNT,null])),sum(case([(year=2020 and name='Amsterdam' and country='US'),SUM,null])),count(case([(year=2020 and name='Amsterdam' and country='US'),COUNT,null])),sum(case([(year=2020 and name='Seattle' and country='NL'),SUM,null])),count(case([(year=2020 and name='Seattle' and country='NL'),COUNT,null])),sum(case([(year=2020 and name='Seattle' and country='US'),SUM,null])),count(case([(year=2020 and name='Seattle' and country='US'),COUNT,null])),sum(case([(year=2020 and name='New York City' and country='NL'),SUM,null])),count(case([(year=2020 and name='New York City' and country='NL'),COUNT,null])),sum(case([(year=2020 and name='New York City' and country='US'),SUM,null])),count(case([(year=2020 and name='New York City' and country='US'),COUNT,null]))]\n" +
+                        "    Async JIT Group By workers: 1\n" +
+                        "      keys: [year,name,country]\n" +
+                        "      values: [sum(population),count(population)]\n" +
+                        "      filter: year in [2000,2010,2020]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: cities\n"
+        );
+    }
 
-            String pivotQuery =
-                    "SELECT *\n" +
-                            "FROM cities\n" +
-                            "PIVOT (\n" +
-                            "    SUM(population),\n" +
-                            "    COUNT(population)\n" +
-                            "    FOR\n" +
-                            "        year IN (2000, 2010, 2020)\n" +
-                            "        country in ('NL', 'US')\n" +
-//                            "    GROUP BY country\n" +
-                            ");\n";
-            String rewrittenQuery =
-                    "SELECT \n" +
-                            "    country,\n" +
-                            "    SUM(CASE WHEN year = 2000 AND country = 'NL' THEN population ELSE null END) AS \"2000_NL_SUM\",\n" +
-                            "    COUNT(CASE WHEN year = 2000 AND country = 'NL' THEN population ELSE null END) AS \"2000_NL_COUNT\",\n" +
-                            "    SUM(CASE WHEN year = 2000 AND country = 'US' THEN population ELSE null END) AS \"2000_US_SUM\",\n" +
-                            "    COUNT(CASE WHEN year = 2000 AND country = 'US' THEN population ELSE null END) AS \"2000_US_COUNT\",\n" +
-                            "    SUM(CASE WHEN year = 2010 AND country = 'NL' THEN population ELSE null END) AS \"2010_NL_SUM\",\n" +
-                            "    COUNT(CASE WHEN year = 2010 AND country = 'NL' THEN population ELSE null END) AS \"2010_NL_COUNT\",\n" +
-                            "    SUM(CASE WHEN year = 2010 AND country = 'US' THEN population ELSE null END) AS \"2010_US_SUM\",\n" +
-                            "    COUNT(CASE WHEN year = 2010 AND country = 'US' THEN population ELSE null END) AS \"2010_US_COUNT\",\n" +
-                            "    SUM(CASE WHEN year = 2020 AND country = 'NL' THEN population ELSE null END) AS \"2020_NL_SUM\",\n" +
-                            "    COUNT(CASE WHEN year = 2020 AND country = 'NL' THEN population ELSE null END) AS \"2020_NL_COUNT\",\n" +
-                            "    SUM(CASE WHEN year = 2020 AND country = 'US' THEN population ELSE null END) AS \"2020_US_SUM\",\n" +
-                            "    COUNT(CASE WHEN year = 2020 AND country = 'US' THEN population ELSE null END) AS \"2020_US_COUNT\",\n" +
-                            "FROM cities\n" +
-                            "GROUP BY country;";
-
-//            String model = "select-group-by country, SUM(case(year = 2000 and country = 'NL',population,null)) 2000_NL_SUM, COUNT(case(year = 2000 and country = 'NL',population,null)) 2000_NL_COUNT, SUM(case(year = 2000 and country = 'US',population,null)) 2000_US_SUM, COUNT(case(year = 2000 and country = 'US',population,null)) 2000_US_COUNT, SUM(case(year = 2010 and country = 'NL',population,null)) 2010_NL_SUM, COUNT(case(year = 2010 and country = 'NL',population,null)) 2010_NL_COUNT, SUM(case(year = 2010 and country = 'US',population,null)) 2010_US_SUM, COUNT(case(year = 2010 and country = 'US',population,null)) 2010_US_COUNT, SUM(case(year = 2020 and country = 'NL',population,null)) 2020_NL_SUM, COUNT(case(year = 2020 and country = 'NL',population,null)) 2020_NL_COUNT, SUM(case(year = 2020 and country = 'US',population,null)) 2020_US_SUM, COUNT(case(year = 2020 and country = 'US',population,null)) 2020_US_COUNT from (select [country, population, year] from cities)";
-//            assertModel(model, pivotQuery, ExecutionModel.QUERY);
-//            assertModel(model, rewrittenQuery, ExecutionModel.QUERY);
-
-            String result = "country\t2000_NL_SUM\t2000_NL_COUNT\t2000_US_SUM\t2000_US_COUNT\t2010_NL_SUM\t2010_NL_COUNT\t2010_US_SUM\t2010_US_COUNT\t2020_NL_SUM\t2020_NL_COUNT\t2020_US_SUM\t2020_US_COUNT\n" +
-                    "NL\t1005\t1\tnull\t0\t1065\t1\tnull\t0\t1158\t1\tnull\t0\n" +
-                    "US\tnull\t0\t8579\t2\tnull\t0\t8783\t2\tnull\t0\t9510\t2\n";
-
-            assertSql(result, pivotQuery);
-            assertSql(result, rewrittenQuery);
-        });
+    @Test
+    public void testPivotWithMultipleGroupBy() throws Exception {
+        assertQueryAndPlan(
+                "country\tname\t2000\t2010\t2020\n",
+                "cities\n" +
+                        "PIVOT (\n" +
+                        "    SUM(population)\n" +
+                        "    FOR\n" +
+                        "        year IN (2000, 2010, 2020)\n" +
+                        "        GROUP BY country, name\n" +
+                        ");\n",
+                ddlCities,
+                null,
+                dmlCities,
+                "country\tname\t2000\t2010\t2020\n" +
+                        "NL\tAmsterdam\t1005\t1065\t1158\n" +
+                        "US\tSeattle\t564\t608\t738\n" +
+                        "US\tNew York City\t8015\t8175\t8772\n",
+                true,
+                true,
+                false,
+                "GroupBy vectorized: false\n" +
+                        "  keys: [country,name]\n" +
+                        "  values: [sum(case([SUM,nullL,year])),sum(case([SUM,nullL,year])),sum(case([SUM,nullL,year]))]\n" +
+                        "    Async JIT Group By workers: 1\n" +
+                        "      keys: [country,name,year]\n" +
+                        "      values: [sum(population)]\n" +
+                        "      filter: year in [2000,2010,2020]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: cities\n"
+        );
     }
 
     @Test
@@ -637,112 +656,136 @@ public class PivotTest extends AbstractSqlParserTest {
 
     @Test
     public void testPivotWithSampleBy() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(ddlTrades);
-            execute(dmlTrades);
-            drainWalQueue();
-
-            String pivotQuery = "(select * from trades where symbol in 'ETH-USDT')\n" +
-                    "  pivot (\n" +
-                    "    sum(price)\n" +
-                    "    FOR \"symbol\" IN ('ETH-USDT')\n" +
-                    "        side in ('buy', 'sell')\n" +
-                    "    SAMPLE BY 100T\n" +
-                    "  );";
-
-            assertPlanNoLeakCheck(pivotQuery,
-                    "Async Group By workers: 1\n" +
-                            "  keys: [timestamp]\n" +
-                            "  values: [sum(case([(symbol='ETH-USDT' and side='buy'),price,null])),sum(case([(symbol='ETH-USDT' and side='sell'),price,null]))]\n" +
-                            "  filter: symbol in [ETH-USDT]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: trades\n");
-
-            assertSql("timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
-                            "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n" +
-                            "2024-12-19T08:10:00.736000Z\tnull\t3678.25\n" +
-                            "2024-12-19T08:10:00.759000Z\tnull\t3678.0\n" +
-                            "2024-12-19T08:10:00.772999Z\tnull\t3678.0\n" +
-                            "2024-12-19T08:10:00.887000Z\t3678.01\tnull\n" +
-                            "2024-12-19T08:10:00.950000Z\tnull\t3678.0\n",
-                    pivotQuery);
-        });
+        assertQueryAndPlan(
+                "country\t2000\t2010\t2020\n",
+                "(trades where symbol in 'ETH-USDT')\n" +
+                        "  pivot (\n" +
+                        "    sum(price)\n" +
+                        "    FOR \"symbol\" IN ('ETH-USDT')\n" +
+                        "        side in ('buy', 'sell')\n" +
+                        "    SAMPLE BY 100T\n" +
+                        "  );",
+                ddlTrades,
+                null,
+                dmlTrades,
+                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
+                        "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n" +
+                        "2024-12-19T08:10:00.736000Z\tnull\t3678.25\n" +
+                        "2024-12-19T08:10:00.759000Z\tnull\t3678.0\n" +
+                        "2024-12-19T08:10:00.772999Z\tnull\t3678.0\n" +
+                        "2024-12-19T08:10:00.887000Z\t3678.01\tnull\n" +
+                        "2024-12-19T08:10:00.950000Z\tnull\t3678.0\n",
+                true,
+                true,
+                false,
+                "Async Group By workers: 1\n" +
+                        "  keys: [timestamp]\n" +
+                        "  values: [sum(case([(symbol='ETH-USDT' and side='buy'),price,null])),sum(case([(symbol='ETH-USDT' and side='sell'),price,null]))]\n" +
+                        "  filter: symbol in [ETH-USDT]\n" +
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: trades\n");
     }
 
     @Test
-    public void testPivotWithTimestmapGrouping() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(ddlCities);
-            execute(dmlCities);
-
-            String pivotQuery =
-                    "SELECT *\n" +
-                            "FROM cities\n" +
-                            "PIVOT (\n" +
-                            "    SUM(population)\n" +
-                            "    FOR\n" +
-                            "        year IN (2000, 2010, 2020)\n" +
-                            ");\n";
-
-            String result = "2000\t2010\t2020\n" +
-                    "9584\t9848\t10668\n";
-
-            assertSql(result, pivotQuery);
-        });
+    public void testPivotWithTimestampGrouping() throws Exception {
+        assertQueryAndPlan(
+                "2000\t2010\t2020\n" +
+                        "null\tnull\tnull\n",
+                "cities\n" +
+                        "PIVOT (\n" +
+                        "    SUM(population)\n" +
+                        "    FOR\n" +
+                        "        year IN (2000, 2010, 2020)\n" +
+                        ");\n",
+                ddlCities,
+                null,
+                dmlCities,
+                "2000\t2010\t2020\n" +
+                        "9584\t9848\t10668\n",
+                false,
+                true,
+                false,
+                "GroupBy vectorized: false\n" +
+                        "  values: [sum(case([SUM,nullL,year])),sum(case([SUM,nullL,year])),sum(case([SUM,nullL,year]))]\n" +
+                        "    Async JIT Group By workers: 1\n" +
+                        "      keys: [year]\n" +
+                        "      values: [sum(population)]\n" +
+                        "      filter: year in [2000,2010,2020]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: cities\n");
     }
 
     @Test
     public void testPivotWithTradesData() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(ddlTrades);
-            execute(dmlTrades);
-            drainWalQueue();
-
-            String pivotQuery = " select * from (select * from trades where symbol in 'ETH-USDT')\n" +
-                    "  pivot (\n" +
-                    "    sum(price)\n" +
-                    "    FOR \"symbol\" IN ('ETH-USDT')\n" +
-                    "        side in ('buy', 'sell')\n" +
-                    "    GROUP BY timestamp\n" +
-                    "  );";
-
-            assertSql("timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
-                            "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n" +
-                            "2024-12-19T08:10:00.736000Z\tnull\t3678.25\n" +
-                            "2024-12-19T08:10:00.759000Z\tnull\t3678.0\n" +
-                            "2024-12-19T08:10:00.772999Z\tnull\t3678.0\n" +
-                            "2024-12-19T08:10:00.887000Z\t3678.01\tnull\n" +
-                            "2024-12-19T08:10:00.950000Z\tnull\t3678.0\n",
-                    pivotQuery);
-        });
+        assertQueryAndPlan(
+                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n",
+                "(select * from trades where symbol in 'ETH-USDT')\n" +
+                        "  pivot (\n" +
+                        "    sum(price)\n" +
+                        "    FOR \"symbol\" IN ('ETH-USDT')\n" +
+                        "        side in ('buy', 'sell')\n" +
+                        "    GROUP BY timestamp\n" +
+                        "  );",
+                ddlTrades,
+                null,
+                dmlTrades,
+                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
+                        "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n" +
+                        "2024-12-19T08:10:00.736000Z\tnull\t3678.25\n" +
+                        "2024-12-19T08:10:00.759000Z\tnull\t3678.0\n" +
+                        "2024-12-19T08:10:00.772999Z\tnull\t3678.0\n" +
+                        "2024-12-19T08:10:00.887000Z\t3678.01\tnull\n" +
+                        "2024-12-19T08:10:00.950000Z\tnull\t3678.0\n",
+                true,
+                true,
+                false,
+                "GroupBy vectorized: false\n" +
+                        "  keys: [timestamp]\n" +
+                        "  values: [sum(case([(symbol='ETH-USDT' and side='buy'),sum,null])),sum(case([(symbol='ETH-USDT' and side='sell'),sum,null]))]\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [timestamp,symbol,side]\n" +
+                        "      values: [sum(price)]\n" +
+                        "      filter: (symbol in [ETH-USDT] and symbol in [ETH-USDT])\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: trades\n");
     }
 
     @Test
     public void testPivotWithTradesDataAndLimit() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(ddlTrades);
-            execute(dmlTrades);
-            drainWalQueue();
-
-            String pivotQuery = " select * from (select * from trades where symbol in 'ETH-USDT')\n" +
-                    "  pivot (\n" +
-                    "    sum(price)\n" +
-                    "    FOR \"symbol\" IN ('ETH-USDT')\n" +
-                    "        side in ('buy', 'sell')\n" +
-                    "    GROUP BY timestamp\n" +
-                    "    LIMIT 3\n" +
-                    "  );";
-
-//            String model = "select-group-by timestamp, sum(case(symbol = 'ETH-USDT' and side = 'buy',price,null)) ETH-USDT_buy, sum(case(symbol = 'ETH-USDT' and side = 'sell',price,null)) ETH-USDT_sell from (select-choose [timestamp, price, symbol, side] symbol, side, price, amount, timestamp from (select [timestamp, price, symbol, side] from trades timestamp (timestamp) where symbol in 'ETH-USDT')) limit 3";
-//            assertModel(model, pivotQuery, ExecutionModel.QUERY);
-
-            assertSql("timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
-                            "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n" +
-                            "2024-12-19T08:10:00.736000Z\tnull\t3678.25\n" +
-                            "2024-12-19T08:10:00.759000Z\tnull\t3678.0\n",
-                    pivotQuery);
-        });
+        assertQueryAndPlan(
+                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n",
+                "(trades where symbol in 'ETH-USDT')\n" +
+                        "  pivot (\n" +
+                        "    sum(price)\n" +
+                        "    FOR \"symbol\" IN ('ETH-USDT')\n" +
+                        "        side in ('buy', 'sell')\n" +
+                        "    GROUP BY timestamp\n" +
+                        "    LIMIT 3" +
+                        "  );",
+                ddlTrades,
+                null,
+                dmlTrades,
+                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
+                        "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n" +
+                        "2024-12-19T08:10:00.736000Z\tnull\t3678.25\n" +
+                        "2024-12-19T08:10:00.759000Z\tnull\t3678.0\n",
+                true,
+                true,
+                false,
+                "Limit lo: 3 skip-over-rows: 0 limit: 3\n" +
+                        "    GroupBy vectorized: false\n" +
+                        "      keys: [timestamp]\n" +
+                        "      values: [sum(case([(symbol='ETH-USDT' and side='buy'),sum,null])),sum(case([(symbol='ETH-USDT' and side='sell'),sum,null]))]\n" +
+                        "        Async Group By workers: 1\n" +
+                        "          keys: [timestamp,symbol,side]\n" +
+                        "          values: [sum(price)]\n" +
+                        "          filter: (symbol in [ETH-USDT] and symbol in [ETH-USDT])\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: trades\n");
     }
 
     @Test
@@ -863,91 +906,141 @@ public class PivotTest extends AbstractSqlParserTest {
 
     @Test
     public void testPivotWithTradesDataAndSubquery() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(ddlTrades);
-            execute(dmlTrades);
-            drainWalQueue();
-
-            assertSql("timestamp\tBTC-USD_buy\tBTC-USD_sell\n" +
-                            "2024-12-19T08:10:00.136000Z\t101502.2\tnull\n" +
-                            "2024-12-19T08:10:00.138000Z\tnull\t101502.1\n" +
-                            "2024-12-19T08:10:00.244000Z\t101502.2\tnull\n" +
-                            "2024-12-19T08:10:00.424000Z\t101502.2\tnull\n" +
-                            "2024-12-19T08:10:00.600000Z\t101502.2\tnull\n" +
-                            "2024-12-19T08:10:00.665999Z\t101502.2\tnull\n" +
-                            "2024-12-19T08:10:00.693000Z\t101502.2\tnull\n" +
-                            "2024-12-19T08:10:00.716999Z\t101502.2\tnull\n" +
-                            "2024-12-19T08:10:00.724000Z\t101502.2\tnull\n" +
-                            "2024-12-19T08:10:00.732999Z\tnull\t101501.06\n" +
-                            "2024-12-19T08:10:00.733999Z\tnull\t101500.0\n" +
-                            "2024-12-19T08:10:00.734999Z\tnull\t101499.95\n" +
-                            "2024-12-19T08:10:00.744000Z\t101497.6\tnull\n" +
-                            "2024-12-19T08:10:00.926000Z\t101497.6\tnull\n" +
-                            "2024-12-19T08:10:00.932000Z\tnull\t101497.25\n",
-                    "SELECT * FROM (\n" +
-                            "SELECT * FROM (\n" +
-                            "     SELECT timestamp, symbol,  side, AVG(price) price, AVG(amount) amount FROM trades WHERE symbol IN 'BTC-USD'\n" +
-                            ")\n" +
-                            "PIVOT (\n" +
-                            "    sum(price)\n" +
-                            "    FOR symbol IN ('BTC-USD')\n" +
-                            "        side IN ('buy', 'sell')\n" +
-                            "    GROUP BY  timestamp\n" +
-                            ") \n" +
-                            ");");
-        });
+        assertQueryAndPlan(
+                "timestamp\tBTC-USD_buy\tBTC-USD_sell\n",
+                "SELECT * FROM (\n" +
+                        "SELECT * FROM (\n" +
+                        "     SELECT timestamp, symbol,  side, AVG(price) price, AVG(amount) amount FROM trades WHERE symbol IN 'BTC-USD'\n" +
+                        ")\n" +
+                        "PIVOT (\n" +
+                        "    sum(price)\n" +
+                        "    FOR symbol IN ('BTC-USD')\n" +
+                        "        side IN ('buy', 'sell')\n" +
+                        "    GROUP BY  timestamp\n" +
+                        ") \n" +
+                        ");",
+                ddlTrades,
+                null,
+                dmlTrades,
+                "timestamp\tBTC-USD_buy\tBTC-USD_sell\n" +
+                        "2024-12-19T08:10:00.136000Z\t101502.2\tnull\n" +
+                        "2024-12-19T08:10:00.138000Z\tnull\t101502.1\n" +
+                        "2024-12-19T08:10:00.244000Z\t101502.2\tnull\n" +
+                        "2024-12-19T08:10:00.424000Z\t101502.2\tnull\n" +
+                        "2024-12-19T08:10:00.600000Z\t101502.2\tnull\n" +
+                        "2024-12-19T08:10:00.665999Z\t101502.2\tnull\n" +
+                        "2024-12-19T08:10:00.693000Z\t101502.2\tnull\n" +
+                        "2024-12-19T08:10:00.716999Z\t101502.2\tnull\n" +
+                        "2024-12-19T08:10:00.724000Z\t101502.2\tnull\n" +
+                        "2024-12-19T08:10:00.732999Z\tnull\t101501.06\n" +
+                        "2024-12-19T08:10:00.733999Z\tnull\t101500.0\n" +
+                        "2024-12-19T08:10:00.734999Z\tnull\t101499.95\n" +
+                        "2024-12-19T08:10:00.744000Z\t101497.6\tnull\n" +
+                        "2024-12-19T08:10:00.926000Z\t101497.6\tnull\n" +
+                        "2024-12-19T08:10:00.932000Z\tnull\t101497.25\n",
+                true,
+                true,
+                false,
+                "GroupBy vectorized: false\n" +
+                        "  keys: [timestamp]\n" +
+                        "  values: [sum(case([(symbol='BTC-USD' and side='buy'),sum,null])),sum(case([(symbol='BTC-USD' and side='sell'),sum,null]))]\n" +
+                        "    GroupBy vectorized: false\n" +
+                        "      keys: [timestamp,symbol,side]\n" +
+                        "      values: [sum(price)]\n" +
+                        "        Async Group By workers: 1\n" +
+                        "          keys: [timestamp,symbol,side]\n" +
+                        "          values: [avg(price)]\n" +
+                        "          filter: (symbol in [BTC-USD] and symbol in [BTC-USD])\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: trades\n");
     }
 
     @Test
     public void testPivotWithTradesDataAndWithClause() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(ddlTrades);
-            execute(dmlTrades);
-            drainWalQueue();
-
-            assertSql("timestamp\tBTC-USD_buy\tBTC-USD_sell\n" +
-                            "2024-12-19T08:10:00.000000Z\t101501.27999999998\t101500.15000000002\n",
-                    "WITH p AS \n" +
-                            "(WITH t AS\n" +
-                            "(\n" +
-                            "\n" +
-                            "    SELECT timestamp, symbol,  side, AVG(price) price, AVG(amount) amount FROM trades WHERE symbol IN 'BTC-USD'\n" +
-                            "    SAMPLE BY 1m\n" +
-                            ")\n" +
-                            "SELECT * FROM t\n" +
-                            "PIVOT (\n" +
-                            "    sum(price)\n" +
-                            "    FOR symbol IN ('BTC-USD')    \n" +
-                            "    side IN ('buy', 'sell')   \n" +
-                            "    GROUP BY timestamp\n" +
-                            ") ) SELECT * from p where `BTC-USD_buy` > 25780 or `BTC-USD_sell` > 25780;");
-        });
+        assertQueryAndPlan(
+                "timestamp\tBTC-USD_buy\tBTC-USD_sell\n",
+                "WITH p AS \n" +
+                        "(WITH t AS\n" +
+                        "(\n" +
+                        "\n" +
+                        "    SELECT timestamp, symbol,  side, AVG(price) price, AVG(amount) amount FROM trades WHERE symbol IN 'BTC-USD'\n" +
+                        "    SAMPLE BY 1m\n" +
+                        ")\n" +
+                        "SELECT * FROM t\n" +
+                        "PIVOT (\n" +
+                        "    sum(price)\n" +
+                        "    FOR symbol IN ('BTC-USD')    \n" +
+                        "    side IN ('buy', 'sell')   \n" +
+                        "    GROUP BY timestamp\n" +
+                        ") ) SELECT * from p where `BTC-USD_buy` > 25780 or `BTC-USD_sell` > 25780;",
+                ddlTrades,
+                null,
+                dmlTrades,
+                "timestamp\tBTC-USD_buy\tBTC-USD_sell\n" +
+                        "2024-12-19T08:10:00.000000Z\t101501.27999999998\t101500.15000000002\n",
+                true,
+                false,
+                false,
+                "Filter filter: (25780<BTC-USD_buy or 25780<BTC-USD_sell)\n" +
+                        "    GroupBy vectorized: false\n" +
+                        "      keys: [timestamp]\n" +
+                        "      values: [sum(case([(symbol='BTC-USD' and side='buy'),sum,null])),sum(case([(symbol='BTC-USD' and side='sell'),sum,null]))]\n" +
+                        "        GroupBy vectorized: false\n" +
+                        "          keys: [timestamp,symbol,side]\n" +
+                        "          values: [sum(price)]\n" +
+                        "            Radix sort light\n" +
+                        "              keys: [timestamp]\n" +
+                        "                Async Group By workers: 1\n" +
+                        "                  keys: [timestamp,symbol,side]\n" +
+                        "                  values: [avg(price)]\n" +
+                        "                  filter: (symbol in [BTC-USD] and symbol in [BTC-USD])\n" +
+                        "                    PageFrame\n" +
+                        "                        Row forward scan\n" +
+                        "                        Frame forward scan on: trades\n");
     }
 
     @Test
     public void testPivotWithTradesDataAndWithClause2() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(ddlTrades);
-            execute(dmlTrades);
-            drainWalQueue();
-
-            assertSql("timestamp\tBTC-USD_buy\tBTC-USD_sell\n" +
-                            "2024-12-19T08:10:00.000000Z\t101501.27999999998\t101500.15000000002\n",
-                    "WITH t AS\n" +
-                            "        (\n" +
-                            "\n" +
-                            "                SELECT timestamp, symbol,  side, AVG(price) price, AVG(amount) amount FROM trades WHERE symbol IN 'BTC-USD'\n" +
-                            "SAMPLE BY 1m\n" +
-                            "), P AS (\n" +
-                            "        SELECT * FROM t\n" +
-                            "        PIVOT (\n" +
-                            "        sum(price)\n" +
-                            "FOR symbol IN ('BTC-USD')\n" +
-                            "side IN ('buy', 'sell')\n" +
-                            "GROUP BY timestamp\n" +
-                            ") )\n" +
-                            "SELECT * FROM P;");
-        });
+        assertQueryAndPlan(
+                "timestamp\tBTC-USD_buy\tBTC-USD_sell\n",
+                "WITH t AS\n" +
+                        "        (\n" +
+                        "\n" +
+                        "                SELECT timestamp, symbol,  side, AVG(price) price, AVG(amount) amount FROM trades WHERE symbol IN 'BTC-USD'\n" +
+                        "SAMPLE BY 1m\n" +
+                        "), P AS (\n" +
+                        "        SELECT * FROM t\n" +
+                        "        PIVOT (\n" +
+                        "        sum(price)\n" +
+                        "FOR symbol IN ('BTC-USD')\n" +
+                        "side IN ('buy', 'sell')\n" +
+                        "GROUP BY timestamp\n" +
+                        ") )\n" +
+                        "SELECT * FROM P;",
+                ddlTrades,
+                null,
+                dmlTrades,
+                "timestamp\tBTC-USD_buy\tBTC-USD_sell\n" +
+                        "2024-12-19T08:10:00.000000Z\t101501.27999999998\t101500.15000000002\n",
+                true,
+                true,
+                false,
+                "GroupBy vectorized: false\n" +
+                        "  keys: [timestamp]\n" +
+                        "  values: [sum(case([(symbol='BTC-USD' and side='buy'),sum,null])),sum(case([(symbol='BTC-USD' and side='sell'),sum,null]))]\n" +
+                        "    GroupBy vectorized: false\n" +
+                        "      keys: [timestamp,symbol,side]\n" +
+                        "      values: [sum(price)]\n" +
+                        "        Radix sort light\n" +
+                        "          keys: [timestamp]\n" +
+                        "            Async Group By workers: 1\n" +
+                        "              keys: [timestamp,symbol,side]\n" +
+                        "              values: [avg(price)]\n" +
+                        "              filter: (symbol in [BTC-USD] and symbol in [BTC-USD])\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: trades\n");
     }
 
     @Test

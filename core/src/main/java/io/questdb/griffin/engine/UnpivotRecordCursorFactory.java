@@ -103,7 +103,7 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return base.recordCursorSupportsRandomAccess();
+        return false;
     }
 
     @Override
