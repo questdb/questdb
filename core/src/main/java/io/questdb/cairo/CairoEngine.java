@@ -445,11 +445,17 @@ public class CairoEngine implements Closeable, WriterSource {
                                         String reason = (lastRefreshBaseTxn == MatViewRefreshState.MAT_VIEW_FULL_REFRESH_TXN_MARKER && state.getSeqTxn() > matViewLastTxn)
                                                 ? "refresh state out of sync with materialized view"
                                                 : "refresh state out of sync with base table";
-
                                         matViewGraph.enqueueInvalidate(tableToken, reason);
+                                        LOG.info().$("invalidate materialized view [view=").utf8(tableToken.getTableName())
+                                                .$(", reason=").$(reason).I$();
                                         continue; // do not refresh the view
                                     } else {
+                                        long old = state.getLastRefreshBaseTxn();
                                         state.setLastRefreshBaseTxn(lastRefreshBaseTxn);
+                                        LOG.info().$("adjust last refresh base txn for materialized view [view=").utf8(tableToken.getTableName())
+                                                .$(", from=").$(old)
+                                                .$(", to=").$(lastRefreshBaseTxn)
+                                                .I$();
                                     }
                                 }
                             }
