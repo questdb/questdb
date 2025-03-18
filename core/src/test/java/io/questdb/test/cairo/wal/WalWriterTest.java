@@ -25,19 +25,55 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.wal.*;
+import io.questdb.cairo.wal.SymbolMapDiff;
+import io.questdb.cairo.wal.SymbolMapDiffEntry;
+import io.questdb.cairo.wal.WalDataRecord;
+import io.questdb.cairo.wal.WalDirectoryPolicy;
+import io.questdb.cairo.wal.WalEventCursor;
+import io.questdb.cairo.wal.WalReader;
+import io.questdb.cairo.wal.WalTxnType;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
+import io.questdb.std.DirectBinarySequence;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.LongHashSet;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.*;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
@@ -3533,15 +3569,42 @@ public class WalWriterTest extends AbstractCairoTest {
         }
     }
 
+    private void generateRow(WalWriter writer, Rnd threadRnd, long timestamp) {
+        var row = writer.newRow(timestamp);
+        var meta = writer.getMetadata();
+        for (int c = 0, n = meta.getColumnCount(); c < n; c++) {
+            int type = meta.getColumnType(c);
+            if (type > 0) {
+                if (threadRnd.nextInt(10) > 0) {
+                    switch (type) {
+                        case ColumnType.SYMBOL:
+                            row.putSym(c, threadRnd.nextChars(2));
+                            break;
+                        case ColumnType.DOUBLE:
+                            if (threadRnd.nextInt(50) != 0) {
+                                row.putDouble(c, threadRnd.nextDouble());
+                            }
+                            break;
+                        case ColumnType.STRING:
+                            row.putStr(c, threadRnd.nextChars(6));
+                            break;
+                        case ColumnType.LONG:
+                            row.putLong(c, threadRnd.nextLong());
+                            break;
+                    }
+                }
+            }
+        }
+        row.append();
+    }
+
     private void testApply1RowCommitManyWriters(long MAX_VALUE, int totalRows, int walWriters) throws Exception {
         setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
         assertMemoryLeak(() -> {
             execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("sm");
-            long startTs = IntervalUtils.parseFloorPartialTimestamp("2022-02-24");
-            long tsIncrement = MAX_VALUE;
 
-            long ts = startTs;
+            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-02-24");
             int symbolCount = 75;
 
             Utf8StringSink sink = new Utf8StringSink();
@@ -3573,7 +3636,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     row.append();
                     writer.commit();
 
-                    ts += tsIncrement;
+                    ts += MAX_VALUE;
                 }
             } finally {
                 Misc.freeObjListIfCloseable(writerObjList);
@@ -3599,42 +3662,13 @@ public class WalWriterTest extends AbstractCairoTest {
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertSql("count\tmin\tmax\n" +
-                    totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - tsIncrement) + "\n", "select count(*), min(ts), max(ts) from sm");
+                    totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - MAX_VALUE) + "\n", "select count(*), min(ts), max(ts) from sm");
             assertSqlCursors("sm", "select * from sm order by id");
             assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(s as int)");
             assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(v as int)");
             assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id % " + symbolCount + " <> cast(m as int)");
 
         });
-    }
-
-    private void generateRow(WalWriter writer, Rnd threadRnd, long timestamp) {
-        var row = writer.newRow(timestamp);
-        var meta = writer.getMetadata();
-        for (int c = 0, n = meta.getColumnCount(); c < n; c++) {
-            int type = meta.getColumnType(c);
-            if (type > 0) {
-                if (threadRnd.nextInt(10) > 0) {
-                    switch (type) {
-                        case ColumnType.SYMBOL:
-                            row.putSym(c, threadRnd.nextChars(2));
-                            break;
-                        case ColumnType.DOUBLE:
-                            if (threadRnd.nextInt(50) != 0) {
-                                row.putDouble(c, threadRnd.nextDouble());
-                            }
-                            break;
-                        case ColumnType.STRING:
-                            row.putStr(c, threadRnd.nextChars(6));
-                            break;
-                        case ColumnType.LONG:
-                            row.putLong(c, threadRnd.nextLong());
-                            break;
-                    }
-                }
-            }
-        }
-        row.append();
     }
 
     private void testDesignatedTimestampIncludesSegmentRowNumber(int[] timestampOffsets, boolean expectedOutOfOrder) throws Exception {
