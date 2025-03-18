@@ -85,7 +85,6 @@ public class PGQuerySuspendTest extends BasePGTest {
 
             for (int i = 0; i < testCases.size(); i++) {
                 TestCase tc = testCases.getQuick(i);
-
                 engine.releaseAllReaders();
                 engine.setReaderListener(null);
 

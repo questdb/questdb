@@ -44,10 +44,9 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.Closeable;
 import java.util.concurrent.atomic.LongAdder;
 
-public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
+public class AsyncFilterAtom implements StatefulAtom, Plannable {
     public static final LongAdder PRE_TOUCH_BLACK_HOLE = new LongAdder();
     private final IntList columnTypes;
     private final Function filter;
@@ -96,22 +95,12 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
             final boolean current = executionContext.getCloneSymbolTables();
             executionContext.setCloneSymbolTables(true);
             try {
-                Function.init(perWorkerFilters, symbolTableSource, executionContext);
+                Function.init(perWorkerFilters, symbolTableSource, executionContext, filter);
             } finally {
                 executionContext.setCloneSymbolTables(current);
             }
         }
         preTouchEnabled = executionContext.isColumnPreTouchEnabled();
-    }
-
-    @Override
-    public void initCursor() {
-        filter.initCursor();
-        if (perWorkerFilters != null) {
-            // Initialize all per-worker filters on the query owner thread to avoid
-            // DataUnavailableException thrown on worker threads when filtering.
-            Function.initCursor(perWorkerFilters);
-        }
     }
 
     public int maybeAcquireFilter(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {

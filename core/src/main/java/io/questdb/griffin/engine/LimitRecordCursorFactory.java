@@ -103,7 +103,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
 
-        if (loFunc != null && loFunc.getLong(null) != Numbers.LONG_NULL) {
+        // cursor has to be open to calculate the limit details.
+        if (cursor.base != null && loFunc != null && loFunc.getLong(null) != Numbers.LONG_NULL) {
             cursor.countLimit();
             sink.meta("skip-over-rows").val(cursor.skippedRows);
             sink.meta("limit").val(cursor.limit);
