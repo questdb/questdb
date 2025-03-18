@@ -881,7 +881,7 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "01ed\r\n" +
+                        "01f9\r\n" +
                         "\"QUERY PLAN\"\r\n" +
                         "\"VirtualRecord\"\r\n" +
                         "\"&nbsp;&nbsp;functions: [1]\"\r\n" +
@@ -997,7 +997,7 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0288\r\n" +
+                        "0294\r\n" +
                         "{\"query\":\"explain select 1 from x where f>systimestamp() and f<0 limit 1\",\"columns\":[{\"name\":\"QUERY PLAN\",\"type\":\"STRING\"}]," +
                         "\"timestamp\":-1,\"dataset\":" +
                         "[[\"VirtualRecord\"]," +
