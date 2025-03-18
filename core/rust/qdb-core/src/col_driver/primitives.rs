@@ -103,7 +103,7 @@ mod tests {
         let err = IntDriver.col_sizes_for_size(&col, 1).unwrap_err();
         assert!(matches!(err.get_cause(), CoreErrorCause::InvalidLayout));
         let msg = format!("{:#}", err);
-        eprintln!("{}", msg);
+        // eprintln!("{}", msg);
         assert!(msg.contains(
             "Data file for column int_col0 smaller than 1 rows, expected at least 4 bytes but is 0"
         ));
