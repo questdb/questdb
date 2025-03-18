@@ -1067,7 +1067,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                         int finalI = i;
                         new Thread(() -> {
                             TestUtils.await(barrier);
-                            try (SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine)) {
+                            try (SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine, workerCount)) {
                                 RecordCursorFactory factory = factories[finalI];
                                 assertQuery(expected, factory, ctx);
                             } catch (Throwable e) {
@@ -1123,7 +1123,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                         int finalI = i;
                         new Thread(() -> {
                             TestUtils.await(barrier);
-                            try (SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine)) {
+                            try (SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine, workerCount)) {
                                 RecordCursorFactory factory = factories[finalI];
                                 assertQuery(expected, factory, ctx);
                             } catch (Throwable e) {
