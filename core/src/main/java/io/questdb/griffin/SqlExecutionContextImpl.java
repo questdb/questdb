@@ -290,6 +290,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
         this.cacheHit = false;
+        this.columnPreTouchEnabled = true;
     }
 
     @Override

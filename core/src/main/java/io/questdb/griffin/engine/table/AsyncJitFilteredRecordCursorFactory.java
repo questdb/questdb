@@ -112,7 +112,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             int columnType = base.getMetadata().getColumnType(i);
             columnTypes.add(columnType);
         }
-        AsyncJitFilterAtom atom = new AsyncJitFilterAtom(
+        final AsyncJitFilterAtom atom = new AsyncJitFilterAtom(
                 configuration,
                 filter,
                 perWorkerFilters,
@@ -431,7 +431,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     public static class AsyncJitFilterAtom extends AsyncFilterAtom {
-
         final ObjList<Function> bindVarFunctions;
         final MemoryCARW bindVarMemory;
         final CompiledFilter compiledFilter;

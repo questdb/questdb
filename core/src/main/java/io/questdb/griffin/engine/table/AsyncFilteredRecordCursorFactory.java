@@ -94,7 +94,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             int columnType = base.getMetadata().getColumnType(i);
             columnTypes.add(columnType);
         }
-        AsyncFilterAtom atom = new AsyncFilterAtom(
+        final AsyncFilterAtom atom = new AsyncFilterAtom(
                 configuration,
                 filter,
                 perWorkerFilters,
