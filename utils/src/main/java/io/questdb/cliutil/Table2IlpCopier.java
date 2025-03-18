@@ -76,6 +76,7 @@ public class Table2IlpCopier {
                                     start = microsecondClock.getTicks();
                                 }
                             }
+                            sender.flush();
                         } catch (Exception th) {
                             try {
                                 sender.flush();

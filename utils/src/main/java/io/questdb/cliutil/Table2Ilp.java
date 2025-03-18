@@ -50,8 +50,8 @@ public class Table2Ilp {
     }
 
     private static void printUsage() {
-        System.out.println("usage: " + Table2Ilp.class.getName() + " -d <destination_table_name> -dc <destination_ilp_host_port> -s <source_select_query> -sc <source_pg_connection_string> \\ " +
-                "\n [-sts <timestamp_column>] [-sym <symbol_columns>] [-dauth <ilp_auth_key:ilp_auth_token>] [-dtls]");
+        System.out.println("usage: " + Table2Ilp.class.getName() + " -d <destination_table_name> -dilp <destination_ilp_connection_string> -s <source_select_query> -sc <source_pg_connection_string> \\ " +
+                "\n [-sts <timestamp_column>] [-sym <symbol_columns>]");
     }
 
     static class Table2IlpParams {
