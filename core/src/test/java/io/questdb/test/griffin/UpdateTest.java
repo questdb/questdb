@@ -3116,7 +3116,7 @@ public class UpdateTest extends AbstractCairoTest {
                     "select distinct symCol from up order by symCol",
                     null,
                     true,
-                    false
+                    true
             );
 
             assertSql(

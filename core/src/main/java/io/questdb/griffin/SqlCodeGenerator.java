@@ -299,8 +299,8 @@ import static io.questdb.cairo.ColumnType.*;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.QUERY;
 import static io.questdb.griffin.model.QueryModel.*;
+import static io.questdb.griffin.model.QueryModel.QUERY;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_HOUR_INT = 1;
@@ -3131,9 +3131,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             listColumnFilterA.add(-index - 1);
                         } else {
                             listColumnFilterA.add(index + 1);
-                            if (i == 0 && metadata.getColumnType(index) == ColumnType.TIMESTAMP) {
-                                orderedByTimestampIndex = index;
-                            }
+                        }
+                        if (i == 0 && metadata.getColumnType(index) == ColumnType.TIMESTAMP) {
+                            orderedByTimestampIndex = index;
                         }
                     }
                 }
@@ -3210,9 +3210,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         );
                     } else {
                         final int columnType = orderedMetadata.getColumnType(firstOrderByColumnIndex);
-                        if (configuration.isSqlOrderBySortEnabled()
-                                && orderByColumnNames.size() == 1
-                                && LongSortedLightRecordCursorFactory.isSupportedColumnType(columnType)) {
+                        if (
+                                configuration.isSqlOrderBySortEnabled()
+                                        && orderByColumnNames.size() == 1
+                                        && LongSortedLightRecordCursorFactory.isSupportedColumnType(columnType)
+                        ) {
                             return new LongSortedLightRecordCursorFactory(
                                     configuration,
                                     orderedMetadata,

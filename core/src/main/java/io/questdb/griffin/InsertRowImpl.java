@@ -78,7 +78,7 @@ public final class InsertRowImpl implements QuietCloseable {
 
     public void initContext(SqlExecutionContext executionContext) throws SqlException {
         final ObjList<? extends Function> functions = virtualRecord.getFunctions();
-        Function.init(functions, null, executionContext);
+        Function.init(functions, null, executionContext, null);
         if (timestampFunction != null) {
             timestampFunction.init(null, executionContext);
         }

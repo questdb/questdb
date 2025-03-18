@@ -119,6 +119,24 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
         });
     }
 
+    @Test
+    public void testMultiGreatFunctionInSingleQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x( timestamp TIMESTAMP, symbol SYMBOL, price DOUBLE, amount DOUBLE ) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("INSERT INTO x VALUES " +
+                    "('2021-10-05T11:31:35.878Z', 'AAPL', 245, 123.4), " +
+                    "('2021-10-05T12:31:35.878Z', 'AAPL', 245, 123.3), " +
+                    "('2021-10-05T13:31:35.878Z', 'AAPL', 250, 123.1), " +
+                    "('2021-10-05T14:31:35.878Z', 'AAPL', 250, 123.0);");
+            drainWalQueue();
+            assertSql("greatest\tgreatest1\n" +
+                    "247.0\t123.4\n" +
+                    "247.0\t123.3\n" +
+                    "250.0\t123.2\n" +
+                    "250.0\t123.2\n", "select greatest(price, 247), greatest(amount, 123.2) from x");
+        });
+    }
+
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new GreatestNumericFunctionFactory();

@@ -37,6 +37,7 @@ import io.questdb.cairo.arr.ArrayState;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
@@ -179,7 +180,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                             }
                         }
                     }
-                    state.metadata = state.recordCursorFactory.getMetadata();
                     doResumeSend(context);
                 } catch (CairoException e) {
                     state.setQueryCacheable(e.isCacheable());
@@ -341,7 +341,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
 
         final HttpChunkedResponse response = context.getChunkedResponse();
-        final int columnCount = state.metadata.getColumnCount();
+        final RecordMetadata metadata = state.recordCursorFactory.getMetadata();
+        final int columnCount = metadata.getColumnCount();
 
         OUT:
         while (true) {
@@ -361,7 +362,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                                 if (state.columnIndex > 0) {
                                     response.putAscii(state.delimiter);
                                 }
-                                response.putQuote().escapeCsvStr(state.metadata.getColumnName(state.columnIndex)).putQuote();
+                                response.putQuote().escapeCsvStr(metadata.getColumnName(state.columnIndex)).putQuote();
                                 state.columnIndex++;
                                 response.bookmark();
                             }
@@ -407,7 +408,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                             if (state.columnIndex > 0 && state.columnValueFullySent) {
                                 response.putAscii(state.delimiter);
                             }
-                            putValue(response, state);
+                            putValue(response, state.metadata.getColumnType(state.columnIndex), state.record, state.columnIndex);
                             state.columnIndex++;
                             response.bookmark();
                         }
