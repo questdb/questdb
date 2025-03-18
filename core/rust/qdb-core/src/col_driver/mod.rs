@@ -54,6 +54,7 @@ pub trait ColumnDriver {
     fn descr(&self) -> &'static str;
 }
 
+/// Obtain a type driver from the provided column type.
 pub fn lookup_driver(col_type: ColumnType) -> &'static dyn ColumnDriver {
     match (col_type.tag(), col_type.is_designated()) {
         (ColumnTypeTag::Boolean, _) => &BooleanDriver,
