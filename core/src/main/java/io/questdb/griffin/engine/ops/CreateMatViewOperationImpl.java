@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlOptimiser;
 import io.questdb.griffin.SqlParser;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExpressionNode;
@@ -336,7 +337,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         // Find sampling interval.
         CharSequence intervalExpr = null;
         int intervalPos = 0;
-        final ExpressionNode sampleBy = queryModel.getSampleBy();
+        final ExpressionNode sampleBy = SqlUtil.findSampleByNode(queryModel);
         if (sampleBy != null && sampleBy.type == ExpressionNode.CONSTANT) {
             intervalExpr = sampleBy.token;
             intervalPos = sampleBy.position;
@@ -344,28 +345,24 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
         // GROUP BY timestamp_floor(ts) (optimized SAMPLE BY)
         if (intervalExpr == null) {
-            final ObjList<QueryColumn> queryColumns = queryModel.getBottomUpColumns();
-            for (int i = 0, n = queryColumns.size(); i < n; i++) {
-                final QueryColumn queryColumn = queryColumns.getQuick(i);
+            final QueryColumn queryColumn = SqlUtil.findTimestampFloorColumn(queryModel);
+            if (queryColumn != null) {
                 final ExpressionNode ast = queryColumn.getAst();
-                if (ast.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase("timestamp_floor", ast.token)) {
-                    if (ast.paramCount == 3) {
-                        intervalExpr = ast.args.getQuick(2).token;
-                        intervalPos = ast.args.getQuick(2).position;
-                    } else {
-                        intervalExpr = ast.lhs.token;
-                        intervalPos = ast.lhs.position;
+                if (ast.paramCount == 3) {
+                    intervalExpr = ast.args.getQuick(2).token;
+                    intervalPos = ast.args.getQuick(2).position;
+                } else {
+                    intervalExpr = ast.lhs.token;
+                    intervalPos = ast.lhs.position;
+                }
+                if (timestamp == null) {
+                    createTableOperation.setTimestampColumnName(Chars.toString(queryColumn.getName()));
+                    createTableOperation.setTimestampColumnNamePosition(ast.position);
+                    final CreateTableColumnModel timestampModel = createColumnModelMap.get(queryColumn.getName());
+                    if (timestampModel == null) {
+                        throw SqlException.position(ast.position).put("TIMESTAMP column does not exist [name=").put(queryColumn.getName()).put(']');
                     }
-                    if (timestamp == null) {
-                        createTableOperation.setTimestampColumnName(Chars.toString(queryColumn.getName()));
-                        createTableOperation.setTimestampColumnNamePosition(ast.position);
-                        final CreateTableColumnModel timestampModel = createColumnModelMap.get(queryColumn.getName());
-                        if (timestampModel == null) {
-                            throw SqlException.position(ast.position).put("TIMESTAMP column does not exist [name=").put(queryColumn.getName()).put(']');
-                        }
-                        timestampModel.setIsDedupKey(); // set dedup for timestamp column
-                    }
-                    break;
+                    timestampModel.setIsDedupKey(); // set dedup for timestamp column
                 }
             }
         }
