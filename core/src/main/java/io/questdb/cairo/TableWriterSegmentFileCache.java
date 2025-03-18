@@ -140,6 +140,10 @@ public class TableWriterSegmentFileCache {
     }
 
     public void closeWalFiles(TableWriterSegmentCopyInfo segmentCopyInfo, int writerColumnCount) {
+        if (getWalMappedColumns().size() == 0) {
+            // Everything is already closed.
+            return;
+        }
         for (int seg = segmentCopyInfo.getSegmentCount() - 1; seg > -1; seg--) {
             int segmentId = segmentCopyInfo.getSegmentId(seg);
             int walId = segmentCopyInfo.getWalId(seg);
