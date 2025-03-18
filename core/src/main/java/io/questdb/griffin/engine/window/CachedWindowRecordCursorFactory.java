@@ -485,7 +485,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                 reopenTrees();
                 reopen(allFunctions);
             }
-            Function.init(allFunctions, this, executionContext);
+            Function.init(allFunctions, this, executionContext, null);
         }
 
         private void reopen(ObjList<?> list) {

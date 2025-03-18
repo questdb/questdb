@@ -235,7 +235,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             record.setRowIndex(0);
             long baseRowId = record.getRowId();
 
-            if (!fragment.isSharded()) {
+            if (fragment.isNotSharded()) {
                 aggregateNonSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
             } else {
                 aggregateSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
@@ -409,7 +409,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             record.setRowIndex(0);
             long baseRowId = record.getRowId();
 
-            if (!fragment.isSharded()) {
+            if (fragment.isNotSharded()) {
                 aggregateFilteredNonSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
             } else {
                 aggregateFilteredSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
