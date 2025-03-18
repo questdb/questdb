@@ -34,6 +34,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -45,8 +46,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
-import io.questdb.cairo.vm.MemoryCARWImpl;
-import io.questdb.cairo.vm.api.MemoryAR;
 import io.questdb.cutlass.pgwire.BadProtocolException;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.cutlass.pgwire.PGResponseSink;
@@ -1700,8 +1699,25 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             utf8Sink.putNetworkInt(1); // lower bound, always 1 in PostgreSQL
         }
 
-        // todo: optimize for vanilla arrays, vanilla arrays do not require recursive processing
-        outColBinArrRecursive(utf8Sink, array, elemType, 0, 0);
+        if (array.isVanilla()) {
+            FlatArrayView flatView = array.flatView();
+            int len = flatView.length();
+            // todo: check if JIT can remove switch from the loop body
+            for (int i = 0; i < len; i++) {
+                switch (elemType) {
+                    case ColumnType.LONG:
+                        utf8Sink.putNetworkInt(Long.BYTES);
+                        utf8Sink.putNetworkLong(flatView.getLongAtAbsoluteIndex(i));
+                        break;
+                    case ColumnType.DOUBLE:
+                        utf8Sink.putNetworkInt(Double.BYTES);
+                        utf8Sink.putNetworkDouble(flatView.getDoubleAtAbsoluteIndex(i));
+                        break;
+                }
+            }
+        } else {
+            outColBinArrRecursive(utf8Sink, array, elemType, 0, 0);
+        }
         utf8Sink.putLenEx(sizePtr);
     }
 

@@ -178,6 +178,20 @@ public abstract class ArrayView implements QuietCloseable {
         return ColumnType.isNull(type);
     }
 
+    /**
+     * Flag indicating whether this array is a vanilla array. Vanilla arrays are arrays
+     * whose shape and strides directly describe the physical layout of the underlying flat array.
+     * <p>
+     * For vanilla arrays, it is safe to iterate directly over the flat array when implementing
+     * operations that process all elements, without using the more expensive index calculations
+     * required for transposed or sliced arrays.
+     *
+     * @return true if this array is vanilla, false otherwise
+     */
+    public boolean isVanilla() {
+        return isVanilla;
+    }
+
     private void appendToMemRecursive(int dim, int flatIndex, MemoryA mem) {
         short elemType = ColumnType.decodeArrayElementType(this.type);
         assert elemType == ColumnType.DOUBLE || elemType == ColumnType.LONG : "implemented only for long and double";
