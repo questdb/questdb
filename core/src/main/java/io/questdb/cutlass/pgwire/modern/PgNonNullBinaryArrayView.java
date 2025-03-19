@@ -97,7 +97,7 @@ final class PgNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
 
     @Override
     public int length() {
-        return 0;
+        return flatViewLength;
     }
 
     void addDimLen(int dimLen) {
@@ -128,40 +128,53 @@ final class PgNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
      */
     void setPtrAndCalculateStrides(long lo, long hi, int pgOidType, PGPipelineEntry pipelineEntry) throws BadProtocolException {
         short componentNativeType;
-        int elementSize;
+        int expectedElementSize;
         switch (pgOidType) {
             case PGOids.PG_INT8:
                 componentNativeType = ColumnType.LONG;
-                elementSize = Long.BYTES;
+                expectedElementSize = Long.BYTES;
                 break;
             case PGOids.PG_FLOAT8:
                 componentNativeType = ColumnType.DOUBLE;
-                elementSize = Double.BYTES;
+                expectedElementSize = Double.BYTES;
                 break;
             default:
                 throw CairoException.nonCritical().put("unsupported array type, only arrays of int8 and float8 are supported [pgOid=").put(pgOidType).put(']');
         }
 
-        // validate that there are no nulls in the array
-        for (long p = lo; p < hi; p += Integer.BYTES + elementSize) {
-            // no need to swap bytes since -1 is always -1, regardless of endianness
-            if (Unsafe.getUnsafe().getInt(p) == -1) {
+        // validate that there are no nulls in the array since we don't support them
+        int increment = Integer.BYTES + expectedElementSize;
+        int expectedElementSizeBE = Numbers.bswap(expectedElementSize);
+        for (long p = lo; p < hi; p += increment) {
+
+            // element size as reported by the client
+            int actualElementSizeBE = Unsafe.getUnsafe().getInt(p);
+
+            // -1 is a special value that indicates a NULL element
+            // no need to swap bytes since -1 is always -1, regardless of endianness, it's all 1s
+            if (actualElementSizeBE == -1) {
                 throw CairoException.nonCritical().put("null elements are not supported in arrays");
+            }
+
+            if (actualElementSizeBE != expectedElementSizeBE) {
+                int actualElementSize = Numbers.bswap(actualElementSizeBE);
+                throw BadProtocolException.instance(pipelineEntry).put("unexpected array element size [expected=").put(expectedElementSize).put(", actual=").put(actualElementSize).put(']');
             }
         }
 
+        // Check client is not misbehaving. Buggy clients can send arrays with wrong size. see: https://github.com/pgjdbc/pgjdbc/issues/3567
+        // Important: We have to validate that the array size is as expected only after we have checked for null elements.
+        // Since a presence of nulls also affects the size of the array and we want to report null elements to user
+        // since that's more likely than a buggy client.
+        long totalExpectedSizeBytes = (long) (expectedElementSize + Integer.BYTES) * flatViewLength;
+        if (hi - lo != totalExpectedSizeBytes) {
+            throw BadProtocolException.instance(pipelineEntry).put("unexpected array size [expected=").put(totalExpectedSizeBytes).put(", actual=").put(hi - lo).put(']');
+        }
+
+        // ok, all good, looks we were given a valid array
         this.lo = lo;
         this.hi = hi;
         this.type = ColumnType.encodeArrayType(componentNativeType, shape.size());
         resetToDefaultStrides();
-
-        // Check client is not misbehaving. buggy clients can send arrays with wrong size. see: https://github.com/pgjdbc/pgjdbc/issues/3567
-        // important: we have to validate that the array size is as expected only after we have checked for null elements.
-        // since a presence of nulls also affects the size of the array and we want to report null elements to user
-        // since that's more likely than a buggy client.
-        long totalExpectedSizeBytes = (long) (elementSize + Integer.BYTES) * flatViewLength;
-        if (hi - lo != totalExpectedSizeBytes) {
-            throw BadProtocolException.instance(pipelineEntry).put("unexpected array size [expected=").put(totalExpectedSizeBytes).put(", actual=").put(hi - lo).put(']');
-        }
     }
 }
