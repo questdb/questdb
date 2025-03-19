@@ -167,7 +167,7 @@ public abstract class ArrayView implements QuietCloseable {
     }
 
     public final boolean arrayEquals(ArrayView other) {
-        if (this.getDimCount() != other.getDimCount() || !this.shape.equals(other.shape)) {
+        if (this.type != other.type || !this.shapeEquals(other)) {
             return false;
         }
         // We need this check to protect from running arrayEqualsRecursive() for an almost unbounded
@@ -362,6 +362,25 @@ public abstract class ArrayView implements QuietCloseable {
         return isVanilla;
     }
 
+    /**
+     * Tells whether this array has the same shape as the other one.
+     * <p>
+     * <strong>NOTE:</strong> arrays of the same shape do not necessarily have the same
+     * strides.
+     */
+    public final boolean shapeEquals(ArrayView other) {
+        int nDims = shape.size();
+        IntList otherShape = other.shape;
+        if (otherShape.size() != nDims) {
+            return false;
+        }
+        for (int i = 0; i < nDims; i++) {
+            if (shape.getQuick(i) != otherShape.getQuick(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
     private void appendToMemRecursive(int dim, int flatIndex, MemoryA mem) {
         short elemType = getElemType();
         assert elemType == ColumnType.DOUBLE || elemType == ColumnType.LONG : "implemented only for long and double";
