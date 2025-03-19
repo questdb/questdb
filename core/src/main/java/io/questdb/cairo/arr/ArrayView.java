@@ -27,6 +27,7 @@ package io.questdb.cairo.arr;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 
 /**
