@@ -1440,7 +1440,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testIndexSampleByAlignToCalendarDSTForwardEdge() throws Exception {
         assertQuery(
                 "k\ts\tlat\tlon\n" +
-                        "2021-03-28T01:00:00.000000Z\ta\t144.77803379943109\t15.276535618609202\n" +
+                        "2021-03-28T00:00:00.000000Z\ta\t144.77803379943109\t15.276535618609202\n" +
                         "2021-03-28T03:00:00.000000Z\ta\tnull\t127.43011035722469\n" +
                         "2021-03-28T04:00:00.000000Z\ta\t60.30746433578906\t128.42101395467057\n",
                 "select to_timezone(k, 'Europe/Berlin') k, s, lat, lon from (select k, s, first(lat) lat, last(lon) lon " +
@@ -1458,7 +1458,8 @@ public class SampleByTest extends AbstractCairoTest {
                         "   long_sequence(100)" +
                         "), index(s) timestamp(k) partition by DAY",
                 null,
-                false
+                true,
+                true
         );
     }
 
@@ -1483,7 +1484,8 @@ public class SampleByTest extends AbstractCairoTest {
                         "   long_sequence(100)" +
                         "), index(s) timestamp(k) partition by DAY",
                 null,
-                false
+                true,
+                true
         );
     }
 
@@ -1509,7 +1511,8 @@ public class SampleByTest extends AbstractCairoTest {
                         "   long_sequence(100)" +
                         "), index(s) timestamp(k) partition by DAY",
                 null,
-                false
+                true,
+                true
         );
     }
 
@@ -1517,12 +1520,12 @@ public class SampleByTest extends AbstractCairoTest {
     public void testIndexSampleByAlignToCalendarDSTForwardLocalMidnight() throws Exception {
         assertQuery(
                 "k\ts\tlat\tlon\n" +
-                        "2021-03-28T00:00:00.000000Z\ta\t142.30215575416736\t167.4566019970139\n" +
-                        "2021-03-28T01:00:00.000000Z\ta\t33.45558404694713\t128.42101395467057\n",
-                "select to_timezone(k, 'Europe/Berlin') k, s, lat, lon from (select k, s, first(lat) lat, last(lon) lon " +
+                        "2021-03-27T23:00:00.000000Z\ta\t142.30215575416736\t167.4566019970139\n" +
+                        "2021-03-27T23:00:00.000000Z\ta\t33.45558404694713\t128.42101395467057\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
                         "from x " +
                         "where s in ('a') " +
-                        "sample by 1h align to calendar time zone 'Europe/Berlin')",
+                        "sample by 1h align to calendar time zone 'Europe/Berlin'",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -1533,8 +1536,9 @@ public class SampleByTest extends AbstractCairoTest {
                         "   from" +
                         "   long_sequence(100)" +
                         "), index(s) timestamp(k) partition by DAY",
-                null,
-                false
+                "k",
+                true,
+                true
         );
     }
 
@@ -1562,18 +1566,20 @@ public class SampleByTest extends AbstractCairoTest {
                         "   timestamp_sequence('2020-10-23T20:30:00.00000Z', 50 * 60 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(120)" +
-                        "),index(s) timestamp(k)"
+                        "),index(s) timestamp(k)",
+                true,
+                true
         );
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBackHourly() throws Exception {
-        assertMemoryLeak(() -> assertSampleByIndexQuery(
+        assertSampleByIndexQuery(
                 "to_timezone\tk\ts\tlat\tlon\n" +
                         "2021-03-27T22:00:00.000000Z\t2021-03-27T21:00:00.000000Z\ta\t132.09083798490755\t2021-03-27T21:51:00.000000Z\n" +
                         "2021-03-27T23:00:00.000000Z\t2021-03-27T22:00:00.000000Z\ta\t77.68770182183965\t2021-03-27T22:56:00.000000Z\n" +
                         "2021-03-28T00:00:00.000000Z\t2021-03-27T23:00:00.000000Z\ta\tnull\t2021-03-27T23:48:00.000000Z\n" +
-                        "2021-03-28T01:00:00.000000Z\t2021-03-28T00:00:00.000000Z\ta\t3.6703591550328163\t2021-03-28T00:27:00.000000Z\n" +
+                        "2021-03-28T00:00:00.000000Z\t2021-03-27T23:00:00.000000Z\ta\t3.6703591550328163\t2021-03-28T00:27:00.000000Z\n" +
                         "2021-03-28T03:00:00.000000Z\t2021-03-28T01:00:00.000000Z\ta\t94.70222369149758\t2021-03-28T01:45:00.000000Z\n" +
                         "2021-03-28T04:00:00.000000Z\t2021-03-28T02:00:00.000000Z\ta\t109.23418649425325\t2021-03-28T02:37:00.000000Z\n" +
                         "2021-03-28T05:00:00.000000Z\t2021-03-28T03:00:00.000000Z\ta\t38.20430552091481\t2021-03-28T03:16:00.000000Z\n",
@@ -1592,8 +1598,10 @@ public class SampleByTest extends AbstractCairoTest {
                         "   timestamp_sequence('2021-03-26T20:30:00.00000Z', 13 * 60 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(1000)" +
-                        "),index(s) timestamp(k)"
-        ));
+                        "),index(s) timestamp(k)",
+                true,
+                true
+        );
     }
 
     @Test
@@ -1629,7 +1637,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftForward() throws Exception {
-        assertMemoryLeak(() -> assertSampleByIndexQuery(
+        assertSampleByIndexQuery(
                 "to_timezone\tk\ts\tlat\tlon\n" +
                         "2021-03-26T00:00:00.000000Z\t2021-03-25T23:00:00.000000Z\ta\t142.30215575416736\t2021-03-26T22:50:00.000000Z\n" +
                         "2021-03-27T00:00:00.000000Z\t2021-03-26T23:00:00.000000Z\ta\tnull\t2021-03-27T22:10:00.000000Z\n" +
@@ -1651,8 +1659,10 @@ public class SampleByTest extends AbstractCairoTest {
                         "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 50 * 60 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(120)" +
-                        "),index(s) timestamp(k)"
-        ));
+                        "),index(s) timestamp(k)",
+                true,
+                true
+        );
     }
 
     @Test
@@ -1687,7 +1697,9 @@ public class SampleByTest extends AbstractCairoTest {
                         "   timestamp_sequence('2020-01-01T20:30:00.00000Z', 35 * 6 * 59 * 1000000L) k" + // ~3.5 hour interval
                         "   from" +
                         "   long_sequence(365 * 7)" +
-                        "),index(s) timestamp(k)"
+                        "),index(s) timestamp(k)",
+                true,
+                true
         );
     }
 
@@ -1751,7 +1763,9 @@ public class SampleByTest extends AbstractCairoTest {
                         "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 50 * 60 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(120)" +
-                        "),index(s) timestamp(k)"
+                        "),index(s) timestamp(k)",
+                true,
+                true
         );
     }
 
@@ -1781,7 +1795,9 @@ public class SampleByTest extends AbstractCairoTest {
                         "   timestamp_sequence('2021-03-26T20:30:00.00000Z', 13 * 60 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(1000)" +
-                        "),index(s) timestamp(k)"
+                        "),index(s) timestamp(k)",
+                true,
+                true
         );
     }
 
@@ -1807,7 +1823,9 @@ public class SampleByTest extends AbstractCairoTest {
                         "   timestamp_sequence('2020-10-23T20:30:00.00000Z', 50 * 60 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(120)" +
-                        "),index(s) timestamp(k)"
+                        "),index(s) timestamp(k)",
+                true,
+                true
         );
     }
 
@@ -1818,7 +1836,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "2020-10-24T22:00:00.000000Z\t2020-10-24T21:00:00.000000Z\ta\t154.93777586404912\t2020-10-24T21:49:28.000000Z\n" +
                         "2020-10-24T23:00:00.000000Z\t2020-10-24T22:00:00.000000Z\ta\t43.799859246867385\t2020-10-24T22:54:13.000000Z\n" +
                         "2020-10-25T00:00:00.000000Z\t2020-10-24T23:00:00.000000Z\ta\t38.34194069380561\t2020-10-24T23:41:42.000000Z\n" +
-                        "2020-10-25T01:00:00.000000Z\t2020-10-25T00:00:00.000000Z\ta\t4.158342987512034\t2020-10-25T01:51:12.000000Z\n" +
+                        "2020-10-25T01:00:00.000000Z\t2020-10-25T01:00:00.000000Z\ta\t4.158342987512034\t2020-10-25T01:51:12.000000Z\n" +
                         "2020-10-25T02:00:00.000000Z\t2020-10-25T02:00:00.000000Z\ta\t95.73868763606973\t2020-10-25T02:47:19.000000Z\n" +
                         "2020-10-25T03:00:00.000000Z\t2020-10-25T03:00:00.000000Z\ta\tnull\t2020-10-25T03:43:26.000000Z\n" +
                         "2020-10-25T04:00:00.000000Z\t2020-10-25T04:00:00.000000Z\ta\t34.49948946607576\t2020-10-25T04:56:49.000000Z\n",
@@ -1837,7 +1855,9 @@ public class SampleByTest extends AbstractCairoTest {
                         "   timestamp_sequence('2020-10-23 20:30:00.00000Z', 259 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(1000)" +
-                        "),index(s) timestamp(k)"
+                        "),index(s) timestamp(k)",
+                true,
+                true
         );
     }
 
@@ -3411,7 +3431,8 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByDayNoFillAlignToCalendarWithTimezoneLondon() throws Exception {
-        assertQuery("to_timezone\ts\tlat\tlon\n" +
+        assertQuery(
+                "to_timezone\ts\tlat\tlon\n" +
                         "2021-03-26T00:00:00.000000Z\ta\t142.30215575416736\t2021-03-26T22:50:00.000000Z\n" +
                         "2021-03-27T00:00:00.000000Z\ta\tnull\t2021-03-27T23:00:00.000000Z\n" +
                         "2021-03-28T00:00:00.000000Z\ta\t33.45558404694713\t2021-03-28T20:40:00.000000Z\n" +
@@ -3430,7 +3451,10 @@ public class SampleByTest extends AbstractCairoTest {
                         "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 50 * 60 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(120)" +
-                        ") timestamp(k)", null, false
+                        ") timestamp(k)",
+                null,
+                true,
+                true
         );
     }
 
@@ -3454,8 +3478,8 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(1000)" +
                         ") timestamp(k) partition by NONE",
                 null,
-                false,
-                false
+                true,
+                true
         );
     }
 
@@ -3480,14 +3504,15 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(600)" +
                         ") timestamp(k) partition by NONE",
                 null,
-                false,
-                false
+                true,
+                true
         );
     }
 
     @Test
     public void testSampleByDayNoFillNotKeyedAlignToCalendarWithTimezoneLondon() throws Exception {
-        assertQuery("to_timezone\tlat\tlon\n" +
+        assertQuery(
+                "to_timezone\tlat\tlon\n" +
                         "2021-03-26T00:00:00.000000Z\t142.30215575416736\t2021-03-26T22:50:00.000000Z\n" +
                         "2021-03-27T00:00:00.000000Z\tnull\t2021-03-27T23:00:00.000000Z\n" +
                         "2021-03-28T00:00:00.000000Z\t33.45558404694713\t2021-03-28T20:40:00.000000Z\n" +
@@ -3506,7 +3531,10 @@ public class SampleByTest extends AbstractCairoTest {
                         "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 50 * 60 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(120)" +
-                        ") timestamp(k)", null, false
+                        ") timestamp(k)",
+                null,
+                true,
+                true
         );
     }
 
@@ -4417,6 +4445,61 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByNegativeTimestamp() throws Exception {
+        execute("create table test ( ts TIMESTAMP, value float );");
+        execute("insert into test VALUES\n" +
+                "    ('1968-10-01T01:00:00.0Z', 5),\n" +
+                "    ('1968-10-02T01:00:00.0Z', 10),\n" +
+                "    ('1968-10-03T01:00:00.0Z', 15),\n" +
+                "    ('1968-10-04T01:00:00.0Z', 20);");
+        assertQueryNoLeakCheck(
+                "ts\tavg\n" +
+                        "1968-10-01T00:00:00.000000Z\t5.0\n" +
+                        "1968-10-02T00:00:00.000000Z\t10.0\n" +
+                        "1968-10-03T00:00:00.000000Z\t15.0\n" +
+                        "1968-10-04T00:00:00.000000Z\t20.0\n",
+                "SELECT ts, avg(value) FROM(select ts, value from test order by ts asc) sample BY 1d FILL(NULL);",
+                "ts"
+        );
+        assertQueryNoLeakCheck(
+                "ts\tavg\n" +
+                        "1968-09-30T02:00:00.000000Z\t5.0\n" +
+                        "1968-10-01T02:00:00.000000Z\t10.0\n" +
+                        "1968-10-02T02:00:00.000000Z\t15.0\n" +
+                        "1968-10-03T02:00:00.000000Z\t20.0\n",
+                "SELECT ts, avg(value) FROM(select ts, value from test order by ts asc)" +
+                        " sample BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '02:00';",
+                "ts"
+        );
+    }
+
+    @Test
+    public void testSampleByNegativeTimestampEdgeCase() throws Exception {
+        execute("create table test ( ts TIMESTAMP, value float );");
+        execute("insert into test VALUES\n" +
+                "    ('1969-12-31T23:00:00.0Z', 5),\n" +
+                "    ('1970-01-01T00:00:00.0Z', 10),\n" +
+                "    ('1970-01-01T01:00:00.0Z', 15),\n" +
+                "    ('1970-01-01T02:00:00.0Z', 20)," +
+                "    ('1970-01-01T03:00:00.0Z', 25);");
+        assertQueryNoLeakCheck(
+                "ts\tavg\n" +
+                        "1969-12-31T00:00:00.000000Z\t5.0\n" +
+                        "1970-01-01T00:00:00.000000Z\t17.5\n",
+                "SELECT ts, avg(value) FROM(select ts, value from test order by ts asc) sample BY 1d FILL(NULL);",
+                "ts"
+        );
+        assertQueryNoLeakCheck(
+                "ts\tavg\n" +
+                        "1969-12-31T02:00:00.000000Z\t10.0\n" +
+                        "1970-01-01T02:00:00.000000Z\t22.5\n",
+                "SELECT ts, avg(value) FROM(select ts, value from test order by ts asc)" +
+                        " sample BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '02:00';",
+                "ts"
+        );
+    }
+
+    @Test
     public void testSampleByNoFillAlignToCalendarTimezoneOffset() throws Exception {
         assertQuery(
                 "k\tb\tc\n" +
@@ -4467,9 +4550,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByNoFillNotKeyedAlignToCalendarMisalignedTimezone() throws Exception {
-
         // IRAN timezone is +4:30, which doesn't align well with 1hr sample
-
         assertQuery(
                 "k\tc\n" +
                         "2021-03-28T04:00:00.000000Z\t3\n" +
@@ -4483,7 +4564,6 @@ public class SampleByTest extends AbstractCairoTest {
                         "2021-03-28T12:00:00.000000Z\t10\n" +
                         "2021-03-28T13:00:00.000000Z\t10\n" +
                         "2021-03-28T14:00:00.000000Z\t7\n",
-
                 "select to_timezone(k, 'Iran') k, c from (select k, count() c from x sample by 1h align to calendar time zone 'Iran')",
                 "create table x as " +
                         "(" +
@@ -4495,19 +4575,19 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
                 null,
-                false,
-                false
+                true,
+                true
         );
     }
 
     @Test
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezone() throws Exception {
-        // We are going over spring time change. Because time is "expanding" we dont have
+        // We are going over spring time change. Because time is "expanding" we don't have
         // to do anything special. Our UTC timestamps will show "gap" and data doesn't
         // have to change
         assertQuery(
                 "k\tc\n" +
-                        "2021-03-28T01:00:00.000000Z\t8\n" +
+                        "2021-03-28T00:00:00.000000Z\t8\n" +
                         "2021-03-28T03:00:00.000000Z\t10\n" +
                         "2021-03-28T04:00:00.000000Z\t10\n" +
                         "2021-03-28T05:00:00.000000Z\t10\n" +
@@ -4525,18 +4605,17 @@ public class SampleByTest extends AbstractCairoTest {
                         " rnd_double(0)*100 a," +
                         " rnd_symbol(5,4,4,1) b," +
                         " timestamp_sequence(cast('2021-03-28T00:15:00.000000Z' as timestamp), 6*60000000) k" +
-                        " from" +
-                        " long_sequence(100)" +
+                        " from long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
                 null,
-                false,
-                false
+                true,
+                true
         );
     }
 
     @Test
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneOct() throws Exception {
-        // We are going over spring time change. Because time is "expanding" we dont have
+        // We are going over spring time change. Because time is "expanding" we don't have
         // to do anything special. Our UTC timestamps will show "gap" and data doesn't
         // have to change
         assertQuery(
@@ -4562,8 +4641,8 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
                 null,
-                false,
-                false
+                true,
+                true
         );
     }
 
@@ -4574,8 +4653,8 @@ public class SampleByTest extends AbstractCairoTest {
         // have to change
         assertQuery(
                 "k\tc\n" +
-                        "2021-10-31T02:00:00.000000Z\t3\n" +
-                        "2021-10-31T02:30:00.000000Z\t15\n" +
+                        "2021-10-31T02:00:00.000000Z\t8\n" +
+                        "2021-10-31T02:30:00.000000Z\t10\n" +
                         "2021-10-31T03:00:00.000000Z\t5\n" +
                         "2021-10-31T03:30:00.000000Z\t5\n" +
                         "2021-10-31T04:00:00.000000Z\t5\n" +
@@ -4604,8 +4683,8 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
                 null,
-                false,
-                false
+                true,
+                true
         );
     }
 
@@ -5224,7 +5303,8 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByWithEmptyCursor() throws Exception {
-        assertQuery("to_timezone\ts\tlat\tlon\n",
+        assertQuery(
+                "to_timezone\ts\tlat\tlon\n",
                 "select to_timezone(k, 'Europe/London'), s, lat, lon from (select k, s, first(lat) lat, last(k) lon " +
                         "from x " +
                         "where s in ('d') " +
@@ -5238,7 +5318,10 @@ public class SampleByTest extends AbstractCairoTest {
                         "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 50 * 60 * 1000000L) k" +
                         "   from" +
                         "   long_sequence(120)" +
-                        ") timestamp(k)", null, false
+                        ") timestamp(k)",
+                null,
+                true,
+                true
         );
     }
 
@@ -7407,6 +7490,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 null,
+                false,
                 false
         );
     }
@@ -8544,6 +8628,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(30)" +
                         ") timestamp(k) partition by NONE",
                 null,
+                false,
                 false
         );
     }
@@ -12166,6 +12251,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE",
                 "k",
+                false,
                 false
         );
     }
@@ -12259,6 +12345,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE",
                 "k",
+                false,
                 false
         );
     }
@@ -13093,61 +13180,6 @@ public class SampleByTest extends AbstractCairoTest {
                 "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by 10*3 mi",
                 "select k, s, first(lat) lat, last(lon) lon from x where s in ('a') sample by 10*3 m".length() - 1,
                 "one letter sample by period unit expected"
-        );
-    }
-
-    @Test
-    public void testSampleByNegativeTimestamp() throws Exception {
-        execute("create table test ( ts TIMESTAMP, value float );");
-        execute("insert into test VALUES\n" +
-                "    ('1968-10-01T01:00:00.0Z', 5),\n" +
-                "    ('1968-10-02T01:00:00.0Z', 10),\n" +
-                "    ('1968-10-03T01:00:00.0Z', 15),\n" +
-                "    ('1968-10-04T01:00:00.0Z', 20);");
-        assertQueryNoLeakCheck(
-                "ts\tavg\n" +
-                        "1968-10-01T00:00:00.000000Z\t5.0\n" +
-                        "1968-10-02T00:00:00.000000Z\t10.0\n" +
-                        "1968-10-03T00:00:00.000000Z\t15.0\n" +
-                        "1968-10-04T00:00:00.000000Z\t20.0\n",
-                "SELECT ts, avg(value) FROM(select ts, value from test order by ts asc) sample BY 1d FILL(NULL);",
-                "ts"
-        );
-        assertQueryNoLeakCheck(
-                "ts\tavg\n" +
-                        "1968-09-30T02:00:00.000000Z\t5.0\n" +
-                        "1968-10-01T02:00:00.000000Z\t10.0\n" +
-                        "1968-10-02T02:00:00.000000Z\t15.0\n" +
-                        "1968-10-03T02:00:00.000000Z\t20.0\n",
-                "SELECT ts, avg(value) FROM(select ts, value from test order by ts asc)" +
-                        " sample BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '02:00';",
-                "ts"
-        );
-    }
-
-    @Test
-    public void testSampleByNegativeTimestampEdgeCase() throws Exception {
-        execute("create table test ( ts TIMESTAMP, value float );");
-        execute("insert into test VALUES\n" +
-                "    ('1969-12-31T23:00:00.0Z', 5),\n" +
-                "    ('1970-01-01T00:00:00.0Z', 10),\n" +
-                "    ('1970-01-01T01:00:00.0Z', 15),\n" +
-                "    ('1970-01-01T02:00:00.0Z', 20)," +
-                "    ('1970-01-01T03:00:00.0Z', 25);");
-        assertQueryNoLeakCheck(
-                "ts\tavg\n" +
-                        "1969-12-31T00:00:00.000000Z\t5.0\n" +
-                        "1970-01-01T00:00:00.000000Z\t17.5\n",
-                "SELECT ts, avg(value) FROM(select ts, value from test order by ts asc) sample BY 1d FILL(NULL);",
-                "ts"
-        );
-        assertQueryNoLeakCheck(
-                "ts\tavg\n" +
-                        "1969-12-31T02:00:00.000000Z\t10.0\n" +
-                        "1970-01-01T02:00:00.000000Z\t22.5\n",
-                "SELECT ts, avg(value) FROM(select ts, value from test order by ts asc)" +
-                        " sample BY 1d FILL(NULL) ALIGN TO CALENDAR WITH OFFSET '02:00';",
-                "ts"
         );
     }
 

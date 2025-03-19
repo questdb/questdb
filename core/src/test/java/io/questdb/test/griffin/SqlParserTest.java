@@ -8259,6 +8259,28 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleByNoKeyTimeZoneBindVariableRewrite() throws SqlException {
+        assertQuery(
+                "select-choose avg from (select-virtual [avg, to_utc(ts,$1) ts] avg, to_utc(ts,$1) ts from (select-group-by [timestamp_floor('5m',to_timezone(ts,$1)) ts, avg(price) avg] avg(price) avg, timestamp_floor('5m',to_timezone(ts,$1)) ts from (select [ts, price] from tbl timestamp (ts) stride 5m)) timestamp (ts) order by ts)",
+                "SELECT avg(price) FROM tbl SAMPLE BY 5m ALIGN TO CALENDAR TIME ZONE $1",
+                modelOf("tbl")
+                        .timestamp("ts")
+                        .col("price", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
+    public void testSampleByNoKeyTimeZoneRewrite() throws SqlException {
+        assertQuery(
+                "select-choose avg from (select-virtual [avg, to_utc(ts,'Europe/Berlin') ts] avg, to_utc(ts,'Europe/Berlin') ts from (select-group-by [timestamp_floor('5m',to_timezone(ts,'Europe/Berlin')) ts, avg(price) avg] avg(price) avg, timestamp_floor('5m',to_timezone(ts,'Europe/Berlin')) ts from (select [ts, price] from tbl timestamp (ts) stride 5m)) timestamp (ts) order by ts)",
+                "SELECT avg(price) FROM tbl SAMPLE BY 5m ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'",
+                modelOf("tbl")
+                        .timestamp("ts")
+                        .col("price", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
     public void testSampleByOfSubQuery() throws SqlException {
         assertQuery(
                 "select-group-by sum(x) sum, t from (select-virtual [timestamp_sequence(0,2_000_000) t, x] x, timestamp_sequence(0,2_000_000) t from (select [x] from long_sequence(10))) timestamp (t) sample by 1s fill(null) align to calendar with offset '00:00'",
@@ -8326,6 +8348,28 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-choose column from (select-virtual [avg * 10 column, timestamp] avg * 10 column, timestamp from (select-group-by [avg(usage_user) avg, timestamp_floor('1d',timestamp) timestamp] avg(usage_user) avg, timestamp_floor('1d',timestamp) timestamp from (select [usage_user, timestamp] from cpu timestamp (timestamp) stride 1d)) order by timestamp)",
                 "select avg(usage_user) * 10 from cpu sample by 1d"
+        );
+    }
+
+    @Test
+    public void testSampleByTimeZoneBindVariableRewrite() throws SqlException {
+        assertQuery(
+                "select-virtual to_utc(ts,$1) ts, avg from (select-group-by [timestamp_floor('5m',to_timezone(ts,$1)) ts, avg(price) avg] timestamp_floor('5m',to_timezone(ts,$1)) ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts) stride 5m)) timestamp (ts) order by ts",
+                "SELECT ts, avg(price) FROM tbl SAMPLE BY 5m ALIGN TO CALENDAR TIME ZONE $1",
+                modelOf("tbl")
+                        .timestamp("ts")
+                        .col("price", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
+    public void testSampleByTimeZoneRewrite() throws SqlException {
+        assertQuery(
+                "select-virtual to_utc(ts,'Europe/Berlin') ts, avg from (select-group-by [timestamp_floor('5m',to_timezone(ts,'Europe/Berlin')) ts, avg(price) avg] timestamp_floor('5m',to_timezone(ts,'Europe/Berlin')) ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts) stride 5m)) timestamp (ts) order by ts",
+                "SELECT ts, avg(price) FROM tbl SAMPLE BY 5m ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'",
+                modelOf("tbl")
+                        .timestamp("ts")
+                        .col("price", ColumnType.DOUBLE)
         );
     }
 

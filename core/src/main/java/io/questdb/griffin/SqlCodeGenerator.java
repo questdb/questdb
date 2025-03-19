@@ -298,8 +298,8 @@ import static io.questdb.cairo.ColumnType.getGeoHashBits;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.*;
 import static io.questdb.griffin.model.QueryModel.QUERY;
+import static io.questdb.griffin.model.QueryModel.*;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_HOUR_INT = 1;

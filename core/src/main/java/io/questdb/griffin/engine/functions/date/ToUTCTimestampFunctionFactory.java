@@ -32,7 +32,11 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
@@ -64,7 +68,7 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
     }
 
     @NotNull
-    static TimestampFunction getTimestampFunction(IntList argPositions, Function timestamp, Function timezone, int multiplier) throws SqlException {
+    static TimestampFunction getTimestampFunction(IntList argPositions, Function timestamp, Function timezone, long multiplier) throws SqlException {
         final CharSequence tz = timezone.getStrA(null);
         if (tz != null) {
             final int hi = tz.length();
