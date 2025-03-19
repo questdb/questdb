@@ -177,7 +177,31 @@ public abstract class ArrayView implements QuietCloseable {
             return true;
         }
         if (this.isVanilla && other.isVanilla) {
-            return this.flatView.flatEquals(other.flatView);
+            FlatArrayView flatViewLeft = flatView;
+            FlatArrayView flatViewRight = other.flatView;
+            int length = flatViewLeft.length();
+            if (length != flatViewRight.length()) {
+                return false;
+            }
+            switch (getElemType()) {
+                case ColumnType.DOUBLE:
+                    for (int i = 0; i < length; i++) {
+                        if (!Numbers.equals(flatViewLeft.getDoubleAtAbsIndex(i), flatViewRight.getDoubleAtAbsIndex(i))) {
+                            return false;
+                        }
+                    }
+                    break;
+                case ColumnType.LONG:
+                    for (int i = 0; i < length; i++) {
+                        if (flatViewLeft.getLongAtAbsIndex(i) != flatViewRight.getLongAtAbsIndex(i)) {
+                            return false;
+                        }
+                    }
+                    break;
+                default:
+                    throw new UnsupportedOperationException("Implemented only for DOUBLE and LONG");
+            }
+            return true;
         }
         return arrayEqualsRecursive(0, 0, other, 0);
     }
