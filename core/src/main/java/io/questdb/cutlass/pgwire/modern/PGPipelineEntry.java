@@ -2521,6 +2521,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         int dimensions = getInt(lo, msgLimit, "malformed array dimensions");
         lo += Integer.BYTES;
         valueSize -= Integer.BYTES;
+        if (dimensions == 0) {
+            throw kaput().put("array dimensions cannot be zero");
+        }
+        if (dimensions > ColumnType.ARRAY_NDIMS_LIMIT) {
+            throw kaput().put("array dimensions cannot be greater than maximum array dimensions [dimensions=").put(dimensions).put(", max=").put(ColumnType.ARRAY_NDIMS_LIMIT).put(']');
+        }
 
         int hasNull = getInt(lo, msgLimit, "malformed array null flag");
         // hasNull flag is not a reliable indicator of a null element, since some clients

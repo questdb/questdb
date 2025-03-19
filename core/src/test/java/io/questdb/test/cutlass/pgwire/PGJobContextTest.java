@@ -1409,6 +1409,45 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
+    public void testArrayMaxDimensions() throws Exception {
+        skipOnWalRun();
+        skipInLegacyMode();
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            int dimCount = ColumnType.ARRAY_NDIMS_LIMIT + 1;
+            try (PreparedStatement statement = connection.prepareStatement("select ? as arr from long_sequence(1);")) {
+                sink.clear();
+                int[] dims = new int[dimCount];
+                Arrays.fill(dims, 1);
+                final Object arr = java.lang.reflect.Array.newInstance(double.class, dims);
+
+                Object lastArray = arr;
+                for (; ; ) {
+                    Object element = java.lang.reflect.Array.get(lastArray, 0);
+                    if (!element.getClass().isArray()) {
+                        break;
+                    }
+                    lastArray = element;
+                }
+                java.lang.reflect.Array.set(lastArray, 0, 1.0);
+
+
+                PGConnection pgConnection = connection.unwrap(PGConnection.class);
+                statement.setArray(1, pgConnection.createArrayOf("float8", arr));
+
+                try (ResultSet rs = statement.executeQuery()) {
+                    // in some modes PG JDBC sends array as string without any type information
+                    // in this case the query execution may succeed.
+                    int columnType = rs.getMetaData().getColumnType(1);
+                    Assert.assertEquals(Types.VARCHAR, columnType);
+                } catch (SQLException e) {
+                    Assert.assertTrue(e.getMessage().contains("array dimensions cannot be greater than maximum array dimensions [dimensions=33, max=32]"));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testArrayNonFinite() throws Exception {
         skipOnWalRun();
         skipInLegacyMode();

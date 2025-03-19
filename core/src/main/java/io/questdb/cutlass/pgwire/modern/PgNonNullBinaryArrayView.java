@@ -127,6 +127,7 @@ final class PgNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
      * @throws CairoException       If array contains NULL elements or has unsupported element type
      */
     void setPtrAndCalculateStrides(long lo, long hi, int pgOidType, PGPipelineEntry pipelineEntry) throws BadProtocolException {
+        assert getDimCount() > 0;
         short componentNativeType;
         int expectedElementSize;
         switch (pgOidType) {
