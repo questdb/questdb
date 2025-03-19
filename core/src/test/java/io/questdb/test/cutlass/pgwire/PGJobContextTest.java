@@ -3064,8 +3064,7 @@ if __name__ == "__main__":
                 try (ResultSet rs = stmt.executeQuery("tables();")) {
                     assertResultSet("id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],matView[BIT]\n" +
                                     "2,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false\n",
-                            sink, rs
-                    );
+                            sink, rs);
                 }
 
                 stmt.execute("drop table x");
@@ -3075,8 +3074,7 @@ if __name__ == "__main__":
                 try (ResultSet rs = stmt.executeQuery("tables();")) {
                     assertResultSet("id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],matView[BIT]\n" +
                                     "3,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false\n",
-                            sink, rs
-                    );
+                            sink, rs);
                 }
             }
         });
