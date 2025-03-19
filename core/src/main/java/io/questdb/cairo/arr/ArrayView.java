@@ -27,8 +27,106 @@ package io.questdb.cairo.arr;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 
+/**
+ * This class represents a flat array of numbers with a hierarchical addressing
+ * scheme applied to it, which makes it usable as an N-dimensional array accessed
+ * with N indexes. For example, here's a 4x3x2 array:
+ * <pre>
+ * {
+ *     { {1, 2}, {3, 4}, {5, 6} },
+ *     { {7, 8}, {9, 0}, {1, 2} },
+ *     { {3, 4}, {5, 6}, {7, 8} },
+ *     { {9, 0}, {1, 2}, {3, 4} }
+ * }
+ * </pre>
+ * Its backing flat array looks like this:
+ * <code>[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4]</code>.
+ * <p>
+ * Hierarchical subdivision of the flat array (dots represent elements, bars
+ * demarcate array slots):
+ * <pre>
+ * dim 0: |. . . . . .|. . . . . .| -- stride = 6, len = 2
+ * dim 1: |. .|. .|. .|. .|. .|. .| -- stride = 2, len = 3
+ * dim 2: |.|.|.|.|.|.|.|.|.|.|.|.| -- stride = 1, len = 2
+ * </pre>
+ * Formula to access a member with syntax `arr[i,j,k]`:
+ * <pre>
+ *     flatIndex = 6i + 2j + k
+ * </pre>
+ * Note that this is just summing up contributions at each dimension. We can
+ * perform it in any order!
+ *
+ * <h3>Transpose</h3>
+ * <p>
+ * "Transposing" the array is nothing more than changing the formula so that we
+ * apply the strides in reverse:
+ * <pre>
+ *     flatIndex = i + 2j + 6k
+ * </pre>
+ * <p>
+ * In fact, we can order the dimensions any way we want -- it's all linear and the
+ * order doesn't matter!
+ *
+ * <h3>>Slice</h3>
+ * <p>
+ * "Slicing" the array means limiting the range of an index. Example: `arr[1:2]`.
+ * This constrains index `i` to be at least 1. But, we don't expose that to the
+ * user; instead we keep the index zero-based, and add the lower bound to it as a
+ * constant:
+ * <pre>
+ *     flatIndex = 6(1 + i) + 2j + k
+ * </pre>
+ * Now we can extract the constant:
+ * <pre>
+ *     flatIndex = 6 + 6i + 2j + k
+ *     flatIndex = flatOffset + 6i + 2j + k
+ * </pre>
+ * And this is the full formula we use in the code. If we perform another slicing
+ * on top of this, we get another constant, and add it to the existing <i>flatOffset</i>.
+ *
+ * <h3>Flatten a Dimension</h3>
+ * <p>
+ * "Flattening" means eliminating a dimension from our addressing scheme. As an
+ * example, let's flatten the dimension 0, but we can do it for any dimension
+ * except the lowest one (with stride = 1). We'll be left with this:
+ *
+ * <pre>
+ * dim 1: |. .|. .|. .|. .|. .|. .| -- stride = 2, len = 6
+ * dim 2: |.|.|.|.|.|.|.|.|.|.|.|.| -- stride = 1, len = 2
+ * </pre>
+ * We can see the strides stayed the same, but we had to make the dimension 1
+ * longer. We had to multiply its previous length by the length of the removed
+ * dimension.
+ * <p>
+ * This will work regardless of the order of dimensions -- just find the dimension
+ * with the next-finer stride and modify its length!
+ * <p>
+ * Our code only inspects the two neighboring dimensions, and chooses the one with
+ * the finer stride. This is OK because we use either the "regular" dimension order
+ * ("row-major" -- strides in descending order), or the "transposed" order
+ * ("column-major", strides in ascending order), so the next-finer stride must be in
+ * one of the neighboring dimensions.
+ *
+ * <h3>Take a Sub-Array</h3>
+ * <p>
+ * We can take a sub-array on any dimension. Examples for a 3D-array:
+ * <ul>
+ *     <li><code>arr[0]</code> removes the first dimension, and returns the 2D
+ *          sub-array at index 0 of the removed dimension.
+ *     <li><code>arr[0:, 1]</code> removes the middle dimension, taking, for each of
+ *          the outer indices, the array at index 1 in the middle dimension, and returns
+ *          the resulting 2D sub-array.
+ * </ul>
+ * Taking a sub-array is a composition of two operations: first slice it to a
+ * single element in that dimension, then flatten the dimension. Because the
+ * only allowed index at the dimension is now 0, we don't need to perform a
+ * general flattening, we can simply remove the dimension without adjusting the
+ * length of any other dimension. Also, while general flattening is not allowed
+ * on the dimension with stride 1, in this special case it is fine.
+ */
 public abstract class ArrayView implements QuietCloseable {
     /**
      * Maximum size of any given dimension.
@@ -86,7 +184,7 @@ public abstract class ArrayView implements QuietCloseable {
     }
 
     /**
-     * Convenience that downcasts `flatView` into {@link BorrowedFlatArrayView}.
+     * Convenience that downcasts {@link #flatView()} into {@link BorrowedFlatArrayView}.
      * If called on the wrong implementation, this call will fail with a cast exception.
      */
     public final BorrowedFlatArrayView borrowedFlatView() {
@@ -98,18 +196,7 @@ public abstract class ArrayView implements QuietCloseable {
     }
 
     /**
-     * Returns a flat view over the elements of the N-dimensional array. It contains
-     * the values stored in row-major order. For example, for a 4x3x2 array:
-     * <pre>
-     * {
-     *     {{1, 2}, {3, 4}, {5, 6}},
-     *     {{7, 8}, {9, 0}, {1, 2}},
-     *     {{3, 4}, {5, 6}, {7, 8}},
-     *     {{9, 0}, {1, 2}, {3, 4}}
-     * }
-     * </pre>
-     * The flat array would contain a flat vector of elements with the numbers
-     * <code>[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4]</code>.
+     * Returns a view into the flat array that stores the elements of this array.
      */
     public final FlatArrayView flatView() {
         return flatView;
@@ -130,12 +217,28 @@ public abstract class ArrayView implements QuietCloseable {
         return shape.getQuick(dimension);
     }
 
+    /**
+     * Returns the {@code double} value at the supplied flat index in this array.
+     * When accessing an array element at coordinates (i, j, k, ...), use this formula
+     * to get its flat index:
+     * <pre>
+     *     flatIndex = i*stride0 + j*stride1 + k*stride2 + ...
+     * </pre>
+     * <strong>NOTE:</strong> the calculated index is <i>relative:</i> a flat index of
+     * zero corresponds to the element at {@link #getFlatViewOffset} in the backing
+     * flat array. We discourage using {@link FlatArrayView#getDoubleAtAbsIndex}
+     * directly, because it is easy to forget adding the offset, and it is non-obvious
+     * from looking at the code that it's broken that way. Using absolute indexing is
+     * OK within a branch covered by an {@link #isVanilla()} check.
+     */
     public final double getDouble(int flatIndex) {
         return flatView.getDoubleAtAbsoluteIndex(flatViewOffset + flatIndex);
     }
 
     /**
-     * Returns the total number of data points (leaf values) in this array.
+     * Returns the number of elements in the backing flat array. For a {@linkplain
+     * #isVanilla vanilla} array, it is equal to the total number of elements in
+     * this array.
      */
     public final int getFlatViewLength() {
         return flatViewLength;
@@ -149,22 +252,45 @@ public abstract class ArrayView implements QuietCloseable {
         return flatViewOffset;
     }
 
+    /**
+     * Returns the {@code long} value at the supplied flat index in this array.
+     * When accessing an array element at coordinates (i, j, k, ...), use this formula
+     * to get its flat index:
+     * <pre>
+     *     flatIndex = i*stride0 + j*stride1 + k*stride2 + ...
+     * </pre>
+     * <strong>NOTE:</strong> the calculated index is <i>relative:</i> a flat index of
+     * zero corresponds to the element at {@link #getFlatViewOffset} in the backing
+     * flat array. We discourage using {@link FlatArrayView#getLongAtAbsIndex}
+     * directly, because it is easy to forget adding the offset, and it is non-obvious
+     * from looking at the code that it's broken that way. Using absolute indexing is
+     * OK within a branch covered by an {@link #isVanilla()} check.
+     */
     public final long getLong(int flatIndex) {
         return flatView.getLongAtAbsoluteIndex(flatViewOffset + flatIndex);
     }
 
+    /**
+     * Returns the stride for the given dimension. You need this when calculating the
+     * flat index of an array element from its coordinates.
+     */
     public final int getStride(int dimension) {
         assert dimension >= 0 && dimension < strides.size();
         return strides.getQuick(dimension);
     }
 
     /**
-     * Returns the encoded array type, as specified in {@link ColumnType#encodeArrayType(short, int)}.
+     * Returns the encoded array type, as specified in {@link
+     * ColumnType#encodeArrayType(short, int)}.
      */
     public final int getType() {
         return type;
     }
 
+    /**
+     * Tells whether this is an empty array, which means its length along at least one
+     * dimension is zero. Empty arrays of different shapes are not considered equal.
+     */
     public final boolean isEmpty() {
         for (int i = 0; i < shape.size(); i++) {
             if (shape.getQuick(i) == 0) {
@@ -174,19 +300,36 @@ public abstract class ArrayView implements QuietCloseable {
         return false;
     }
 
+    /**
+     * Tells whether this object represents an array-typed NULL value.
+     */
     public final boolean isNull() {
         return ColumnType.isNull(type);
     }
 
     /**
-     * Flag indicating whether this array is a vanilla array. Vanilla arrays are arrays
-     * whose shape and strides directly describe the physical layout of the underlying flat array.
+     * Tells whether this array is a "vanilla array". A vanilla array's shape and
+     * strides directly describe the physical layout of the underlying flat array. The
+     * main reason to know this is when you're about to iterate over all the array
+     * elements. For a vanilla array, you can go through the flat indices from zero to
+     * {@link #getFlatViewLength()} and you'll iterate over the whole array in
+     * row-major order.
      * <p>
-     * For vanilla arrays, it is safe to iterate directly over the flat array when implementing
-     * operations that process all elements, without using the more expensive index calculations
-     * required for transposed or sliced arrays.
-     *
-     * @return true if this array is vanilla, false otherwise
+     * On a non-vanilla array, you must calculate each element's flat index from its
+     * coordinates, applying the array's strides. A non-vanilla array arises when you
+     * perform a shape change on a vanilla array, such as slicing, taking a sub-array,
+     * transposing, flattening a dimension etc. On a transposed array, all indices
+     * remain valid, but iterating over the flat array no longer corresponds to
+     * row-major traversal.
+     * <p>
+     * {@code ArrayView} implementations (such as {@link DirectArray} and {@link
+     * FunctionArray}) directly reflect the underlying flat array and are thus always
+     * vanilla. It is illegal to change their shape. The way to transform the array
+     * shape is to first construct a {@link DerivedArrayView} from it, and then perform
+     * a shape change. The derived array view shares the original array's underlying
+     * flat array, but after a shape change, some elements in the flat array are no
+     * longer a part of the derived view. They remain accessible by their flat index,
+     * but if your code does that, it's broken.
      */
     public boolean isVanilla() {
         return isVanilla;

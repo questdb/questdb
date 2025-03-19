@@ -29,6 +29,17 @@ import io.questdb.cairo.ColumnType;
 
 public class MutableArray extends ArrayView {
 
+    /**
+     * Sets the length of one dimension.
+     * <p>
+     * <strong>IMPORTANT:</strong> if you are calling this as the first step in populating
+     * the array with new data, you must call {@code applyShape()} before adding the data.
+     * A method of that name is defined on subclasses such as {@link DirectArray#applyShape()
+     * DirectArray} and {@link FunctionArray#applyShape FunctionArray}.
+     * <p>
+     * If you're calling this while not changing the data, it is most likely an error and may
+     * result in a segmentation fault when accessing the data.
+     */
     public final void setDimLen(int dimension, int length) {
         if (length < 0) {
             throw CairoException.nonCritical()
@@ -46,6 +57,18 @@ public class MutableArray extends ArrayView {
         shape.set(dimension, length);
     }
 
+    /**
+     * Sets the encoded type of the array. This includes the element type and the number
+     * of dimensions. Encode the type using {@link ColumnType#encodeArrayType}.
+     * <p>
+     * <strong>IMPORTANT:</strong> if you are calling this as the first step in populating
+     * the array with new data, you must call {@code applyShape()} before adding the data.
+     * A method of that name is defined on subclasses such as {@link DirectArray#applyShape()
+     * DirectArray} and {@link FunctionArray#applyShape FunctionArray}.
+     * <p>
+     * If you're calling this while not changing the data, it is most likely an error and may
+     * result in a segmentation fault when accessing the data.
+     */
     public final void setType(int encodedType) {
         assert ColumnType.isArray(encodedType);
         this.type = encodedType;

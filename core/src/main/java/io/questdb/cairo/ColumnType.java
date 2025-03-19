@@ -197,6 +197,7 @@ public final class ColumnType {
      * | Reserved |  nDims   | elemType  | ColumnType.ARRAY |
      * +----------+----------+-----------+------------------+
      * |          |  5 bits  |  6 bits   |      8 bits      |
+     * +----------+----------+-----------+------------------+
      * </pre>
      *
      * @param elemType one of the supported array element type tags.
