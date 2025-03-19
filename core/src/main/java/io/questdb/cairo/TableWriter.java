@@ -2707,7 +2707,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void readWalTxnDetails(TransactionLogCursor transactionLogCursor) {
         if (walTxnDetails == null) {
             // Lazy creation
-            walTxnDetails = new WalTxnDetails(ff, configuration.getWalApplyLookAheadTransactionCount(), getWalMaxLagRows());
+            walTxnDetails = new WalTxnDetails(ff, configuration, getWalMaxLagRows());
         }
 
         walTxnDetails.readObservableTxnMeta(other, transactionLogCursor, pathSize, getAppliedSeqTxn(), txWriter.getMaxTimestamp());

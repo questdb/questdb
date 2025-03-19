@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MapWriter;
 import io.questdb.cairo.TableWriterSegmentCopyInfo;
@@ -67,8 +68,8 @@ public class WalTxnDetails implements QuietCloseable {
     public static final int TXN_METADATA_LONGS_SIZE = WAL_TXN_SYMBOL_DIFF_OFFSET + 1;
     private static final int SYMBOL_MAP_COLUMN_RECORD_HEADER_INTS = 6;
     private static final int SYMBOL_MAP_RECORD_HEADER_INTS = 4;
+    private final CairoConfiguration config;
     private final long maxLookaheadRows;
-    private final int maxLookaheadTxn;
     private final SymbolMapDiffCursorImpl symbolMapDiffCursor = new SymbolMapDiffCursorImpl();
     private final LongList transactionMeta = new LongList();
     private final WalEventReader walEventReader;
@@ -95,9 +96,9 @@ public class WalTxnDetails implements QuietCloseable {
     private long totalRowsLoadedToApply = 0;
     private DirectLongList txnOrder = new DirectLongList(10 * 4L, MemoryTag.NATIVE_TABLE_WRITER);
 
-    public WalTxnDetails(FilesFacade ff, int maxLookaheadTxns, long maxLookaheadRows) {
+    public WalTxnDetails(FilesFacade ff, CairoConfiguration configuration, long maxLookaheadRows) {
         walEventReader = new WalEventReader(ff);
-        this.maxLookaheadTxn = maxLookaheadTxns;
+        this.config = configuration;
         this.maxLookaheadRows = maxLookaheadRows;
     }
 
@@ -456,7 +457,8 @@ public class WalTxnDetails implements QuietCloseable {
             totalRowsLoadedToApply = 0;
         }
 
-        int txnLoadCount = this.maxLookaheadTxn;
+        int maxLookaheadTxn = config.getWalApplyLookAheadTransactionCount();
+        int txnLoadCount = maxLookaheadTxn;
         long rowsToLoad;
 
         do {

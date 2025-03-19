@@ -312,10 +312,10 @@ public class WalWriter implements TableWriterAPI {
                 // flush disk before getting next txn
                 syncIfRequired();
                 final long seqTxn = getSequencerTxn();
-                LOG.debug().$("committed data block [wal=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
-                        .$(", segmentTxn=").$(lastSegmentTxn)
+                LOG.info().$("commit [wal=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
+                        .$(", segTxn=").$(lastSegmentTxn)
                         .$(", seqTxn=").$(seqTxn)
-                        .$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount)
+                        .$(", rowLo=").$(currentTxnStartRowNum).$(", rowHi=").$(segmentRowCount)
                         .$(", minTs=").$ts(txnMinTimestamp).$(", maxTs=").$ts(txnMaxTimestamp).I$();
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();

@@ -80,8 +80,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     public static final String WAL_2_TABLE_RESUME_REASON = "Resume WAL Data Application";
     private static final Log LOG = LogFactory.getLog(ApplyWal2TableJob.class);
     private static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
+    private final CairoConfiguration config;
     private final CairoEngine engine;
-    private final int lookAheadTransactionCount;
     private final WalMetrics metrics;
     private final MicrosecondClock microClock;
     private final MatViewRefreshTask mvRefreshTask = new MatViewRefreshTask();
@@ -107,8 +107,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         microClock = configuration.getMicrosecondClock();
         walEventReader = new WalEventReader(configuration.getFilesFacade());
         metrics = engine.getMetrics().walMetrics();
-        lookAheadTransactionCount = configuration.getWalApplyLookAheadTransactionCount();
         tableTimeQuotaMicros = configuration.getWalApplyTableTimeQuota() >= 0 ? configuration.getWalApplyTableTimeQuota() * 1000L : Timestamps.DAY_MICROS;
+        config = engine.getConfiguration();
     }
 
     @Override
@@ -371,8 +371,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 final long start = microClock.getTicks();
 
                                 long lastLoadedTxnDetails = writer.getWalTnxDetails().getLastSeqTxn();
-                                if (seqTxn > lastLoadedTxnDetails
-                                        || (lastLoadedTxnDetails < seqTxn + lookAheadTransactionCount && (transactionLogCursor.getMaxTxn() > lastLoadedTxnDetails || transactionLogCursor.extend()))
+                                if (seqTxn > lastLoadedTxnDetails || (lastLoadedTxnDetails < seqTxn + config.getWalApplyLookAheadTransactionCount()
+                                        && (transactionLogCursor.getMaxTxn() > lastLoadedTxnDetails || transactionLogCursor.extend()))
                                 ) {
                                     // Last few transactions left to process from the list
                                     // of observed transactions built upfront in the beginning of the loop.
