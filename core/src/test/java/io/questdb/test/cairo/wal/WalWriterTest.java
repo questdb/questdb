@@ -3610,7 +3610,7 @@ public class WalWriterTest extends AbstractCairoTest {
             Utf8StringSink sink = new Utf8StringSink();
             StringSink stringSink = new StringSink();
 
-            Rnd rnd = TestUtils.generateRandom(LOG);
+            Rnd rnd = TestUtils.generateRandom(LOG, 672802496975500L, 1742393295792L);
 
             ObjList<WalWriter> writerObjList = new ObjList<>();
             for (int c = 0; c < walWriters; c++) {

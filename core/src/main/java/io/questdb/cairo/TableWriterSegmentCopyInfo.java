@@ -30,6 +30,11 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 
+/**
+ * This is a helper class that stores information about segments and transactions
+ * that are processed as single transaction block.
+ * It is used by {@link TableWriter} and {@link io.questdb.cairo.wal.WalTxnDetails}
+ */
 public class TableWriterSegmentCopyInfo implements QuietCloseable {
     private final IntList seqTxnOrder = new IntList();
     private boolean allDataInOrder;

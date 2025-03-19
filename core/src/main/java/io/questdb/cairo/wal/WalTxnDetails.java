@@ -101,10 +101,26 @@ public class WalTxnDetails implements QuietCloseable {
         this.maxLookaheadRows = maxLookaheadRows;
     }
 
+    /**
+     * Creates symbol map for multiple transactions. It is used in {@link io.questdb.cairo.TableWriter} during
+     * WAL transaction block application
+     *
+     * @param transactions - transactions to build symbol map for
+     * @param columnIndex  - symbol column index
+     * @param mapWriter    - map writer to write symbols to
+     * @param outMem       - memory to store symbol map
+     * @return true if symbol map is created, false if the symbol map is identical, no remapping needed
+     */
     public boolean buildTxnSymbolMap(TableWriterSegmentCopyInfo transactions, int columnIndex, MapWriter mapWriter, MemoryCARW outMem) {
+        // Output format, for every transaction
         // Header, 2 ints per txn,
         // - clear symbol count
-        // - offset of the map start for the transactions
+        // - offset of the map start in the output buffer
+        // Map format
+        // 4 bytes with the final symbol key for every symbol key in the WAL column shifted by clear symbol count
+
+        // Clear symbol count is the number of symbol keys that do not to be re-mapped since they were taken
+        // directly from the table symbol map during WAL writing.
         long txnCount = transactions.getTxnCount();
         int headerInts = 2;
         outMem.jumpTo(txnCount * headerInts * Integer.BYTES);
@@ -182,6 +198,15 @@ public class WalTxnDetails implements QuietCloseable {
         return outMem.getAppendOffset() > (txnCount << 3);
     }
 
+    /**
+     * Calculates the count of transactions to apply in one go in {@link io.questdb.cairo.TableWriter}.
+     * Applying many transactions is also referenced as wrting a block of transactions.
+     *
+     * @param seqTxn              - seqTxn to start the block from
+     * @param pressureControl     - pressure control to calculate the block size, pressure control can limit the block size
+     * @param maxBlockRecordCount - maximum number of transactions in the block
+     * @return - the number of transactions to apply in one go, e.g. the block size
+     */
     public int calculateInsertTransactionBlock(long seqTxn, TableWriterPressureControl pressureControl, long maxBlockRecordCount) {
         int blockSize = 1;
         long lastSeqTxn = getLastSeqTxn();
@@ -245,6 +270,13 @@ public class WalTxnDetails implements QuietCloseable {
         txnOrder = Misc.free(txnOrder);
     }
 
+    /**
+     * Calculate a heuristic timestamp to make the data visible to the readers. The purpose is to avoid future
+     * O3 commits and partition rewrites.
+     *
+     * @param seqTxn - seqTxn to calculate the commit to timestamp for
+     * @return - the commit to timestamp
+     */
     public long getCommitToTimestamp(long seqTxn) {
         long value = transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + COMMIT_TO_TIMESTAMP_OFFSET);
         return value == LAST_ROW_COMMIT ? FORCE_FULL_COMMIT : value;

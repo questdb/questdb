@@ -29,7 +29,18 @@ public final class Vect {
     public static final int BIN_SEARCH_SCAN_DOWN = 1;
     // Up is decreasing scan direction
     public static final int BIN_SEARCH_SCAN_UP = -1;
+    // Index format:
+    // Per every timestamp there is a record:
+    // 8 bytes is used for timestamp
+    // 8 bytes to store segment and row id in the segment
+    // (1-8) bytes of reverse index, e.g. what is the index of the row with current index in the sorted result set
     public static final byte DEDUP_INDEX_FORMAT = 1;
+    // Index format is 2 parts
+    // Part 1: per every timestamp there is a record:
+    // 8 bytes is used for timestamp
+    // 8 bytes to store segment and row id in the segment
+    // Part 2:
+    // (1-8) bytes of reverse index, e.g. what is the index of the row with current index in the sorted result set
     public static final byte SHUFFLE_INDEX_FORMAT = 2;
 
     public static native double avgDoubleAcc(long pInt, long count, long pCount);
@@ -154,6 +165,12 @@ public final class Vect {
 
     public static native void indexReshuffle8Bit(long pSrc, long pDest, long pIndex, long count);
 
+    /**
+     * Check if index return code is valid and indicates successful index creation.
+     *
+     * @param indexFormat index format returned by index sort function
+     * @return true if index is valid and successful
+     */
     public static boolean isIndexSuccess(long indexFormat) {
         long f = indexFormat >>> 56;
         return f > 0 && f < 4;
@@ -239,16 +256,16 @@ public final class Vect {
             long indexFormat,
             long srcAddresses,
             long dstAddress,
-            long mergeIndex,
-            long segmentAddressPtr,
+            long mergeIndexAddr,
+            long segmentAddressAddr,
             long segmentCount
     );
 
-    public static native long mergeShuffleStringColumnFromManyAddresses(long indexFormat, int dataLengthBytes, long primaryAddressList, long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndex, long destVarOffset, long destDataSize);
+    public static native long mergeShuffleStringColumnFromManyAddresses(long indexFormat, int dataLengthBytes, long primaryAddressList, long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndexAddr, long destVarOffset, long destDataSize);
 
-    public static native long mergeShuffleSymbolColumnFromManyAddresses(long indexFormat, long srcAddresses, long dstAddress, long mergeIndex, long txnInfo, long txnCount, long symbolMapAddress, long symbolMapSize);
+    public static native long mergeShuffleSymbolColumnFromManyAddresses(long indexFormat, long srcAddresses, long dstAddress, long mergeIndexAddr, long txnInfo, long txnCount, long symbolMapAddress, long symbolMapSize);
 
-    public static native long mergeShuffleVarcharColumnFromManyAddresses(long indexFormat, long primaryAddressList, long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndex, long destVarOffset, long destDataSize);
+    public static native long mergeShuffleVarcharColumnFromManyAddresses(long indexFormat, long primaryAddressList, long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndexAddr, long destVarOffset, long destDataSize);
 
     public static native long mergeTwoLongIndexesAsc(long pTs, long tsIndexLo, long tsCount, long pIndex2, long index2Count, long pIndexDest);
 
@@ -366,7 +383,7 @@ public final class Vect {
             long indexFormat,
             long srcAddresses,
             long dstAddress,
-            long mergeIndex
+            long mergeIndexAddr
     );
 
     /**

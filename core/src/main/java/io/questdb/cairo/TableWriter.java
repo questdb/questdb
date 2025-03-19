@@ -317,7 +317,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private UpdateOperatorImpl updateOperatorImpl;
     private WalTxnDetails walTxnDetails;
     private final ColumnTaskHandler cthMapSymbols = this::processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mapSymbols;
-    private final ColumnTaskHandler cthMergeWalColumnManySegments = this::processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mergeWalColumnManySegments;
+    private final ColumnTaskHandler cthMergeWalColumnManySegments = this::processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mergeShuffleWalColumnManySegments;
 
 
     public TableWriter(
@@ -1452,7 +1452,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // packed as [auxFd, dataFd, dataVecBytesWritten]
         // dataVecBytesWritten is used to adjust offsets in the auxiliary vector
-        final DirectLongList columnFdAndDataSize = getTempDirectMemoryList(3L * columnCount);
+        final DirectLongList columnFdAndDataSize = getTempDirectLongList(3L * columnCount);
 
         // path is now pointing to the parquet file
         // other is pointing to the new partition folder
@@ -5365,7 +5365,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @NotNull
-    private DirectLongList getTempDirectMemoryList(long capacity) {
+    private DirectLongList getTempDirectLongList(long capacity) {
         if (tempDirectMemList == null) {
             tempDirectMemList = new DirectLongList(capacity, MemoryTag.NATIVE_TABLE_WRITER);
             tempDirectMemList.zero();
@@ -6984,6 +6984,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             return blockTransactionCount;
         } finally {
+            if (memColumnShifted) {
+                clearMemColumnShifts();
+            }
             segmentFileCache.closeWalFiles(segmentCopyInfo, metadata.getColumnCount());
             if (tempDirectMemList != null) {
                 tempDirectMemList.resetCapacity();
@@ -6992,15 +6995,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private ObjList<MemoryCR> processWalCommitBlock_remapSymbols() {
-        var columnSegmentAddresses = getTempDirectMemoryList(2L * metadata.getColumnCount());
-        columnSegmentAddresses.setPos(2L * metadata.getColumnCount());
+        long columnAddressCount = 2L * metadata.getColumnCount();
+        DirectLongList columnSegmentAddressBuffer = getTempDirectLongList(columnAddressCount);
+        columnSegmentAddressBuffer.setPos(columnAddressCount);
 
         // Remap the symbols if there are any
-        long segmentColAddresses = columnSegmentAddresses.getAddress();
         processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks(
                 0,
                 segmentCopyInfo.getTotalRows(),
-                segmentColAddresses,
+                columnSegmentAddressBuffer.getAddress(),
                 1,
                 segmentCopyInfo.getRowLo(0),
                 true,
@@ -7011,6 +7014,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3ColumnOverrides.clear();
         o3ColumnOverrides.addAll(segmentFileCache.getWalMappedColumns());
 
+        long columnSegmentAddressesBase = columnSegmentAddressBuffer.getAddress();
         // Take symbol columns from o3MemColumns2 if remapping happened
         int tsColIndex = metadata.getTimestampIndex();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
@@ -7019,41 +7023,41 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (ColumnType.isSymbol(columnType)) {
                     // -1 is the indicator that column is remapped.
                     // Otherwise, the symbol remapping did not happen because there were no new symbols
-                    if (Unsafe.getUnsafe().getLong(segmentColAddresses) == -1L) {
+                    if (Unsafe.getUnsafe().getLong(columnSegmentAddressesBase) == -1L) {
                         int primaryColumnIndex = getPrimaryColumnIndex(i);
                         MemoryCARW remappedColumn = o3MemColumns2.getQuick(primaryColumnIndex);
                         assert remappedColumn.size() >= (segmentCopyInfo.getTotalRows() << ColumnType.pow2SizeOf(columnType));
-                        o3ColumnOverrides.setQuick(primaryColumnIndex, remappedColumn);
+                        o3ColumnOverrides.set(primaryColumnIndex, remappedColumn);
 
                         LOG.info().$("using remapped column buffer [table=").$(tableToken)
                                 .$("name=").$(metadata.getColumnName(i)).$(", index=").$(i).I$();
                     }
                 }
-                segmentColAddresses += Long.BYTES;
+                columnSegmentAddressesBase += Long.BYTES;
                 if (ColumnType.isVarSize(columnType)) {
-                    segmentColAddresses += Long.BYTES;
+                    columnSegmentAddressesBase += Long.BYTES;
                 }
             }
         }
-        columnSegmentAddresses.resetCapacity();
+        columnSegmentAddressBuffer.resetCapacity();
         return o3ColumnOverrides;
     }
 
     // Name of the method starts from processWalCommitBlock to keep the methods close together after code formatting
     private long processWalCommitBlock_sortWalSegmentTimestamps() {
         int timestampIndex = metadata.getTimestampIndex();
-        // Timestamp column is special, exclude it here
-        int walColumnCountPerSegment = metadata.getColumnCount() * 2;
 
+        // For each column we will need dense list of column addresses
+        // across all the segments. It will be used in column shuffling/remapping procs
+        // Allocate enough space to store all the addresses, e.g. for every segment 2x longs for every column.
+        int walColumnCountPerSegment = metadata.getColumnCount() * 2;
         long totalSegmentAddresses = segmentCopyInfo.getSegmentCount();
         long totalColumnAddressSize = totalSegmentAddresses * walColumnCountPerSegment;
-
-        var tsAddresses = getTempDirectMemoryList(totalColumnAddressSize);
+        DirectLongList tsAddresses = getTempDirectLongList(totalColumnAddressSize);
         tsAddresses.setPos(totalColumnAddressSize);
 
         try {
             segmentFileCache.createAddressBuffersPrimary(timestampIndex, metadata.getColumnCount(), segmentCopyInfo.getSegmentCount(), tsAddresses.getAddress());
-
             long totalRows = segmentCopyInfo.getTotalRows();
             // This sort apart from creating normal merge index with 2 longs
             // creates reverse long index at the end, e.g. it needs one more long per row
@@ -7094,7 +7098,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     needsDedup ? Vect.DEDUP_INDEX_FORMAT : Vect.SHUFFLE_INDEX_FORMAT
             );
 
-            // Clean timestamp addresses, otherwise the shuffle code will be lazily re-use them
+            // result of the sort is sort index. The format of the index is different
+            // if the dedup is needed. See comments on Vect.DEDUP_INDEX_FORMAT and Vect.SHUFFLE_INDEX_FORMAT
+            // to understand the difference
+
+            // Clean timestamp addresses, otherwise the shuffle code will lazily re-use them
             tsAddresses.set(0, 0L);
 
             if (!Vect.isIndexSuccess(indexFormat)) {
@@ -7107,8 +7115,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             if (isDeduplicationEnabled()) {
-                if (denseSymbolMapWriters.size() > 0) {
-                    // Remap the symbols if there are any
+                if (denseSymbolMapWriters.size() > 0 && dedupColumnCommitAddresses.getColumnCount() > 0) {
+                    // Remap the symbols if there are any SYMBOL dedup keys
                     processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks(
                             timestampAddr,
                             totalRows,
@@ -7128,6 +7136,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         tsAddresses.getAddress()
                 );
 
+                // The last call to dedup the index converts it to the shuffle format.
+                // See comments on Vect.DEDUP_INDEX_FORMAT and Vect.SHUFFLE_INDEX_FORMAT
+                // to understand the difference
+
                 if (!Vect.isIndexSuccess(indexFormat)) {
                     LOG.critical().$("WAL dedup sorted index failed will switch to 1 commit [table=").$(tableToken.getDirName())
                             .$(", totalRows=").$(totalRows)
@@ -7143,17 +7155,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .$(", dups=").$(totalRows - dedupedRowCount)
                         .I$();
 
-                // Swap tsMemory and tsMemoryCopy, dedup index result is in o3TimestampMemCpy
-                var tsMem1 = o3MemColumns1.get(getPrimaryColumnIndex(timestampIndex));
-                var tsMem2 = o3MemColumns2.get(getPrimaryColumnIndex(timestampIndex));
-
-                o3MemColumns1.set(getPrimaryColumnIndex(timestampIndex), tsMem2);
-                o3TimestampMem = tsMem2;
-
-                o3MemColumns2.set(getPrimaryColumnIndex(timestampIndex), tsMem1);
-                o3TimestampMemCpy = tsMem1;
-
-                timestampAddr = o3TimestampMem.getAddress();
+                // Swap tsMemory and tsMemoryCopy, result of index dedup is in o3TimestampMemCpy
+                timestampAddr = swapTimestampInMemCols(timestampIndex);
                 totalRows = dedupedRowCount;
             }
 
@@ -7273,6 +7276,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean dedupColumnOnly,
             ColumnTaskHandler taskHandler
     ) {
+        // Dispatch processWalCommitBlock column tasks.
+        // This method is used in 3 places:
+        // 1. Remap symbols to table symbol ids before deduplication
+        // 2. Remap symbols to table symbol ids when all transactions are from same segment and data is in order
+        // 2. Shuffle columns data according to the index
         final long timestampColumnIndex = metadata.getTimestampIndex();
         final Sequence pubSeq = this.messageBus.getColumnTaskPubSeq();
         final RingQueue<ColumnTask> queue = this.messageBus.getColumnTaskQueue();
@@ -7285,16 +7293,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             int columnType = metadata.getColumnType(columnIndex);
             if (columnIndex != timestampColumnIndex && columnType > 0) {
+
+                // Allocate the column buffers the same way
+                // regardless if it is a symbol only pass or all column pass,
+                // e.g. allocate addresses for non-deleted  columns.
+                // After symbol only remap pass, the buffer addresses
+                // will contain a hint that the symbol remapping is already done and the shuffle proc rely on that flag.
+
                 long mappedAddrBuffPrimary = columnAddressesBuffer;
                 columnAddressesBuffer += totalSegmentAddressesBytes;
                 if (ColumnType.isVarSize(columnType)) {
                     columnAddressesBuffer += totalSegmentAddressesBytes;
                 }
-
-                // Allocate the column buffers the same way
-                // regadless if it'a symbol only pass or all column pass
-                // The buffer addresses will contain a hint that the mapping is not needed
-
 
                 if ((!symbolColumnsOnly || ColumnType.isSymbol(columnType)) && (!dedupColumnOnly || metadata.isDedupKey(columnIndex))) {
                     long cursor = pubSeq.next();
@@ -7353,18 +7363,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             var mapWriter = symbolMapWriters.get(columnIndex);
 
+            // Use o3MemColumns1 to build symbol maps.
+            // and o3MemColumns2 to store re-mapped symbols
             var symbolMapMem = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));
             symbolMapMem.jumpTo(0);
 
             boolean needsRemapping = walTxnDetails.buildTxnSymbolMap(segmentCopyInfo, columnIndex, mapWriter, symbolMapMem);
 
+            // When there are no new symbols for all the segment transactions, remapping is not needed and not performed
             if (needsRemapping) {
                 long txnCount = this.segmentCopyInfo.getTxnCount();
                 segmentFileCache.createAddressBuffersPrimary(columnIndex, metadata.getColumnCount(), segmentCopyInfo.getSegmentCount(), mappedAddrBuffPrimary);
                 var destinationColumn = o3MemColumns2.get(getPrimaryColumnIndex(columnIndex));
+
                 destinationColumn.jumpTo((rowsOffset + totalRows) << shl);
 
-                LOG.info().$("remapping WAL symbols [table=").$(tableToken.getTableName())
+                LOG.debug().$("remapping WAL symbols [table=").$(tableToken.getTableName())
                         .$(", column=").$(metadata.getColumnName(columnIndex))
                         .$(", rows=").$(totalRows)
                         .$(", txnCount=").$(txnCount)
@@ -7373,11 +7387,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 long rowCount = Vect.remapSymbolColumnFromManyAddresses(
                         mappedAddrBuffPrimary,
-                        destinationColumn.getAddress() + (rowsOffset << shl),
+                        destinationColumn.getAddress(),
                         segmentCopyInfo.getTxnInfoAddress(),
                         txnCount,
                         symbolMapMem.getAddress()
                 );
+                destinationColumn.shiftAddressRight(rowsOffset << shl);
+                memColumnShifted |= (rowsOffset << shl) != 0;
 
                 if (rowCount != totalRows) {
                     throwApplyBlockColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
@@ -7388,7 +7404,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } else {
                 // Save the hint that symbol column is not re-mapped
                 Unsafe.getUnsafe().putLong(mappedAddrBuffPrimary, 0);
-                LOG.info().$("no new symbols, no remapping needed [table=").$(tableToken.getTableName())
+                LOG.debug().$("no new symbols, no remapping needed [table=").$(tableToken.getTableName())
                         .$(", column=").$(metadata.getColumnName(columnIndex))
                         .$(", rows=").$(totalRows)
                         .I$();
@@ -7407,14 +7423,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mergeWalColumnManySegments(
+    private void processWalCommitBlock_sortWalSegmentTimestamps_dispatchColumnSortTasks_mergeShuffleWalColumnManySegments(
             int columnIndex,
             int columnType,
             long timestampColumnIndex,
-            long mergeIndex,
+            long mergeIndexAddress,
             long mappedAddrBuffPrimary,
             long totalRows,
-            long indexFormat,
+            long mergeIndexFormat,
             long totalSegmentAddressesBytes
     ) {
         try {
@@ -7439,10 +7455,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     long rowCount = Vect.mergeShuffleFixedColumnFromManyAddresses(
                             (1 << shl),
-                            indexFormat,
+                            mergeIndexFormat,
                             mappedAddrBuffPrimary,
                             destinationColumn.getAddress(),
-                            mergeIndex,
+                            mergeIndexAddress,
                             segmentCopyInfo.getSegmentsAddress(),
                             segmentCopyInfo.getSegmentCount()
                     );
@@ -7459,10 +7475,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (firstPointer == -1) {
                         assert isDeduplicationEnabled() && metadata.isDedupKey(columnIndex);
                         long rowCount = Vect.shuffleSymbolColumnByReverseIndex(
-                                indexFormat,
+                                mergeIndexFormat,
                                 o3MemColumns2.get(getPrimaryColumnIndex(columnIndex)).getAddress(),
                                 destinationColumn.getAddress(),
-                                mergeIndex
+                                mergeIndexAddress
                         );
 
                         if (rowCount != totalRows) {
@@ -7486,36 +7502,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             needsRemapping = walTxnDetails.buildTxnSymbolMap(segmentCopyInfo, columnIndex, mapWriter, symbolMapMem);
                         }
 
+                        long rowCount;
                         if (needsRemapping) {
-                            long rowCount = Vect.mergeShuffleSymbolColumnFromManyAddresses(
-                                    indexFormat,
+                            rowCount = Vect.mergeShuffleSymbolColumnFromManyAddresses(
+                                    mergeIndexFormat,
                                     mappedAddrBuffPrimary,
                                     destinationColumn.getAddress(),
-                                    mergeIndex,
+                                    mergeIndexAddress,
                                     segmentCopyInfo.getTxnInfoAddress(),
                                     txnCount,
                                     symbolMapMem.getAddress(),
                                     symbolMapMem.getAppendOffset()
                             );
-
-                            if (rowCount != totalRows) {
-                                throwApplyBlockColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
-                            }
                         } else {
-                            // Shuffle as int32, no new symbols to add
-                            long rowCount = Vect.mergeShuffleFixedColumnFromManyAddresses(
+                            // Shuffle as int32, no new symbol values added
+                            rowCount = Vect.mergeShuffleFixedColumnFromManyAddresses(
                                     (1 << shl),
-                                    indexFormat,
+                                    mergeIndexFormat,
                                     mappedAddrBuffPrimary,
                                     destinationColumn.getAddress(),
-                                    mergeIndex,
+                                    mergeIndexAddress,
                                     segmentCopyInfo.getSegmentsAddress(),
                                     segmentCopyInfo.getSegmentCount()
                             );
 
-                            if (rowCount != totalRows) {
-                                throwApplyBlockColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
-                            }
+                        }
+                        if (rowCount != totalRows) {
+                            throwApplyBlockColumnShuffleFailed(columnIndex, columnType, totalRows, rowCount);
                         }
                     }
                 }
@@ -7530,12 +7543,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 destinationColumnPrimary.jumpTo(totalVarSize);
 
                 long rowCount = driver.mergeShuffleColumnFromManyAddresses(
-                        indexFormat,
+                        mergeIndexFormat,
                         mappedAddrBuffPrimary,
                         mappedAddrBuffSecondary,
                         destinationColumnPrimary.getAddress(),
                         destinationColumnSecondary.getAddress(),
-                        mergeIndex,
+                        mergeIndexAddress,
                         0,
                         totalVarSize
                 );
@@ -7550,8 +7563,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     columnIndex,
                     columnType,
                     totalRows,
-                    mergeIndex,
-                    indexFormat,
+                    mergeIndexAddress,
+                    mergeIndexFormat,
                     totalSegmentAddressesBytes,
                     th
             );
@@ -8881,6 +8894,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3NullSetters1 = o3NullSetters2;
         o3NullSetters2 = tempNullSetters;
         activeNullSetters = o3NullSetters1;
+    }
+
+    private long swapTimestampInMemCols(int timestampIndex) {
+        long timestampAddr;
+        var tsMem1 = o3MemColumns1.get(getPrimaryColumnIndex(timestampIndex));
+        var tsMem2 = o3MemColumns2.get(getPrimaryColumnIndex(timestampIndex));
+
+        o3MemColumns1.set(getPrimaryColumnIndex(timestampIndex), tsMem2);
+        o3TimestampMem = tsMem2;
+
+        o3MemColumns2.set(getPrimaryColumnIndex(timestampIndex), tsMem1);
+        o3TimestampMemCpy = tsMem1;
+
+        timestampAddr = o3TimestampMem.getAddress();
+        return timestampAddr;
     }
 
     private void switchPartition(long timestamp) {
