@@ -64,7 +64,8 @@ public class TimestampBoundsTest extends AbstractCairoTest {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts)");
             assertException("INSERT INTO tango VALUES (NULL)", -1, "designated timestamp column cannot be NULL");
             assertException("INSERT INTO tango VALUES (" + -1L + ")", -1, "designated timestamp before 1970-01-01 is not allowed");
-            execute("INSERT INTO tango VALUES (" + Timestamps.YEAR_10000 + ")");
+            assertException("INSERT INTO tango VALUES (" + Timestamps.YEAR_10000 + ")", -1,
+                    "designated timestamp beyond 9999-12-31 is not allowed");
         });
     }
 
@@ -76,7 +77,7 @@ public class TimestampBoundsTest extends AbstractCairoTest {
             assertException("INSERT INTO tango VALUES (NULL)", -1, "designated timestamp column cannot be NULL");
             assertException("INSERT INTO tango VALUES (" + -1L + ")", -1, "designated timestamp before 1970-01-01 is not allowed");
             assertException("INSERT INTO tango VALUES (" + Timestamps.YEAR_10000 + ")", -1,
-                    "designated timestamp beyond 9999-12-31 is not allowed in a partitioned table");
+                    "designated timestamp beyond 9999-12-31 is not allowed");
         });
     }
 
@@ -89,12 +90,12 @@ public class TimestampBoundsTest extends AbstractCairoTest {
             assertException("INSERT INTO tango VALUES (NULL)", -1, "designated timestamp column cannot be NULL");
             assertException("INSERT INTO tango VALUES (" + -1L + ")", -1, "designated timestamp before 1970-01-01 is not allowed");
             assertException("INSERT INTO tango VALUES (" + Timestamps.YEAR_10000 + ")", -1,
-                    "designated timestamp beyond 9999-12-31 is not allowed in a partitioned table");
+                    "designated timestamp beyond 9999-12-31 is not allowed");
         });
     }
 
     @Test
-    public void testTimestampBoundsNonPartitioned() throws Exception {
+    public void testTimestampBoundsNotDesignated() throws Exception {
         Assume.assumeFalse(walEnabled);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP)");

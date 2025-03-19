@@ -94,7 +94,7 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.TableUtils.*;
-import static io.questdb.cairo.TableWriter.validatePartitioningTimestampBounds;
+import static io.questdb.cairo.TableWriter.validateDesignatedTimestampBounds;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 
@@ -458,7 +458,7 @@ public class WalWriter implements TableWriterAPI {
     @Override
     public TableWriter.Row newRow(long timestamp) {
         checkDistressed();
-        validatePartitioningTimestampBounds(timestamp);
+        validateDesignatedTimestampBounds(timestamp);
         try {
             if (rollSegmentOnNextRow) {
                 rollSegment();

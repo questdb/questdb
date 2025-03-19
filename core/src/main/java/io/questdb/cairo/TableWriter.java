@@ -507,13 +507,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (timestamp < Timestamps.O3_MIN_TS) {
             throw CairoException.nonCritical().put("designated timestamp before 1970-01-01 is not allowed");
         }
-    }
-
-    public static void validatePartitioningTimestampBounds(long timestamp) {
-        validateDesignatedTimestampBounds(timestamp);
         if (timestamp >= Timestamps.YEAR_10000) {
             throw CairoException.nonCritical().put(
-                    "designated timestamp beyond 9999-12-31 is not allowed in a partitioned table");
+                    "designated timestamp beyond 9999-12-31 is not allowed");
         }
     }
 
@@ -2328,9 +2324,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public Row newRow(long timestamp) {
+        if (rowAction != ROW_ACTION_NO_TIMESTAMP) {
+            validateDesignatedTimestampBounds(timestamp);
+        }
         switch (rowAction) {
             case ROW_ACTION_NO_PARTITION:
-                validateDesignatedTimestampBounds(timestamp);
                 if (timestamp < txWriter.getMaxTimestamp()) {
                     throw CairoException.nonCritical()
                             .put("cannot insert rows out of order to non-partitioned table. Table=").put(path);
@@ -2342,20 +2340,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 bumpMasterRef();
                 break;
             case ROW_ACTION_O3:
-                validatePartitioningTimestampBounds(timestamp);
                 bumpMasterRef();
                 o3TimestampSetter(timestamp);
                 return row;
             case ROW_ACTION_OPEN_PARTITION:
                 if (txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
-                    validatePartitioningTimestampBounds(timestamp);
                     txWriter.setMinTimestamp(timestamp);
                     initLastPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
                 }
                 rowAction = ROW_ACTION_SWITCH_PARTITION;
                 // fall thru
             case ROW_ACTION_SWITCH_PARTITION:
-                validatePartitioningTimestampBounds(timestamp);
                 bumpMasterRef();
                 if (timestamp > partitionTimestampHi || timestamp < txWriter.getMaxTimestamp()) {
                     if (timestamp < txWriter.getMaxTimestamp()) {
