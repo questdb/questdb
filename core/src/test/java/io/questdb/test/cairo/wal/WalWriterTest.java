@@ -48,6 +48,7 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
@@ -253,6 +254,166 @@ public class WalWriterTest extends AbstractCairoTest {
                 assertFalse(eventCursor.hasNext());
             }
         });
+    }
+
+    @Test
+    public void testAddColumnsRollLargeSegment() throws Exception {
+        assertMemoryLeak(() -> {
+            // This test reproduces a bug where rolling a large segment file sized over 2GB
+            // resulted in int overflow and commit exception.
+
+            // The test is a bit slow writing a column over 2Gb to WAL
+            node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 3000_000);
+            node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_SIZE, 3 * Numbers.SIZE_1GB);
+
+            TableToken tableToken = createTable(new TableModel(configuration, testName.getMethodName(), PartitionBy.HOUR)
+                    .col("desk", ColumnType.VARCHAR)
+                    .timestamp("instanceName")
+                    .wal()
+            );
+
+            long initialTimestamp = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T00:40:00.000Z");
+            long tsIncrement = 1000_0000L;
+
+            int varcharSize = 20 * Numbers.SIZE_1MB;
+            long buffer = Unsafe.malloc(varcharSize, MemoryTag.NATIVE_DEFAULT);
+            Vect.memset(buffer, varcharSize, (byte) 'a');
+            DirectUtf8String longVarchar = new DirectUtf8String();
+            longVarchar.of(buffer, buffer + varcharSize);
+
+            try (WalWriter writer = engine.getWalWriter(tableToken)) {
+                // Add rows so that total size of varchar column is > 2Gb
+                int rowCount = (int) ((Numbers.SIZE_1GB * 2 + Numbers.SIZE_1MB * 20) / varcharSize);
+                for (int i = 0; i < rowCount; i++) {
+                    TableWriter.Row row = writer.newRow(initialTimestamp);
+                    initialTimestamp += tsIncrement;
+                    row.putVarchar(0, longVarchar);
+                    row.append();
+                }
+                writer.commit();
+
+                // Add few more rows and then add a column
+                for (int i = 0; i < 1; i++) {
+                    TableWriter.Row row = writer.newRow(initialTimestamp);
+                    initialTimestamp += tsIncrement;
+                    row.putVarchar(0, longVarchar);
+                    row.append();
+                }
+                writer.addColumn("newColumn", ColumnType.DOUBLE);
+                writer.commit();
+            } finally {
+                Path.clearThreadLocals();
+                Unsafe.free(buffer, varcharSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+
+    }
+
+    @Test
+    public void testAddManyColumnsExistingSegments() throws Exception {
+        assertMemoryLeak(() -> {
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            int threadCount = 2 + rnd.nextInt(1);
+            int columnAddLimit = 10 + rnd.nextInt(5);
+
+            node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 30);
+
+            TableToken tableToken = createTable(new TableModel(configuration, testName.getMethodName(), PartitionBy.HOUR)
+                    .col("cluster", ColumnType.SYMBOL)
+                    .col("hostName", ColumnType.SYMBOL)
+                    .col("desk", ColumnType.SYMBOL)
+                    .timestamp("instanceName")
+                    .wal()
+            );
+
+            ObjList<Thread> writerThreads = new ObjList<>();
+
+            AtomicInteger error = new AtomicInteger();
+
+            long initialTimestamp = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T00:40:00.000Z");
+            long tsIncrement = rnd.nextLong(1000_0000L);
+            for (int th = 0; th < threadCount; th++) {
+                Rnd threadRnd = new Rnd(rnd.nextLong(), rnd.nextLong());
+
+                writerThreads.add(new Thread(() -> {
+                    try (WalWriter writer = engine.getWalWriter(tableToken)) {
+                        int columnNum = 1;
+                        long timestamp = initialTimestamp;
+
+                        while (columnNum < columnAddLimit) {
+                            int rowCount = 10 + threadRnd.nextInt(10);
+                            boolean addColumn = threadRnd.nextInt(20) == 0;
+                            if (addColumn) {
+                                rowCount = 30 + threadRnd.nextInt(10);
+                            }
+                            int initialRows = addColumn ? rnd.nextInt(rowCount) : Integer.MAX_VALUE;
+
+                            for (int r = 0; r < rowCount; r++) {
+                                generateRow(writer, threadRnd, timestamp);
+                                timestamp += tsIncrement;
+                                if (r == initialRows) {
+                                    while (true) {
+                                        String columnName = rnd.nextBoolean() ? "d" : "D" + (columnNum++);
+                                        try {
+                                            int typeRnd = rnd.nextInt(3);
+                                            int columnType;
+                                            switch (typeRnd) {
+                                                case 0:
+                                                case 1:
+                                                    columnType = ColumnType.DOUBLE;
+                                                    break;
+                                                default:
+                                                    columnType = ColumnType.STRING;
+                                                    break;
+                                            }
+                                            addColumn(writer, columnName, columnType);
+                                            break;
+                                        } catch (CairoException e) {
+                                            int columnWriterIndex = writer.getMetadata().getColumnIndexQuiet(columnName);
+                                            if (columnWriterIndex < 0) {
+                                                // the column is still not there, something must be wrong
+                                                throw e;
+                                            }
+                                            // all good, someone added the column concurrently
+                                            columnNum++;
+                                        }
+                                    }
+                                }
+                            }
+                            writer.commit();
+
+                            if (rnd.nextInt(20) == 0) {
+                                String columnName = rnd.nextBoolean() ? "d" : "D" + (1 + rnd.nextInt(columnNum));
+                                try {
+                                    AlterOperationBuilder removeColumnOperation = new AlterOperationBuilder().ofDropColumn(0, writer.getTableToken(), 0);
+                                    removeColumnOperation.ofDropColumn(columnName);
+                                    writer.apply(removeColumnOperation.build(), true);
+                                } catch (CairoException ex) {
+                                    if (ex.getMessage().contains("column does not exist")) {
+                                        // all good, someone removed the column concurrently
+                                        continue;
+                                    }
+                                    throw ex;
+                                }
+                            }
+                        }
+                    } catch (Throwable e) {
+                        error.incrementAndGet();
+                        throw e;
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }));
+                writerThreads.getLast().start();
+            }
+
+            for (int i = 0; i < writerThreads.size(); i++) {
+                writerThreads.getQuick(i).join();
+            }
+
+            Assert.assertEquals(0, error.get());
+        });
+
     }
 
     @Test
@@ -530,7 +691,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     addColumn(walWriter, "c", ColumnType.SHORT);
                     assertExceptionNoLeakCheck("Should not be able to add duplicate column");
                 } catch (CairoException e) {
-                    assertEquals("[-1] duplicate column name: c", e.getMessage());
+                    assertEquals("[-100] duplicate column [name=c]", e.getMessage());
                 }
 
                 row = walWriter.newRow(0);
@@ -1428,7 +1589,7 @@ public class WalWriterTest extends AbstractCairoTest {
             engine.load();
 
             try {
-                var lastTxn = engine.getTableSequencerAPI().lastTxn(tableToken);
+                engine.getTableSequencerAPI().lastTxn(tableToken);
                 assertExceptionNoLeakCheck("Exception expected");
             } catch (CairoException e) {
                 // The table is not dropped in the table registry, the exception should not be table dropped exception
@@ -3186,7 +3347,7 @@ public class WalWriterTest extends AbstractCairoTest {
             };
 
             try {
-                var lastTxn = engine.getTableSequencerAPI().lastTxn(tableToken);
+                engine.getTableSequencerAPI().lastTxn(tableToken);
                 Assert.fail("Exception expected");
             } catch (CairoException e) {
                 // We should receive table is dropped error
@@ -3472,6 +3633,35 @@ public class WalWriterTest extends AbstractCairoTest {
         } finally {
             path.trimTo(pathLen);
         }
+    }
+
+    private void generateRow(WalWriter writer, Rnd threadRnd, long timestamp) {
+        var row = writer.newRow(timestamp);
+        var meta = writer.getMetadata();
+        for (int c = 0, n = meta.getColumnCount(); c < n; c++) {
+            int type = meta.getColumnType(c);
+            if (type > 0) {
+                if (threadRnd.nextInt(10) > 0) {
+                    switch (type) {
+                        case ColumnType.SYMBOL:
+                            row.putSym(c, threadRnd.nextChars(2));
+                            break;
+                        case ColumnType.DOUBLE:
+                            if (threadRnd.nextInt(50) != 0) {
+                                row.putDouble(c, threadRnd.nextDouble());
+                            }
+                            break;
+                        case ColumnType.STRING:
+                            row.putStr(c, threadRnd.nextChars(6));
+                            break;
+                        case ColumnType.LONG:
+                            row.putLong(c, threadRnd.nextLong());
+                            break;
+                    }
+                }
+            }
+        }
+        row.append();
     }
 
     private void testDesignatedTimestampIncludesSegmentRowNumber(int[] timestampOffsets, boolean expectedOutOfOrder) throws Exception {

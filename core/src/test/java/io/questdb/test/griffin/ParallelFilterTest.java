@@ -95,6 +95,17 @@ public class ParallelFilterTest extends AbstractCairoTest {
             "4014104627539596639\n" +
             "3393210801760647293\n" +
             "4099611147050818391\n";
+    private static final String expectedSymbolInCursorQueryLimit = "v\ts\n" +
+            "-9200716729349404576\tC\n" +
+            "-9199187235976552080\tC\n" +
+            "-9128506055317587235\tB\n" +
+            "-8960406850507339854\tC\n" +
+            "-8955092533521658248\tC\n" +
+            "-8930904012891908076\tC\n" +
+            "-8906871108655466881\tB\n" +
+            "-8889930662239044040\tC\n" +
+            "-8888027247206813045\tC\n" +
+            "-8845171937548005347\tC\n";
     private static final String expectedSymbolNoLimit = "v\n" +
             "3393210801760647293\n" +
             "3394168647660478011\n" +
@@ -139,9 +150,11 @@ public class ParallelFilterTest extends AbstractCairoTest {
             "3927079694554322589\tg\uECF9J9漫\uDBDB\uDDDB1fÄ}o輖NI\n" +
             "4171842711013652287\t\n" +
             "4290056275098552124\t=ܼDdjvsoߛ)*EB\n";
+    private static final String symbolInCursorQueryLimit = "select v, s from x where s::string::symbol in (select rnd_varchar('C', 'B') from long_sequence(100)) order by v limit 10";
     private static final String symbolQueryNegativeLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L limit -10";
     private static final String symbolQueryNoLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L order by v";
     private static final String symbolQueryPositiveLimit = "select v from x where v > 3326086085493629941L and v < 4326086085493629941L limit 10";
+    private static final String symbolStaticInCursorQueryLimit = "select v, s from x where s in (select rnd_varchar('C', 'B') from long_sequence(100)) order by v limit 10";
     private static final String varcharQueryNoLimit = "select l, v from x where l > 3326086085493629941L and l < 4326086085493629941L order by l";
     private final boolean convertToParquet;
 
@@ -466,6 +479,11 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelStressSymbolMultipleThreadsMultipleWorkersNonStaticSymbolInVarcharCursorJitDisabled() throws Exception {
+        testParallelStressSymbol(symbolInCursorQueryLimit, expectedSymbolInCursorQueryLimit, 4, 4, SqlJitMode.JIT_MODE_DISABLED);
+    }
+
+    @Test
     public void testParallelStressSymbolMultipleThreadsMultipleWorkersPositiveLimitJitDisabled() throws Exception {
         testParallelStressSymbol(symbolQueryPositiveLimit, expectedPositiveLimit, 4, 4, SqlJitMode.JIT_MODE_DISABLED);
     }
@@ -476,6 +494,11 @@ public class ParallelFilterTest extends AbstractCairoTest {
         Assume.assumeTrue(JitUtil.isJitSupported());
 
         testParallelStressSymbol(symbolQueryPositiveLimit, expectedPositiveLimit, 4, 4, SqlJitMode.JIT_MODE_ENABLED);
+    }
+
+    @Test
+    public void testParallelStressSymbolMultipleThreadsMultipleWorkersSymbolInVarcharCursorJitDisabled() throws Exception {
+        testParallelStressSymbol(symbolStaticInCursorQueryLimit, expectedSymbolInCursorQueryLimit, 4, 4, SqlJitMode.JIT_MODE_DISABLED);
     }
 
     @Test
@@ -1044,9 +1067,9 @@ public class ParallelFilterTest extends AbstractCairoTest {
                         int finalI = i;
                         new Thread(() -> {
                             TestUtils.await(barrier);
-                            try {
+                            try (SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine, workerCount)) {
                                 RecordCursorFactory factory = factories[finalI];
-                                assertQuery(expected, factory, sqlExecutionContext);
+                                assertQuery(expected, factory, ctx);
                             } catch (Throwable e) {
                                 e.printStackTrace();
                                 errors.incrementAndGet();
@@ -1100,9 +1123,9 @@ public class ParallelFilterTest extends AbstractCairoTest {
                         int finalI = i;
                         new Thread(() -> {
                             TestUtils.await(barrier);
-                            try {
+                            try (SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine, workerCount)) {
                                 RecordCursorFactory factory = factories[finalI];
-                                assertQuery(expected, factory, sqlExecutionContext);
+                                assertQuery(expected, factory, ctx);
                             } catch (Throwable e) {
                                 e.printStackTrace();
                                 errors.incrementAndGet();

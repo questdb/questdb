@@ -134,6 +134,7 @@ public class WalWriter implements TableWriterAPI {
     private final WalDirectoryPolicy walDirectoryPolicy;
     private final int walId;
     private final String walName;
+    private long avgRecordSize;
     private SegmentColumnRollSink columnConversionSink;
     private int columnCount;
     private ColumnVersionReader columnVersionReader;
@@ -150,6 +151,8 @@ public class WalWriter implements TableWriterAPI {
     private long segmentLockFd = -1;
     private long segmentRowCount = -1;
     private TableToken tableToken;
+    private long totalSegmentsRowCount;
+    private long totalSegmentsSize;
     private TxReader txReader;
     private long txnMaxTimestamp = -1;
     private long txnMinTimestamp = Long.MAX_VALUE;
@@ -534,6 +537,8 @@ public class WalWriter implements TableWriterAPI {
 
                     final int commitMode = configuration.getCommitMode();
                     for (int columnIndex = 0; columnIndex < columnsToRoll; columnIndex++) {
+                        // Allocate space for new column in columnRollSink and move to next record
+                        // Do it for deleted columns too, it will be skipped in exactly same way in switchColumnsToNewSegment
                         columnRollSink.nextColumn();
                         final int columnType = metadata.getColumnType(columnIndex);
                         if (columnType > 0) {
@@ -553,7 +558,9 @@ public class WalWriter implements TableWriterAPI {
                                 }
                             }
 
-                            int type = columnIndex == timestampIndex ? -columnType : columnType;
+                            int colType = columnIndex == timestampIndex ? -columnType : columnType;
+                            int newColumnType = columnIndex == convertColumnIndex ? convertToColumnType : colType;
+                            // Saves existing segment file offsets and new file sizes in columnRollSink.
                             CopyWalSegmentUtils.rollColumnToSegment(
                                     ff,
                                     configuration.getWriterFileOpenOpts(),
@@ -562,16 +569,17 @@ public class WalWriter implements TableWriterAPI {
                                     path,
                                     newSegmentId,
                                     columnName,
-                                    type,
+                                    colType,
                                     currentTxnStartRowNum,
                                     uncommittedRows,
                                     columnRollSink,
                                     commitMode,
-                                    columnIndex == convertColumnIndex ? convertToColumnType : type,
+                                    newColumnType,
                                     symbolTable,
                                     symbolMapWriter
                             );
                         } else {
+                            // Deleted column
                             rowValueIsNotNull.setQuick(columnIndex, COLUMN_DELETED_NULL_FLAG);
                         }
                     }
@@ -860,6 +868,10 @@ public class WalWriter implements TableWriterAPI {
             return false;
         }
 
+        if (avgRecordSize != 0) {
+            return (segmentRowCount * avgRecordSize) > threshold;
+        }
+
         long tally = 0;
         for (int colIndex = 0, colCount = columns.size(); colIndex < colCount; ++colIndex) {
             final MemoryMA column = columns.getQuick(colIndex);
@@ -871,6 +883,12 @@ public class WalWriter implements TableWriterAPI {
 
         // The events file will also contain the symbols.
         tally += events.size();
+
+        // If we have many columns it can be a bit expensive, we can optimise the check
+        // by calculating the average record size.
+        if ((totalSegmentsRowCount + segmentRowCount) > 1000) {
+            avgRecordSize = (totalSegmentsSize + tally) / (totalSegmentsRowCount + segmentRowCount);
+        }
 
         return tally > threshold;
     }
@@ -1286,6 +1304,7 @@ public class WalWriter implements TableWriterAPI {
     private void openColumnFiles(CharSequence columnName, int columnType, int columnIndex, int pathTrimToLen) {
         try {
             final MemoryMA dataMem = getDataColumn(columnIndex);
+            totalSegmentsSize += dataMem.getAppendOffset();
             dataMem.close(isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
             dataMem.of(
                     ff,
@@ -1299,6 +1318,7 @@ public class WalWriter implements TableWriterAPI {
 
             final MemoryMA auxMem = getAuxColumn(columnIndex);
             if (auxMem != null) {
+                totalSegmentsSize += auxMem.getAppendOffset();
                 auxMem.close(isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
                 ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
                 columnTypeDriver.configureAuxMemMA(
@@ -1323,6 +1343,7 @@ public class WalWriter implements TableWriterAPI {
         segmentLockFd = -1;
         final long oldSegmentRows = segmentRowCount;
         try {
+            totalSegmentsRowCount += Math.max(0, segmentRowCount);
             currentTxnStartRowNum = 0;
             rowValueIsNotNull.fill(0, columnCount, -1);
             final int segmentPathLen = createSegmentDir(newSegmentId);
@@ -1356,6 +1377,7 @@ public class WalWriter implements TableWriterAPI {
 
             segmentRowCount = 0;
             metadata.switchTo(path, segmentPathLen, isTruncateFilesOnClose());
+            totalSegmentsSize += events.size();
             events.openEventFile(path, segmentPathLen, isTruncateFilesOnClose(), tableToken.isSystem());
             if (commitMode != CommitMode.NOSYNC) {
                 events.sync();
@@ -1884,7 +1906,7 @@ public class WalWriter implements TableWriterAPI {
                 throw CairoException.nonCritical().put("invalid column name: ").put(columnName);
             }
             if (metadata.getColumnIndexQuiet(columnName) > -1) {
-                throw CairoException.nonCritical().put("duplicate column name: ").put(columnName);
+                throw CairoException.duplicateColumn(columnName);
             }
         }
 

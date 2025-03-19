@@ -112,7 +112,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
             // init all record functions for this cursor, in case functions require metadata and/or symbol tables
-            Function.init(recordFunctions, baseCursor, executionContext);
+            Function.init(recordFunctions, baseCursor, executionContext, null);
         } catch (Throwable th) {
             baseCursor.close();
             throw th;
@@ -196,9 +196,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-            if (!isDataMapBuilt) {
-                buildDataMap();
-            }
+            buildMapConditionally();
             baseCursor.calculateSize(circuitBreaker, counter);
         }
 
@@ -215,17 +213,13 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            if (!isDataMapBuilt) {
-                buildDataMap();
-            }
+            buildMapConditionally();
             return super.hasNext();
         }
 
         @Override
         public void longTopK(DirectLongLongHeap heap, int columnIndex) {
-            if (!isDataMapBuilt) {
-                buildDataMap();
-            }
+            buildMapConditionally();
             ((MapRecordCursor) baseCursor).longTopK(heap, recordFunctions.getQuick(columnIndex));
         }
 
@@ -236,7 +230,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 dataMap.reopen();
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
-            Function.init(keyFunctions, managedCursor, executionContext);
+            Function.init(keyFunctions, managedCursor, executionContext, null);
             isDataMapBuilt = false;
             rowId = 0;
         }
@@ -263,6 +257,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
             super.of(dataMap.getCursor());
             isDataMapBuilt = true;
+        }
+
+        private void buildMapConditionally() {
+            if (!isDataMapBuilt) {
+                buildDataMap();
+            }
         }
     }
 }
