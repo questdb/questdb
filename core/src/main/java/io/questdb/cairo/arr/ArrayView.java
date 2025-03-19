@@ -27,7 +27,6 @@ package io.questdb.cairo.arr;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 
 /**
@@ -235,6 +234,10 @@ public abstract class ArrayView implements QuietCloseable {
         return flatView.getDoubleAtAbsoluteIndex(flatViewOffset + flatIndex);
     }
 
+    public final short getElemType() {
+        return ColumnType.decodeArrayElementType(type);
+    }
+
     /**
      * Returns the number of elements in the backing flat array. For a {@linkplain
      * #isVanilla vanilla} array, it is equal to the total number of elements in
@@ -336,7 +339,7 @@ public abstract class ArrayView implements QuietCloseable {
     }
 
     private void appendToMemRecursive(int dim, int flatIndex, MemoryA mem) {
-        short elemType = ColumnType.decodeArrayElementType(this.type);
+        short elemType = getElemType();
         assert elemType == ColumnType.DOUBLE || elemType == ColumnType.LONG : "implemented only for long and double";
 
         final int count = getDimLen(dim);
@@ -366,7 +369,7 @@ public abstract class ArrayView implements QuietCloseable {
     }
 
     private boolean arrayEqualsRecursive(int dim, int flatIndexThis, ArrayView other, int flatIndexOther) {
-        assert ColumnType.isDouble(ColumnType.decodeArrayElementType(this.type)) : "implemented only for double";
+        assert ColumnType.isDouble(getElemType()) : "implemented only for double";
 
         final int count = getDimLen(dim);
         final int strideThis = getStride(dim);

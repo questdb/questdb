@@ -91,7 +91,7 @@ public abstract class AbstractArray implements QuietCloseable {
     }
 
     protected void ensureLegalAppendPosition() {
-        long elementSize = ColumnType.sizeOf(ColumnType.decodeArrayElementType(array.getType()));
+        long elementSize = ColumnType.sizeOf(array.getElemType());
         if (memA.getAppendOffset() == flatLength * elementSize) {
             memA = array.startMemoryA();
         }

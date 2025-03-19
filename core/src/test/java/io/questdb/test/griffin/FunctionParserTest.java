@@ -111,7 +111,6 @@ import org.junit.Assume;
 import org.junit.Test;
 
 import static io.questdb.cairo.ColumnType.OVERLOAD_NONE;
-import static io.questdb.cairo.ColumnType.decodeArrayElementType;
 import static org.junit.Assert.*;
 
 public class FunctionParserTest extends BaseFunctionFactoryTest {
@@ -230,7 +229,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         //TODO: Add more types as we support them
         try (Function f = parseFunction("ARRAY[1, 2.0]", metadata, functionParser)) {
             ArrayView array = f.getArray(null);
-            assertEquals(ColumnType.DOUBLE, decodeArrayElementType(array.getType()));
+            assertEquals(ColumnType.DOUBLE, array.getElemType());
             assertEquals(2, array.getFlatViewLength());
             assertEquals(1, array.getDimCount());
             assertEquals(1.0, array.getDouble(0), 0.0001);
@@ -238,7 +237,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         }
         try (Function f = parseFunction("ARRAY[[1], [2.0]]", metadata, functionParser)) {
             ArrayView array = f.getArray(null);
-            assertEquals(ColumnType.DOUBLE, decodeArrayElementType(array.getType()));
+            assertEquals(ColumnType.DOUBLE, array.getElemType());
             assertEquals(2, array.getDimLen(0));
             assertEquals(1, array.getDimLen(1));
             assertEquals(2, array.getFlatViewLength());

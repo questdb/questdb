@@ -659,7 +659,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     private static @NotNull ArrayValueAppender resolveAppender(@NotNull ArrayView array, boolean convertNonFiniteToNull) {
-        int elemType = ColumnType.decodeArrayElementType(array.getType());
+        int elemType = array.getElemType();
         switch (elemType) {
             case ColumnType.DOUBLE:
                 return convertNonFiniteToNull ? VALUE_APPENDER_DOUBLE_FINITE : VALUE_APPENDER_DOUBLE;
@@ -687,7 +687,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         // We could be storing values of different datatypes.
         // We thus need to align accordingly. I.e., if we store doubles, we need to align on an 8-byte boundary.
         // for shorts, it's on a 2-byte boundary. For booleans, we align to the byte.
-        final int requiredByteAlignment = ColumnType.sizeOf(ColumnType.decodeArrayElementType(array.getType()));
+        final int requiredByteAlignment = ColumnType.sizeOf(array.getElemType());
         padTo(dataMem, requiredByteAlignment);
         array.appendToMem(dataMem);
         // We pad at the end, ready for the next entry that starts with an int.

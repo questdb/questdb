@@ -46,7 +46,7 @@ public class FunctionArray extends MutableArray implements FlatArrayView {
 
     @Override
     public void appendToMemFlat(MemoryA mem) {
-        final short elemType = elemType();
+        final short elemType = getElemType();
         final Function[] functions = functions();
         int elemCount = getFlatViewLength();
         switch (elemType) {

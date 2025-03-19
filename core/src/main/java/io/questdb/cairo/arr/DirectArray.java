@@ -66,10 +66,10 @@ public final class DirectArray extends MutableArray implements Mutable {
     }
 
     public void applyShape(int errorPosition) {
+        short elemType = getElemType();
         int maxArrayElementCount = configuration != null ? configuration.maxArrayElementCount() :
-                Integer.MAX_VALUE >> ColumnType.pow2SizeOf(ColumnType.decodeArrayElementType(this.type));
+                Integer.MAX_VALUE >> ColumnType.pow2SizeOf(elemType);
         resetToDefaultStrides(maxArrayElementCount, errorPosition);
-        short elemType = ColumnType.decodeArrayElementType(type);
         int byteSize = flatViewLength << ColumnType.pow2SizeOf(elemType);
         ensureSize(byteSize);
         borrowedFlatView().of(ptr, elemType, flatViewLength);
@@ -114,7 +114,7 @@ public final class DirectArray extends MutableArray implements Mutable {
      * and then use {@link MemoryA#putDouble(double)} to append all values in row-major order.
      */
     public void putDouble(int flatIndex, double value) {
-        assert ColumnType.decodeArrayElementType(type) == ColumnType.DOUBLE : "putting DOUBLE to a non-DOUBLE array";
+        assert getElemType() == ColumnType.DOUBLE : "putting DOUBLE to a non-DOUBLE array";
         assert flatIndex >= 0 : "negative flatIndex";
         assert ptr > 0 : "ptr <= 0";
         long offset = flatIndex * DOUBLE_BYTES;
@@ -128,7 +128,7 @@ public final class DirectArray extends MutableArray implements Mutable {
      * and then use {@link MemoryA#putLong(long)} to append all values in row-major order.
      */
     public void putLong(int flatIndex, long value) {
-        assert ColumnType.decodeArrayElementType(type) == ColumnType.LONG : "putting LONG to a non-LONG array";
+        assert getElemType() == ColumnType.LONG : "putting LONG to a non-LONG array";
         assert flatIndex >= 0 && flatIndex < flatViewLength : "flatIndex out of bounds";
         long offset = flatIndex * LONG_BYTES;
         assert size >= offset + LONG_BYTES : "size < offset + LONG_BYTES";

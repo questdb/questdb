@@ -196,8 +196,8 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         @Override
         public ArrayView getArray(Record rec) {
             ArrayView array0 = args.getQuick(0).getArray(rec);
-            short type0 = decodeArrayElementType(array0.getType());
-            short outType = decodeArrayElementType(arrayOut.getType());
+            short type0 = array0.getElemType();
+            short outType = arrayOut.getElemType();
             if (type0 != ColumnType.UNDEFINED && type0 != outType) {
                 throw CairoException.nonCritical().position(argPositions.getQuick(0))
                         .put("sub-array has different type [subArrayType=").put(type0)

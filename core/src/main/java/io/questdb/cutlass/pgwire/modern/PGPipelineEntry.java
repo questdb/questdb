@@ -1682,7 +1682,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
 
         int nDims = array.getDimCount();
-        short elemType = ColumnType.decodeArrayElementType(columnType);
+        short elemType = array.getElemType();
         int componentTypeOid = getTypeOid(elemType);
 
         // array header
