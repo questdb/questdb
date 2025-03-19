@@ -55,14 +55,14 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
     private final PerWorkerLocks perWorkerLocks;
     private final double preTouchThreshold;
     private boolean preTouchEnabled;
+    // used to disable column pre-touch without affecting the explain plan
+    private boolean preTouchEnabledOverride;
 
     public AsyncFilterAtom(
             @NotNull CairoConfiguration configuration,
             @NotNull Function filter,
             @Nullable ObjList<Function> perWorkerFilters,
-            @NotNull IntList columnTypes,
-            boolean forceDisablePreTouch,
-            double preTouchThreshold
+            @NotNull IntList columnTypes
     ) {
         this.filter = filter;
         this.perWorkerFilters = perWorkerFilters;
@@ -72,8 +72,8 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
             perWorkerLocks = null;
         }
         this.columnTypes = columnTypes;
-        this.forceDisablePreTouch = forceDisablePreTouch;
-        this.preTouchThreshold = preTouchThreshold;
+        this.forceDisablePreTouch = !configuration.isSqlParallelFilterPreTouchEnabled();
+        this.preTouchThreshold = configuration.getSqlParallelFilterPreTouchThreshold();
     }
 
     @Override
@@ -101,6 +101,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
             }
         }
         preTouchEnabled = executionContext.isColumnPreTouchEnabled();
+        preTouchEnabledOverride = executionContext.isColumnPreTouchEnabledOverride();
     }
 
     public int maybeAcquireFilter(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
@@ -129,7 +130,7 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
      */
     public void preTouchColumns(PageFrameMemoryRecord record, DirectLongList rows, long frameRowCount) {
         // Only pre-touch if the filter selectivity is high, i.e. when reading the column values may involve random I/O.
-        if (!isPreTouchEnabled() || rows.size() > frameRowCount * preTouchThreshold) {
+        if (!isPreTouchEnabled() || !preTouchEnabledOverride || rows.size() > frameRowCount * preTouchThreshold) {
             return;
         }
         // We use a LongAdder as a black hole to make sure that the JVM JIT compiler keeps the load instructions in place.

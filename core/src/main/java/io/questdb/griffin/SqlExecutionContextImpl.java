@@ -64,6 +64,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private MicrosecondClock clock;
     private boolean cloneSymbolTables = false;
     private boolean columnPreTouchEnabled = true;
+    private boolean columnPreTouchEnabledOverride = true;
     private boolean containsSecret;
     private int jitMode;
     private long now;
@@ -251,6 +252,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isColumnPreTouchEnabledOverride() {
+        return columnPreTouchEnabledOverride;
+    }
+
+    @Override
     public boolean isParallelFilterEnabled() {
         return parallelFilterEnabled;
     }
@@ -291,6 +297,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.useSimpleCircuitBreaker = false;
         this.cacheHit = false;
         this.columnPreTouchEnabled = true;
+        this.columnPreTouchEnabledOverride = true;
     }
 
     @Override
@@ -312,6 +319,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setColumnPreTouchEnabled(boolean columnPreTouchEnabled) {
         this.columnPreTouchEnabled = columnPreTouchEnabled;
+    }
+
+    @Override
+    public void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride) {
+        this.columnPreTouchEnabledOverride = columnPreTouchEnabledOverride;
     }
 
     @Override

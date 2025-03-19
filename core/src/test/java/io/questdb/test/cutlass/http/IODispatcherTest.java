@@ -4491,7 +4491,7 @@ public class IODispatcherTest extends AbstractTest {
         );
         ObjList<SqlExecutionContextImpl> contexts = builder.getSqlExecutionContexts();
         for (int i = 0, n = contexts.size(); i < n; i++) {
-            if (!contexts.getQuick(i).isColumnPreTouchEnabled()) {
+            if (!contexts.getQuick(i).isColumnPreTouchEnabledOverride()) {
                 return;
             }
         }

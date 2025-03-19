@@ -78,8 +78,6 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             @Nullable ObjList<Function> perWorkerFilters,
             @Nullable Function limitLoFunction,
             int limitLoPos,
-            boolean preTouchColumns,
-            double preTouchThreshold,
             int workerCount
     ) {
         super(base.getMetadata());
@@ -98,9 +96,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
                 configuration,
                 filter,
                 perWorkerFilters,
-                columnTypes,
-                !preTouchColumns,
-                preTouchThreshold
+                columnTypes
         );
         this.frameSequence = new PageFrameSequence<>(
                 configuration,
