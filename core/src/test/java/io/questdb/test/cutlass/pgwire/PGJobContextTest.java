@@ -204,6 +204,7 @@ public class PGJobContextTest extends BasePGTest {
     public static void setUpStatic() throws Exception {
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         AbstractCairoTest.setUpStatic();
+        engine.load();
         final SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss'.0'");
         formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
         final Stream<Object[]> dates = LongStream.rangeClosed(0, count - 1)
@@ -3064,7 +3065,8 @@ if __name__ == "__main__":
                 try (ResultSet rs = stmt.executeQuery("tables();")) {
                     assertResultSet("id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],matView[BIT]\n" +
                                     "2,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false\n",
-                            sink, rs);
+                            sink, rs
+                    );
                 }
 
                 stmt.execute("drop table x");
@@ -3074,7 +3076,8 @@ if __name__ == "__main__":
                 try (ResultSet rs = stmt.executeQuery("tables();")) {
                     assertResultSet("id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],matView[BIT]\n" +
                                     "3,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false\n",
-                            sink, rs);
+                            sink, rs
+                    );
                 }
             }
         });
