@@ -222,7 +222,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             @NotNull String nullLiteral,
             ArrayState arrayState
     ) {
-        if (ColumnType.isNull(array.getType())) {
+        if (array.isNull()) {
             sink.putAscii(nullLiteral);
             return;
         }
