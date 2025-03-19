@@ -825,9 +825,22 @@ public class SqlParser {
             final QueryModel queryModel = parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback, null);
             final int endOfQuery = lexer.getPosition() - 1;
 
+            // Basic validation - check window functions.
+            QueryModel m = queryModel;
+            while (m != null) {
+                ObjList<QueryColumn> columns = m.getColumns();
+                for (int i = 0, n = columns.size(); i < n; i++) {
+                    QueryColumn column = columns.getQuick(i);
+                    if (column.isWindowColumn()) {
+                        throw SqlException.position(column.getAst().position).put("window function is not supported for materialized views");
+                    }
+                }
+                m = m.getNestedModel();
+            }
+
             // Basic validation - check all nested models for FROM-TO or FILL.
             final QueryModel nestedModel = queryModel.getNestedModel();
-            QueryModel m = nestedModel;
+            m = nestedModel;
             while (m != null) {
                 if (m.getSampleByFrom() != null || m.getSampleByTo() != null) {
                     final int position = m.getSampleByFrom() != null ? m.getSampleByFrom().position : m.getSampleByTo().position;
