@@ -136,7 +136,6 @@ public class CairoEngine implements Closeable, WriterSource {
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
     private final EngineMaintenanceJob engineMaintenanceJob;
     private final FunctionFactoryCache ffCache;
-    private final MatViewGraph matViewGraph;
     private final MessageBusImpl messageBus;
     private final MetadataCache metadataCache;
     private final Metrics metrics;
@@ -161,14 +160,11 @@ public class CairoEngine implements Closeable, WriterSource {
     private final WriterPool writerPool;
     private @NotNull ConfigReloader configReloader = () -> false; // no-op
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
+    private @NotNull MatViewGraph matViewGraph = NoOpMatViewGraph.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
 
     public CairoEngine(CairoConfiguration configuration) {
-        this(configuration, false);
-    }
-
-    public CairoEngine(CairoConfiguration configuration, boolean isReadOnlyReplica) {
         try {
             ffCache = new FunctionFactoryCache(
                     configuration,
@@ -211,15 +207,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 enablePartitionOverwriteControl();
             }
             this.metadataCache = new MetadataCache(this);
-            if (isReadOnlyReplica) {
-                // read-only replica does not need to publish refresh tasks,
-                // but it still needs to track mat view list
-                this.matViewGraph = new MatViewGraphImpl(this, true);
-            } else {
-                this.matViewGraph = configuration.isMatViewEnabled()
-                        ? new MatViewGraphImpl(this)
-                        : NoOpMatViewGraph.INSTANCE;
-            }
         } catch (Throwable th) {
             close();
             throw th;
@@ -580,7 +567,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return getSequencerMetadata(tableToken, desiredVersion);
     }
 
-    public MatViewGraph getMatViewGraph() {
+    public @NotNull MatViewGraph getMatViewGraph() {
         return matViewGraph;
     }
 
@@ -934,6 +921,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // Convert tables to WAL/non-WAL, if necessary.
         final ObjList<TableToken> convertedTables = TableConverter.convertTables(this, tableSequencerAPI, tableFlagResolver, tableNameRegistry);
         tableNameRegistry.reload(convertedTables);
+        matViewGraph = configuration.isMatViewEnabled() ? createMatViewGraph() : NoOpMatViewGraph.INSTANCE;
         buildMatViewGraph();
     }
 
@@ -1027,6 +1015,7 @@ public class CairoEngine implements Closeable, WriterSource {
             matViewRefreshTask.clear();
             matViewRefreshTask.baseTableToken = tableToken;
             matViewRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
+            matViewRefreshTask.invalidationReason = "table drop operation";
             notifyMatViewBaseCommit(matViewRefreshTask, tableSequencerAPI.lastTxn(tableToken));
             return true;
         }
@@ -1703,6 +1692,10 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.tableDoesNotExist(tableName);
         }
         return token;
+    }
+
+    protected MatViewGraph createMatViewGraph() {
+        return new MatViewGraphImpl(this);
     }
 
     protected SqlExecutionContext createRootExecutionContext() {
