@@ -41,7 +41,7 @@ public class MutableArray extends ArrayView {
      * result in a segmentation fault when accessing the data.
      */
     public final void copyShapeFrom(ArrayView source) {
-        int nDims = ColumnType.decodeArrayDimensionality(this.type);
+        int nDims = getDimCount();
         if (source.getDimCount() != nDims) {
             throw CairoException.nonCritical()
                     .put("source array doesn't have the same dimensionality [nDimsThis=").put(nDims)

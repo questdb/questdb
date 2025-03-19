@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
+import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -55,91 +56,100 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new MultiplyDoubleArrayFunction(configuration,
-                args.getQuick(0), args.getQuick(1),
-                argPositions.getQuick(0), argPositions.getQuick(1));
+        return new MultiplyDoubleArrayFunction(
+                configuration,
+                args.getQuick(0),
+                args.getQuick(1),
+                argPositions.getQuick(0),
+                argPositions.getQuick(1)
+        );
     }
 
     private static class MultiplyDoubleArrayFunction extends ArrayFunction implements BinaryFunction {
 
         private final int leftArgPos;
+        private final int rightArgPos;
         private DirectArray arrayOut;
-        private Function leftFn;
-        private Function rightFn;
+        private Function leftArg;
+        private Function rightArg;
 
         public MultiplyDoubleArrayFunction(
                 CairoConfiguration configuration,
-                Function leftFn,
-                Function rightFn,
+                Function leftArg,
+                Function rightArg,
                 int leftArgPos,
                 int rightArgPos
         ) throws SqlException {
-            this.leftFn = leftFn;
-            this.rightFn = rightFn;
+            this.leftArg = leftArg;
+            this.rightArg = rightArg;
             this.arrayOut = new DirectArray(configuration);
             this.leftArgPos = leftArgPos;
-            int nDimsLeft = ColumnType.decodeArrayDimensionality(leftFn.getType());
-            int nDimsRight = ColumnType.decodeArrayDimensionality(rightFn.getType());
-            if (nDimsLeft != 2) {
-                throw SqlException.position(leftArgPos).put("left array is not two-dimensional");
+            this.rightArgPos = rightArgPos;
+            int nDimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
+            int nDimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
+            if (nDimsLeft != nDimsRight) {
+                throw SqlException.position(leftArgPos)
+                        .put("left and right arrays have different number of dimensions [nDimsLeft=").put(nDimsLeft)
+                        .put(", nDimsRight=").put(nDimsRight).put(']');
             }
-            if (nDimsRight != 2) {
-                throw SqlException.position(rightArgPos).put("right array is not two-dimensional");
-            }
-            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
+            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDimsLeft);
+            arrayOut.setType(type);
         }
 
         @Override
         public void close() {
-            this.leftFn = Misc.free(this.leftFn);
-            this.rightFn = Misc.free(this.rightFn);
+            this.leftArg = Misc.free(this.leftArg);
+            this.rightArg = Misc.free(this.rightArg);
             this.arrayOut = Misc.free(this.arrayOut);
         }
 
         @Override
         public ArrayView getArray(Record rec) {
-            ArrayView left = leftFn.getArray(rec);
-            ArrayView right = rightFn.getArray(rec);
+            ArrayView left = leftArg.getArray(rec);
+            ArrayView right = rightArg.getArray(rec);
             if (left.isNull() || right.isNull()) {
                 arrayOut.ofNull();
                 return arrayOut;
             }
-            int commonDimLen = left.getDimLen(1);
-            if (right.getDimLen(0) != commonDimLen) {
+            if (left.getType() != type) {
                 throw CairoException.nonCritical().position(leftArgPos)
-                        .put("left array row length doesn't match right array column length ")
-                        .put("[leftRowLen=").put(commonDimLen)
-                        .put(", rightColLen=").put(right.getDimLen(0))
+                        .put("unexpected array type [expected=").put(type)
+                        .put(", actual=").put(left.getType())
                         .put(']');
             }
-            int outRowCount = left.getDimLen(0);
-            int outColCount = right.getDimLen(1);
-            int leftStride0 = left.getStride(0);
-            int leftStride1 = left.getStride(1);
-            int rightStride0 = right.getStride(0);
-            int rightStride1 = right.getStride(1);
+            if (right.getType() != type) {
+                throw CairoException.nonCritical().position(rightArgPos)
+                        .put("unexpected array type [expected=").put(type)
+                        .put(", actual=").put(right.getType())
+                        .put(']');
+            }
+            if (!left.shapeEquals(right)) {
+                throw CairoException.nonCritical().position(leftArgPos)
+                        .put("arrays have different shapes [leftShape=").put(left.shapeToString())
+                        .put(", rightShape=").put(right.shapeToString())
+                        .put(']');
+            }
             arrayOut.setType(type);
-            arrayOut.setDimLen(0, outRowCount);
-            arrayOut.setDimLen(1, outColCount);
-            arrayOut.applyShape(leftArgPos);
-            MemoryA memOut = arrayOut.startMemoryA();
-            for (int rowOut = 0; rowOut < outRowCount; rowOut++) {
-                for (int colOut = 0; colOut < outColCount; colOut++) {
-                    double sum = 0;
-                    for (int commonDim = 0; commonDim < commonDimLen; commonDim++) {
-                        int leftFlatIndex = leftStride0 * rowOut + leftStride1 * commonDim;
-                        int rightFlatIndex = rightStride0 * commonDim + rightStride1 * colOut;
-                        sum += left.getDouble(leftFlatIndex) * right.getDouble(rightFlatIndex);
-                    }
-                    memOut.putDouble(sum);
+            arrayOut.copyShapeFrom(left);
+            arrayOut.applyShape();
+            if (left.isVanilla() && right.isVanilla()) {
+                FlatArrayView flatViewLeft = left.flatView();
+                FlatArrayView flatViewRight = right.flatView();
+                int elemCount = flatViewLeft.length();
+                for (int i = 0; i < elemCount; i++) {
+                    double leftVal = flatViewLeft.getDoubleAtAbsIndex(i);
+                    double rightVal = flatViewRight.getDoubleAtAbsIndex(i);
+                    arrayOut.putDouble(i, leftVal * rightVal);
                 }
+            } else {
+                multiplyRecursive(0, left, 0, right, 0, arrayOut.startMemoryA());
             }
             return arrayOut;
         }
 
         @Override
         public Function getLeft() {
-            return leftFn;
+            return leftArg;
         }
 
         @Override
@@ -149,12 +159,39 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
 
         @Override
         public Function getRight() {
-            return rightFn;
+            return rightArg;
         }
 
         @Override
         public boolean isOperator() {
             return true;
+        }
+
+        private void multiplyRecursive(
+                int dim,
+                ArrayView left,
+                int flatIndexLeft,
+                ArrayView right,
+                int flatIndexRight,
+                MemoryA memOut
+        ) {
+            final int count = left.getDimLen(dim);
+            final int strideLeft = left.getStride(dim);
+            final int strideRight = right.getStride(dim);
+            final boolean atDeepestDim = dim == left.getDimCount() - 1;
+            if (atDeepestDim) {
+                for (int i = 0; i < count; i++) {
+                    memOut.putDouble(left.getDouble(flatIndexLeft) * right.getDouble(flatIndexLeft));
+                    flatIndexLeft += strideLeft;
+                    flatIndexRight += strideRight;
+                }
+            } else {
+                for (int i = 0; i < count; i++) {
+                    multiplyRecursive(dim + 1, left, flatIndexLeft, right, flatIndexRight, memOut);
+                    flatIndexLeft += strideLeft;
+                    flatIndexRight += strideRight;
+                }
+            }
         }
     }
 }

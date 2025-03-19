@@ -604,38 +604,86 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMultiplyArray() throws Exception {
+    public void testMatrixMultiply() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (left DOUBLE[][], right DOUBLE[][])");
             execute("INSERT INTO tango VALUES " +
                     "(ARRAY[[1.0, 3]], ARRAY[[5.0], [7]]), " +
                     "(ARRAY[[1.0, 1, 1], [2, 2, 2]], ARRAY[[3.0], [5], [7]])");
-            assertSql("product\n[[26.0]]\n[[15.0],[30.0]]\n", "SELECT left * right AS product FROM tango");
+            assertSql("product\n[[26.0]]\n[[15.0],[30.0]]\n", "SELECT matmul(left, right) AS product FROM tango");
         });
     }
 
     @Test
-    public void testMultiplyArrayInvalid() throws Exception {
+    public void testMatrixMultiplyInvalid() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT " +
                     "ARRAY[[1.0, 2.0]] left2d, ARRAY[1.0] left1d, " +
                     "ARRAY[[1.0]] right2d, ARRAY[1.0] right1d "
                     + "FROM long_sequence(1))");
-            assertExceptionNoLeakCheck("SELECT left1d * right1d FROM tango",
-                    7, "left array is not two-dimensional");
-            assertExceptionNoLeakCheck("SELECT left2d * right1d FROM tango",
-                    16, "right array is not two-dimensional");
-            assertExceptionNoLeakCheck("SELECT left2d * right2d FROM tango",
-                    7, "left array row length doesn't match right array column length");
+            assertExceptionNoLeakCheck("SELECT matmul(left1d, right1d) FROM tango",
+                    14, "left array is not two-dimensional");
+            assertExceptionNoLeakCheck("SELECT matmul(left2d, right1d) FROM tango",
+                    22, "right array is not two-dimensional");
+            assertExceptionNoLeakCheck("SELECT matmul(left2d, right2d) FROM tango",
+                    14, "left array row length doesn't match right array column length");
         });
     }
 
     @Test
-    public void testMultiplyArrayTransposed() throws Exception {
+    public void testMatrixMultiplyTransposed() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4], [5, 6]] arr FROM long_sequence(1))");
             assertSql("product\n[[5.0,11.0,17.0],[11.0,25.0,39.0],[17.0,39.0,61.0]]\n",
-                    "SELECT arr * t(arr) product FROM tango");
+                    "SELECT matmul(arr, t(arr)) product FROM tango");
+        });
+    }
+
+    @Test
+    public void testMultiplyArray1d() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[2.0, 3.0], ARRAY[4.0, 5]), " +
+                    "(ARRAY[6.0, 7], ARRAY[8.0, 9])");
+            assertSql("product\n[8.0,15.0]\n[48.0,63.0]\n", "SELECT a * b product FROM tango");
+        });
+    }
+
+    @Test
+    public void testMultiplyArray3d() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE[][][], b DOUBLE[][][])");
+            execute("INSERT INTO tango VALUES (" +
+                    "ARRAY[ [ [2.0, 3], [4.0, 5] ], [ [6.0, 7], [8.0, 9] ]  ], " +
+                    "ARRAY[ [ [10.0, 11], [12.0, 13] ], [ [14.0, 15], [16.0, 17] ]  ]" +
+                    ")");
+            assertSql("product\n[[[20.0,33.0],[48.0,65.0]],[[84.0,105.0],[128.0,153.0]]]\n",
+                    "SELECT a * b product FROM tango");
+        });
+    }
+
+    @Test
+    public void testMultiplyArraySlice1d() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[2.0, 3.0], ARRAY[4.0, 5]), " +
+                    "(ARRAY[6.0, 7], ARRAY[8.0, 9])");
+            assertSql("product\n[15.0]\n[63.0]\n", "SELECT a[2:] * b[2:] product FROM tango");
+        });
+    }
+
+    @Test
+    public void testMultiplyArraySlice3d() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE[][][], b DOUBLE[][][])");
+            execute("INSERT INTO tango VALUES (" +
+                    "ARRAY[ [ [2.0, 3], [4.0, 5] ], [ [6.0, 7], [8.0, 9] ]  ], " +
+                    "ARRAY[ [ [10.0, 11], [12.0, 13] ], [ [14.0, 15], [16.0, 17] ]  ]" +
+                    ")");
+            assertSql("product\n[[[34.0]]]\n",
+                    "SELECT a[1:2, 1:2, 1:2] * b[2:, 2:, 2:] product FROM tango");
         });
     }
 
