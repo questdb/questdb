@@ -127,11 +127,6 @@ public class FunctionArray extends MutableArray implements FlatArrayView {
     }
 
     @Override
-    public short elemType() {
-        return ColumnType.decodeArrayElementType(this.type);
-    }
-
-    @Override
     public double getDoubleAtAbsIndex(int flatIndex) {
         validateFlatIndex(flatIndex);
         return functions[flatIndex].getDouble(record);

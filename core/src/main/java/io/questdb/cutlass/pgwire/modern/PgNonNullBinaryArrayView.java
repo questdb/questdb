@@ -75,11 +75,6 @@ final class PgNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
     }
 
     @Override
-    public short elemType() {
-        return ColumnType.decodeArrayElementType(type);
-    }
-
-    @Override
     public double getDoubleAtAbsIndex(int flatIndex) {
         final long addr = lo + Integer.BYTES + ((long) flatIndex * (Double.BYTES + Integer.BYTES));
         assert addr < hi;

@@ -34,11 +34,6 @@ public interface FlatArrayView {
      */
     void appendToMemFlat(MemoryA mem);
 
-    /**
-     * Returns the type of elements stored in this flat array,
-     * one of the {@link io.questdb.cairo.ColumnType} constants.
-     */
-    short elemType();
 
     default boolean flatEquals(FlatArrayView other) {
         int length = this.length();

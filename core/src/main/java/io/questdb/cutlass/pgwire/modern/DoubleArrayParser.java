@@ -53,11 +53,6 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
     }
 
     @Override
-    public short elemType() {
-        return ColumnType.DOUBLE;
-    }
-
-    @Override
     public double getDoubleAtAbsIndex(int elemIndex) {
         return values.getQuick(elemIndex);
     }
