@@ -38,10 +38,12 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -132,6 +134,8 @@ public class MatViewGraphImplTest extends AbstractCairoTest {
 
     @Test
     public void testMatViewConsistencyOutOfSyncBase() throws Exception {
+        // test requires deletion of opened files
+        Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(() -> {
             checkRefreshStateConsistency(true);
         });
@@ -139,6 +143,8 @@ public class MatViewGraphImplTest extends AbstractCairoTest {
 
     @Test
     public void testMatViewConsistencyOutOfSyncView() throws Exception {
+        // test requires deletion of opened files
+        Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(() -> {
             checkRefreshStateConsistency(false);
         });
