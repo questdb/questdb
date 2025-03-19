@@ -63,7 +63,6 @@ public class CreateMatViewTest extends AbstractCairoTest {
     public static void setUpStatic() throws Exception {
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         AbstractCairoTest.setUpStatic();
-        engine.load();
     }
 
     @Before

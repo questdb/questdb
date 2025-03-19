@@ -50,7 +50,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     public static void setUpStatic() throws Exception {
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         AbstractCairoTest.setUpStatic();
-        engine.load();
     }
 
     @Before

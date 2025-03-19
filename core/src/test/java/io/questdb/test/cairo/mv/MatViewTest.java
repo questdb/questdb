@@ -64,7 +64,6 @@ public class MatViewTest extends AbstractCairoTest {
         inputWorkRoot = TestUtils.unchecked(() -> temp.newFolder("imports" + System.nanoTime()).getAbsolutePath());
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         AbstractCairoTest.setUpStatic();
-        engine.load();
     }
 
     @Before

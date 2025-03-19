@@ -46,7 +46,6 @@ public class MatViewTelemetryTest extends AbstractCairoTest {
         // needed for static engine instance
         setProperty(CAIRO_MAT_VIEW_ENABLED, "true");
         AbstractCairoTest.setUpStatic();
-        engine.load();
     }
 
     @Before

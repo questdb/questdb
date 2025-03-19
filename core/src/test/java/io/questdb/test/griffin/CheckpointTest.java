@@ -88,7 +88,6 @@ public class CheckpointTest extends AbstractCairoTest {
         ff = testFilesFacade;
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         AbstractCairoTest.setUpStatic();
-        engine.load();
     }
 
     @AfterClass
