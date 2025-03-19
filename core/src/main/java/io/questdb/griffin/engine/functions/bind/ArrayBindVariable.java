@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.bind;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.ArrayFunction;
@@ -39,10 +40,16 @@ public final class ArrayBindVariable extends ArrayFunction implements Mutable {
     private ArrayView view;
 
     public void assignType(int type) throws SqlException {
-        if (view == null || view.getType() == ColumnType.UNDEFINED) {
+        assert ColumnType.isArray(type);
+        if (view == null) {
             super.type = type;
             return;
         }
+        int viewType = view.getType();
+        if (ColumnType.isUnderdefined(viewType)) {
+            super.type = type;
+        }
+
         if (view.getType() != type) {
             throw SqlException.$(0, "type mismatch");
         }
@@ -51,6 +58,7 @@ public final class ArrayBindVariable extends ArrayFunction implements Mutable {
     @Override
     public void clear() {
         view = null;
+        super.type = ColumnType.UNDEFINED;
     }
 
     @Override
@@ -59,12 +67,7 @@ public final class ArrayBindVariable extends ArrayFunction implements Mutable {
     }
 
     public void parseArray(CharSequence value) {
-        view = SqlUtil.implicitCastStringAsDoubleArray(value, doubleArrayParser, super.type);
-    }
-
-    public void setType(int colType) {
-        assert view == null || view.getType() == colType;
-        super.type = colType;
+        view = SqlUtil.implicitCastStringAsDoubleArray(value, doubleArrayParser, type);
     }
 
     public void setView(ArrayView view) {
@@ -72,8 +75,17 @@ public final class ArrayBindVariable extends ArrayFunction implements Mutable {
             clear();
             return;
         }
-        if (ColumnType.decodeArrayElementType(view.getType()) != ColumnType.LONG && ColumnType.decodeArrayElementType(view.getType()) != ColumnType.DOUBLE) {
-            throw new UnsupportedOperationException("not imlemented yet");
+
+        int elementType = ColumnType.decodeArrayElementType(view.getType());
+        if (elementType != ColumnType.LONG && elementType != ColumnType.DOUBLE) {
+            throw CairoException.nonCritical().put("unsupported array type, only DOUBLE is currently supported [type=").put(ColumnType.nameOf(elementType)).put(']');
+        }
+        if (ColumnType.isUnderdefined(type)) {
+            type = view.getType();
+        } else {
+            if (type != view.getType()) {
+                throw CairoException.nonCritical().put("array type mismatch [expected=").put(ColumnType.nameOf(type)).put(", actual=").put(ColumnType.nameOf(view.getType())).put(']');
+            }
         }
         this.view = view;
     }

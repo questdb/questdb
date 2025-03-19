@@ -1409,6 +1409,42 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
+    public void testArrayInsertWrongDimensionCount() throws Exception {
+        skipOnWalRun();
+        skipInLegacyMode();
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
+                stmt.execute();
+            }
+
+            // less dimensions than expected
+            try (PreparedStatement stmt = connection.prepareStatement("insert into x values (?)")) {
+                Array arr = connection.createArrayOf("float8", new Double[]{1d, 2d, 3d, 4d, 5d});
+                stmt.setArray(1, arr);
+                stmt.execute();
+                Assert.fail("Wrong array dimension count should fail");
+            } catch (SQLException ex) {
+                TestUtils.assertContainsEither(ex.getMessage(), "inconvertible value", // text mode: implicit cast from string
+                        "array type mismatch [expected=DOUBLE[][], actual=DOUBLE[]]" // binary array
+                );
+            }
+
+            // more dimensions than expected
+            try (PreparedStatement stmt = connection.prepareStatement("insert into x values (?)")) {
+                Array arr = connection.createArrayOf("float8", new Double[][][]{{{1d, 2d, 3d, 4d, 5d}}});
+                stmt.setArray(1, arr);
+                stmt.execute();
+                Assert.fail("Wrong array dimension count should fail");
+            } catch (SQLException ex) {
+                TestUtils.assertContainsEither(ex.getMessage(), "inconvertible value", // text mode: implicit cast from string
+                        "array type mismatch [expected=DOUBLE[][], actual=DOUBLE[][][]]" // binary array
+                );
+            }
+        });
+    }
+
+    @Test
     public void testArrayMaxDimensions() throws Exception {
         skipOnWalRun();
         skipInLegacyMode();

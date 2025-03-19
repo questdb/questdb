@@ -736,7 +736,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             // the bind variable to that type. This will then fail when an actual value is bound
             // to the variable, and it's most likely not that arbitrary type.
             Function arg0 = args.getQuick(0);
-            if (arg0.isUndefined() || ColumnType.isUnderdefinedArray(arg0.getType())) {
+            if (ColumnType.isUnderdefined(arg0.getType())) {
                 final int castToType = args.getQuick(1).getType();
                 short castToTypeTag = ColumnType.tagOf(castToType);
                 final int assignType;

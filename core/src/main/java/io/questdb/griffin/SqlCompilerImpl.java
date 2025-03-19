@@ -3529,7 +3529,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             BindVariableService bindVariableService
     ) throws SqlException {
         final int columnType = metadata.getColumnType(metadataColumnIndex);
-        if (function.isUndefined() || ColumnType.isUnderdefinedArray(function.getType())) {
+        if (ColumnType.isUnderdefined(function.getType())) {
             function.assignType(columnType, bindVariableService);
         }
 

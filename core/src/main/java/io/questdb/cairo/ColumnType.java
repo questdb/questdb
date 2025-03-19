@@ -404,8 +404,8 @@ public final class ColumnType {
         return columnType == UNDEFINED;
     }
 
-    public static boolean isUnderdefinedArray(int columnType) {
-        return tagOf(columnType) == ARRAY && decodeArrayElementType(columnType) == UNDEFINED;
+    public static boolean isUnderdefined(int columnType) {
+        return columnType == UNDEFINED || isUnderdefinedArray(columnType);
     }
 
     public static boolean isVarSize(int columnType) {
@@ -577,6 +577,10 @@ public final class ColumnType {
                 || (fromType == CHAR && toType == SYMBOL)
                 || (fromType == CHAR && toType == STRING)
                 || (fromType == UUID && toType == STRING);
+    }
+
+    private static boolean isUnderdefinedArray(int columnType) {
+        return tagOf(columnType) == ARRAY && decodeArrayElementType(columnType) == UNDEFINED;
     }
 
     private static boolean isVarcharCast(int fromType, int toType) {
