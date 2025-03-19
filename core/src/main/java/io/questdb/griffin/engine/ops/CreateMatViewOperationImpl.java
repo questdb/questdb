@@ -337,7 +337,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         // Find sampling interval.
         CharSequence intervalExpr = null;
         int intervalPos = 0;
-        final ExpressionNode sampleBy = SqlUtil.findSampleByNode(queryModel);
+        final ExpressionNode sampleBy = findSampleByNode(queryModel);
         if (sampleBy != null && sampleBy.type == ExpressionNode.CONSTANT) {
             intervalExpr = sampleBy.token;
             intervalPos = sampleBy.position;
@@ -345,7 +345,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
         // GROUP BY timestamp_floor(ts) (optimized SAMPLE BY)
         if (intervalExpr == null) {
-            final QueryColumn queryColumn = SqlUtil.findTimestampFloorColumn(queryModel);
+            final QueryColumn queryColumn = findTimestampFloorColumn(queryModel);
             if (queryColumn != null) {
                 final ExpressionNode ast = queryColumn.getAst();
                 if (ast.paramCount == 3) {
@@ -396,6 +396,43 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
         // Don't forget to reset augmented columns in create table op with what we have scraped.
         createTableOperation.initColumnMetadata(createColumnModelMap);
+    }
+
+    private static ExpressionNode findSampleByNode(QueryModel model) {
+        while (model != null) {
+
+            if (SqlUtil.isNotPlainSelectModel(model)) {
+                return null;
+            }
+
+            final ExpressionNode sampleBy = model.getSampleBy();
+            if (sampleBy != null && sampleBy.type == ExpressionNode.CONSTANT) {
+                return sampleBy;
+            }
+
+            model = model.getNestedModel();
+        }
+        return null;
+    }
+
+    private static QueryColumn findTimestampFloorColumn(QueryModel model) {
+        while (model != null) {
+
+            if (SqlUtil.isNotPlainSelectModel(model)) {
+                return null;
+            }
+
+            final ObjList<QueryColumn> queryColumns = model.getBottomUpColumns();
+            for (int i = 0, n = queryColumns.size(); i < n; i++) {
+                final QueryColumn queryColumn = queryColumns.getQuick(i);
+                final ExpressionNode ast = queryColumn.getAst();
+                if (ast.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase("timestamp_floor", ast.token)) {
+                    return queryColumn;
+                }
+            }
+            model = model.getNestedModel();
+        }
+        return null;
     }
 
     @Override

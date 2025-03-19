@@ -241,43 +241,6 @@ public class SqlUtil {
         return null;
     }
 
-    public static ExpressionNode findSampleByNode(QueryModel model) {
-        while (model != null) {
-
-            if (SqlUtil.isNotWrapperModel(model)) {
-                return null;
-            }
-
-            final ExpressionNode sampleBy = model.getSampleBy();
-            if (sampleBy != null && sampleBy.type == ExpressionNode.CONSTANT) {
-                return sampleBy;
-            }
-
-            model = model.getNestedModel();
-        }
-        return null;
-    }
-
-    public static QueryColumn findTimestampFloorColumn(QueryModel model) {
-        while (model != null) {
-
-            if (SqlUtil.isNotWrapperModel(model)) {
-                return null;
-            }
-
-            final ObjList<QueryColumn> queryColumns = model.getBottomUpColumns();
-            for (int i = 0, n = queryColumns.size(); i < n; i++) {
-                final QueryColumn queryColumn = queryColumns.getQuick(i);
-                final ExpressionNode ast = queryColumn.getAst();
-                if (ast.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase("timestamp_floor", ast.token)) {
-                    return queryColumn;
-                }
-            }
-            model = model.getNestedModel();
-        }
-        return null;
-    }
-
     public static byte implicitCastAsByte(long value, int fromType) {
         if (value >= Byte.MIN_VALUE && value <= Byte.MAX_VALUE) {
             return (byte) value;
@@ -883,7 +846,7 @@ public class SqlUtil {
         return Numbers.LONG_NULL;
     }
 
-    private static boolean isNotWrapperModel(QueryModel model) {
+    public static boolean isNotPlainSelectModel(QueryModel model) {
         return model.getTableName() != null
                 || model.getGroupBy().size() > 0
                 || model.getJoinModels().size() > 1
