@@ -25,6 +25,7 @@
 package io.questdb.cairo.arr;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.Numbers;
 
 /**
@@ -77,6 +78,7 @@ public class DerivedArrayView extends ArrayView {
         isVanilla = false;
         shape.removeIndex(dim);
         strides.removeIndex(dim);
+        type = ColumnType.encodeArrayType(getElemType(), getDimCount() - 1);
     }
 
     public void slice(int dim, int lo, int hi, int argPos) {
