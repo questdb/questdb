@@ -69,8 +69,8 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         }
         Function arg0 = args.getQuick(0);
         int arg0Pos = argPositions.getQuick(0);
-        short type0 = (short) arg0.getType();
-        short commonElemType = type0;
+        int type0 = arg0.getType();
+        short commonElemType = (short) type0;
         boolean isConstant = arg0.isConstant();
         if (!ColumnType.isArray(type0)) {
             for (int i = 1; i < outerDimLen; i++) {
