@@ -358,10 +358,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                             case DROP_TABLE_WAL_ID:
                                 engine.notifyDropped(tableToken);
-
-                                mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
-                                engine.notifyMatViewBaseCommit(mvRefreshTask, writer.getSeqTxn());
-
                                 purgeTableFiles(tableToken, writer, engine, tempPath);
                                 return;
 

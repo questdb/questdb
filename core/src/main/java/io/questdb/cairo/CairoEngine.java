@@ -456,15 +456,9 @@ public class CairoEngine implements Closeable, WriterSource {
     public void dropTableOrMatView(@Transient Path path, TableToken tableToken) {
         verifyTableToken(tableToken);
         if (tableToken.isWal()) {
-            if (tableNameRegistry.dropTable(tableToken)) {
+            if (notifyDropped(tableToken)) {
                 tableSequencerAPI.dropTable(tableToken, false);
                 matViewGraph.dropViewIfExists(tableToken);
-
-                final MatViewRefreshTask matViewRefreshTask = tlMatViewRefreshTask.get();
-                matViewRefreshTask.clear();
-                matViewRefreshTask.baseTableToken = tableToken;
-                matViewRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
-                notifyMatViewBaseCommit(matViewRefreshTask, tableSequencerAPI.lastTxn(tableToken));
             } else {
                 LOG.info().$("table is already dropped [table=").$(tableToken)
                         .$(", dirName=").$(tableToken.getDirName()).I$();
@@ -1027,8 +1021,16 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isMatView, isWal);
     }
 
-    public void notifyDropped(TableToken tableToken) {
-        tableNameRegistry.dropTable(tableToken);
+    public boolean notifyDropped(TableToken tableToken) {
+        if (tableNameRegistry.dropTable(tableToken)) {
+            final MatViewRefreshTask matViewRefreshTask = tlMatViewRefreshTask.get();
+            matViewRefreshTask.clear();
+            matViewRefreshTask.baseTableToken = tableToken;
+            matViewRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
+            notifyMatViewBaseCommit(matViewRefreshTask, tableSequencerAPI.lastTxn(tableToken));
+            return true;
+        }
+        return false;
     }
 
     public void notifyMatViewBaseCommit(MatViewRefreshTask task, long seqTxn) {
