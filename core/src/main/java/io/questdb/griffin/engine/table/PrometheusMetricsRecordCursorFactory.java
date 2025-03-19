@@ -93,7 +93,7 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
 
         @Override
         public void close() {
-            record.sink.close();
+            record.sink.clear();
             record.values.clear();
             record.value.clear();
         }
@@ -105,7 +105,7 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
 
         @Override
         public Record getRecordB() {
-            return null;
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -169,10 +169,10 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
             public static final int VALUE = TYPE + 1;
             public static final int KIND = VALUE + 1;
             public static final int LABELS = KIND + 1;
-            public DirectUtf8Sink sink = new DirectUtf8Sink(255);
+            public DirectUtf8Sink sink;
             Target target;
-            LongList values = new LongList(10);
-            DirectUtf8String value = new DirectUtf8String();
+            LongList values;
+            DirectUtf8String value;
 
             public PrometheusMetricsRecord(DirectUtf8Sink sink, LongList values, DirectUtf8String value) {
                 this.sink = sink;
