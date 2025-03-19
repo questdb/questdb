@@ -381,6 +381,15 @@ public abstract class ArrayView implements QuietCloseable {
         }
         return true;
     }
+
+    /**
+     * Returns the string representation of this array's shape, as a
+     * list of numbers <code>[len0, len1, ...]</code>.
+     */
+    public final String shapeToString() {
+        return shape.toString();
+    }
+
     private void appendToMemRecursive(int dim, int flatIndex, MemoryA mem) {
         short elemType = getElemType();
         assert elemType == ColumnType.DOUBLE || elemType == ColumnType.LONG : "implemented only for long and double";
