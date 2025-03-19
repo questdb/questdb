@@ -231,7 +231,7 @@ public abstract class ArrayView implements QuietCloseable {
      * OK within a branch covered by an {@link #isVanilla()} check.
      */
     public final double getDouble(int flatIndex) {
-        return flatView.getDoubleAtAbsoluteIndex(flatViewOffset + flatIndex);
+        return flatView.getDoubleAtAbsIndex(flatViewOffset + flatIndex);
     }
 
     public final short getElemType() {
@@ -270,7 +270,7 @@ public abstract class ArrayView implements QuietCloseable {
      * OK within a branch covered by an {@link #isVanilla()} check.
      */
     public final long getLong(int flatIndex) {
-        return flatView.getLongAtAbsoluteIndex(flatViewOffset + flatIndex);
+        return flatView.getLongAtAbsIndex(flatViewOffset + flatIndex);
     }
 
     /**

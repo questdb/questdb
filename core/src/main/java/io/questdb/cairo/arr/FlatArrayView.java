@@ -65,10 +65,9 @@ public interface FlatArrayView {
         }
         return true;
     }
+    double getDoubleAtAbsIndex(int elemIndex);
 
-    double getDoubleAtAbsoluteIndex(int elemIndex);
-
-    long getLongAtAbsoluteIndex(int elemIndex);
+    long getLongAtAbsIndex(int elemIndex);
 
     /**
      * Returns the number of elements stored in this flat array.

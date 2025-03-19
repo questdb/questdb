@@ -80,7 +80,7 @@ final class PgNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
     }
 
     @Override
-    public double getDoubleAtAbsoluteIndex(int flatIndex) {
+    public double getDoubleAtAbsIndex(int flatIndex) {
         final long addr = lo + Integer.BYTES + ((long) flatIndex * (Double.BYTES + Integer.BYTES));
         assert addr < hi;
         long networkOrderVal = Unsafe.getUnsafe().getLong(addr);
@@ -88,7 +88,7 @@ final class PgNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
     }
 
     @Override
-    public long getLongAtAbsoluteIndex(int flatIndex) {
+    public long getLongAtAbsIndex(int flatIndex) {
         final long addr = lo + Integer.BYTES + ((long) flatIndex * (Long.BYTES + Integer.BYTES));
         assert addr < hi;
         long networkOrderVal = Unsafe.getUnsafe().getLong(addr);

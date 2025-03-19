@@ -58,12 +58,12 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
     }
 
     @Override
-    public double getDoubleAtAbsoluteIndex(int elemIndex) {
+    public double getDoubleAtAbsIndex(int elemIndex) {
         return values.getQuick(elemIndex);
     }
 
     @Override
-    public long getLongAtAbsoluteIndex(int elemIndex) {
+    public long getLongAtAbsIndex(int elemIndex) {
         throw new UnsupportedOperationException();
     }
 

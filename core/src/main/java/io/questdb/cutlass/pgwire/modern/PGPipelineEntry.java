@@ -1707,11 +1707,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 switch (elemType) {
                     case ColumnType.LONG:
                         utf8Sink.putNetworkInt(Long.BYTES);
-                        utf8Sink.putNetworkLong(flatView.getLongAtAbsoluteIndex(i));
+                        utf8Sink.putNetworkLong(flatView.getLongAtAbsIndex(i));
                         break;
                     case ColumnType.DOUBLE:
                         utf8Sink.putNetworkInt(Double.BYTES);
-                        utf8Sink.putNetworkDouble(flatView.getDoubleAtAbsoluteIndex(i));
+                        utf8Sink.putNetworkDouble(flatView.getDoubleAtAbsIndex(i));
                         break;
                 }
             }
