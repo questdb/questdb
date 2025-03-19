@@ -244,6 +244,23 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewInvalidColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String createSql = "create materialized view test as (select ts, avg(no_col_like_this) from " + TABLE1 + " sample by 30s) partition by DAY";
+            try {
+                execute(createSql);
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column: no_col_like_this");
+                assertEquals(createSql.indexOf("no_col_like_this"), e.getPosition());
+            }
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
     public void testCreateMatViewInvalidTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);

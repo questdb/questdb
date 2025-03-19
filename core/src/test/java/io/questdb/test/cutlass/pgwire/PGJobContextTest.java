@@ -3064,7 +3064,8 @@ if __name__ == "__main__":
                 try (ResultSet rs = stmt.executeQuery("tables();")) {
                     assertResultSet("id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],matView[BIT]\n" +
                                     "2,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false\n",
-                            sink, rs);
+                            sink, rs
+                    );
                 }
 
                 stmt.execute("drop table x");
@@ -3074,7 +3075,8 @@ if __name__ == "__main__":
                 try (ResultSet rs = stmt.executeQuery("tables();")) {
                     assertResultSet("id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],matView[BIT]\n" +
                                     "3,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false\n",
-                            sink, rs);
+                            sink, rs
+                    );
                 }
             }
         });
@@ -3182,17 +3184,21 @@ if __name__ == "__main__":
     @Test
     public void testCreateTableDuplicateColumnName() throws Exception {
         skipOnWalRun(); // non-partitioned table
+
+        final String sql = "create table tab as (\n" +
+                "            select\n" +
+                "                rnd_byte() b,\n" +
+                "                rnd_boolean() B\n" +
+                "            from long_sequence(1)\n" +
+                "        )";
+
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try {
-                connection.prepareStatement("create table tab as (\n" +
-                        "            select\n" +
-                        "                rnd_byte() b,\n" +
-                        "                rnd_boolean() B\n" +
-                        "            from long_sequence(1)\n" +
-                        "        )").execute();
+                connection.prepareStatement(sql).execute();
                 Assert.fail();
             } catch (PSQLException e) {
-                assertContains(e.getMessage(), "Duplicate column [name=B]");
+                assertContains(e.getMessage(), "ERROR: Duplicate column [name=B]\n" +
+                        "  Position: " + sql.indexOf("B"));
             }
         });
     }

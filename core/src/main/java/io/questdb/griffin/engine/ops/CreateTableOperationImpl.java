@@ -75,6 +75,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     // position of the "like" table name in the SQL text, for error reporting
     private final int likeTableNamePosition;
     private final String selectText;
+    private final int selectTextPosition;
     private final String sqlText;
     private final String tableName;
     private final int tableNamePosition;
@@ -108,6 +109,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.likeTableNamePosition = likeTableNamePosition;
         this.ignoreIfExists = ignoreIfExists;
         this.selectText = null;
+        this.selectTextPosition = -1;
         this.timestampColumnName = null;
         this.timestampColumnNamePosition = 0;
         this.batchSize = 0;
@@ -158,6 +160,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.walEnabled = walEnabled;
 
         this.selectText = null;
+        this.selectTextPosition = -1;
         this.likeTableName = null;
         this.likeTableNamePosition = -1;
         this.batchSize = 0;
@@ -192,6 +195,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             String sqlText,
             @NotNull String tableName,
             @NotNull String selectText,
+            int selectTextPosition,
             int tableNamePosition,
             boolean ignoreIfExists,
             int partitionBy,
@@ -210,6 +214,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.sqlText = sqlText;
         this.tableName = tableName;
         this.selectText = selectText;
+        this.selectTextPosition = selectTextPosition;
         this.tableNamePosition = tableNamePosition;
         this.partitionBy = partitionBy;
         this.volumeAlias = volumeAlias;
@@ -319,6 +324,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     @Override
     public String getSelectText() {
         return selectText;
+    }
+
+    @Override
+    public int getSelectTextPosition() {
+        return selectTextPosition;
     }
 
     @Override
