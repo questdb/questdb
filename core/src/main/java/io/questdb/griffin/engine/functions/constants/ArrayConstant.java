@@ -39,6 +39,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.str.StringSink;
 
 public final class ArrayConstant extends ArrayFunction implements ConstantFunction {
+    public static final DirectArray NULL = new DirectArray();
     private final DirectArray array = new DirectArray();
 
     public ArrayConstant(FunctionArray arrayIn) {
@@ -112,5 +113,9 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
         StringSink strSink = new StringSink();
         ArrayTypeDriver.arrayToJson(array, strSink, NoopArrayState.INSTANCE);
         sink.val("ARRAY" + strSink);
+    }
+
+    static {
+        NULL.ofNull();
     }
 }

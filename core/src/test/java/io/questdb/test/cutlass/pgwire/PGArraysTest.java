@@ -29,6 +29,7 @@ import io.questdb.std.Chars;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -279,6 +280,29 @@ public class PGArraysTest extends BasePGTest {
     }
 
     @Test
+    @Ignore("todo: this currently fail with binary encoding since client BIND message includes the number of dimensions: 1, " +
+            "but the table is created with 2 dimensions. should we allow implicit casting of empty arrays to any dimension?")
+    public void testImplicitCastingOfEmptyArraysToDifferentDimension() throws Exception {
+        skipOnWalRun();
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[][])")) {
+                stmt.execute();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("insert into x values (?)")) {
+                stmt.setObject(1, new double[0]);
+                stmt.execute();
+
+                assertPgWireQuery(connection,
+                        "select * from x",
+                        "al[ARRAY]\n" +
+                                "{}\n");
+            }
+        });
+    }
+
+    @Test
     public void testInsertEmptyArray() throws Exception {
         skipOnWalRun();
 
@@ -398,7 +422,7 @@ public class PGArraysTest extends BasePGTest {
                 stmt.execute();
             }
 
-            // insert null
+            // insert null, this is easy since casting inform the server about the type we are about to insert
             try (PreparedStatement stmt = connection.prepareStatement("insert into x values (null::string)")) {
                 stmt.execute();
             }
@@ -413,6 +437,34 @@ public class PGArraysTest extends BasePGTest {
                             rs
                     );
                 }
+            }
+
+            // a null array can be inserted using setObject - this is harder since the server doesn't know the type
+            try (PreparedStatement stmt = connection.prepareStatement("insert into x values (?)")) {
+                // force client to send PARSE with an unknown type
+                stmt.setObject(1, null);
+                stmt.execute();
+
+                assertPgWireQuery(connection,
+                        "select * from x",
+                        "al[ARRAY]\n" +
+                                "{{1.0,2.0},{3.0,4.0}}\n" +
+                                "null\n" +
+                                "null\n"); // the null we just inserted
+            }
+
+            // now try an empty array explicitly serialized as a string
+            try (PreparedStatement stmt = connection.prepareStatement("insert into x values (?)")) {
+                stmt.setObject(1, "{}");
+                stmt.execute();
+
+                assertPgWireQuery(connection,
+                        "select * from x",
+                        "al[ARRAY]\n" +
+                                "{{1.0,2.0},{3.0,4.0}}\n" +
+                                "null\n" +
+                                "null\n" +
+                                "{}\n"); // the empty array we just inserted
             }
         });
     }

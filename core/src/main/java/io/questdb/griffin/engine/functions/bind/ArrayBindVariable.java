@@ -32,10 +32,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.pgwire.modern.DoubleArrayParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.std.Mutable;
 
 public final class ArrayBindVariable extends ArrayFunction implements Mutable {
-
     private final DoubleArrayParser doubleArrayParser = new DoubleArrayParser();
     private ArrayView view;
 
@@ -63,6 +63,11 @@ public final class ArrayBindVariable extends ArrayFunction implements Mutable {
 
     @Override
     public ArrayView getArray(Record rec) {
+        // todo: consider view field to use ArrayConstant.NULL instead of null
+        if (view == null) {
+            return ArrayConstant.NULL;
+        }
+
         return view;
     }
 

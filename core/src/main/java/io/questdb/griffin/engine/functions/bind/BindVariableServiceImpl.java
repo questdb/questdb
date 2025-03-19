@@ -1342,7 +1342,7 @@ public class BindVariableServiceImpl implements BindVariableService {
             if (tag == ColumnType.ARRAY) {
                 ((ArrayBindVariable) function).assignType(colType);
             } else {
-                throw new UnsupportedOperationException("not implemented");
+                reportError(function, colType, index, null);
             }
         }
     }
