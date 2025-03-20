@@ -113,6 +113,7 @@ final class PgNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
      *   <li>Validating the total memory size matches expected size based on dimensions</li>
      * </ol>
      * <p>After this method is called, the view is ready to be used to access array elements.</p>
+     * <strong>Important:</strong> This method may be called only after shape was set up by the caller via {@link #addDimLen(int)}.
      *
      * @param lo            Start address of the binary array data in memory
      * @param hi            End address of the binary array data in memory (exclusive)
@@ -122,7 +123,8 @@ final class PgNonNullBinaryArrayView extends MutableArray implements FlatArrayVi
      * @throws CairoException       If array contains NULL elements or has unsupported element type
      */
     void setPtrAndCalculateStrides(long lo, long hi, int pgOidType, PGPipelineEntry pipelineEntry) throws BadProtocolException {
-        assert getDimCount() > 0;
+        assert shape.size() > 0;
+
         short componentNativeType;
         int expectedElementSize;
         switch (pgOidType) {
