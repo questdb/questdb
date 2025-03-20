@@ -7,6 +7,9 @@
   <a href="#contribute">
     <img src="https://img.shields.io/github/contributors/questdb/questdb" alt="QuestDB open source contributors"/>
   </a>
+  <a href="https://search.maven.org/search?q=g:org.questdb">
+    <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB en Maven Central"/>
+  </a>
 </p>
 
 <p align="center">
