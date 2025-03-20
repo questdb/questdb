@@ -42,6 +42,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
@@ -304,6 +305,12 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
             if (col == valueColumnIndex) {
                 return baseRecord.getInt(unpivotForIndices.getQuick(cursor.columnPosition));
             }
+
+            // like symbol, we need to provide the key
+            if (col == inColumnIndex) {
+                return cursor.columnPosition;
+            }
+
             return baseRecord.getInt(passthroughIndicesMap.get(col));
         }
 
@@ -312,6 +319,7 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
             if (col == valueColumnIndex) {
                 return baseRecord.getLong(unpivotForIndices.getQuick(cursor.columnPosition));
             }
+
             return baseRecord.getLong(passthroughIndicesMap.get(col));
         }
 
@@ -457,7 +465,7 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
         abstract boolean mustSkipUnpivotValueColumn(int col);
     }
 
-    public class UnpivotRecordCursor implements RecordCursor {
+    public class UnpivotRecordCursor implements RecordCursor, SymbolTable {
         private final UnpivotRecord unpivotRecord;
         private RecordCursor baseCursor;
         private Record baseRecord = null;
@@ -473,7 +481,7 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void close() {
-            baseCursor.close();
+            baseCursor = Misc.free(baseCursor);
         }
 
         @Override
@@ -486,14 +494,24 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
             throw new UnsupportedOperationException();
         }
 
+
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            return baseCursor.getSymbolTable(columnIndex);
+            if (columnIndex == inColumnIndex) {
+                return this;
+            } else {
+                return baseCursor.getSymbolTable(columnIndex);
+            }
         }
 
         @Override
         public boolean hasNext() throws DataUnavailableException {
             return getNextRecord();
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return getSymbolTable(columnIndex);
         }
 
         public void of(SqlExecutionContext executionContext) throws SqlException {
@@ -516,6 +534,22 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
             columnPosition = -1;
             baseRecord = null;
             baseCursor.toTop();
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            if (key > -1) {
+                return unpivotForNames.getQuick(key);
+            }
+            return null;
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            if (key > -1) {
+                return unpivotForNames.getQuick(key);
+            }
+            return null;
         }
 
         private boolean getNextColumn() {
