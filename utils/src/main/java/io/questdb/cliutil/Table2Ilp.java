@@ -50,8 +50,8 @@ public class Table2Ilp {
     }
 
     private static void printUsage() {
-        System.out.println("usage: " + Table2Ilp.class.getName() + " -d <destination_table_name> -dc <destination_ilp_host_port> -s <source_select_query> -sc <source_pg_connection_string> \\ " +
-                "\n [-sts <timestamp_column>] [-sym <symbol_columns>] [-dauth <ilp_auth_key:ilp_auth_token>] [-dtls]");
+        System.out.println("usage: " + Table2Ilp.class.getName() + " -d <destination_table_name> -dilp <destination_ilp_connection_string> -s <source_select_query> -sc <source_pg_connection_string> \\ " +
+                "\n [-sts <timestamp_column>] [-sym <symbol_columns>]");
     }
 
     static class Table2IlpParams {
@@ -59,6 +59,7 @@ public class Table2Ilp {
         private String destinationAuthToken;
         private boolean destinationEnableTls;
         private String destinationIlpHost;
+        private String destinationIlpConnection;
         private int destinationIlpPort;
         private String destinationTableName;
         private String sourcePgConnectionString;
@@ -102,6 +103,9 @@ public class Table2Ilp {
                     case "-sts":
                         params.sourceTimestampColumnName = args[++i].trim();
                         break;
+                    case "-dilp":
+                        params.destinationIlpConnection = args[++i].trim();
+                        break;
                     default:
                         System.err.println("Error: invalid token: " + arg);
                         break;
@@ -118,24 +122,26 @@ public class Table2Ilp {
                 return params;
             }
 
-            if (destinationIlpHostPort != null) {
-                String[] parts = destinationIlpHostPort.split("\\s*:\\s*");
+            if (params.destinationIlpConnection == null) {
+                if (destinationIlpHostPort != null) {
+                    String[] parts = destinationIlpHostPort.split("\\s*:\\s*");
 
-                if (parts.length != 2) {
-                    System.err.println("Error: invalid destination ILP host:port '" + destinationIlpHostPort + "'");
+                    if (parts.length != 2) {
+                        System.err.println("Error: invalid destination ILP host:port '" + destinationIlpHostPort + "'");
+                        return params;
+                    }
+
+                    params.destinationIlpHost = parts[0];
+                    try {
+                        params.destinationIlpPort = Numbers.parseInt(parts[1]);
+                    } catch (NumericException e) {
+                        System.err.println("Error: invalid destination ILP port: " + destinationIlpHostPort);
+                        return params;
+                    }
+                } else {
+                    System.err.println("error: destination ILP host:port not specified");
                     return params;
                 }
-
-                params.destinationIlpHost = parts[0];
-                try {
-                    params.destinationIlpPort = Numbers.parseInt(parts[1]);
-                } catch (NumericException e) {
-                    System.err.println("Error: invalid destination ILP port: " + destinationIlpHostPort);
-                    return params;
-                }
-            } else {
-                System.err.println("error: destination ILP host:port not specified");
-                return params;
             }
 
             if (params.sourcePgConnectionString == null) {
@@ -191,6 +197,10 @@ public class Table2Ilp {
 
         public int getDestinationIlpPort() {
             return destinationIlpPort;
+        }
+
+        public String getDestinationIlpConnection() {
+            return destinationIlpConnection;
         }
 
         public String getDestinationTableName() {
