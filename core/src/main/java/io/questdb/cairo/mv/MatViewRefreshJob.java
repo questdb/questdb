@@ -58,8 +58,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 public class MatViewRefreshJob implements Job, QuietCloseable {
-    private static final String BASE_MAT_VIEW_DROPPED_OR_RENAMED = "base materialized view is dropped or renamed";
-    private static final String BASE_TABLE_DROPPED_OR_RENAMED = "base table is dropped or renamed";
     private static final Log LOG = LogFactory.getLog(MatViewRefreshJob.class);
     private final BlockFileWriter blockFileWriter;
     private final ObjList<TableToken> childViewSink = new ObjList<>();
@@ -193,7 +191,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             TableWriterAPI tableWriter,
             long baseTableTxn,
             long refreshTriggeredTimestamp
-    ) {
+    ) throws SqlException {
         assert state.isLocked();
 
         final int maxRecompileAttempts = configuration.getMatViewMaxRecompileAttempts();
@@ -309,7 +307,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
 
             // Invalidate dependent views recursively.
-            enqueueInvalidateDependentViews(viewToken, invalidationReason);
+            enqueueInvalidateDependentViews(viewToken, "base materialized view is invalidated");
         }
     }
 
@@ -327,12 +325,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 try {
                     engine.verifyTableToken(baseTableToken);
                 } catch (CairoException | TableReferenceOutOfDateException e) {
-                    final String errorMessage = baseTableToken.isMatView() ? BASE_MAT_VIEW_DROPPED_OR_RENAMED : BASE_TABLE_DROPPED_OR_RENAMED;
-                    LOG.info().$(errorMessage)
+                    LOG.info().$("base table is dropped or renamed [table=").$(baseTableToken)
                             .$(" [table=").$(baseTableToken)
                             .$(", error=").$(e.getFlyweightMessage())
                             .I$();
-                    invalidateDependentViews(baseTableToken, viewGraph, errorMessage);
+                    invalidateDependentViews(baseTableToken, viewGraph, "base table is dropped or renamed");
                     continue;
                 }
             }
@@ -407,7 +404,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private void refreshFailState(MatViewRefreshState state, long refreshTimestamp, String errorMessage) {
         state.refreshFail(blockFileWriter, dbRoot.trimTo(dbRootLen), refreshTimestamp, errorMessage);
         // Invalidate dependent views recursively.
-        enqueueInvalidateDependentViews(state.getViewDefinition().getMatViewToken(), errorMessage);
+        enqueueInvalidateDependentViews(state.getViewDefinition().getMatViewToken(), "base materialized view refresh failed");
     }
 
     private boolean refreshFull(@NotNull TableToken viewToken, MatViewGraph viewGraph, long refreshTriggeredTimestamp) {

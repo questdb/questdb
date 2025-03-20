@@ -1231,9 +1231,9 @@ public class MatViewTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\n" +
                             "v1_base\tincremental\tbase\tinvalid\ttruncate operation\n" +
-                            "v2_v1\tincremental\tv1_base\tinvalid\ttruncate operation\n" +
-                            "v3_v1\tincremental\tv1_base\tinvalid\ttruncate operation\n" +
-                            "v4_v3\tincremental\tv3_v1\tinvalid\ttruncate operation\n",
+                            "v2_v1\tincremental\tv1_base\tinvalid\tbase materialized view is invalidated\n" +
+                            "v3_v1\tincremental\tv1_base\tinvalid\tbase materialized view is invalidated\n" +
+                            "v4_v3\tincremental\tv3_v1\tinvalid\tbase materialized view is invalidated\n",
                     "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name",
                     null,
                     true
@@ -1245,9 +1245,9 @@ public class MatViewTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\n" +
                             "v1_base\tincremental\tbase\tvalid\t\n" +
-                            "v2_v1\tincremental\tv1_base\tinvalid\ttruncate operation\n" +
-                            "v3_v1\tincremental\tv1_base\tinvalid\ttruncate operation\n" +
-                            "v4_v3\tincremental\tv3_v1\tinvalid\ttruncate operation\n",
+                            "v2_v1\tincremental\tv1_base\tinvalid\tbase materialized view is invalidated\n" +
+                            "v3_v1\tincremental\tv1_base\tinvalid\tbase materialized view is invalidated\n" +
+                            "v4_v3\tincremental\tv3_v1\tinvalid\tbase materialized view is invalidated\n",
                     "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name",
                     null,
                     true
@@ -1324,9 +1324,9 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\n" +
-                            "v2_v1\tincremental\tv1_base\tinvalid\tbase materialized view is dropped or renamed\n" +
-                            "v3_v1\tincremental\tv1_base\tinvalid\tbase materialized view is dropped or renamed\n" +
-                            "v4_v3\tincremental\tv3_v1\tinvalid\tbase materialized view is dropped or renamed\n",
+                            "v2_v1\tincremental\tv1_base\tinvalid\tbase table is dropped or renamed\n" +
+                            "v3_v1\tincremental\tv1_base\tinvalid\tbase table is dropped or renamed\n" +
+                            "v4_v3\tincremental\tv3_v1\tinvalid\tbase materialized view is invalidated\n",
                     "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name",
                     null,
                     true
@@ -1358,10 +1358,10 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\n" +
-                            "price_1d\tincremental\tprice_1h\tinvalid\t[-1] unexpected filter error\n" +
-                            "price_1d_2\tincremental\tprice_1h\tinvalid\t[-1] unexpected filter error\n" +
+                            "price_1d\tincremental\tprice_1h\tinvalid\tbase materialized view refresh failed\n" +
+                            "price_1d_2\tincremental\tprice_1h\tinvalid\tbase materialized view refresh failed\n" +
                             "price_1h\tincremental\tbase_price\tinvalid\t[-1] unexpected filter error\n" +
-                            "price_1w\tincremental\tprice_1d\tinvalid\t[-1] unexpected filter error\n",
+                            "price_1w\tincremental\tprice_1d\tinvalid\tbase materialized view is invalidated\n",
                     "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name",
                     null,
                     true
