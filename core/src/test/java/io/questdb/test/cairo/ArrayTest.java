@@ -59,7 +59,7 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test2dArrayFrom1dArrays() throws Exception {
+    public void test2dFrom1d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE samba (ask_price DOUBLE[], ask_size DOUBLE[])");
             execute("CREATE TABLE tango (ask DOUBLE[][])");
@@ -79,7 +79,7 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAccessArray1d() throws Exception {
+    public void testAccess1d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[1.0, 2, 3] arr FROM long_sequence(1))");
             assertSql("x\n2.0\n", "SELECT arr[2] x FROM tango");
@@ -88,7 +88,7 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAccessArray3d() throws Exception {
+    public void testAccess3d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[[1.0, 2], [3, 4]], [[5, 6], [7, 8]] ] arr FROM long_sequence(1))");
             assertSql("x\n2.0\n", "SELECT arr[1, 1, 2] x FROM tango");
@@ -101,7 +101,7 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAccessArrayInvalid() throws Exception {
+    public void testAccessInvalid() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4]] arr FROM long_sequence(1))");
             assertExceptionNoLeakCheck("SELECT arr['1',1] FROM tango",
@@ -126,7 +126,7 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testArrayAccessWithNonConstants() throws Exception {
+    public void testAccessWithNonConstants() throws Exception {
         assertMemoryLeak(() -> {
             String subArr11 = "[1.0,2.0]";
             String subArr12 = "[3.0,4.0]";
@@ -146,106 +146,7 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testArrayNativeFormatParser() {
-        final long allocSize = 2048;
-        long mem = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
-        try (DirectArray array = new DirectArray(configuration);
-             ArrayBinaryFormatParser parserNative = new ArrayBinaryFormatParser();
-             DirectUtf8Sink sink = new DirectUtf8Sink(100)
-        ) {
-            // [[1, 2], [3, 4], [5, 6]]
-            array.setType(ColumnType.encodeArrayType(ColumnType.LONG, 2));
-            array.setDimLen(0, 3);
-            array.setDimLen(1, 2);
-            array.applyShape();
-            MemoryA memA = array.startMemoryA();
-            memA.putLong(1);
-            memA.putLong(2);
-            memA.putLong(3);
-            memA.putLong(4);
-            memA.putLong(5);
-            memA.putLong(6);
-            sink.clear();
-            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayState.INSTANCE);
-            String textViewStr = sink.toString();
-
-            long start = mem;
-            sink.clear();
-            parserNative.reset();
-            arrayViewToBinaryFormat(array, mem);
-            boolean finish;
-            do {
-                long size = parserNative.getNextExpectSize();
-                finish = parserNative.processNextBinaryPart(start);
-                start += size;
-            } while (!finish);
-
-            ArrayTypeDriver.arrayToJson(parserNative.getArray(), sink, NoopArrayState.INSTANCE);
-            assertEquals(textViewStr, sink.toString());
-        } catch (ArrayBinaryFormatParser.ParseException e) {
-            throw new RuntimeException(e);
-        } finally {
-            Unsafe.free(mem, allocSize, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    @Test
-    public void testArrayOpComposition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0,2.0],[3.0,4.0],[5.0,6.0]] arr FROM long_sequence(1))");
-            assertSql("x\n[[3.0,4.0]]\n", "SELECT arr[2:3] x FROM tango");
-            assertSql("x\n[3.0,4.0]\n", "SELECT arr[2] x FROM tango");
-            assertSql("x\n[[3.0],[4.0]]\n", "SELECT t(arr[2:3]) x FROM tango");
-            assertSql("x\n[2.0,4.0,6.0]\n", "SELECT t(arr)[2] x FROM tango");
-            assertSql("x\n4.0\n", "SELECT arr[2][2] x FROM tango");
-            assertSql("x\n[4.0]\n", "SELECT arr[2][2:3] x FROM tango");
-            assertSql("x\n[5.0,6.0]\n", "SELECT arr[2:4][2] x FROM tango");
-            assertSql("x\n[[5.0,6.0]]\n", "SELECT arr[2:4][2:3] x FROM tango");
-        });
-    }
-
-    @Test
-    public void testArrayToJsonDouble() {
-        try (DirectArray array = new DirectArray(configuration);
-             DirectUtf8Sink sink = new DirectUtf8Sink(20)
-        ) {
-            array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2));
-            array.setDimLen(0, 2);
-            array.setDimLen(1, 2);
-            array.applyShape();
-            MemoryA memA = array.startMemoryA();
-            memA.putDouble(1.0);
-            memA.putDouble(2.0);
-            memA.putDouble(3.0);
-            memA.putDouble(4.0);
-            sink.clear();
-            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayState.INSTANCE);
-            assertEquals("[[1.0,2.0],[3.0,4.0]]", sink.toString());
-        }
-    }
-
-    @Test
-    public void testArrayToJsonLong() {
-        try (DirectArray array = new DirectArray(configuration);
-             DirectUtf8Sink sink = new DirectUtf8Sink(20)
-        ) {
-            array.setType(ColumnType.encodeArrayType(ColumnType.LONG, 2));
-            array.setDimLen(0, 2);
-            array.setDimLen(1, 2);
-            array.applyShape();
-            MemoryA memA = array.startMemoryA();
-            memA.putLong(1);
-            memA.putLong(2);
-            memA.putLong(3);
-            memA.putLong(4);
-            sink.clear();
-            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayState.INSTANCE);
-            assertEquals("[[1,2],[3,4]]", sink.toString());
-        }
-    }
-
-    @Test
-    public void testBasicArithmeticArray1d() throws Exception {
+    public void testBasicArithmetic() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[])");
             execute("INSERT INTO tango VALUES " +
@@ -258,7 +159,7 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBasicArithmeticArray3d() throws Exception {
+    public void testBasicArithmetic3d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (a DOUBLE[][][], b DOUBLE[][][])");
             execute("INSERT INTO tango VALUES (" +
@@ -583,7 +484,7 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInsertEmptyArrays1d() throws Exception {
+    public void testInsertEmpty1d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE samba (arr LONG[])");
             execute("INSERT INTO samba VALUES (ARRAY[])");
@@ -596,7 +497,7 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInsertEmptyArrays2d() throws Exception {
+    public void testInsertEmpty2d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE samba (arr LONG[][])");
             execute("INSERT INTO samba VALUES (ARRAY[[]])");
@@ -613,7 +514,7 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInsertEmptyArrays3d() throws Exception {
+    public void testInsertEmpty3d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE samba (arr LONG[][][])");
             execute("INSERT INTO samba VALUES (ARRAY[[[]]])");
@@ -630,7 +531,7 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInsertTransposedArray() throws Exception {
+    public void testInsertTransposed() throws Exception {
         assertMemoryLeak(() -> {
             String original = "[[1.0,2.0],[3.0,4.0],[5.0,6.0]]";
             String transposed = "[[1.0,3.0,5.0],[2.0,4.0,6.0]]";
@@ -697,7 +598,7 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMultiplyArraySlice1d() throws Exception {
+    public void testMultiplySlice1d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[])");
             execute("INSERT INTO tango VALUES " +
@@ -708,7 +609,7 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMultiplyArraySlice3d() throws Exception {
+    public void testMultiplySlice3d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (a DOUBLE[][][], b DOUBLE[][][])");
             execute("INSERT INTO tango VALUES (" +
@@ -718,6 +619,50 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("product\n[[[34.0]]]\n",
                     "SELECT a[1:2, 1:2, 1:2] * b[2:, 2:, 2:] product FROM tango");
         });
+    }
+
+    @Test
+    public void testNativeFormatParser() {
+        final long allocSize = 2048;
+        long mem = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
+        try (DirectArray array = new DirectArray(configuration);
+             ArrayBinaryFormatParser parserNative = new ArrayBinaryFormatParser();
+             DirectUtf8Sink sink = new DirectUtf8Sink(100)
+        ) {
+            // [[1, 2], [3, 4], [5, 6]]
+            array.setType(ColumnType.encodeArrayType(ColumnType.LONG, 2));
+            array.setDimLen(0, 3);
+            array.setDimLen(1, 2);
+            array.applyShape();
+            MemoryA memA = array.startMemoryA();
+            memA.putLong(1);
+            memA.putLong(2);
+            memA.putLong(3);
+            memA.putLong(4);
+            memA.putLong(5);
+            memA.putLong(6);
+            sink.clear();
+            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayState.INSTANCE);
+            String textViewStr = sink.toString();
+
+            long start = mem;
+            sink.clear();
+            parserNative.reset();
+            arrayViewToBinaryFormat(array, mem);
+            boolean finish;
+            do {
+                long size = parserNative.getNextExpectSize();
+                finish = parserNative.processNextBinaryPart(start);
+                start += size;
+            } while (!finish);
+
+            ArrayTypeDriver.arrayToJson(parserNative.getArray(), sink, NoopArrayState.INSTANCE);
+            assertEquals(textViewStr, sink.toString());
+        } catch (ArrayBinaryFormatParser.ParseException e) {
+            throw new RuntimeException(e);
+        } finally {
+            Unsafe.free(mem, allocSize, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test
@@ -748,6 +693,21 @@ public class ArrayTest extends AbstractCairoTest {
         assertSql("arr\nnull\n", "SELECT arr FROM tango");
         assertSql("arr\nnull\n", "SELECT t(arr) arr FROM tango");
         assertSql("arr\nnull\n", "SELECT l2price(1.0, arr, arr) arr FROM tango");
+    }
+
+    @Test
+    public void testOpComposition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0,2.0],[3.0,4.0],[5.0,6.0]] arr FROM long_sequence(1))");
+            assertSql("x\n[[3.0,4.0]]\n", "SELECT arr[2:3] x FROM tango");
+            assertSql("x\n[3.0,4.0]\n", "SELECT arr[2] x FROM tango");
+            assertSql("x\n[[3.0],[4.0]]\n", "SELECT t(arr[2:3]) x FROM tango");
+            assertSql("x\n[2.0,4.0,6.0]\n", "SELECT t(arr)[2] x FROM tango");
+            assertSql("x\n4.0\n", "SELECT arr[2][2] x FROM tango");
+            assertSql("x\n[4.0]\n", "SELECT arr[2][2:3] x FROM tango");
+            assertSql("x\n[5.0,6.0]\n", "SELECT arr[2:4][2] x FROM tango");
+            assertSql("x\n[[5.0,6.0]]\n", "SELECT arr[2:4][2:3] x FROM tango");
+        });
     }
 
     @Test
@@ -870,7 +830,7 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSliceArray1d() throws Exception {
+    public void testSlice1d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[1.0,2.0,3.0] arr FROM long_sequence(1))");
             assertSql("slice\n[1.0]\n", "SELECT arr[1:2] slice from tango");
@@ -879,7 +839,7 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSliceArray2d() throws Exception {
+    public void testSlice2d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4], [5, 6]] arr FROM long_sequence(1))");
             assertSql("slice\n[[1.0,2.0]]\n", "SELECT arr[1:2] slice FROM tango");
@@ -893,7 +853,7 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSliceArrayInvalid() throws Exception {
+    public void testSliceInvalid() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4], [5, 6]] arr FROM long_sequence(1))");
             assertExceptionNoLeakCheck("SELECT arr[:1] FROM tango",
@@ -915,7 +875,7 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSliceArrayTransposed() throws Exception {
+    public void testSliceTransposed() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4], [5, 6]] arr FROM long_sequence(1))");
             // transposed array: [[1,3,5],[2,4,6]]; slice takes first row, and first two elements from it
@@ -971,7 +931,47 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTransposeArray() throws Exception {
+    public void testToJsonDouble() {
+        try (DirectArray array = new DirectArray(configuration);
+             DirectUtf8Sink sink = new DirectUtf8Sink(20)
+        ) {
+            array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2));
+            array.setDimLen(0, 2);
+            array.setDimLen(1, 2);
+            array.applyShape();
+            MemoryA memA = array.startMemoryA();
+            memA.putDouble(1.0);
+            memA.putDouble(2.0);
+            memA.putDouble(3.0);
+            memA.putDouble(4.0);
+            sink.clear();
+            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayState.INSTANCE);
+            assertEquals("[[1.0,2.0],[3.0,4.0]]", sink.toString());
+        }
+    }
+
+    @Test
+    public void testToJsonLong() {
+        try (DirectArray array = new DirectArray(configuration);
+             DirectUtf8Sink sink = new DirectUtf8Sink(20)
+        ) {
+            array.setType(ColumnType.encodeArrayType(ColumnType.LONG, 2));
+            array.setDimLen(0, 2);
+            array.setDimLen(1, 2);
+            array.applyShape();
+            MemoryA memA = array.startMemoryA();
+            memA.putLong(1);
+            memA.putLong(2);
+            memA.putLong(3);
+            memA.putLong(4);
+            sink.clear();
+            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayState.INSTANCE);
+            assertEquals("[[1,2],[3,4]]", sink.toString());
+        }
+    }
+
+    @Test
+    public void testTranspose() throws Exception {
         assertMemoryLeak(() -> {
             String original = "[[1.0,2.0],[3.0,4.0],[5.0,6.0]]";
             String transposed = "[[1.0,3.0,5.0],[2.0,4.0,6.0]]";
@@ -1029,7 +1029,7 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUnsupportedArrayDimensionality() throws Exception {
+    public void testUnsupportedDimensionality() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (a DOUBLE[][][][][][][][][][][][][][][][])");
             try (TableMetadata m = engine.getTableMetadata(engine.verifyTableName("x"))) {
@@ -1046,7 +1046,7 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUnsupportedArrayType() throws Exception {
+    public void testUnsupportedType() throws Exception {
         assertMemoryLeak(() -> {
             assertExceptionNoLeakCheck(
                     "create table x (a SYMBOL[][][])",
