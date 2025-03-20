@@ -46,6 +46,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.security.PrivateKey;
@@ -98,10 +99,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 sender.flush();
 
                 assertTableSizeEventually(engine, table, 1);
-                // @todo getArray support in TestTableReadCursor
-/*                try (TableReader reader = getReader(table)) {
-                    TestUtils.assertReader("", reader, new StringSink());
-                }*/
+                // @todo assert table contents, needs getArray support in TestTableReadCursor
             }
         });
     }
@@ -136,7 +134,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 sender.flush();
 
                 assertTableSizeEventually(engine, table, 1);
-                // @todo getArray support in TestTableReadCursor
+                // @todo assert table contents, needs getArray support in TestTableReadCursor
             }
         });
     }
@@ -404,6 +402,27 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testInsertBadStringIntoUuidColumn() throws Exception {
         testValueCannotBeInsertedToUuidColumn("totally not a uuid");
+    }
+
+    @Ignore("TODO: support large arrays in TCP sender")
+    @Test
+    public void testInsertLargeArray() throws Exception {
+        String tableName = "arr_large_test";
+        runInContext(r -> {
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()
+            ) {
+                double[] arr = createDoubleArray(1000);
+                sender.table(tableName)
+                        .doubleArray("arr", arr)
+                        .at(100000000000L, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            assertTableSizeEventually(engine, tableName, 1);
+        });
     }
 
     @Test
