@@ -1067,10 +1067,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         var oldSymbolWriter = (SymbolMapWriter) symbolMapWriters.getQuick(columnIndex);
         int oldCapacity = oldSymbolWriter.getSymbolCapacity();
+        int symbolDenseIndex = oldSymbolWriter.getSymbolDenseIndex();
         boolean symbolCacheFlag = metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag();
 
         newSymbolCapacity = Numbers.ceilPow2(newSymbolCapacity);
-        if (newSymbolCapacity < 0 || newSymbolCapacity > 0x10000000) {
+        if (newSymbolCapacity < 16 || newSymbolCapacity > 0x10000000) {
             LOG.error().$("invalid symbol capacity to change to [table=").$(tableToken).$(", column=").utf8(columnName)
                     .$(", from=").$(oldCapacity)
                     .$(", to=").$(newSymbolCapacity).I$();
@@ -1097,11 +1098,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // remove _todo
                 clearTodoLog();
 
-                var newSymbolWriter = createSymbolMapWriterObj(columnName, columnNameTxn, newSymbolCapacity, symbolCacheFlag);
+                var newSymbolWriter = createSymbolMapWriterObj(columnName, columnNameTxn, newSymbolCapacity, symbolCacheFlag, symbolDenseIndex);
 
                 newSymbolWriter.copySymbols(oldSymbolWriter);
                 symbolMapWriters.set(columnIndex, newSymbolWriter);
-                denseSymbolMapWriters.set(denseSymbolMapWriters.indexOf(oldSymbolWriter), newSymbolWriter);
+                denseSymbolMapWriters.set(symbolDenseIndex, newSymbolWriter);
                 Misc.free(oldSymbolWriter);
 
                 // swap of the files has to be done after _todo is removed
@@ -1116,12 +1117,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             finishColumnPurge();
 
             // open new column files
-            if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
+            long transientRowCount = txWriter.getTransientRowCount();
+            if (transientRowCount > 0) {
                 long partitionTimestamp = txWriter.getLastPartitionTimestamp();
                 setStateForTimestamp(path, partitionTimestamp);
+                int plen = path.size();
                 openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
-                setColumnAppendPosition(columnIndex, txWriter.getTransientRowCount(), false);
+                setColumnAppendPosition(columnIndex, transientRowCount, false);
                 path.trimTo(pathSize);
+
+                if (metadata.isIndexed(columnIndex)) {
+                    ColumnIndexer indexer = indexers.get(columnIndex);
+                    assert indexer != null;
+                    indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), transientRowCount);
+                }
             }
 
         } catch (Throwable th) {
@@ -3248,24 +3257,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private static void copySymbolColumnFiles_partitionDFile(
-            Path path,
-            int rootLen,
-            int partitionBy,
-            long partitionTimestamp,
-            long partitionNameTxn,
-            CharSequence columnName,
-            long columnNameTxn
-    ) {
-        TableUtils.setPathForNativePartition(
-                path.trimTo(rootLen),
-                partitionBy,
-                partitionTimestamp,
-                partitionNameTxn
-        );
-        dFile(path, columnName, columnNameTxn);
-    }
-
     private static void linkFile(FilesFacade ff, LPSZ from, LPSZ to) {
         if (ff.exists(from)) {
             if (ff.hardLink(from, to) == FILES_RENAME_OK) {
@@ -4348,14 +4339,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void createSymbolMapWriter(CharSequence name, long columnNameTxn, int symbolCapacity, boolean symbolCacheFlag) {
-        SymbolMapWriter w = createSymbolMapWriterObj(name, columnNameTxn, symbolCapacity, symbolCacheFlag);
+        SymbolMapWriter w = createSymbolMapWriterObj(name, columnNameTxn, symbolCapacity, symbolCacheFlag, denseSymbolMapWriters.size());
 
         denseSymbolMapWriters.add(w);
         symbolMapWriters.extendAndSet(columnCount, w);
     }
 
     @NotNull
-    private SymbolMapWriter createSymbolMapWriterObj(CharSequence name, long columnNameTxn, int symbolCapacity, boolean symbolCacheFlag) {
+    private SymbolMapWriter createSymbolMapWriterObj(CharSequence name, long columnNameTxn, int symbolCapacity, boolean symbolCacheFlag, int symbolDenseIndex) {
         MapWriter.createSymbolMapFiles(ff, ddlMem, path, name, columnNameTxn, symbolCapacity, symbolCacheFlag);
         SymbolMapWriter w = new SymbolMapWriter(
                 configuration,
@@ -4363,7 +4354,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 name,
                 columnNameTxn,
                 0,
-                denseSymbolMapWriters.size(),
+                symbolDenseIndex,
                 txWriter
         );
 
@@ -7719,7 +7710,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Shift all subsequent symbol indexes by 1 back
             while (symColIndex < denseSymbolMapWriters.size()) {
                 MapWriter w = denseSymbolMapWriters.getQuick(symColIndex);
-                w.setSymbolIndexInTxWriter(symColIndex);
+                w.setSymbolDenseIndex(symColIndex);
                 symColIndex++;
             }
             Misc.freeIfCloseable(writer);

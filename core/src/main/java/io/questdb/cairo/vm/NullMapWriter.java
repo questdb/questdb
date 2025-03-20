@@ -82,7 +82,7 @@ public class NullMapWriter implements MapWriter {
     }
 
     @Override
-    public void setSymbolIndexInTxWriter(int symbolIndexInTxWriter) {
+    public void setSymbolDenseIndex(int symbolDenseIndex) {
         throw new UnsupportedOperationException();
     }
 

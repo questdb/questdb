@@ -57,7 +57,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     private boolean cachedFlag;
     private boolean nullValue = false;
     private MemoryMARW offsetMem;
-    private int symbolIndexInTxWriter;
+    private int symbolDenseIndex;
 
     public SymbolMapWriter(
             CairoConfiguration configuration,
@@ -65,7 +65,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             CharSequence name,
             long columnNameTxn,
             int symbolCount,
-            int symbolIndexInTxWriter,
+            int symbolDenseIndex,
             @NotNull SymbolValueCountCollector valueCountCollector
     ) {
         final int plen = path.size();
@@ -133,7 +133,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
                 cachedFlag = false;
             }
 
-            this.symbolIndexInTxWriter = symbolIndexInTxWriter;
+            this.symbolDenseIndex = symbolDenseIndex;
             this.valueCountCollector = valueCountCollector;
             LOG.debug()
                     .$("open [name=").$(path.trimTo(plen).concat(name).$())
@@ -209,6 +209,10 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         return offsetToKey(offsetMem.getAppendOffset() - Long.BYTES);
     }
 
+    public int getSymbolDenseIndex() {
+        return symbolDenseIndex;
+    }
+
     @Override
     public MemoryR getSymbolOffsetsMemory() {
         return offsetMem;
@@ -254,15 +258,15 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         indexWriter.rollbackValues(keyToOffset(symbolCount - 1));
         offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
         jumpCharMemToSymbolCount(symbolCount);
-        valueCountCollector.collectValueCount(symbolIndexInTxWriter, symbolCount);
+        valueCountCollector.collectValueCount(symbolDenseIndex, symbolCount);
         if (cache != null) {
             cache.clear();
         }
     }
 
     @Override
-    public void setSymbolIndexInTxWriter(int symbolIndexInTxWriter) {
-        this.symbolIndexInTxWriter = symbolIndexInTxWriter;
+    public void setSymbolDenseIndex(int symbolDenseIndex) {
+        this.symbolDenseIndex = symbolDenseIndex;
     }
 
     @Override
@@ -338,7 +342,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         offsetMem.putLong(nPlusOneValue);
 
         final int symIndex = offsetToKey(nOffsetOffset);
-        countCollector.collectValueCount(symbolIndexInTxWriter, symIndex + 1);
+        countCollector.collectValueCount(symbolDenseIndex, symIndex + 1);
         return symIndex;
     }
 
