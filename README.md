@@ -29,18 +29,11 @@
 
 ---
 
-QuestDB is the fastest growing open-source time-series database offering **blazingly fast, high
-throughput ingestion** and **dynamic, low-latency SQL queries**. The entire high-performance
-codebase is built from the ground up in Java, C++ and Rust with no dependencies
-and zero garbage collection.
+QuestDB is the fastest growing open-source time-series database offering **blazingly fast, high throughput ingestion** and **dynamic, low-latency SQL queries**. The entire high-performance codebase is built from the ground up in Java, C++ and Rust with no dependencies and zero garbage collection.
 
-We achieve high performance via a column-oriented storage model, parallelized
-vector execution, SIMD instructions, and low-latency techniques. In addition,
-QuestDB is hardware efficient, with quick setup and operational efficiency.
+We achieve high performance via a column-oriented storage model, parallelized vector execution, SIMD instructions, and low-latency techniques. In addition, QuestDB is hardware efficient, with quick setup and operational efficiency.
 
-QuestDB implements ANSI SQL with native time-series SQL extensions. These SQL
-extensions make it simple to analyze, filter and downsample data, or to
-correlate data from multiple sources using relational and time-series joins.
+QuestDB implements ANSI SQL with native time-series SQL extensions. These SQL extensions make it simple to analyze, filter and downsample data, or to correlate data from multiple sources using relational and time-series joins.
 
 > Ready to go? Jump to the
 > [Get started](#get-started) section.
@@ -69,14 +62,9 @@ Feature highlights include:
 - SQL with powerful, SIMD-optimized time-series extensions
 - High-speed ingestion via the InfluxDB Line Protocol
 - Strong and efficient performance on limited hardware
-- Columnar storage format (native or
-  [Apache Parquet](https://questdb.io/glossary/apache-parquet/)), partitioned
-  and ordered by time
-- Responsive and intuitive Web Console for query and data management, with error
-  handling
-- Excellent performance with
-  [high data cardinality](https://questdb.io/glossary/high-cardinality/) - see
-  [benchmarks](#questdb-performance-vs-other-oss-databases)
+- Columnar storage format (native or [Apache Parquet](https://questdb.io/glossary/apache-parquet/)), partitioned and ordered by time
+- Responsive and intuitive Web Console for query and data management, with error handling
+- Excellent performance with [high data cardinality](https://questdb.io/glossary/high-cardinality/) - see [benchmarks](#questdb-performance-vs-other-oss-databases)
 
 And why use a time-series database?
 
@@ -157,8 +145,7 @@ questdb start
 questdb stop
 ```
 
-Alternatively, to kickoff the full onboarding journey, start with our concise
-[quick start guide](https://questdb.io/docs/quick-start/).
+Alternatively, to kickoff the full onboarding journey, start with our concise [quick start guide](https://questdb.io/docs/quick-start/).
 
 ### First-party ingestion clients
 
@@ -176,14 +163,10 @@ QuestDB clients for ingesting data via the InfluxDB Line Protocol:
 
 Interact with QuestDB and your data via the following interfaces:
 
-- [Web Console](https://questdb.io/docs/web-console/) for an interactive SQL
-  editor and CSV import on port `9000`
-- [InfluxDB Line Protocol](https://questdb.io/docs/reference/api/ilp/overview/)
-  for streaming ingestion on port `9000`
-- [PostgreSQL Wire Protocol](https://questdb.io/docs/reference/api/postgres/)
-  for programmatic queries on port `8812`
-- [REST API](https://questdb.io/docs/reference/api/rest/) for CSV import and
-  cURL on port `9000`
+- [Web Console](https://questdb.io/docs/web-console/) for an interactive SQL editor and CSV import on port `9000`
+- [InfluxDB Line Protocol](https://questdb.io/docs/reference/api/ilp/overview/) for streaming ingestion on port `9000`
+- [PostgreSQL Wire Protocol](https://questdb.io/docs/reference/api/postgres/) for programmatic queries on port `8812`
+- [REST API](https://questdb.io/docs/reference/api/rest/) for CSV import and cURL on port `9000`
 
 ### Popular third-party tools
 
@@ -199,15 +182,12 @@ Popular tools that integrate with QuestDB include:
 
 ### End-to-end code scaffolds
 
-From streaming ingestion to visualization with Grafana, start with code
-scaffolds in from our
-[quickstart repository](https://github.com/questdb/questdb-quickstart).
+From streaming ingestion to visualization with Grafana, start with code scaffolds in from our [quickstart repository](https://github.com/questdb/questdb-quickstart).
 
 ### Configure QuestDB for production workloads
 
 Find our
-[capacity planning](https://questdb.io/docs/deployment/capacity-planning/) to
-fine-tune QuestDB for production workloads.
+[capacity planning](https://questdb.io/docs/deployment/capacity-planning/) to fine-tune QuestDB for production workloads.
 
 ### QuestDB Enterprise
 
@@ -223,29 +203,22 @@ Additional features include:
 - native querying of Parquet files via object storage
 - support SLAs, enhanced monitoring and more
 
-Visit the [Enterprise page](https://questdb.io/enterprise/) for further details
-and contact information.
+Visit the [Enterprise page](https://questdb.io/enterprise/) for further details and contact information.
 
 ## Additional resources
 
 ### 📚 Read the docs
 
 - [QuestDB documentation:](https://questdb.io/docs/) begin the journey
-- [Product roadmap:](https://github.com/orgs/questdb/projects/1/views/5) check
-  out our plan for upcoming releases
-- [Tutorials:](https://questdb.io/tutorial/) learn what's possible with QuestDB,
-  step by step
+- [Product roadmap:](https://github.com/orgs/questdb/projects/1/views/5) check out our plan for upcoming releases
+- [Tutorials:](https://questdb.io/tutorial/) learn what's possible with QuestDB, step by step
 
 ### ❓ Get support
 
-- [Community Discourse forum:](https://community.questdb.io/) join technical
-  discussions, ask questions, and meet other users!
-- [Public Slack:](https://slack.questdb.io/) chat with the QuestDB team and
-  community members
-- [GitHub issues:](https://github.com/questdb/questdb/issues) report bugs or
-  issues with QuestDB
-- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) look for
-  common troubleshooting solutions
+- [Community Discourse forum:](https://community.questdb.io/) join technical discussions, ask questions, and meet other users!
+- [Public Slack:](https://slack.questdb.io/) chat with the QuestDB team and community members
+- [GitHub issues:](https://github.com/questdb/questdb/issues) report bugs or issues with QuestDB
+- [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) look for common troubleshooting solutions
 
 ### 🚢 Deploy QuestDB
 
@@ -262,30 +235,22 @@ Contributions welcome!
 We appreciate:
 
 - source code
-- documentation (see our
-  [documentation repository](https://github.com/questdb/documentation))
+- documentation (see our [documentation repository](https://github.com/questdb/documentation))
 - bug reports
 - feature requests or feedback.
 
 To get started with contributing:
 
-- Have a look through GitHub issues labelled
-  "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)"
-- For Hacktoberfest, see the relevant
-  [labelled issues](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3Ahacktoberfest)
-- Read the
-  [contribution guide](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)
-- For details on building QuestDB, see the
-  [build instructions](https://github.com/questdb/questdb/blob/master/core/README.md)
-- [Create a fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo)
-  of QuestDB and submit a pull request with your proposed changes
+- Have a look through GitHub issues labelled "[Good first issue](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3A%22Good+first+issue%22)"
+- For Hacktoberfest, see the relevant [labelled issues](https://github.com/questdb/questdb/issues?q=is%3Aissue+is%3Aopen+label%3Ahacktoberfest)
+- Read the [contribution guide](https://github.com/questdb/questdb/blob/master/CONTRIBUTING.md)
+- For details on building QuestDB, see the [build instructions](https://github.com/questdb/questdb/blob/master/core/README.md)
+- [Create a fork](https://docs.github.com/en/github/getting-started-with-github/fork-a-repo) of QuestDB and submit a pull request with your proposed changes
 - Stuck? Join our [public Slack](https://slack.questdb.io/) for assistance
 
-✨ As a sign of our gratitude, we send
-**[QuestDB swag](https://questdb.io/community)** to our contributors!
+✨ As a sign of our gratitude, we send **[QuestDB swag](https://questdb.io/community)** to our contributors!
 
-A big thanks goes to the following wonderful people who have contributed to
-QuestDB [emoji key](https://allcontributors.org/docs/en/emoji-key):
+A big thanks goes to the following wonderful people who have contributed to QuestDB (using [emoji key](https://allcontributors.org/docs/en/emoji-key)):
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
