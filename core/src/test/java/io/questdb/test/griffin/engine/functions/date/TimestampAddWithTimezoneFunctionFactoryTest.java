@@ -27,7 +27,6 @@ package io.questdb.test.griffin.engine.functions.date;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.date.TimestampAddWithTimezoneFunctionFactory;
-import io.questdb.jit.JitUtil;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
@@ -119,54 +118,27 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
                             " and period <> 'x'"
             );
 
-            if (JitUtil.isJitSupported()) {
-                assertSql(
-                        "QUERY PLAN\n" +
-                                "VirtualRecord\n" +
-                                "  functions: [dateadd('period',stride,ts,tz),dateadd('period',stride,null,tz),ts,period,stride,tz]\n" +
-                                "    Async JIT Filter workers: 1\n" +
-                                "      filter: ((stride!=null and tz!='unknown/unknown' and period is not null and tz is not null) and period!='x')\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: test_tab\n",
-                        "explain select dateadd(period, stride, ts, tz) val," +
-                                " dateadd(period, stride, null, tz) val2," +
-                                " ts," +
-                                " period," +
-                                " stride," +
-                                " tz" +
-                                " from test_tab" +
-                                " where stride is not null" +
-                                " and tz <> 'unknown/unknown'" +
-                                " and period is not null" +
-                                " and tz is not null" +
-                                " and period <> 'x'"
-                );
-
-            } else {
-                assertSql(
-                        "QUERY PLAN\n" +
-                                "VirtualRecord\n" +
-                                "  functions: [dateadd('period',stride,ts,tz),dateadd('period',stride,null,tz),ts,period,stride,tz]\n" +
-                                "    Async Filter workers: 1\n" +
-                                "      filter: ((stride!=null and tz!='unknown/unknown' and period is not null and tz is not null) and period!='x')\n" +
-                                "        PageFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: test_tab\n",
-                        "explain select dateadd(period, stride, ts, tz) val," +
-                                " dateadd(period, stride, null, tz) val2," +
-                                " ts," +
-                                " period," +
-                                " stride," +
-                                " tz" +
-                                " from test_tab" +
-                                " where stride is not null" +
-                                " and tz <> 'unknown/unknown'" +
-                                " and period is not null" +
-                                " and tz is not null" +
-                                " and period <> 'x'"
-                );
-            }
+            assertPlanNoLeakCheck(
+                    "select dateadd(period, stride, ts, tz) val," +
+                            " dateadd(period, stride, null, tz) val2," +
+                            " ts," +
+                            " period," +
+                            " stride," +
+                            " tz" +
+                            " from test_tab" +
+                            " where stride is not null" +
+                            " and tz <> 'unknown/unknown'" +
+                            " and period is not null" +
+                            " and tz is not null" +
+                            " and period <> 'x'",
+                    "VirtualRecord\n" +
+                            "  functions: [dateadd('period',stride,ts,tz),dateadd('period',stride,null,tz),ts,period,stride,tz]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      filter: ((stride!=null and tz!='unknown/unknown' and period is not null and tz is not null) and period!='x') [pre-touch]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: test_tab\n"
+            );
         });
     }
 

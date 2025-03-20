@@ -882,7 +882,7 @@ public class DeclareTest extends AbstractSqlParserTest {
     public void testDeclareWorksWithJit() throws Exception {
         assertMemoryLeak(() -> {
             String plan = "Async{JIT}Filter workers: 1\n" +
-                    "  filter: id<4\n" +
+                    "  filter: id<4 [pre-touch]\n" +
                     "    PageFrame\n" +
                     "        Row forward scan\n" +
                     "        Frame forward scan on: x\n";
