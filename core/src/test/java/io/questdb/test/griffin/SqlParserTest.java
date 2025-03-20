@@ -1575,10 +1575,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testCreateAsSelectDuplicateColumn1() throws Exception {
-        final String sql = "create table tab as (select rnd_byte() b, rnd_boolean() \"B\" from long_sequence(1))";
         assertSyntaxError(
-                sql,
-                sql.indexOf("\"B\""),
+                "create table tab as (select rnd_byte() b, rnd_boolean() \"B\" from long_sequence(1))",
+                56,
                 "Duplicate column [name=B]",
                 modelOf("tab")
                         .col("b", ColumnType.BYTE)

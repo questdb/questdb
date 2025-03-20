@@ -3185,20 +3185,19 @@ if __name__ == "__main__":
     public void testCreateTableDuplicateColumnName() throws Exception {
         skipOnWalRun(); // non-partitioned table
 
-        final String sql = "create table tab as (\n" +
-                "            select\n" +
-                "                rnd_byte() b,\n" +
-                "                rnd_boolean() B\n" +
-                "            from long_sequence(1)\n" +
-                "        )";
-
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try {
-                connection.prepareStatement(sql).execute();
+                connection.prepareStatement(
+                        "create table tab as (\n" +
+                                "            select\n" +
+                                "                rnd_byte() b,\n" +
+                                "                rnd_boolean() B\n" +
+                                "            from long_sequence(1)\n" +
+                                "        )").execute();
                 Assert.fail();
             } catch (PSQLException e) {
                 assertContains(e.getMessage(), "ERROR: Duplicate column [name=B]\n" +
-                        "  Position: " + sql.indexOf("B"));
+                        "  Position: 102");
             }
         });
     }
