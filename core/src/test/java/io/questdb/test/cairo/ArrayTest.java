@@ -724,6 +724,29 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPartitionConversionToParquetFailsGracefully() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts timestamp, i int, arr double[]) timestamp(ts) partition by DAY");
+            execute("INSERT INTO tango VALUES ('2001-01', 1, '{1.0, 2.0}')");
+            execute("INSERT INTO tango VALUES ('2001-02', 1, '{1.0, 2.0}')");
+
+            // with predicate
+            assertException(
+                    "ALTER TABLE tango CONVERT PARTITION TO PARQUET where ts in '2001-01';",
+                    39,
+                    "tables with array columns cannot be converted to Parquet partitions yet [table=tango, column=arr]"
+            );
+            
+            // with list
+            assertException(
+                    "ALTER TABLE tango CONVERT PARTITION TO PARQUET list '2001-01';",
+                    39,
+                    "tables with array columns cannot be converted to Parquet partitions yet [table=tango, column=arr]"
+            );
+        });
+    }
+
+    @Test
     public void testRndDoubleFunctionEdgeCases() throws Exception {
         assertMemoryLeak(() -> {
             assertExceptionNoLeakCheck(
