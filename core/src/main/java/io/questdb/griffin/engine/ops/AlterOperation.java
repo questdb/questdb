@@ -226,7 +226,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             // "duplicate column name:" is BAU when column is added from ILP, don't log it as an error
             boolean isInfo = command == ADD_COLUMN && e.isMetadataValidation();
 
-            final LogRecord log = isCritical ? LOG.critical() : (isInfo ? LOG.info() : LOG.error());
+            final LogRecord log = isInfo ? LOG.info() : (isCritical ? LOG.critical() : LOG.error());
             log.$("could not alter table [table=").$(svc.getTableToken())
                     .$(", command=").$(command)
                     .$(", msg=").$(e.getFlyweightMessage())
