@@ -291,6 +291,20 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDedup() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, uniq LONG, arr DOUBLE[])" +
+                    " TIMESTAMP(ts) PARTITION BY HOUR WAL" +
+                    " DEDUP UPSERT KEYS (ts, uniq)");
+            execute("INSERT INTO tango VALUES (1, 1, ARRAY[1.0, 2, 3])");
+            execute("INSERT INTO tango VALUES (1, 1, ARRAY[4.0, 5, 6])");
+            drainWalQueue();
+            assertSql("ts\tuniq\tarr\n" +
+                    "1970-01-01T00:00:00.000001Z\t1\t[4.0,5.0,6.0]\n", "tango");
+        });
+    }
+
+    @Test
     public void testEmptyArrayToJsonDouble() {
         try (DirectArray array = new DirectArray(configuration);
              DirectUtf8Sink sink = new DirectUtf8Sink(20)
