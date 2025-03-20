@@ -185,7 +185,7 @@ public class ArrayTest extends AbstractCairoTest {
                     "arrays have different number of dimensions [nDimsLeft=1, nDimsRight=2]");
             assertException("SELECT a + b from tango", 7,
                     "arrays have different shapes [leftShape=[2], rightShape=[3]]");
-            assertException("SELECT a + d from tango", 7,
+            assertException("SELECT a + d from tango", 9,
                     "there is no matching operator `+` with the argument types: DOUBLE[] + LONG[]");
         });
     }
