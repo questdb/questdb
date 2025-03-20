@@ -60,6 +60,7 @@ import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.ConvertOperatorImpl;
 import io.questdb.griffin.DropIndexOperator;
 import io.questdb.griffin.PurgingOperator;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.UpdateOperatorImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
@@ -1071,7 +1072,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         boolean symbolCacheFlag = metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag();
 
         newSymbolCapacity = Numbers.ceilPow2(newSymbolCapacity);
-        if (newSymbolCapacity < 16 || newSymbolCapacity > 0x10000000) {
+        try {
+            TableUtils.validateSymbolCapacity(0, newSymbolCapacity);
+        } catch (SqlException e) {
             LOG.error().$("invalid symbol capacity to change to [table=").$(tableToken).$(", column=").utf8(columnName)
                     .$(", from=").$(oldCapacity)
                     .$(", to=").$(newSymbolCapacity).I$();

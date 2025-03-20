@@ -628,9 +628,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
     private static long getDataVectorSize(long auxEntry) {
         final int raw = Unsafe.getUnsafe().getInt(auxEntry);
-//        if (raw == 0) {
-//            int i = 0;
-//        }
         assert raw != 0;
         final long dataOffset = getDataOffset(auxEntry);
         if (hasNullOrInlinedFlag(raw)) {

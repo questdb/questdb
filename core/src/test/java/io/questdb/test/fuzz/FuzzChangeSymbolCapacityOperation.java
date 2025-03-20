@@ -64,7 +64,7 @@ public class FuzzChangeSymbolCapacityOperation implements FuzzTransactionOperati
             if (tableMetadata.getColumnType(columnIndex) == ColumnType.SYMBOL) {
 
                 String columnName = tableMetadata.getColumnName(columnIndex);
-                int capacity = 1 << (5 + rnd.nextInt(3));
+                int capacity = 1 << (1 + rnd.nextInt(9));
                 FuzzChangeSymbolCapacityOperation operation =
                         new FuzzChangeSymbolCapacityOperation(rnd, columnName, capacity);
                 transaction.operationList.add(operation);
