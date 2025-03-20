@@ -360,12 +360,11 @@ public abstract class ArrayView implements QuietCloseable {
      * shape is to first construct a {@link DerivedArrayView} from it, and then perform
      * a shape change.
      * <p>
-     * The derived array view shares the original array's underlying
-     * flat array, but after a shape change, some elements in the flat array are no
-     * longer a part of the derived view. They remain accessible by their flat index,
-     * but if your code does that, it's broken. (On a transposed array, all indices
-     * remain valid, but iterating over the flat array no longer corresponds to
-     * row-major traversal.)
+     * The derived array view shares the original array's underlying flat array, but
+     * after a shape change, some elements in the flat array are no longer a part of
+     * the derived view. They remain accessible by their flat index, but if your code
+     * does that, it's broken. (On a transposed array, all indices remain valid, but
+     * iterating over the flat array no longer corresponds to row-major traversal.)
      */
     public boolean isVanilla() {
         return isVanilla;
