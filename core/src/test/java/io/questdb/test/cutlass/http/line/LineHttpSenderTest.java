@@ -400,6 +400,42 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testInsertLargeArray() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                String tableName = "arr_large_test";
+                serverMain.ddl("CREATE TABLE " + tableName + " (ts TIMESTAMP, arr DOUBLE[])" +
+                        " TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.awaitTxn(tableName, 0);
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .autoFlushRows(Integer.MAX_VALUE) // we'll flush manually
+                        .retryTimeoutMillis(0)
+                        .build()
+                ) {
+                    double[] arr = createDoubleArray(10_000_000);
+                    sender.table(tableName)
+                            .doubleArray("arr", arr)
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTxn(tableName, 1);
+
+                serverMain.assertSql(
+                        "SELECT ts, arr[1] arr0, arr[10_000] arr4, arr[1_000_000] arr6, arr[10_000_000] arr7" +
+                                " FROM " + tableName,
+                        "ts\tarr0\tarr4\tarr6\tarr7\n" +
+                                "1970-01-02T03:46:40.000000Z\t1.0\t10000.0\t1000000.0\t1.0E7\n");
+            }
+        });
+    }
+
+    @Test
     public void testInsertLongArray() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -471,7 +507,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
             )) {
-                String tableName = "ndarr_nullable_test";
+                String tableName = "arr_nullable_test";
                 serverMain.ddl("CREATE TABLE " + tableName + " (x SYMBOL, l1 LONG, a1 DOUBLE[], " +
                         "a2 DOUBLE[][], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.awaitTxn(tableName, 0);
