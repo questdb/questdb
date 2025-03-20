@@ -1138,11 +1138,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public void resetFlags() {
-            sqlExecutionContext.resetFlags();
-        }
-
-        @Override
         public long getRequestFd() {
             return sqlExecutionContext.getRequestFd();
         }
@@ -1183,6 +1178,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isColumnPreTouchEnabledOverride() {
+            return sqlExecutionContext.isColumnPreTouchEnabledOverride();
+        }
+
+        @Override
         public boolean isParallelFilterEnabled() {
             return sqlExecutionContext.isParallelFilterEnabled();
         }
@@ -1218,6 +1218,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public void resetFlags() {
+            sqlExecutionContext.resetFlags();
+        }
+
+        @Override
         public void setCacheHit(boolean value) {
             sqlExecutionContext.setCacheHit(value);
         }
@@ -1235,6 +1240,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void setColumnPreTouchEnabled(boolean columnPreTouchEnabled) {
             sqlExecutionContext.setColumnPreTouchEnabled(columnPreTouchEnabled);
+        }
+
+        @Override
+        public void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride) {
+            sqlExecutionContext.setColumnPreTouchEnabledOverride(columnPreTouchEnabledOverride);
         }
 
         @Override

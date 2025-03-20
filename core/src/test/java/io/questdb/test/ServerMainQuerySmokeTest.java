@@ -163,7 +163,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 "QUERY PLAN[VARCHAR]\n" +
                         "Async Filter workers: 4\n" +
                         "  limit: 10\n" +
-                        "  filter: key='k3'\n" +
+                        "  filter: key='k3' [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n",

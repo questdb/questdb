@@ -245,7 +245,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public boolean isMetadataValidation() {
-        return errno == METADATA_VALIDATION;
+        return errno == METADATA_VALIDATION || errno == METADATA_VALIDATION_RECOVERABLE;
     }
 
     public boolean isOutOfMemory() {

@@ -862,6 +862,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public double getSqlParallelFilterPreTouchThreshold() {
+        return getDelegate().getSqlParallelFilterPreTouchThreshold();
+    }
+
+    @Override
     public int getSqlParallelWorkStealingThreshold() {
         return getDelegate().getSqlParallelWorkStealingThreshold();
     }
