@@ -825,9 +825,19 @@ public class SqlParser {
             final QueryModel queryModel = parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback, null);
             final int endOfQuery = lexer.getPosition() - 1;
 
-            // Basic validation - check window functions.
+            // Basic validation - check all nested models for window functions, FROM-TO or FILL.
             QueryModel m = queryModel;
             while (m != null) {
+                if (m.getSampleByFrom() != null || m.getSampleByTo() != null) {
+                    final int position = m.getSampleByFrom() != null ? m.getSampleByFrom().position : m.getSampleByTo().position;
+                    throw SqlException.position(position).put("FROM-TO is not supported for materialized views");
+                }
+
+                final ObjList<ExpressionNode> sampleByFill = m.getSampleByFill();
+                if (sampleByFill != null && sampleByFill.size() > 0) {
+                    throw SqlException.position(sampleByFill.get(0).position).put("FILL is not supported for materialized views");
+                }
+
                 ObjList<QueryColumn> columns = m.getColumns();
                 for (int i = 0, n = columns.size(); i < n; i++) {
                     QueryColumn column = columns.getQuick(i);
@@ -835,24 +845,11 @@ public class SqlParser {
                         throw SqlException.position(column.getAst().position).put("window function is not supported for materialized views");
                     }
                 }
+
                 m = m.getNestedModel();
             }
 
-            // Basic validation - check all nested models for FROM-TO or FILL.
             final QueryModel nestedModel = queryModel.getNestedModel();
-            m = nestedModel;
-            while (m != null) {
-                if (m.getSampleByFrom() != null || m.getSampleByTo() != null) {
-                    final int position = m.getSampleByFrom() != null ? m.getSampleByFrom().position : m.getSampleByTo().position;
-                    throw SqlException.position(position).put("FROM-TO is not supported for materialized views");
-                }
-                final ObjList<ExpressionNode> sampleByFill = m.getSampleByFill();
-                if (sampleByFill != null && sampleByFill.size() > 0) {
-                    throw SqlException.position(sampleByFill.get(0).position).put("FILL is not supported for materialized views");
-                }
-                m = m.getNestedModel();
-            }
-
             if (nestedModel != null) {
                 if (nestedModel.getSampleByTimezoneName() != null) {
                     mvOpBuilder.setTimeZone(unquote(nestedModel.getSampleByTimezoneName().token).toString());
