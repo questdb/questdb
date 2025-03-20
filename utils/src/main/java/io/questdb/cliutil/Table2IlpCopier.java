@@ -61,7 +61,7 @@ public class Table2IlpCopier {
                     }
                     int timestampIndex = getTimestampIndex(columnNames, columnTypes, params.getSourceTimestampColumnName());
 
-                    try (Sender sender = buildLineTcpSender(params)) {
+                    try (Sender sender = buildSender(params)) {
                         String tableName = params.getDestinationTableName();
 
                         try {
@@ -76,6 +76,7 @@ public class Table2IlpCopier {
                                     start = microsecondClock.getTicks();
                                 }
                             }
+                            sender.flush();
                         } catch (Exception th) {
                             try {
                                 sender.flush();
@@ -97,7 +98,11 @@ public class Table2IlpCopier {
         return totalSentLines;
     }
 
-    private static Sender buildLineTcpSender(Table2Ilp.Table2IlpParams params) {
+    private static Sender buildSender(Table2Ilp.Table2IlpParams params) {
+        if (params.getDestinationIlpConnection() != null) {
+            return Sender.builder(params.getDestinationIlpConnection()).build();
+        }
+
         Sender.LineSenderBuilder senderBuilder = Sender.builder(Sender.Transport.TCP);
         senderBuilder.address(params.getDestinationIlpHost() + ":" + params.getDestinationIlpPort());
         if (params.enableDestinationTls()) {
@@ -218,6 +223,7 @@ public class Table2IlpCopier {
                     case Types.CHAR:
                     case Types.VARCHAR:
                     case Types.LONGVARCHAR:
+                    case Types.OTHER:
                         String value = resultSet.getString(i + 1);
                         if (value != null && !resultSet.wasNull()) {
                             sender.stringColumn(columnName, resultSet.getString(i + 1));
