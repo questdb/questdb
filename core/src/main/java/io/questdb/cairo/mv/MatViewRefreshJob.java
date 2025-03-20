@@ -58,6 +58,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 public class MatViewRefreshJob implements Job, QuietCloseable {
+    private static final String BASE_MAT_VIEW_DROPPED_OR_RENAMED = "base materialized view is dropped or renamed";
+    private static final String BASE_TABLE_DROPPED_OR_RENAMED = "base table is dropped or renamed";
     private static final Log LOG = LogFactory.getLog(MatViewRefreshJob.class);
     private final BlockFileWriter blockFileWriter;
     private final ObjList<TableToken> childViewSink = new ObjList<>();
@@ -191,7 +193,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             TableWriterAPI tableWriter,
             long baseTableTxn,
             long refreshTriggeredTimestamp
-    ) throws SqlException {
+    ) {
         assert state.isLocked();
 
         final int maxRecompileAttempts = configuration.getMatViewMaxRecompileAttempts();
@@ -325,10 +327,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 try {
                     engine.verifyTableToken(baseTableToken);
                 } catch (CairoException | TableReferenceOutOfDateException e) {
-                    LOG.info().$("base table is dropped or renamed [table=").$(baseTableToken)
+                    final String errorMessage = baseTableToken.isMatView() ? BASE_MAT_VIEW_DROPPED_OR_RENAMED : BASE_TABLE_DROPPED_OR_RENAMED;
+                    LOG.info().$(errorMessage)
+                            .$(" [table=").$(baseTableToken)
                             .$(", error=").$(e.getFlyweightMessage())
                             .I$();
-                    invalidateDependentViews(baseTableToken, viewGraph, "base table is dropped or renamed");
+                    invalidateDependentViews(baseTableToken, viewGraph, errorMessage);
                     continue;
                 }
             }

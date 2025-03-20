@@ -1324,9 +1324,9 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\n" +
-                            "v2_v1\tincremental\tv1_base\tinvalid\tbase table is dropped or renamed\n" +
-                            "v3_v1\tincremental\tv1_base\tinvalid\tbase table is dropped or renamed\n" +
-                            "v4_v3\tincremental\tv3_v1\tinvalid\tbase table is dropped or renamed\n",
+                            "v2_v1\tincremental\tv1_base\tinvalid\tbase materialized view is dropped or renamed\n" +
+                            "v3_v1\tincremental\tv1_base\tinvalid\tbase materialized view is dropped or renamed\n" +
+                            "v4_v3\tincremental\tv3_v1\tinvalid\tbase materialized view is dropped or renamed\n",
                     "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name",
                     null,
                     true
