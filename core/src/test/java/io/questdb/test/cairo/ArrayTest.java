@@ -245,6 +245,36 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBasicArithmeticArray1d() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[2.0, 3.0], ARRAY[4.0, 5]), " +
+                    "(ARRAY[6.0, 7], ARRAY[8.0, 9])");
+            assertSql("sum\n[6.0,8.0]\n[14.0,16.0]\n", "SELECT a + b sum FROM tango");
+            assertSql("diff\n[-2.0,-2.0]\n[-2.0,-2.0]\n", "SELECT a - b diff FROM tango");
+            assertSql("product\n[8.0,15.0]\n[48.0,63.0]\n", "SELECT a * b product FROM tango");
+        });
+    }
+
+    @Test
+    public void testBasicArithmeticArray3d() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE[][][], b DOUBLE[][][])");
+            execute("INSERT INTO tango VALUES (" +
+                    "ARRAY[ [ [2.0, 3], [4.0, 5] ], [ [6.0, 7], [8.0, 9] ]  ], " +
+                    "ARRAY[ [ [10.0, 11], [12.0, 13] ], [ [14.0, 15], [16.0, 17] ]  ]" +
+                    ")");
+            assertSql("sum\n[[[12.0,14.0],[16.0,18.0]],[[20.0,22.0],[24.0,26.0]]]\n",
+                    "SELECT a + b sum FROM tango");
+            assertSql("diff\n[[[-8.0,-8.0],[-8.0,-8.0]],[[-8.0,-8.0],[-8.0,-8.0]]]\n",
+                    "SELECT a - b diff FROM tango");
+            assertSql("product\n[[[20.0,33.0],[48.0,65.0]],[[84.0,105.0],[128.0,153.0]]]\n",
+                    "SELECT a * b product FROM tango");
+        });
+    }
+
+    @Test
     public void testCreateAsSelect2d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (a DOUBLE, b DOUBLE)");
@@ -636,30 +666,6 @@ public class ArrayTest extends AbstractCairoTest {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4], [5, 6]] arr FROM long_sequence(1))");
             assertSql("product\n[[5.0,11.0,17.0],[11.0,25.0,39.0],[17.0,39.0,61.0]]\n",
                     "SELECT matmul(arr, t(arr)) product FROM tango");
-        });
-    }
-
-    @Test
-    public void testMultiplyArray1d() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[])");
-            execute("INSERT INTO tango VALUES " +
-                    "(ARRAY[2.0, 3.0], ARRAY[4.0, 5]), " +
-                    "(ARRAY[6.0, 7], ARRAY[8.0, 9])");
-            assertSql("product\n[8.0,15.0]\n[48.0,63.0]\n", "SELECT a * b product FROM tango");
-        });
-    }
-
-    @Test
-    public void testMultiplyArray3d() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (a DOUBLE[][][], b DOUBLE[][][])");
-            execute("INSERT INTO tango VALUES (" +
-                    "ARRAY[ [ [2.0, 3], [4.0, 5] ], [ [6.0, 7], [8.0, 9] ]  ], " +
-                    "ARRAY[ [ [10.0, 11], [12.0, 13] ], [ [14.0, 15], [16.0, 17] ]  ]" +
-                    ")");
-            assertSql("product\n[[[20.0,33.0],[48.0,65.0]],[[84.0,105.0],[128.0,153.0]]]\n",
-                    "SELECT a * b product FROM tango");
         });
     }
 

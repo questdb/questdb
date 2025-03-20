@@ -33,10 +33,10 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
+public class DoubleArrayAddFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "*(D[]D[])";
+        return "+(D[]D[])";
     }
 
     @Override
@@ -47,7 +47,7 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new DoubleArrayMultiplyOperator(
+        return new DoubleArrayAddOperator(
                 configuration,
                 args.getQuick(0),
                 args.getQuick(1),
@@ -56,21 +56,21 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
         );
     }
 
-    private static class DoubleArrayMultiplyOperator extends DoubleArrayBinaryOperator {
+    private static class DoubleArrayAddOperator extends DoubleArrayBinaryOperator {
 
-        DoubleArrayMultiplyOperator(
+        DoubleArrayAddOperator(
                 CairoConfiguration configuration,
                 Function leftArg,
                 Function rightArg,
                 int leftArgPos,
                 int rightArgPos
         ) throws SqlException {
-            super("*", configuration, leftArg, rightArg, leftArgPos, rightArgPos);
+            super("+", configuration, leftArg, rightArg, leftArgPos, rightArgPos);
         }
 
         @Override
         protected double applyOperation(double leftVal, double rightVal) {
-            return leftVal * rightVal;
+            return leftVal + rightVal;
         }
 
         @Override
@@ -78,7 +78,7 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
             for (int n = leftFlatView.length(), i = 0; i < n; i++) {
                 double leftVal = leftFlatView.getDoubleAtAbsIndex(i);
                 double rightVal = rightFlatView.getDoubleAtAbsIndex(i);
-                arrayOut.putDouble(i, leftVal * rightVal);
+                arrayOut.putDouble(i, leftVal + rightVal);
             }
         }
     }
