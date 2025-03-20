@@ -186,7 +186,7 @@ public class Table2IlpTest {
                 new DefaultServerConfiguration(root) {
                     @Override
                     public HttpFullFatServerConfiguration getHttpServerConfiguration() {
-                        return new DefaultHttpServerConfiguration() {
+                        return new DefaultHttpServerConfiguration(configuration) {
                             @Override
                             public int getBindPort() {
                                 return HTTP_PORT;
