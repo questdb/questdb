@@ -65,7 +65,7 @@ public abstract class DoubleArrayBinaryOperator extends ArrayFunction implements
         int nDimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
         if (nDimsLeft != nDimsRight) {
             throw SqlException.position(leftArgPos)
-                    .put("left and right arrays have different number of dimensions [nDimsLeft=").put(nDimsLeft)
+                    .put("arrays have different number of dimensions [nDimsLeft=").put(nDimsLeft)
                     .put(", nDimsRight=").put(nDimsRight).put(']');
         }
         this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, nDimsLeft);

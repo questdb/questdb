@@ -146,7 +146,7 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBasicArithmetic() throws Exception {
+    public void testBasicArithmetic1d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[])");
             execute("INSERT INTO tango VALUES " +
@@ -172,6 +172,21 @@ public class ArrayTest extends AbstractCairoTest {
                     "SELECT a - b diff FROM tango");
             assertSql("product\n[[[20.0,33.0],[48.0,65.0]],[[84.0,105.0],[128.0,153.0]]]\n",
                     "SELECT a * b product FROM tango");
+        });
+    }
+
+    @Test
+    public void testBasicArithmeticInvalid() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[], c DOUBLE[][], d LONG[])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[2.0, 3.0], ARRAY[4.0, 5, 6], ARRAY[ [1.0, 2.0], [3.0, 4.0] ], ARRAY[1::long])");
+            assertException("SELECT a + c from tango", 7,
+                    "arrays have different number of dimensions [nDimsLeft=1, nDimsRight=2]");
+            assertException("SELECT a + b from tango", 7,
+                    "arrays have different shapes [leftShape=[2], rightShape=[3]]");
+            assertException("SELECT a + d from tango", 7,
+                    "there is no matching operator `+` with the argument types: DOUBLE[] + LONG[]");
         });
     }
 
