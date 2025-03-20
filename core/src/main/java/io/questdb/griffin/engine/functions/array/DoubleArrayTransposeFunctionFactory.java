@@ -41,7 +41,7 @@ import io.questdb.std.ObjList;
 public class DoubleArrayTransposeFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "t(D[])";
+        return "transpose(D[])";
     }
 
     @Override
@@ -80,7 +80,7 @@ public class DoubleArrayTransposeFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("t(").val(arrayFunc).val(')');
+            sink.val("transpose(").val(arrayFunc).val(')');
         }
     }
 }
