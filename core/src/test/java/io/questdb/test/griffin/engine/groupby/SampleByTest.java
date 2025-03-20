@@ -1606,7 +1606,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBackHourlyWithOffset() throws Exception {
-        assertMemoryLeak(() -> assertSampleByIndexQuery(
+        assertSampleByIndexQuery(
                 "to_timezone\tk\ts\tlat\tlon\n" +
                         "2021-03-27T21:15:00.000000Z\t2021-03-27T20:15:00.000000Z\ta\t132.09083798490755\t2021-03-27T21:12:00.000000Z\n" +
                         "2021-03-27T22:15:00.000000Z\t2021-03-27T21:15:00.000000Z\ta\t179.5841357536068\t2021-03-27T21:51:00.000000Z\n" +
@@ -1632,7 +1632,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "   from" +
                         "   long_sequence(1000)" +
                         "),index(s) timestamp(k)"
-        ));
+        );
     }
 
     @Test
@@ -2247,8 +2247,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testIndexSampleByMicro() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_PAGE_SIZE, 256);
-
-        assertMemoryLeak(() -> assertSampleByIndexQuery(
+        assertSampleByIndexQuery(
                 "k\tfirst\n" +
                         "2021-01-01T00:07:39.760000Z\t15318\n" +
                         "2021-01-01T00:07:40.560000Z\t15341\n" +
@@ -2363,7 +2362,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "), index(s) timestamp(k) partition by DAY",
                 false,
                 true
-        ));
+        );
     }
 
     @Test
@@ -2540,7 +2539,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByWithInvalidFunctionArgs() throws Exception {
-        assertMemoryLeak(() -> assertSampleByIndexQuery(
+        assertSampleByIndexQuery(
                 "k\ts\tlat\tlon\n" +
                         "1970-01-04T00:26:40.000000Z\ta\t71.00560222114518\t336.09942524982637\n" +
                         "1970-01-04T01:26:40.000000Z\ta\t7.612327943200507\t302.609357768427\n" +
@@ -2560,7 +2559,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "   from" +
                         "   long_sequence(100)" +
                         "), index(s capacity 10) timestamp(k) partition by DAY"
-        ));
+        );
     }
 
     @Test

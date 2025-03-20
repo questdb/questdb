@@ -8687,6 +8687,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleByUtcTimeZoneAndZeroOffsetRewrite() throws SqlException {
+        // Both time zone and offset should be ignored.
+        assertQuery(
+                "select-group-by timestamp_floor('5m',ts) ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts) stride 5m) order by ts",
+                "SELECT ts, avg(price) FROM tbl SAMPLE BY 5m ALIGN TO CALENDAR TIME ZONE 'UTC' WITH OFFSET '00:00'",
+                modelOf("tbl")
+                        .timestamp("ts")
+                        .col("price", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
     public void testSelectAfterOrderBy() throws SqlException {
         assertQuery(
                 "select-choose Schema from (select-group-by [Schema] Schema, count() count from (select-virtual [Schema, Name] Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relnamespace, relkind, oid] from pg_catalog.pg_class() c left join select [nspname, oid] from pg_catalog.pg_namespace() n on n.oid = c.relnamespace post-join-where n.nspname != 'pg_catalog' and n.nspname != 'information_schema' and n.nspname !~ '^pg_toast' where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid)) c) c order by Schema, Name))",

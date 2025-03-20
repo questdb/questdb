@@ -4808,9 +4808,13 @@ public class SqlOptimiser implements Mutable {
         if (nested != null) {
             // "sample by" details will be on the nested model of the query
             final ExpressionNode sampleBy = nested.getSampleBy();
-            final ExpressionNode sampleByOffset = nested.getSampleByOffset();
+            final ExpressionNode sampleByOffset = nested.getSampleByOffset() != null && !isZeroOffset(nested.getSampleByOffset().token)
+                    ? nested.getSampleByOffset()
+                    : null;
             final ObjList<ExpressionNode> sampleByFill = nested.getSampleByFill();
-            final ExpressionNode sampleByTimezoneName = nested.getSampleByTimezoneName();
+            final ExpressionNode sampleByTimezoneName = nested.getSampleByTimezoneName() != null && !isUTC(nested.getSampleByTimezoneName().token)
+                    ? nested.getSampleByTimezoneName()
+                    : null;
             final ExpressionNode sampleByUnit = nested.getSampleByUnit();
             final ExpressionNode timestamp = nested.getTimestamp();
             final int sampleByFillSize = sampleByFill.size();
@@ -4825,8 +4829,8 @@ public class SqlOptimiser implements Mutable {
             if (
                     sampleBy != null
                             && timestamp != null
-                            && (sampleByFillSize == 0 || (sampleByTimezoneName == null || isUTC(sampleByTimezoneName.token)))
-                            && (sampleByOffset != null && isZeroOffset(sampleByOffset.token))
+                            && (sampleByFillSize == 0 || sampleByTimezoneName == null)
+                            && sampleByOffset == null
                             && (sampleByFillSize == 0 || (sampleByFillSize == 1 && !isPrevKeyword(sampleByFill.getQuick(0).token) && !isLinearKeyword(sampleByFill.getQuick(0).token)))
                             && sampleByUnit == null
                             && (sampleByFrom == null || ((sampleByFrom.type != BIND_VARIABLE) && (sampleByFrom.type != FUNCTION) && (sampleByFrom.type != OPERATION)))

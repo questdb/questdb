@@ -35,13 +35,20 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 public class TimestampFloorFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "timestamp_floor(sN)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         final CharSequence str = args.getQuick(0).getStrA(null);
         int stride = 1;
         char c = 0;
