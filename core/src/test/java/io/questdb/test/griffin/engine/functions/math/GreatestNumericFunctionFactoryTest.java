@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.functions.finance;
+package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.math.GreatestNumericFunctionFactory;
@@ -47,6 +47,18 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
         assertSqlWithTypes("greatest\n4.0:DOUBLE\n", "select greatest(1::short, 4.0)");
         assertSqlWithTypes("greatest\n4.0:DOUBLE\n", "select greatest(1f, 4.0::double)");
         assertSqlWithTypes("greatest\n4.0000:FLOAT\n", "select greatest(1f, 4::int)");
+    }
+
+    @Test
+    public void testGreatestNumericFunctionFactoryDates() throws Exception {
+        assertSqlWithTypes(
+                "greatest\n2020-09-11T00:00:00.000Z:DATE\n",
+                "select greatest('2020-09-10'::date, '2020-09-11'::date)"
+        );
+        assertSqlWithTypes(
+                "greatest\n2020-09-13T00:00:00.000Z:DATE\n",
+                "select greatest('2020-09-10'::date, '2020-09-11'::date, '2020-09-13'::date)"
+        );
     }
 
     @Test
@@ -76,12 +88,26 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
     @Test
     public void testGreatestNumericFunctionFactoryNulls() throws Exception {
         assertSqlWithTypes("greatest\nnull:NULL\n", "select greatest(1L, null, 2L)");
+        // verify that we've cleaned up the counter array after the NULL returned earlier
+        assertSqlWithTypes("greatest\n2:INT\n", "select greatest(1, 2)");
     }
 
     @Test
     public void testGreatestNumericFunctionFactoryShorts() throws Exception {
         assertSqlWithTypes("greatest\n40:SHORT\n", "select greatest(1::short, 40::short)");
         assertSqlWithTypes("greatest\n12:SHORT\n", "select greatest(1::short, 4::short, 3::short, 12::short, 8::short)");
+    }
+
+    @Test
+    public void testGreatestNumericFunctionFactoryTimestamps() throws Exception {
+        assertSqlWithTypes(
+                "greatest\n2020-09-10T20:01:00.000000Z:TIMESTAMP\n",
+                "select greatest('2020-09-10T20:00:00.000000Z'::timestamp, '2020-09-10T20:01:00.000000Z'::timestamp)"
+        );
+        assertSqlWithTypes(
+                "greatest\n2020-09-11T20:00:00.000000Z:TIMESTAMP\n",
+                "select greatest('2020-09-10T20:00:00.000000Z'::timestamp, '2020-09-10T20:01:00.000000Z'::timestamp, '2020-09-11T20:00:00.000000Z'::timestamp)"
+        );
     }
 
     @Test
@@ -94,28 +120,54 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
     public void testGreatestNumericFunctionFactoryWithData() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_int() a, rnd_int() b from long_sequence(20))");
-            drainWalQueue();
-            assertSqlWithTypes("greatest\n" +
-                    "315515118:INT\n" +
-                    "1548800833:INT\n" +
-                    "73575701:INT\n" +
-                    "1326447242:INT\n" +
-                    "1868723706:INT\n" +
-                    "-1191262516:INT\n" +
-                    "-1436881714:INT\n" +
-                    "1545253512:INT\n" +
-                    "1573662097:INT\n" +
-                    "339631474:INT\n" +
-                    "1904508147:INT\n" +
-                    "-1458132197:INT\n" +
-                    "1125579207:INT\n" +
-                    "426455968:INT\n" +
-                    "-85170055:INT\n" +
-                    "-1520872171:INT\n" +
-                    "-1101822104:INT\n" +
-                    "1404198:INT\n" +
-                    "1631244228:INT\n" +
-                    "-1252906348:INT\n", "select greatest(a, b) from x");
+
+            assertSqlWithTypes(
+                    "greatest\n" +
+                            "315515118:INT\n" +
+                            "1548800833:INT\n" +
+                            "73575701:INT\n" +
+                            "1326447242:INT\n" +
+                            "1868723706:INT\n" +
+                            "-1191262516:INT\n" +
+                            "-1436881714:INT\n" +
+                            "1545253512:INT\n" +
+                            "1573662097:INT\n" +
+                            "339631474:INT\n" +
+                            "1904508147:INT\n" +
+                            "-1458132197:INT\n" +
+                            "1125579207:INT\n" +
+                            "426455968:INT\n" +
+                            "-85170055:INT\n" +
+                            "-1520872171:INT\n" +
+                            "-1101822104:INT\n" +
+                            "1404198:INT\n" +
+                            "1631244228:INT\n" +
+                            "-1252906348:INT\n",
+                    "select greatest(a, b) from x"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiGreatFunctionInSingleQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (timestamp TIMESTAMP, symbol SYMBOL, price DOUBLE, amount DOUBLE) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute(
+                    "INSERT INTO x VALUES " +
+                            "('2021-10-05T11:31:35.878Z', 'AAPL', 245, 123.4), " +
+                            "('2021-10-05T12:31:35.878Z', 'AAPL', 245, 123.3), " +
+                            "('2021-10-05T13:31:35.878Z', 'AAPL', 250, 123.1), " +
+                            "('2021-10-05T14:31:35.878Z', 'AAPL', 250, 123.0);"
+            );
+
+            assertQuery(
+                    "greatest\tgreatest1\n" +
+                            "247.0\t123.4\n" +
+                            "247.0\t123.3\n" +
+                            "250.0\t123.2\n" +
+                            "250.0\t123.2\n",
+                    "select greatest(price, 247), greatest(amount, 123.2) from x"
+            );
         });
     }
 

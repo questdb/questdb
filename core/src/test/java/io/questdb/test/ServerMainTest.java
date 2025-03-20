@@ -316,6 +316,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.page.frame.min.rows\tQDB_CAIRO_SQL_PAGE_FRAME_MIN_ROWS\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.filter.enabled\tQDB_CAIRO_SQL_PARALLEL_FILTER_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.filter.pretouch.enabled\tQDB_CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.filter.pretouch.threshold\tQDB_CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_THRESHOLD\t0.05\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.enabled\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.merge.shard.queue.capacity\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_MERGE_SHARD_QUEUE_CAPACITY\t4\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.sharding.threshold\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD\t100000\tdefault\tfalse\tfalse\n" +
@@ -371,7 +372,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.wal.purge.interval\tQDB_CAIRO_WAL_PURGE_INTERVAL\t30000\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.recreate.distressed.sequencer.attempts\tQDB_CAIRO_WAL_RECREATE_DISTRESSED_SEQUENCER_ATTEMPTS\t3\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.segment.rollover.row.count\tQDB_CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT\t200000\tdefault\tfalse\tfalse\n" +
-                                    "cairo.wal.segment.rollover.size\tQDB_CAIRO_WAL_SEGMENT_ROLLOVER_SIZE\t0\tdefault\tfalse\tfalse\n" +
+                                    "cairo.wal.segment.rollover.size\tQDB_CAIRO_WAL_SEGMENT_ROLLOVER_SIZE\t52428800\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.squash.uncommitted.rows.multiplier\tQDB_CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER\t20.0\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.supported\tQDB_CAIRO_WAL_SUPPORTED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.temp.pending.rename.table.prefix\tQDB_CAIRO_WAL_TEMP_PENDING_RENAME_TABLE_PREFIX\ttemp_5822f658-31f6-11ee-be56-0242ac120002\tdefault\tfalse\tfalse\n" +

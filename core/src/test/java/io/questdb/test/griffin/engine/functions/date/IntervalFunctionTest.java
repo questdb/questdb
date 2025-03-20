@@ -135,7 +135,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
                     "VirtualRecord\n" +
                             "  functions: [true]\n" +
                             "    Async Filter workers: 1\n" +
-                            "      filter: ts in (null, null)\n" +
+                            "      filter: ts in (null, null) [pre-touch]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: x\n"
@@ -224,7 +224,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select * from x where ts in today() or ts in tomorrow() or ts in yesterday();",
                     "Async Filter workers: 1\n" +
-                            "  filter: ((ts in today() or ts in tomorrow()) or ts in yesterday())\n" +
+                            "  filter: ((ts in today() or ts in tomorrow()) or ts in yesterday()) [pre-touch]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n"

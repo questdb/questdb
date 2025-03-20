@@ -411,6 +411,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlPageFrameMinRows;
     private final boolean sqlParallelFilterEnabled;
     private final boolean sqlParallelFilterPreTouchEnabled;
+    private final double sqlParallelFilterPreTouchThreshold;
     private final boolean sqlParallelGroupByEnabled;
     private final boolean sqlParallelReadParquetEnabled;
     private final int sqlParallelWorkStealingThreshold;
@@ -758,7 +759,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walSupported = getBoolean(properties, env, PropertyKey.CAIRO_WAL_SUPPORTED, true);
         walApplyEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_APPLY_ENABLED, true);
         this.walSegmentRolloverRowCount = getLong(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 200_000);
-        this.walSegmentRolloverSize = getLongSize(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_SIZE, 0);  // disabled by default.
+        this.walSegmentRolloverSize = getLongSize(properties, env, PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_SIZE, 50 * Numbers.SIZE_1MB);
         if ((this.walSegmentRolloverSize != 0) && (this.walSegmentRolloverSize < 1024)) {  // 1KiB segments minimum
             throw CairoException.critical(0).put("cairo.wal.segment.rollover.size must be 0 (disabled) or >= 1024 (1KiB)");
         }
@@ -1639,6 +1640,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             final int defaultReduceShardCount = Math.min(sharedWorkerCount, 4);
             this.cairoPageFrameReduceShardCount = getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, defaultReduceShardCount);
             this.sqlParallelFilterPreTouchEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, true);
+            this.sqlParallelFilterPreTouchThreshold = getDouble(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_THRESHOLD, "0.05");
             this.sqlCopyModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 32);
 
             final boolean defaultParallelSqlEnabled = sharedWorkerCount >= 4;
@@ -3329,6 +3331,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlPageFrameMinRows() {
             return sqlPageFrameMinRows;
+        }
+
+        @Override
+        public double getSqlParallelFilterPreTouchThreshold() {
+            return sqlParallelFilterPreTouchThreshold;
         }
 
         @Override

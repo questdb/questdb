@@ -64,6 +64,16 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                     Assert.assertNotEquals(-1, sink.toString().indexOf('h'));
                 }
             }
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: name ~ concat(['%',:sym::string,'%']) [case-sensitive] [state-shared] [pre-touch]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where name like '%' || :sym || '%'"
+            );
         });
     }
 
@@ -471,8 +481,69 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
             assertLike("s\nv\n", "select * from x where s like '_'");
             assertLike("s\nv\nvv\n", "select * from x where s like '%'");
             assertLike("s\nv\nvv\n", "select * from x where s like 'v%'");
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: s ilike v% [state-shared] [pre-touch]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where s ilike 'v%'"
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: s like v% [state-shared] [pre-touch]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where s like 'v%'"
+            );
+
             assertLike("s\nv\nvv\n", "select * from x where s like '%v'");
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: s like %v [state-shared] [pre-touch]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where s like '%v'"
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: s ilike %v [state-shared] [pre-touch]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where s ilike '%v'"
+            );
+
             assertLike("s\nv\nvv\n", "select * from x where s like '%v%'");
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: s like %v% [state-shared] [pre-touch]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where s like '%v%'"
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: s ilike %v% [state-shared] [pre-touch]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where s ilike '%v%'"
+            );
             assertLike("s\n", "select * from x where s like 'w%'");
             assertLike("s\n", "select * from x where s like '%w'");
             assertLike("s\nv\nvv\n", "select * from x where s like '%%'");
