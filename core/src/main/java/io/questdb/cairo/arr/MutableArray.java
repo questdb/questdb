@@ -32,13 +32,15 @@ public class MutableArray extends ArrayView {
     /**
      * Copies the shape from the provided source array.
      * <p>
-     * <strong>IMPORTANT:</strong> if you are calling this as the first step in populating
-     * the array with new data, you must call {@code applyShape()} before adding the data.
-     * A method of that name is defined on subclasses such as {@link DirectArray#applyShape()
-     * DirectArray} and {@link FunctionArray#applyShape FunctionArray}.
+     * <strong>IMPORTANT:</strong> if you are calling this as the first step in
+     * populating the array with new data, you must call {@code applyShape()} before
+     * adding the data. A method of that name is defined on subclasses such as {@link
+     * DirectArray#applyShape() DirectArray} and {@link FunctionArray#applyShape
+     * FunctionArray}.
      * <p>
-     * If you're calling this while not changing the data, it is most likely an error and may
-     * result in a segmentation fault when accessing the data.
+     * If you're calling this while not changing the data, it is most likely an error
+     * and may result in a segmentation fault when accessing the data. If your goal is
+     * to create a view of this array with a different shape, use {@link DerivedArrayView}.
      */
     public final void copyShapeFrom(ArrayView source) {
         int nDims = getDimCount();
@@ -61,8 +63,9 @@ public class MutableArray extends ArrayView {
      * A method of that name is defined on subclasses such as {@link DirectArray#applyShape()
      * DirectArray} and {@link FunctionArray#applyShape FunctionArray}.
      * <p>
-     * If you're calling this while not changing the data, it is most likely an error and may
-     * result in a segmentation fault when accessing the data.
+     * If you're calling this while not changing the data, it is most likely an error
+     * and may result in a segmentation fault when accessing the data. If your goal is
+     * to create a view of this array with a different shape, use {@link DerivedArrayView}.
      */
     public final void setDimLen(int dimension, int length) {
         if (length < 0) {
@@ -90,8 +93,9 @@ public class MutableArray extends ArrayView {
      * A method of that name is defined on subclasses such as {@link DirectArray#applyShape()
      * DirectArray} and {@link FunctionArray#applyShape FunctionArray}.
      * <p>
-     * If you're calling this while not changing the data, it is most likely an error and may
-     * result in a segmentation fault when accessing the data.
+     * If you're calling this while not changing the data, it is most likely an error
+     * and may result in a segmentation fault when accessing the data. If your goal is
+     * to create a view of this array with a different shape, use {@link DerivedArrayView}.
      */
     public final void setType(int encodedType) {
         assert ColumnType.isArray(encodedType);

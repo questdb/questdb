@@ -127,7 +127,7 @@ public class PGArraysTest extends BasePGTest {
                 stmt.execute();
             }
 
-            // less dimensions than expected
+            // fewer dimensions than expected
             try (PreparedStatement stmt = connection.prepareStatement("insert into x values (?)")) {
                 Array arr = connection.createArrayOf("float8", new Double[]{1d, 2d, 3d, 4d, 5d});
                 stmt.setArray(1, arr);
