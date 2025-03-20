@@ -405,10 +405,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     commonPart1 + "ARRAY[arr1,arr1]" + commonPart2);
             assertPlanNoLeakCheck("SELECT ARRAY[arr1[1:2], arr2[0]] FROM tango",
                     commonPart1 + "ARRAY[arr1[1:2],arr2[0]]" + commonPart2);
-            assertPlanNoLeakCheck("SELECT t(arr2) FROM tango",
-                    commonPart1 + "t(arr2)" + commonPart2);
-            assertPlanNoLeakCheck("SELECT arr2 * t(arr2) FROM tango",
-                    commonPart1 + "arr2*t(arr2)" + commonPart2);
+            assertPlanNoLeakCheck("SELECT transpose(arr2) FROM tango",
+                    commonPart1 + "transpose(arr2)" + commonPart2);
+            assertPlanNoLeakCheck("SELECT arr2 * transpose(arr2) FROM tango",
+                    commonPart1 + "arr2*transpose(arr2)" + commonPart2);
         });
     }
 
