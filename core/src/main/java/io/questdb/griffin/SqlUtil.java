@@ -846,6 +846,14 @@ public class SqlUtil {
         return Numbers.LONG_NULL;
     }
 
+    public static boolean isNotPlainSelectModel(QueryModel model) {
+        return model.getTableName() != null
+                || model.getGroupBy().size() > 0
+                || model.getJoinModels().size() > 1
+                || model.getLatestByType() != QueryModel.LATEST_BY_NONE
+                || model.getUnionModel() != null;
+    }
+
     static CharSequence createColumnAlias(
             CharacterStore store,
             CharSequence base,
