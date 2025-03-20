@@ -52,7 +52,6 @@ public class CompiledFilterTest extends AbstractCairoTest {
     public void setUp() {
         // Disable the test suite on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
-
         super.setUp();
     }
 
@@ -200,6 +199,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
     public void testMixedSelectPreTouchEnabled() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, true);
+            node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_THRESHOLD, "1.0");
 
             execute("create table t1 as (select " +
                     " x," +
@@ -601,6 +601,9 @@ public class CompiledFilterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setJitMode(jitMode);
             node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, preTouch);
+            if (preTouch) {
+                node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_THRESHOLD, "1.0");
+            }
 
             execute("create table t1 as (select " +
                     " x," +

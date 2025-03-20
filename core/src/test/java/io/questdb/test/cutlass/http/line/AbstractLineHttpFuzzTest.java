@@ -224,6 +224,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                         PropertyKey.PG_ENABLED.getEnvVarName(), "false",
                         PropertyKey.PG_LEGACY_MODE_ENABLED.getEnvVarName(), "false",
                         PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
+                        PropertyKey.HTTP_NET_CONNECTION_LIMIT.getEnvVarName(), String.valueOf(2 * numOfThreads),
                         PropertyKey.HTTP_BIND_TO.getEnvVarName(), "127.0.0.1:" + httpPortRandom
                 )) {
                     Assert.assertEquals(0, tables.size());
@@ -550,6 +551,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                             .address("localhost:" + port)
                             .httpUsernamePassword(username, password)
                             .retryTimeoutMillis(0)
+                            .httpTimeoutMillis(60000)
                             .build()
             ) {
                 LineHttpSender httpSender = (LineHttpSender) sender;
