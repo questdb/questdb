@@ -460,7 +460,34 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExplicitCast() throws Exception {
+    public void testExplicitCastFromArrayToStr() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql("cast\n" +
+                            "[1.0]\n",
+                    "SELECT ARRAY[1.0]::string FROM long_sequence(1)");
+
+            assertSql("cast\n" +
+                            "[1.0,2.0]\n",
+                    "SELECT ARRAY[1.0, 2.0]::string FROM long_sequence(1)");
+
+            assertSql("cast\n" +
+                            "[[1.0,2.0],[3.0,4.0]]\n",
+                    "SELECT ARRAY[[1.0, 2.0], [3.0, 4.0]]::string FROM long_sequence(1)");
+
+            // array with no elements is always printed as []
+            assertSql("cast\n" +
+                            "[]\n",
+                    "SELECT ARRAY[[], []]::double[][]::string FROM long_sequence(1)");
+
+            // null case, 'assertSql()' prints 'null' as an empty string
+            assertSql("cast\n" +
+                            "\n",
+                    "SELECT NULL::double[]::string FROM long_sequence(1)");
+        });
+    }
+
+    @Test
+    public void testExplicitCastFromStrToArray() throws Exception {
         assertMemoryLeak(() -> {
             assertSql("cast\n" +
                     "[1.0,2.0]\n", "SELECT '{1, 2}'::double[] FROM long_sequence(1)");
@@ -736,7 +763,7 @@ public class ArrayTest extends AbstractCairoTest {
                     39,
                     "tables with array columns cannot be converted to Parquet partitions yet [table=tango, column=arr]"
             );
-            
+
             // with list
             assertException(
                     "ALTER TABLE tango CONVERT PARTITION TO PARQUET list '2001-01';",
