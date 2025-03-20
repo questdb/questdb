@@ -56,23 +56,24 @@ import io.questdb.std.QuietCloseable;
  * <pre>
  *     flatIndex = 6i + 2j + k
  * </pre>
- * Note that this is just summing up contributions at each dimension. We can
- * perform it in any order!
+ * Note that this just sums up the contributions at each dimension. We can perform
+ * it in any order.
  *
  * <h3>Transpose</h3>
  * <p>
- * "Transposing" the array is nothing more than changing the formula so that we
- * apply the strides in reverse:
+ * Transposing the array changes the formula so that we apply the strides in
+ * reverse:
  * <pre>
  *     flatIndex = i + 2j + 6k
  * </pre>
  * <p>
  * In fact, we can order the dimensions any way we want -- it's all linear and the
- * order doesn't matter!
+ * order doesn't matter to the calculation. It only affects the meaning of each
+ * coordinate in the array access expression.
  *
  * <h3>>Slice</h3>
  * <p>
- * "Slicing" the array means limiting the range of an index. Example: `arr[1:2]`.
+ * Slicing the array means limiting the range of an index. Example: `arr[1:2]`.
  * This constrains index `i` to be at least 1. But, we don't expose that to the
  * user; instead we keep the index zero-based, and add the lower bound to it as a
  * constant:
@@ -85,11 +86,15 @@ import io.questdb.std.QuietCloseable;
  *     flatIndex = flatOffset + 6i + 2j + k
  * </pre>
  * And this is the full formula we use in the code. If we perform another slicing
- * on top of this, we get another constant, and add it to the existing <i>flatOffset</i>.
+ * on top of this, we get another constant, and add it to the existing
+ * <i>flatOffset</i>.
+ * <p>
+ * <strong>NOTE:</strong> We use zero-based indexes here, but SQL uses one-based
+ * array indexes!
  *
  * <h3>Flatten a Dimension</h3>
  * <p>
- * "Flattening" means eliminating a dimension from our addressing scheme. As an
+ * Flattening means eliminating a dimension from our addressing scheme. As an
  * example, let's flatten the dimension 0, but we can do it for any dimension
  * except the lowest one (with stride = 1). We'll be left with this:
  *
@@ -122,10 +127,10 @@ import io.questdb.std.QuietCloseable;
  * </ul>
  * Taking a sub-array is a composition of two operations: first slice it to a
  * single element in that dimension, then flatten the dimension. Because the
- * only allowed index at the dimension is now 0, we don't need to perform a
- * general flattening, we can simply remove the dimension without adjusting the
- * length of any other dimension. Also, while general flattening is not allowed
- * on the dimension with stride 1, in this special case it is fine.
+ * only allowed index at the dimension is 0 after slicing, we don't need to perform
+ * a general flattening, we can simply remove the dimension without adjusting the
+ * length of any other dimension. For the same reason, while general flattening is
+ * not allowed on the dimension with stride 1, in this special case it is fine.
  */
 public abstract class ArrayView implements QuietCloseable {
     /**
@@ -341,23 +346,26 @@ public abstract class ArrayView implements QuietCloseable {
      * main reason to know this is when you're about to iterate over all the array
      * elements. For a vanilla array, you can go through the flat indices from zero to
      * {@link #getFlatViewLength()} and you'll iterate over the whole array in
-     * row-major order.
+     * row-major order. You can also use {@link FlatArrayView#getDoubleAtAbsIndex},
+     * avoiding the slight overhead of adding zero offset in {@link #getDouble}.
      * <p>
      * On a non-vanilla array, you must calculate each element's flat index from its
      * coordinates, applying the array's strides. A non-vanilla array arises when you
      * perform a shape change on a vanilla array, such as slicing, taking a sub-array,
-     * transposing, flattening a dimension etc. On a transposed array, all indices
-     * remain valid, but iterating over the flat array no longer corresponds to
-     * row-major traversal.
+     * transposing, flattening a dimension etc.
      * <p>
      * {@code ArrayView} implementations (such as {@link DirectArray} and {@link
      * FunctionArray}) directly reflect the underlying flat array and are thus always
      * vanilla. It is illegal to change their shape. The way to transform the array
      * shape is to first construct a {@link DerivedArrayView} from it, and then perform
-     * a shape change. The derived array view shares the original array's underlying
+     * a shape change.
+     * <p>
+     * The derived array view shares the original array's underlying
      * flat array, but after a shape change, some elements in the flat array are no
      * longer a part of the derived view. They remain accessible by their flat index,
-     * but if your code does that, it's broken.
+     * but if your code does that, it's broken. (On a transposed array, all indices
+     * remain valid, but iterating over the flat array no longer corresponds to
+     * row-major traversal.)
      */
     public boolean isVanilla() {
         return isVanilla;
