@@ -789,7 +789,7 @@ public class SqlParser {
         String baseTableName = null;
         if (isWithKeyword(tok)) {
             expectTok(lexer, "base");
-            baseTableName = Chars.toString(tok(lexer, "base table expected"));
+            baseTableName = Chars.toString(unquote(tok(lexer, "base table expected")));
             tok = tok(lexer, "'as' or 'refresh'");
         }
         mvOpBuilder.setBaseTableName(Chars.toString(baseTableName));
