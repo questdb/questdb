@@ -158,6 +158,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isColumnPreTouchEnabledOverride() {
+        return false;
+    }
+
+    @Override
     public boolean isParallelFilterEnabled() {
         return false;
     }
@@ -208,6 +213,10 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void setColumnPreTouchEnabled(boolean columnPreTouchEnabled) {
+    }
+
+    @Override
+    public void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride) {
     }
 
     @Override

@@ -70,21 +70,23 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
         if (numberOfPairs == 0) {
             throw SqlException.position(argPositions.getLast()).put("not enough arguments for l2price");
         }
+        // have to copy, args is mutable
+        args = new ObjList<>(args);
         final IntList positions = new IntList();
         positions.addAll(argPositions);
         switch (numberOfPairs) {
             case 1:
-                return new L2PriceFunction1(new ObjList<>(args), positions);
+                return new L2PriceFunction1(args, positions);
             case 2:
-                return new L2PriceFunction2(new ObjList<>(args), positions);
+                return new L2PriceFunction2(args, positions);
             case 3:
-                return new L2PriceFunction3(new ObjList<>(args), positions);
+                return new L2PriceFunction3(args, positions);
             case 4:
-                return new L2PriceFunction4(new ObjList<>(args), positions);
+                return new L2PriceFunction4(args, positions);
             case 5:
-                return new L2PriceFunction5(new ObjList<>(args), positions);
+                return new L2PriceFunction5(args, positions);
             default:
-                return new L2PriceFunctionN(new ObjList<>(args), positions);
+                return new L2PriceFunctionN(args, positions);
         }
     }
 
@@ -123,10 +125,10 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
     }
 
     private abstract static class L2PriceBaseFunction extends DoubleFunction implements MultiArgFunction {
-        final IntList argPositions;
-        final ObjList<Function> args;
+        protected final ObjList<Function> args;
+        private final IntList argPositions;
 
-        L2PriceBaseFunction(ObjList<Function> args, IntList argPositions) {
+        public L2PriceBaseFunction(ObjList<Function> args, IntList argPositions) {
             this.args = args;
             this.argPositions = argPositions;
         }

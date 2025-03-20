@@ -49,6 +49,7 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.str.StringSink;
 
 public class InSymbolCursorFunctionFactory implements FunctionFactory {
@@ -61,8 +62,8 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
@@ -114,11 +115,11 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
     private static class StrInCursorFunc extends BooleanFunction implements BinaryFunction {
         private final Function cursorArg;
         private final Record.CharSequenceFunction func;
+        private final StringSink sink = new StringSink();
         private final Function valueArg;
+        private final CharSequenceHashSet valueSet = new CharSequenceHashSet();
         private boolean stateInherited = false;
         private boolean stateShared = false;
-        private final CharSequenceHashSet valueSet = new CharSequenceHashSet();
-        private final StringSink sink = new StringSink();
 
         public StrInCursorFunc(Function valueArg, Function cursorArg, Record.CharSequenceFunction func) {
             this.valueArg = valueArg;
