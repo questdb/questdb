@@ -3813,7 +3813,7 @@ if __name__ == "__main__":
                             expectedResult.put("QUERY PLAN[VARCHAR]\n" +
                                     "Async Filter workers: 2\n" +
                                     "  limit: 10\n" +
-                                    "  filter: ('" + i + "'::long<x and x<'" + (i + 1) * 10 + ".0'::double)\n" +
+                                    "  filter: ('" + i + "'::long<x and x<'" + (i + 1) * 10 + ".0'::double) [pre-touch]\n" +
                                     "    PageFrame\n" +
                                     "        Row forward scan\n" +
                                     "        Frame forward scan on: xx\n");
@@ -3822,7 +3822,7 @@ if __name__ == "__main__":
                             expectedResult.put("QUERY PLAN[VARCHAR]\n" +
                                     "Async Filter workers: 2\n" +
                                     "  limit: 10\n" +
-                                    "  filter: ($0::long<x and x<$1::double)\n" +
+                                    "  filter: ($0::long<x and x<$1::double) [pre-touch]\n" +
                                     "    PageFrame\n" +
                                     "        Row forward scan\n" +
                                     "        Frame forward scan on: xx\n");
@@ -9610,7 +9610,7 @@ create table tab as (
                     assertResultSet(
                             "QUERY PLAN[VARCHAR]\n" +
                                     "Async Filter workers: 2\n" +
-                                    "  filter: to_str(ts) in [$0::string,'Wednesday',$1::string]\n" +
+                                    "  filter: to_str(ts) in [$0::string,'Wednesday',$1::string] [pre-touch]\n" +
                                     "    PageFrame\n" +
                                     "        Row forward scan\n" +
                                     "        Frame forward scan on: tab\n",
