@@ -26,6 +26,7 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileReader;
@@ -87,13 +88,16 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final AtomicInteger createCounter = new AtomicInteger();
 
             final Thread creator = new Thread(() -> {
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
-                     SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                try (
+                        MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+                        SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
+                ) {
                     barrier.await();
                     for (int i = 0; i < iterations; i++) {
+                        // Use test alloc() function to make sure that we always free the factory.
                         execute(
                                 "create materialized view if not exists price_1h as (" +
-                                        "  select sym, last(price) as price, ts from base_price sample by 1h" +
+                                        "  select sym, alloc(42), last(price) as price, ts from base_price sample by 1h" +
                                         ") partition by DAY",
                                 executionContext
                         );
@@ -244,6 +248,29 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewInvalidPartitionBy() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            try {
+                execute("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by 3d");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
+            }
+            assertNull(getMatViewDefinition("test"));
+
+            try {
+                execute("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by NONE");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "materialized view has to be partitioned");
+            }
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
     public void testCreateMatViewInvalidTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -359,33 +386,12 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
     @Test
     public void testCreateMatViewNoPartitionBy() throws Exception {
-        assertMemoryLeak(() -> {
-            createTable(TABLE1);
+        testCreateMatViewNoPartitionBy(true);
+    }
 
-            try {
-                execute("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s)");
-                fail("Expected SqlException missing");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "'partition by' expected");
-            }
-            assertNull(getMatViewDefinition("test"));
-
-            try {
-                execute("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by 3d");
-                fail("Expected SqlException missing");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
-            }
-            assertNull(getMatViewDefinition("test"));
-
-            try {
-                execute("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by NONE");
-                fail("Expected SqlException missing");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "materialized view has to be partitioned");
-            }
-            assertNull(getMatViewDefinition("test"));
-        });
+    @Test
+    public void testCreateMatViewNoPartitionByNoParentheses() throws Exception {
+        testCreateMatViewNoPartitionBy(false);
     }
 
     @Test
@@ -660,6 +666,26 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewTtlNoPartitionBy() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query = "select ts, k, max(v) as v_max from " + TABLE1 + " sample by 1h";
+            execute("CREATE MATERIALIZED VIEW test AS (" + query + ") TTL 1 MONTH;");
+            assertMatViewDefinition("test", query, TABLE1, 1, 'h');
+            assertMatViewMetadata("test", query, TABLE1, 1, 'h');
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
+                assertEquals(0, metadata.getTimestampIndex());
+                assertTrue(metadata.isDedupKey(0));
+                assertTrue(metadata.isDedupKey(1));
+                assertFalse(metadata.isDedupKey(2));
+                assertEquals(-1, metadata.getTtlHoursOrMonths());
+            }
+        });
+    }
+
+    @Test
     public void testCreateMatViewWithBase() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -821,9 +847,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                     barrier.await();
                     for (int i = 0; i < iterations; i++) {
+                        // Use test alloc() function to make sure that we always free the factory.
                         execute(
                                 "create materialized view if not exists price_1h as (" +
-                                        "  select sym, last(price) as price, ts from base_price sample by 1h" +
+                                        "  select sym, alloc(42), last(price) as price, ts from base_price sample by 1h" +
                                         ") partition by DAY",
                                 executionContext
                         );
@@ -1337,7 +1364,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
             String timeZoneOffset
     ) {
         final TableToken matViewToken = engine.getTableTokenIfExists(name);
-        try (BlockFileReader reader = new BlockFileReader(configuration); Path path = new Path()) {
+        try (
+                BlockFileReader reader = new BlockFileReader(configuration);
+                Path path = new Path()
+        ) {
             path.of(configuration.getDbRoot());
             final int rootLen = path.size();
             MatViewDefinition matViewDefinition = new MatViewDefinition();
@@ -1380,6 +1410,36 @@ public class CreateMatViewTest extends AbstractCairoTest {
         for (int i = 0; i < 9; i++) {
             execute("insert into " + tableName + " values (" + (i * 10000000) + ", 'k" + i + "', " + i + ")");
         }
+    }
+
+    private void testCreateMatViewNoPartitionBy(boolean useParentheses) throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            testCreateMatViewNoPartitionBy(10, 's', PartitionBy.DAY, useParentheses);
+            testCreateMatViewNoPartitionBy(1, 'm', PartitionBy.DAY, useParentheses);
+            testCreateMatViewNoPartitionBy(2, 'm', PartitionBy.MONTH, useParentheses);
+            testCreateMatViewNoPartitionBy(1, 'h', PartitionBy.MONTH, useParentheses);
+            testCreateMatViewNoPartitionBy(2, 'h', PartitionBy.YEAR, useParentheses);
+            testCreateMatViewNoPartitionBy(70, 'm', PartitionBy.YEAR, useParentheses);
+        });
+    }
+
+    private void testCreateMatViewNoPartitionBy(int samplingInterval, char samplingIntervalUnit, int expectedPartitionBy, boolean useParentheses) throws SqlException {
+        final String sampleBy = String.valueOf(samplingInterval) + samplingIntervalUnit;
+        final String matViewName = TABLE1 + '_' + sampleBy;
+        final String query = "select ts, avg(v) from " + TABLE1 + " sample by " + sampleBy;
+        if (useParentheses) {
+            execute("create materialized view " + matViewName + " as (" + query + ")");
+        } else {
+            execute("create materialized view " + matViewName + " as " + query);
+        }
+
+        try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists(matViewName))) {
+            assertEquals(expectedPartitionBy, metadata.getPartitionBy());
+        }
+        assertMatViewDefinition(matViewName, query, TABLE1, samplingInterval, samplingIntervalUnit);
+        assertMatViewMetadata(matViewName, query, TABLE1, samplingInterval, samplingIntervalUnit);
     }
 
     private void testCreateMatViewNonDeterministicFunction(String func, String columnName) throws Exception {

@@ -770,6 +770,9 @@ public class SqlParser {
         mvOpBuilder.clear(); // clears tableOpBuilder too
         tableOpBuilder.setDefaultSymbolCapacity(configuration.getDefaultSymbolCapacity());
 
+        // Mat view is always WAL enabled.
+        tableOpBuilder.setWalEnabled(true);
+
         expectTok(lexer, "view");
         CharSequence tok = tok(lexer, "view name or 'if'");
         if (isIfKeyword(tok)) {
@@ -809,13 +812,18 @@ public class SqlParser {
         }
         mvOpBuilder.setRefreshType(refreshType);
 
+        boolean enclosedInParentheses;
         if (isAsKeyword(tok)) {
-            expectTok(lexer, '(');
+            int startOfQuery = lexer.getPosition();
+            tok = tok(lexer, "'(' or 'with' or 'select'");
+            enclosedInParentheses = Chars.equals(tok, '(');
+            if (enclosedInParentheses) {
+                startOfQuery = lexer.getPosition();
+                tok = tok(lexer, "'with' or 'select'");
+            }
 
             // Parse SELECT for the sake of basic SQL validation.
             // It'll be compiled and optimized later, at the execution phase.
-            final int startOfQuery = lexer.getPosition();
-            tok = tok(lexer, "'with' or 'select'");
             if (isWithKeyword(tok)) {
                 parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, null);
                 // CTEs require SELECT to be specified
@@ -823,7 +831,7 @@ public class SqlParser {
             }
             lexer.unparseLast();
             final QueryModel queryModel = parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback, null);
-            final int endOfQuery = lexer.getPosition() - 1;
+            final int endOfQuery = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
 
             // Basic validation - check all nested models for FROM-TO or FILL.
             final QueryModel nestedModel = queryModel.getNestedModel();
@@ -853,10 +861,21 @@ public class SqlParser {
             tableOpBuilder.setSelectText(matViewSql);
             tableOpBuilder.setSelectModel(queryModel); // transient model, for toSink() purposes only
 
-            expectTok(lexer, ')');
+            if (enclosedInParentheses) {
+                expectTok(lexer, ')');
+            } else {
+                // We expect nothing more when there are no parentheses.
+                tok = optTok(lexer);
+                if (tok != null && !Chars.equals(tok, ';')) {
+                    throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+                }
+                return mvOpBuilder;
+            }
         } else {
             throw SqlException.position(lexer.getPosition()).put("'as' expected");
         }
+
+        // Optional clauses that go after the parentheses.
 
         while ((tok = optTok(lexer)) != null && Chars.equals(tok, ',')) {
             tok = tok(lexer, "'index'");
@@ -874,23 +893,25 @@ public class SqlParser {
         }
 
         final ExpressionNode partitionByExpr = parseCreateTablePartition(lexer, tok);
-        if (partitionByExpr == null) {
-            throw SqlException.position(lexer.getPosition()).put("'partition by' expected");
+        int partitionBy = -1;
+        if (partitionByExpr != null) {
+            partitionBy = PartitionBy.fromString(partitionByExpr.token);
+            if (partitionBy == -1) {
+                throw SqlException.$(partitionByExpr.position, "'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
+            }
+            if (!PartitionBy.isPartitioned(partitionBy)) {
+                throw SqlException.position(0).put("materialized view has to be partitioned");
+            }
+            tableOpBuilder.setPartitionByExpr(partitionByExpr);
+            tok = optTok(lexer);
         }
-        final int partitionBy = PartitionBy.fromString(partitionByExpr.token);
-        if (partitionBy == -1) {
-            throw SqlException.$(partitionByExpr.position, "'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
-        }
-        if (!PartitionBy.isPartitioned(partitionBy)) {
-            throw SqlException.position(0).put("materialized view has to be partitioned");
-        }
-        tableOpBuilder.setPartitionByExpr(partitionByExpr);
-        tok = optTok(lexer);
 
         if (tok != null && isTtlKeyword(tok)) {
             int ttlValuePos = lexer.getPosition();
             int ttlHoursOrMonths = parseTtlHoursOrMonths(lexer);
-            PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, ttlValuePos);
+            if (partitionBy != -1) {
+                PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, ttlValuePos);
+            }
             tableOpBuilder.setTtlHoursOrMonths(ttlHoursOrMonths);
             tok = optTok(lexer);
         }
@@ -904,9 +925,6 @@ public class SqlParser {
             tableOpBuilder.setVolumeAlias(GenericLexer.unquote(tok));
             tok = optTok(lexer);
         }
-
-        // Mat view is always WAL enabled.
-        tableOpBuilder.setWalEnabled(true);
 
         return parseCreateMatViewExt(lexer, executionContext, sqlParserCallback, tok, mvOpBuilder);
     }
