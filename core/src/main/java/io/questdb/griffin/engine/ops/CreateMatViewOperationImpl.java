@@ -349,9 +349,10 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 final QueryColumn queryColumn = queryColumns.getQuick(i);
                 final ExpressionNode ast = queryColumn.getAst();
                 if (ast.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase("timestamp_floor", ast.token)) {
-                    if (ast.paramCount == 3) {
-                        intervalExpr = ast.args.getQuick(2).token;
-                        intervalPos = ast.args.getQuick(2).position;
+                    if (ast.paramCount == 3 || ast.paramCount == 4) {
+                        final int idx = ast.paramCount - 1;
+                        intervalExpr = ast.args.getQuick(idx).token;
+                        intervalPos = ast.args.getQuick(idx).position;
                     } else {
                         intervalExpr = ast.lhs.token;
                         intervalPos = ast.lhs.position;
