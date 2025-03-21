@@ -124,7 +124,7 @@ fn data_and_aux_size_at(col: &MappedColumn, row_count: u64) -> CoreResult<(u64, 
 mod tests {
     use super::*;
     use crate::col_type::ColumnTypeTag;
-    use crate::error::CoreErrorCause;
+    use crate::error::CoreErrorReason;
     use std::path::PathBuf;
 
     fn map_col(name: &str) -> MappedColumn {
@@ -199,7 +199,7 @@ mod tests {
         let err = BinaryDriver.col_sizes_for_size(&col, 6).unwrap_err();
         let msg = format!("{:#}", err);
         // eprintln!("{}", &msg);
-        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidLayout));
+        assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         assert!(msg.contains("binary entry index 6 not found in aux for column b1 in"));
     }
 
@@ -214,7 +214,7 @@ mod tests {
         // out of range
         let err = BinaryDriver.col_sizes_for_size(&col, 1).unwrap_err();
         let msg = format!("{:#}", err);
-        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidLayout));
+        assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         // eprintln!("{msg}");
         assert!(msg.contains("binary entry index 1 not found in aux for column bempty in"));
     }

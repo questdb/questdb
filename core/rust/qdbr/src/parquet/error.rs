@@ -23,7 +23,7 @@
  ******************************************************************************/
 use crate::allocator::{take_last_alloc_error, AllocFailure};
 use crate::cairo::CairoException;
-use qdb_core::error::{CoreError, CoreErrorCause};
+use qdb_core::error::{CoreError, CoreErrorReason};
 use std::alloc::AllocError;
 use std::backtrace::{Backtrace, BacktraceStatus};
 use std::collections::TryReserveError;
@@ -51,12 +51,12 @@ pub enum ParquetErrorCause {
     ArrowParquet(Arc<parquet::errors::ParquetError>),
 }
 
-impl From<CoreErrorCause> for ParquetErrorCause {
-    fn from(cause: CoreErrorCause) -> Self {
+impl From<CoreErrorReason> for ParquetErrorCause {
+    fn from(cause: CoreErrorReason) -> Self {
         match cause {
-            CoreErrorCause::InvalidType => ParquetErrorCause::InvalidType,
-            CoreErrorCause::InvalidLayout => ParquetErrorCause::InvalidLayout,
-            CoreErrorCause::Io(err) => ParquetErrorCause::Io(err),
+            CoreErrorReason::InvalidType => ParquetErrorCause::InvalidType,
+            CoreErrorReason::InvalidLayout => ParquetErrorCause::InvalidLayout,
+            CoreErrorReason::Io(err) => ParquetErrorCause::Io(err),
         }
     }
 }

@@ -62,7 +62,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::byte_util::cast_slice;
-    use crate::error::CoreErrorCause;
+    use crate::error::CoreErrorReason;
 
     #[test]
     fn test_cast_slice() {
@@ -75,12 +75,12 @@ mod tests {
         assert_eq!(u32s, &[50462976, 117835012, 185207048]);
 
         let e1 = cast_slice::<()>(&b1).unwrap_err();
-        assert!(matches!(e1.get_cause(), CoreErrorCause::InvalidLayout));
+        assert!(matches!(e1.reason(), CoreErrorReason::InvalidLayout));
         let e1msg = format!("{}", e1);
         assert_eq!(e1msg, "target type () has zero size");
 
         let e2 = cast_slice::<u64>(&b1).unwrap_err();
-        assert!(matches!(e2.get_cause(), CoreErrorCause::InvalidLayout));
+        assert!(matches!(e2.reason(), CoreErrorReason::InvalidLayout));
         let e2msg = format!("{}", e2);
         assert_eq!(
             e2msg,
@@ -88,7 +88,7 @@ mod tests {
         );
 
         let e3 = cast_slice::<u32>(&b1[1..9]).unwrap_err();
-        assert!(matches!(e3.get_cause(), CoreErrorCause::InvalidLayout));
+        assert!(matches!(e3.reason(), CoreErrorReason::InvalidLayout));
         let e3msg = format!("{}", e3);
         assert!(e3msg.contains("is not aligned to target type u32 alignment of 4 bytes"));
     }

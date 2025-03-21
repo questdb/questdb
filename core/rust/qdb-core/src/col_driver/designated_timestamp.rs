@@ -17,7 +17,8 @@ impl ColumnDriver for DesignatedTimestampDriver {
         if data_size > col.data.len() as u64 {
             return Err(fmt_err!(
                 InvalidLayout,
-                "Data file for column {} smaller than {} rows, expected at least {} bytes but is {} at {}",
+                "data file for {} column {} smaller than {} rows, expected at least {} bytes but is {} at {}",
+                self.descr(),
                 col.col_name,
                 row_count,
                 data_size,

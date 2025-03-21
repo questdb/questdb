@@ -27,13 +27,13 @@ use std::sync::Arc;
 
 /// Cause of an error.
 #[derive(Debug, Clone)]
-pub enum CoreErrorCause {
+pub enum CoreErrorReason {
     InvalidType,
     InvalidLayout,
     Io(Arc<std::io::Error>),
 }
 
-impl CoreErrorCause {
+impl CoreErrorReason {
     pub fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::InvalidType | Self::InvalidLayout => None,
@@ -51,7 +51,7 @@ impl CoreErrorCause {
 #[derive(Clone)]
 pub struct CoreError {
     /// What caused the error.
-    cause: CoreErrorCause,
+    reason: CoreErrorReason,
 
     /// Initial message (if any) and
     /// stack of additional contextual information,
@@ -65,7 +65,7 @@ pub struct CoreError {
 impl CoreError {
     fn fmt_msg<W: Write>(&self, f: &mut W) -> std::fmt::Result {
         // Print the context first in reverse order.
-        let source = self.cause.source();
+        let source = self.reason.source();
         let last_index = self.context.len().saturating_sub(1);
         for (index, context) in self.context.iter().rev().enumerate() {
             if index == last_index {
@@ -94,33 +94,32 @@ impl CoreError {
         Ok(())
     }
 
-    pub fn into_tuple(self) -> (CoreErrorCause, Vec<String>, Arc<Backtrace>) {
-        (self.cause, self.context, self.backtrace)
+    pub fn into_tuple(self) -> (CoreErrorReason, Vec<String>, Arc<Backtrace>) {
+        (self.reason, self.context, self.backtrace)
     }
 }
 
 impl CoreError {
     #[track_caller]
-    pub fn new(cause: CoreErrorCause) -> Self {
+    pub fn new(cause: CoreErrorReason) -> Self {
         Self {
-            cause,
+            reason: cause,
             context: Vec::new(),
             backtrace: Backtrace::capture().into(),
         }
     }
 
     #[track_caller]
-    pub fn with_descr(cause: CoreErrorCause, descr: impl Into<String>) -> Self {
+    pub fn with_descr(cause: CoreErrorReason, descr: impl Into<String>) -> Self {
         Self {
-            cause,
+            reason: cause,
             context: vec![descr.into()],
             backtrace: Backtrace::capture().into(),
         }
     }
 
-    #[cfg(test)]
-    pub fn get_cause(&self) -> &CoreErrorCause {
-        &self.cause
+    pub fn reason(&self) -> &CoreErrorReason {
+        &self.reason
     }
 
     pub fn add_context(&mut self, context: impl Into<String>) {
@@ -130,7 +129,7 @@ impl CoreError {
 
 impl Debug for CoreError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "CoreError\n    Cause: {:?}", self.cause)?;
+        writeln!(f, "CoreError\n    Cause: {:?}", self.reason)?;
         writeln!(f, "    Context:")?;
         for line in self.context.iter().rev() {
             writeln!(f, "        {}", line)?;
@@ -160,13 +159,13 @@ impl Display for CoreErrorWithBacktraceDisplay<'_> {
 
 impl std::error::Error for CoreError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        self.cause.source()
+        self.reason.source()
     }
 }
 
 impl From<std::io::Error> for CoreError {
     fn from(e: std::io::Error) -> Self {
-        Self::new(CoreErrorCause::Io(Arc::new(e)))
+        Self::new(CoreErrorReason::Io(Arc::new(e)))
     }
 }
 
@@ -217,7 +216,7 @@ where
 macro_rules! fmt_err {
     ($cause: ident, $($arg:tt)*) => {
         crate::error::CoreError::with_descr(
-            crate::error::CoreErrorCause::$cause,
+            crate::error::CoreErrorReason::$cause,
             format!($($arg)*))
     };
 }

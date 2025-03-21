@@ -174,7 +174,7 @@ fn data_and_aux_size_at(col: &MappedColumn, row_count: u64) -> CoreResult<(u64, 
 mod tests {
     use super::*;
     use crate::col_type::ColumnTypeTag;
-    use crate::error::CoreErrorCause;
+    use crate::error::CoreErrorReason;
     use std::path::PathBuf;
 
     fn map_col(name: &str) -> MappedColumn {
@@ -244,7 +244,7 @@ mod tests {
         // out of range
         let err = VarcharDriver.col_sizes_for_size(&col, 6).unwrap_err();
         let msg = format!("{:#}", err);
-        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidLayout));
+        assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         assert!(msg.contains("varchar entry index 5 not found in aux for column v1 in"));
     }
 
@@ -284,7 +284,7 @@ mod tests {
         // out of range
         let err = VarcharDriver.col_sizes_for_size(&col, 6).unwrap_err();
         let msg = format!("{:#}", err);
-        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidLayout));
+        assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         assert!(msg.contains("varchar entry index 5 not found in aux for column v2 in"));
     }
 
@@ -324,7 +324,7 @@ mod tests {
         // out of range
         let err = VarcharDriver.col_sizes_for_size(&col, 6).unwrap_err();
         let msg = format!("{:#}", err);
-        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidLayout));
+        assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         assert!(msg.contains("varchar entry index 5 not found in aux for column v3 in"));
     }
 
@@ -364,7 +364,7 @@ mod tests {
         // out of range
         let err = VarcharDriver.col_sizes_for_size(&col, 6).unwrap_err();
         let msg = format!("{:#}", err);
-        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidLayout));
+        assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         assert!(msg.contains("varchar entry index 5 not found in aux for column v4 in"));
     }
 
@@ -379,7 +379,7 @@ mod tests {
         // out of range
         let err = VarcharDriver.col_sizes_for_size(&col, 1).unwrap_err();
         let msg = format!("{:#}", err);
-        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidLayout));
+        assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         assert!(msg.contains("varchar entry index 0 not found in aux for column vempty in"));
     }
 }

@@ -39,7 +39,8 @@ macro_rules! impl_primitive_type_driver {
                     if data_size > col.data.len() as u64 {
                         return Err(fmt_err!(
                             InvalidLayout,
-                            "Data file for column {} smaller than {} rows, expected at least {} bytes but is {} at {}",
+                            "data file for {} column {} shorter than {} rows, expected at least {} bytes but is {} at {}",
+                            self.descr(),
                             col.col_name,
                             row_count,
                             data_size,
@@ -82,7 +83,7 @@ impl_primitive_type_driver!(IPv4);
 mod tests {
     use super::*;
     use crate::col_type::ColumnType;
-    use crate::error::CoreErrorCause;
+    use crate::error::CoreErrorReason;
     use std::path::PathBuf;
 
     fn map_col(name: &str, col_type: ColumnType) -> MappedColumn {
@@ -101,11 +102,11 @@ mod tests {
         assert_eq!(aux_size, None);
 
         let err = IntDriver.col_sizes_for_size(&col, 1).unwrap_err();
-        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidLayout));
+        assert!(matches!(err.get_cause(), CoreErrorReason::InvalidLayout));
         let msg = format!("{:#}", err);
         // eprintln!("{}", msg);
         assert!(msg.contains(
-            "Data file for column int_col0 smaller than 1 rows, expected at least 4 bytes but is 0"
+            "data file for int column int_col0 smaller than 1 rows, expected at least 4 bytes but is 0"
         ));
     }
 
@@ -121,11 +122,11 @@ mod tests {
         assert_eq!(aux_size, None);
 
         let err = IntDriver.col_sizes_for_size(&col, 2).unwrap_err();
-        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidLayout));
+        assert!(matches!(err.get_cause(), CoreErrorReason::InvalidLayout));
         let msg = format!("{:#}", err);
         // eprintln!("{}", msg);
         assert!(msg.contains(
-            "Data file for column int_col1 smaller than 2 rows, expected at least 8 bytes but is 4"
+            "data file for int column int_col1 smaller than 2 rows, expected at least 8 bytes but is 4"
         ));
     }
 
@@ -141,11 +142,11 @@ mod tests {
         assert_eq!(aux_size, None);
 
         let err = TimestampDriver.col_sizes_for_size(&col, 2).unwrap_err();
-        assert!(matches!(err.get_cause(), CoreErrorCause::InvalidLayout));
+        assert!(matches!(err.get_cause(), CoreErrorReason::InvalidLayout));
         let msg = format!("{:#}", err);
         // eprintln!("{}", msg);
         assert!(msg.contains(
-            "Data file for column timestamp_col1 smaller than 2 rows, expected at least 16 bytes but is 8"
+            "data file for timestamp column timestamp_col1 smaller than 2 rows, expected at least 16 bytes but is 8"
         ));
     }
 }
