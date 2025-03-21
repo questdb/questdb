@@ -397,7 +397,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     commonPart1 + "arr3[0:0,1:2,2:]" + commonPart2);
             assertPlanNoLeakCheck("SELECT ARRAY[1.0, 2] FROM tango",
                     commonPart1 + "ARRAY[1.0,2.0]" + commonPart2);
-            assertPlanNoLeakCheck("SELECT ARRAY[[1.0, 2], [3, 4]] FROM tango",
+            assertPlanNoLeakCheck("SELECT ARRAY[[1.0, 2], [3.0, 4]] FROM tango",
                     commonPart1 + "ARRAY[[1.0,2.0],[3.0,4.0]]" + commonPart2);
             assertPlanNoLeakCheck("SELECT ARRAY[a, a] FROM tango",
                     commonPart1 + "ARRAY[a,a]" + commonPart2);
@@ -2402,7 +2402,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             colFuncs.put(ColumnType.BINARY, BinColumn.newInstance(1));
             colFuncs.put(ColumnType.LONG128, Long128Column.newInstance(1));
             colFuncs.put(ColumnType.UUID, UuidColumn.newInstance(1));
-            colFuncs.put(ColumnType.ARRAY, new ArrayColumn(1, ColumnType.encodeArrayType(ColumnType.INT, 2)));
+            colFuncs.put(ColumnType.ARRAY, new ArrayColumn(1, ColumnType.encodeArrayType(ColumnType.DOUBLE, 2)));
 
             PlanSink planSink = new TextPlanSink() {
                 @Override
@@ -2498,7 +2498,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         sigArgType = ColumnType.INT;
                                         useConst = true;
                                     } else if (factory instanceof ArrayCreateFunctionFactory) {
-                                        sigArgType = ColumnType.INT;
+                                        sigArgType = ColumnType.DOUBLE;
                                     } else if (factory instanceof DoubleArrayAccessFunctionFactory) {
                                         sigArgType = ColumnType.INT;
                                     } else if (factory instanceof RndDoubleArrayFunctionFactory) {
@@ -2630,7 +2630,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                             // TODO: test with partition by, order by and various frame modes
                             if (factory.isWindow()) {
-                                sqlExecutionContext.configureWindowContext(null, null, null, false, PageFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20, WindowColumn.EXCLUDE_NO_OTHERS, 0, -1, false, 0);
+                                sqlExecutionContext.configureWindowContext(
+                                        null, null, null, false,
+                                        PageFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true,
+                                        WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20,
+                                        WindowColumn.EXCLUDE_NO_OTHERS, 0, -1, false, 0);
                             }
                             Function function = null;
                             try {
@@ -2643,7 +2647,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                                 goodArgsFound = true;
 
-                                Assert.assertFalse("function " + factory.getSignature() + " should serialize to text properly. current text: " + planSink.getSink(), Chars.contains(planSink.getSink(), "io.questdb"));
+                                Assert.assertFalse("function " + factory.getSignature() +
+                                        " should serialize to text properly. current text: " +
+                                        planSink.getSink(), Chars.contains(planSink.getSink(), "io.questdb"));
                                 LOG.info().$(sink).$(planSink.getSink()).$();
 
                                 if (function instanceof NegatableBooleanFunction && !((NegatableBooleanFunction) function).isNegated()) {
@@ -2652,7 +2658,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     function.toPlan(tmpPlanSink);
 
                                     if (Chars.equals(planSink.getSink(), tmpPlanSink.getSink())) {
-                                        throw new AssertionError("Same output generated regardless of negatable flag! Factory: " + factory.getSignature() + " " + function);
+                                        throw new AssertionError("Same output generated regardless of " +
+                                                "negatable flag! Factory: " + factory.getSignature() + " " + function);
                                     }
 
                                     Assert.assertFalse(

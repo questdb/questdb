@@ -206,7 +206,7 @@ public final class ColumnType {
     public static int encodeArrayType(short elemType, int nDims) {
         assert nDims >= 1 && nDims <= ARRAY_NDIMS_LIMIT : "nDims out of range: " + nDims;
         assert isSupportedArrayElementType(elemType) || elemType == UNDEFINED
-                : "not supported as array element type: " + elemType;
+                : "not supported as array element type: " + nameOf(elemType);
 
         nDims--; // 0 == one dimension
         return (nDims & ARRAY_NDIMS_FIELD_MASK) << ARRAY_NDIMS_FIELD_POS
@@ -694,18 +694,18 @@ public final class ColumnType {
         typeNameMap.put(INTERVAL, "INTERVAL");
         typeNameMap.put(NULL, "NULL");
 
-        arrayTypeSet.add(BOOLEAN);
-        arrayTypeSet.add(BYTE);
-        arrayTypeSet.add(SHORT);
-        arrayTypeSet.add(INT);
-        arrayTypeSet.add(LONG);
-        arrayTypeSet.add(DATE);
-        arrayTypeSet.add(TIMESTAMP);
-        arrayTypeSet.add(FLOAT);
+//        arrayTypeSet.add(BOOLEAN);
+//        arrayTypeSet.add(BYTE);
+//        arrayTypeSet.add(SHORT);
+//        arrayTypeSet.add(INT);
+//        arrayTypeSet.add(LONG);
+//        arrayTypeSet.add(DATE);
+//        arrayTypeSet.add(TIMESTAMP);
+//        arrayTypeSet.add(FLOAT);
         arrayTypeSet.add(DOUBLE);
-        arrayTypeSet.add(LONG256);
-        arrayTypeSet.add(UUID);
-        arrayTypeSet.add(IPv4);
+//        arrayTypeSet.add(LONG256);
+//        arrayTypeSet.add(UUID);
+//        arrayTypeSet.add(IPv4);
 
         nameTypeMap.put("boolean", BOOLEAN);
         nameTypeMap.put("byte", BYTE);

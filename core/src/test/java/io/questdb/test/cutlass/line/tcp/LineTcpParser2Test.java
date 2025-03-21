@@ -70,12 +70,12 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
                 DirectUtf8Sink sink = new DirectUtf8Sink(1024);
                 DirectArray array = new DirectArray(configuration);
         ) {
-            String array1 = "[1,2]";
-            array.setType(ColumnType.encodeArrayType(ColumnType.LONG, 1));
+            String array1 = "[1.0,2.0]";
+            array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
             array.setDimLen(0, 2);
             array.applyShape();
-            array.putLong(0, 1);
-            array.putLong(1, 2);
+            array.putDouble(0, 1);
+            array.putDouble(1, 2);
             Unsafe.getUnsafe().putByte(mem, LineTcpParser.ENTITY_TYPE_ARRAY);
             long array1Addr = mem + 1;
             long array1Size = ArrayTest.arrayViewToBinaryFormat(array, array1Addr);

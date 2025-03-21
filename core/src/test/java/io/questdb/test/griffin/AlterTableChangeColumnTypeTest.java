@@ -475,23 +475,23 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     public void testConversionsFromArray() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                execute("create table x (arr int[]);");
-                assertException("alter table x alter column arr type uuid", 36, "incompatible column type change [existing=INT[], new=UUID]", sqlExecutionContext);
-                assertException("alter table x alter column arr type int", 36, "incompatible column type change [existing=INT[], new=INT]", sqlExecutionContext);
-                assertException("alter table x alter column arr type ipv4", 36, "incompatible column type change [existing=INT[], new=IPv4]", sqlExecutionContext);
-                assertException("alter table x alter column arr type long", 36, "incompatible column type change [existing=INT[], new=LONG]", sqlExecutionContext);
-                assertException("alter table x alter column arr type short", 36, "incompatible column type change [existing=INT[], new=SHORT]", sqlExecutionContext);
-                assertException("alter table x alter column arr type byte", 36, "incompatible column type change [existing=INT[], new=BYTE]", sqlExecutionContext);
-                assertException("alter table x alter column arr type double", 36, "incompatible column type change [existing=INT[], new=DOUBLE]", sqlExecutionContext);
-                assertException("alter table x alter column arr type float", 36, "incompatible column type change [existing=INT[], new=FLOAT]", sqlExecutionContext);
-                assertException("alter table x alter column arr type char", 36, "incompatible column type change [existing=INT[], new=CHAR]", sqlExecutionContext);
-                assertException("alter table x alter column arr type boolean", 36, "incompatible column type change [existing=INT[], new=BOOLEAN]", sqlExecutionContext);
-                assertException("alter table x alter column arr type timestamp", 36, "incompatible column type change [existing=INT[], new=TIMESTAMP]", sqlExecutionContext);
-                assertException("alter table x alter column arr type date", 36, "incompatible column type change [existing=INT[], new=DATE]", sqlExecutionContext);
-                assertException("alter table x alter column arr type symbol", 36, "incompatible column type change [existing=INT[], new=SYMBOL]", sqlExecutionContext);
-                assertException("alter table x alter column arr type string", 36, "incompatible column type change [existing=INT[], new=STRING]", sqlExecutionContext);
-                assertException("alter table x alter column arr type varchar", 36, "incompatible column type change [existing=INT[], new=VARCHAR]", sqlExecutionContext);
-                assertException("alter table x alter column arr type binary", 36, "incompatible column type change [existing=INT[], new=BINARY]", sqlExecutionContext);
+                execute("create table x (arr double[]);");
+                assertException("alter table x alter column arr type uuid", 36, "incompatible column type change [existing=DOUBLE[], new=UUID]", sqlExecutionContext);
+                assertException("alter table x alter column arr type int", 36, "incompatible column type change [existing=DOUBLE[], new=INT]", sqlExecutionContext);
+                assertException("alter table x alter column arr type ipv4", 36, "incompatible column type change [existing=DOUBLE[], new=IPv4]", sqlExecutionContext);
+                assertException("alter table x alter column arr type long", 36, "incompatible column type change [existing=DOUBLE[], new=LONG]", sqlExecutionContext);
+                assertException("alter table x alter column arr type short", 36, "incompatible column type change [existing=DOUBLE[], new=SHORT]", sqlExecutionContext);
+                assertException("alter table x alter column arr type byte", 36, "incompatible column type change [existing=DOUBLE[], new=BYTE]", sqlExecutionContext);
+                assertException("alter table x alter column arr type double", 36, "incompatible column type change [existing=DOUBLE[], new=DOUBLE]", sqlExecutionContext);
+                assertException("alter table x alter column arr type float", 36, "incompatible column type change [existing=DOUBLE[], new=FLOAT]", sqlExecutionContext);
+                assertException("alter table x alter column arr type char", 36, "incompatible column type change [existing=DOUBLE[], new=CHAR]", sqlExecutionContext);
+                assertException("alter table x alter column arr type boolean", 36, "incompatible column type change [existing=DOUBLE[], new=BOOLEAN]", sqlExecutionContext);
+                assertException("alter table x alter column arr type timestamp", 36, "incompatible column type change [existing=DOUBLE[], new=TIMESTAMP]", sqlExecutionContext);
+                assertException("alter table x alter column arr type date", 36, "incompatible column type change [existing=DOUBLE[], new=DATE]", sqlExecutionContext);
+                assertException("alter table x alter column arr type symbol", 36, "incompatible column type change [existing=DOUBLE[], new=SYMBOL]", sqlExecutionContext);
+                assertException("alter table x alter column arr type string", 36, "incompatible column type change [existing=DOUBLE[], new=STRING]", sqlExecutionContext);
+                assertException("alter table x alter column arr type varchar", 36, "incompatible column type change [existing=DOUBLE[], new=VARCHAR]", sqlExecutionContext);
+                assertException("alter table x alter column arr type binary", 36, "incompatible column type change [existing=DOUBLE[], new=BINARY]", sqlExecutionContext);
             } finally {
                 execute("drop table if exists x;");
             }
@@ -526,22 +526,22 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                                 ")"
                 );
 
-                assertException("alter table x alter column guid type INT[]", 41, "incompatible column type change [existing=UUID, new=INT[]]", sqlExecutionContext);
-                assertException("alter table x alter column rint type INT[]", 41, "incompatible column type change [existing=INT, new=INT[]]", sqlExecutionContext);
-                assertException("alter table x alter column ip type INT[]", 39, "incompatible column type change [existing=IPv4, new=INT[]]", sqlExecutionContext);
-                assertException("alter table x alter column i64 type INT[]", 40, "incompatible column type change [existing=LONG, new=INT[]]", sqlExecutionContext);
-                assertException("alter table x alter column i16 type INT[]", 40, "incompatible column type change [existing=SHORT, new=INT[]]", sqlExecutionContext);
-                assertException("alter table x alter column i8 type INT[]", 39, "incompatible column type change [existing=BYTE, new=INT[]]", sqlExecutionContext);
-                assertException("alter table x alter column f64 type INT[]", 40, "incompatible column type change [existing=DOUBLE, new=INT[]]", sqlExecutionContext);
-                assertException("alter table x alter column f32 type INT[]", 40, "incompatible column type change [existing=FLOAT, new=INT[]]", sqlExecutionContext);
-                assertException("alter table x alter column ch type INT[]", 39, "incompatible column type change [existing=CHAR, new=INT[]]", sqlExecutionContext);
-                assertException("alter table x alter column b type INT[]", 38, "incompatible column type change [existing=BOOLEAN, new=INT[]]", sqlExecutionContext);
-                assertException("alter table x alter column ts type INT[]", 39, "incompatible column type change [existing=TIMESTAMP, new=INT[]]", sqlExecutionContext);
-                assertException("alter table x alter column dt type INT[]", 39, "incompatible column type change [existing=DATE, new=INT[]]", sqlExecutionContext);
-                assertException("alter table x alter column sym type INT[]", 40, "incompatible column type change [existing=SYMBOL, new=INT[]]", sqlExecutionContext);
-                assertException("alter table x alter column str type INT[]", 40, "incompatible column type change [existing=STRING, new=INT[]]", sqlExecutionContext);
-                assertException("alter table x alter column var type INT[]", 40, "incompatible column type change [existing=VARCHAR, new=INT[]]", sqlExecutionContext);
-                assertException("alter table x alter column bin type INT[]", 40, "incompatible column type change [existing=BINARY, new=INT[]]", sqlExecutionContext);
+                assertException("alter table x alter column guid type DOUBLE[]", 44, "incompatible column type change [existing=UUID, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column rint type DOUBLE[]", 44, "incompatible column type change [existing=INT, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column ip type DOUBLE[]", 42, "incompatible column type change [existing=IPv4, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column i64 type DOUBLE[]", 43, "incompatible column type change [existing=LONG, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column i16 type DOUBLE[]", 43, "incompatible column type change [existing=SHORT, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column i8 type DOUBLE[]", 42, "incompatible column type change [existing=BYTE, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column f64 type DOUBLE[]", 43, "incompatible column type change [existing=DOUBLE, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column f32 type DOUBLE[]", 43, "incompatible column type change [existing=FLOAT, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column ch type DOUBLE[]", 42, "incompatible column type change [existing=CHAR, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column b type DOUBLE[]", 41, "incompatible column type change [existing=BOOLEAN, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column ts type DOUBLE[]", 42, "incompatible column type change [existing=TIMESTAMP, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column dt type DOUBLE[]", 42, "incompatible column type change [existing=DATE, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column sym type DOUBLE[]", 43, "incompatible column type change [existing=SYMBOL, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column str type DOUBLE[]", 43, "incompatible column type change [existing=STRING, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column var type DOUBLE[]", 43, "incompatible column type change [existing=VARCHAR, new=DOUBLE[]]", sqlExecutionContext);
+                assertException("alter table x alter column bin type DOUBLE[]", 43, "incompatible column type change [existing=BINARY, new=DOUBLE[]]", sqlExecutionContext);
 
             } finally {
                 execute("drop table if exists x;");

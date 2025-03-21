@@ -82,6 +82,12 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                 isConstant &= argI.isConstant();
                 commonElemType = commonWideningType(commonElemType, typeI);
             }
+            if (!ColumnType.isSupportedArrayElementType(commonElemType)) {
+                throw SqlException.position(arg0Pos)
+                        .put("unsupported array element type [type=")
+                        .put(ColumnType.nameOf(commonElemType))
+                        .put(']');
+            }
             FunctionArray array = new FunctionArray(commonElemType, 1);
             array.setDimLen(0, outerDimLen);
             array.applyShape(configuration, arg0Pos);

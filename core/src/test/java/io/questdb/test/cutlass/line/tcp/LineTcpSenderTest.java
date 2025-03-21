@@ -35,7 +35,6 @@ import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
 import io.questdb.cutlass.line.array.DoubleArray;
-import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.network.Net;
 import io.questdb.std.Chars;
@@ -55,7 +54,6 @@ import java.time.temporal.ChronoUnit;
 import java.util.function.Consumer;
 
 import static io.questdb.test.cutlass.http.line.LineHttpSenderTest.createDoubleArray;
-import static io.questdb.test.cutlass.http.line.LineHttpSenderTest.createLongArray;
 import static io.questdb.test.tools.TestUtils.assertContains;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.Assert.*;
@@ -95,41 +93,6 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         .doubleArray("a4", a4)
                         .doubleArray("a5", a5)
                         .doubleArray("a6", a6)
-                        .at(ts, ChronoUnit.MICROS);
-                sender.flush();
-
-                assertTableSizeEventually(engine, table, 1);
-                // @todo assert table contents, needs getArray support in TestTableReadCursor
-            }
-        });
-    }
-
-    @Test
-    public void testArrayLong() throws Exception {
-        runInContext(r -> {
-            try (Sender sender = Sender.builder(Sender.Transport.TCP)
-                    .address("127.0.0.1")
-                    .port(bindPort)
-                    .build();
-                 LongArray a4 = new LongArray(1, 2, 1, 1).setAll(4);
-                 LongArray a5 = new LongArray(3, 2, 1, 4, 1).setAll(5);
-                 LongArray a6 = new LongArray(1, 3, 4, 2, 1, 1).setAll(6);
-            ) {
-                String table = "nd_test";
-                long ts = IntervalUtils.parseFloorPartialTimestamp("2025-02-22");
-                long[] arr1d = createLongArray(5);
-                long[][] arr2d = createLongArray(2, 3);
-                long[][][] arr3d = createLongArray(1, 2, 3);
-                sender.table(table)
-                        .symbol("x", "42i")
-                        .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")  // ensuring no array parsing for symbol
-                        .longColumn("l1", 23452345)
-                        .longArray("a1", arr1d)
-                        .longArray("a2", arr2d)
-                        .longArray("a3", arr3d)
-                        .longArray("a4", a4)
-                        .longArray("a5", a5)
-                        .longArray("a6", a6)
                         .at(ts, ChronoUnit.MICROS);
                 sender.flush();
 

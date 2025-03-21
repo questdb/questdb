@@ -794,7 +794,7 @@ public class SqlUtil {
         return pool.next().of(exprNodeType, token, 0, position);
     }
 
-    public static int parseArrayDimensions(GenericLexer lexer) throws SqlException {
+    public static int parseArrayDimensionality(GenericLexer lexer) throws SqlException {
         int dim = 0;
         do {
             CharSequence tok = fetchNext(lexer);

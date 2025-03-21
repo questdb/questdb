@@ -3454,16 +3454,21 @@ public class SqlParser {
             }
         }
 
-        int dim = SqlUtil.parseArrayDimensions(lexer);
-        if (dim > 0) {
-            if (ColumnType.isSupportedArrayElementType(typeTag)) {
-                if (dim <= ColumnType.ARRAY_NDIMS_LIMIT) {
-                    return ColumnType.encodeArrayType(typeTag, dim);
-                } else {
-                    throw SqlException.position(typePosition).put("array dimension limit is ").put(ColumnType.ARRAY_NDIMS_LIMIT);
-                }
+        int nDims = SqlUtil.parseArrayDimensionality(lexer);
+        if (nDims > 0) {
+            if (!ColumnType.isSupportedArrayElementType(typeTag)) {
+                throw SqlException.position(typePosition)
+                        .put("unsupported array element type [type=")
+                        .put(ColumnType.nameOf(typeTag))
+                        .put(']');
             }
-            throw SqlException.position(typePosition).put(ColumnType.nameOf(typeTag)).put(" array type is not supported");
+            if (nDims > ColumnType.ARRAY_NDIMS_LIMIT) {
+                throw SqlException.position(typePosition)
+                        .put("too many array dimensions [nDims=").put(nDims)
+                        .put(", maxNDims=").put(ColumnType.ARRAY_NDIMS_LIMIT)
+                        .put(']');
+            }
+            return ColumnType.encodeArrayType(typeTag, nDims);
         } else if (typeTag == ColumnType.GEOHASH) {
             expectTok(lexer, '(');
             final int bits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, expectLiteral(lexer).token);

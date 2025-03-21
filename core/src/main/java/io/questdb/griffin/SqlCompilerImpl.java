@@ -525,12 +525,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         short typeTag = SqlUtil.toPersistedTypeTag(tok, lexer.lastTokenPosition());
         int typePosition = lexer.lastTokenPosition();
 
-        int dim = SqlUtil.parseArrayDimensions(lexer);
+        int dim = SqlUtil.parseArrayDimensionality(lexer);
         int columnType;
         if (dim > 0) {
             if (!ColumnType.isSupportedArrayElementType(typeTag)) {
-                throw SqlException.position(typePosition).put(ColumnType.nameOf(typeTag))
-                        .put(" is not supported as an array element type");
+                throw SqlException.position(typePosition)
+                        .put("unsupported array element type [type=")
+                        .put(ColumnType.nameOf(typeTag))
+                        .put(']');
             }
             columnType = ColumnType.encodeArrayType(typeTag, dim);
         } else {

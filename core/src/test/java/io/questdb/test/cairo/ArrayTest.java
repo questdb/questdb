@@ -90,7 +90,8 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testAccess3d() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango AS (SELECT ARRAY[[[1.0, 2], [3, 4]], [[5, 6], [7, 8]] ] arr FROM long_sequence(1))");
+            execute("CREATE TABLE tango AS (SELECT " +
+                    "ARRAY[[[1.0, 2], [3.0, 4]], [[5.0, 6], [7.0, 8]] ] arr FROM long_sequence(1))");
             assertSql("x\n2.0\n", "SELECT arr[1, 1, 2] x FROM tango");
             assertSql("x\n6.0\n", "SELECT arr[2, 1, 2] x FROM tango");
             assertSql("x\n8.0\n", "SELECT arr[2, 2, 2] x FROM tango");
@@ -103,7 +104,7 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testAccessInvalid() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4]] arr FROM long_sequence(1))");
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3.0, 4]] arr FROM long_sequence(1))");
             assertExceptionNoLeakCheck("SELECT arr['1',1] FROM tango",
                     10, "there is no matching function `[]` with the argument types: (DOUBLE[][], CHAR, INT)");
             assertExceptionNoLeakCheck("SELECT arr[1,1::long] FROM tango",
@@ -146,6 +147,29 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddColumnUnsupportedType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (n LONG)");
+            assertException("ALTER TABLE tango ADD COLUMN arr BYTE[]", 33, "unsupported array element type [type=BYTE]");
+            assertException("ALTER TABLE tango ADD COLUMN arr SHORT[]", 33, "unsupported array element type [type=SHORT]");
+            assertException("ALTER TABLE tango ADD COLUMN arr INT[]", 33, "unsupported array element type [type=INT]");
+            assertException("ALTER TABLE tango ADD COLUMN arr LONG[]", 33, "unsupported array element type [type=LONG]");
+            assertException("ALTER TABLE tango ADD COLUMN arr FLOAT[]", 33, "unsupported array element type [type=FLOAT]");
+            assertException("ALTER TABLE tango ADD COLUMN arr BOOLEAN[]", 33, "unsupported array element type [type=BOOLEAN]");
+            assertException("ALTER TABLE tango ADD COLUMN arr CHAR[]", 33, "unsupported array element type [type=CHAR]");
+            assertException("ALTER TABLE tango ADD COLUMN arr STRING[]", 33, "unsupported array element type [type=STRING]");
+            assertException("ALTER TABLE tango ADD COLUMN arr VARCHAR[]", 33, "unsupported array element type [type=VARCHAR]");
+            assertException("ALTER TABLE tango ADD COLUMN arr ARRAY[]", 33, "unsupported array element type [type=ARRAY]");
+            assertException("ALTER TABLE tango ADD COLUMN arr BINARY[]", 33, "unsupported array element type [type=BINARY]");
+            assertException("ALTER TABLE tango ADD COLUMN arr DATE[]", 33, "unsupported array element type [type=DATE]");
+            assertException("ALTER TABLE tango ADD COLUMN arr TIMESTAMP[]", 33, "unsupported array element type [type=TIMESTAMP]");
+            assertException("ALTER TABLE tango ADD COLUMN arr UUID[]", 33, "unsupported array element type [type=UUID]");
+            assertException("ALTER TABLE tango ADD COLUMN arr LONG128[]", 33, "unsupported array element type [type=LONG128]");
+            assertException("ALTER TABLE tango ADD COLUMN arr GEOHASH[]", 33, "unsupported array element type [type=GEOHASH]");
+        });
+    }
+
+    @Test
     public void testBasicArithmetic1d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[])");
@@ -178,15 +202,36 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testBasicArithmeticInvalid() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[], c DOUBLE[][], d LONG[])");
+            execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[], c DOUBLE[][])");
             execute("INSERT INTO tango VALUES " +
-                    "(ARRAY[2.0, 3.0], ARRAY[4.0, 5, 6], ARRAY[ [1.0, 2.0], [3.0, 4.0] ], ARRAY[1::long])");
+                    "(ARRAY[2.0, 3], ARRAY[4.0, 5, 6], ARRAY[ [1.0, 2], [3.0, 4] ])");
             assertException("SELECT a + c from tango", 7,
                     "arrays have different number of dimensions [nDimsLeft=1, nDimsRight=2]");
             assertException("SELECT a + b from tango", 7,
                     "arrays have different shapes [leftShape=[2], rightShape=[3]]");
-            assertException("SELECT a + d from tango", 9,
-                    "there is no matching operator `+` with the argument types: DOUBLE[] + LONG[]");
+        });
+    }
+
+    @Test
+    public void testChangeColumnToUnsupportedType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (n LONG)");
+            assertException("ALTER TABLE tango ALTER COLUMN n TYPE BYTE[]", 38, "unsupported array element type [type=BYTE]");
+            assertException("ALTER TABLE tango ALTER COLUMN n TYPE SHORT[]", 38, "unsupported array element type [type=SHORT]");
+            assertException("ALTER TABLE tango ALTER COLUMN n TYPE INT[]", 38, "unsupported array element type [type=INT]");
+            assertException("ALTER TABLE tango ALTER COLUMN n TYPE LONG[]", 38, "unsupported array element type [type=LONG]");
+            assertException("ALTER TABLE tango ALTER COLUMN n TYPE FLOAT[]", 38, "unsupported array element type [type=FLOAT]");
+            assertException("ALTER TABLE tango ALTER COLUMN n TYPE BOOLEAN[]", 38, "unsupported array element type [type=BOOLEAN]");
+            assertException("ALTER TABLE tango ALTER COLUMN n TYPE CHAR[]", 38, "unsupported array element type [type=CHAR]");
+            assertException("ALTER TABLE tango ALTER COLUMN n TYPE STRING[]", 38, "unsupported array element type [type=STRING]");
+            assertException("ALTER TABLE tango ALTER COLUMN n TYPE VARCHAR[]", 38, "unsupported array element type [type=VARCHAR]");
+            assertException("ALTER TABLE tango ALTER COLUMN n TYPE ARRAY[]", 38, "unsupported array element type [type=ARRAY]");
+            assertException("ALTER TABLE tango ALTER COLUMN n TYPE BINARY[]", 38, "unsupported array element type [type=BINARY]");
+            assertException("ALTER TABLE tango ALTER COLUMN n TYPE DATE[]", 38, "unsupported array element type [type=DATE]");
+            assertException("ALTER TABLE tango ALTER COLUMN n TYPE TIMESTAMP[]", 38, "unsupported array element type [type=TIMESTAMP]");
+            assertException("ALTER TABLE tango ALTER COLUMN n TYPE UUID[]", 38, "unsupported array element type [type=UUID]");
+            assertException("ALTER TABLE tango ALTER COLUMN n TYPE LONG128[]", 38, "unsupported array element type [type=LONG128]");
+            assertException("ALTER TABLE tango ALTER COLUMN n TYPE GEOHASH[]", 38, "unsupported array element type [type=GEOHASH]");
         });
     }
 
@@ -231,49 +276,50 @@ public class ArrayTest extends AbstractCairoTest {
     public void testCreateTableAllSupportedTypes() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (" +
-                    "d double[][][]" +
-                    ", b boolean[][][][]" +
-                    ", bt byte[][][][][][][][]" +
-                    ", f float[]" +
-                    ", i int[][]" +
-                    ", l long[][]" +
-                    ", s short[][][][][]" +
-                    ", dt date[][][][]" +
-                    ", ts timestamp[][]" +
-                    ", l2 long256[][][]" +
-                    ", u uuid[][][][]" +
-                    ", ip ipv4[][]" +
-                    ", c double)");
+                            "d double[][][]" +
+//                    ", b boolean[][][][]" +
+//                    ", bt byte[][][][][][][][]" +
+//                    ", f float[]" +
+//                    ", i int[][]" +
+//                    ", l long[][]" +
+//                    ", s short[][][][][]" +
+//                    ", dt date[][][][]" +
+//                    ", ts timestamp[][]" +
+//                    ", l2 long256[][][]" +
+//                    ", u uuid[][][][]" +
+//                    ", ip ipv4[][]" +
+                            ", c double)"
+            );
 
             String[] expectedColumnNames = {
                     "d",
-                    "b",
-                    "bt",
-                    "f",
-                    "i",
-                    "l",
-                    "s",
-                    "dt",
-                    "ts",
-                    "l2",
-                    "u",
-                    "ip",
-                    "c"
+//                    "b",
+//                    "bt",
+//                    "f",
+//                    "i",
+//                    "l",
+//                    "s",
+//                    "dt",
+//                    "ts",
+//                    "l2",
+//                    "u",
+//                    "ip",
+                    "c",
             };
 
             String[] expectedColumnTypes = {
                     "DOUBLE[][][]",
-                    "BOOLEAN[][][][]",
-                    "BYTE[][][][][][][][]",
-                    "FLOAT[]",
-                    "INT[][]",
-                    "LONG[][]",
-                    "SHORT[][][][][]",
-                    "DATE[][][][]",
-                    "TIMESTAMP[][]",
-                    "LONG256[][][]",
-                    "UUID[][][][]",
-                    "IPv4[][]",
+//                    "BOOLEAN[][][][]",
+//                    "BYTE[][][][][][][][]",
+//                    "FLOAT[]",
+//                    "INT[][]",
+//                    "LONG[][]",
+//                    "SHORT[][][][][]",
+//                    "DATE[][][][]",
+//                    "TIMESTAMP[][]",
+//                    "LONG256[][][]",
+//                    "UUID[][][][]",
+//                    "IPv4[][]",
                     "DOUBLE"
             };
 
@@ -287,6 +333,28 @@ public class ArrayTest extends AbstractCairoTest {
                     Assert.assertEquals(expectedColumnTypes[i], ColumnType.nameOf(m.getColumnType(i)));
                 }
             }
+        });
+    }
+
+    @Test
+    public void testCreateTableWithUnsupportedColumnType() throws Exception {
+        assertMemoryLeak(() -> {
+            assertException("CREATE TABLE tango (arr BYTE[])", 24, "unsupported array element type [type=BYTE]");
+            assertException("CREATE TABLE tango (arr SHORT[])", 24, "unsupported array element type [type=SHORT]");
+            assertException("CREATE TABLE tango (arr INT[])", 24, "unsupported array element type [type=INT]");
+            assertException("CREATE TABLE tango (arr LONG[])", 24, "unsupported array element type [type=LONG]");
+            assertException("CREATE TABLE tango (arr FLOAT[])", 24, "unsupported array element type [type=FLOAT]");
+            assertException("CREATE TABLE tango (arr BOOLEAN[])", 24, "unsupported array element type [type=BOOLEAN]");
+            assertException("CREATE TABLE tango (arr CHAR[])", 24, "unsupported array element type [type=CHAR]");
+            assertException("CREATE TABLE tango (arr STRING[])", 24, "unsupported array element type [type=STRING]");
+            assertException("CREATE TABLE tango (arr VARCHAR[])", 24, "unsupported array element type [type=VARCHAR]");
+            assertException("CREATE TABLE tango (arr ARRAY[])", 24, "unsupported array element type [type=ARRAY]");
+            assertException("CREATE TABLE tango (arr BINARY[])", 24, "unsupported array element type [type=BINARY]");
+            assertException("CREATE TABLE tango (arr DATE[])", 24, "unsupported array element type [type=DATE]");
+            assertException("CREATE TABLE tango (arr TIMESTAMP[])", 24, "unsupported array element type [type=TIMESTAMP]");
+            assertException("CREATE TABLE tango (arr UUID[])", 24, "unsupported array element type [type=UUID]");
+            assertException("CREATE TABLE tango (arr LONG128[])", 24, "unsupported array element type [type=LONG128]");
+            assertException("CREATE TABLE tango (arr GEOHASH[])", 24, "unsupported array element type [type=GEOHASH]");
         });
     }
 
@@ -325,7 +393,7 @@ public class ArrayTest extends AbstractCairoTest {
     public void testEqualsArrayLiterals() throws Exception {
         assertMemoryLeak(() -> {
             assertSql("eq\ntrue\n", "SELECT (ARRAY[[1.0, 3]] = ARRAY[[1.0, 3]]) eq FROM long_sequence(1)");
-            assertSql("eq\ntrue\n", "SELECT (ARRAY[[1.0, 3], [5, 7]] = ARRAY[[1.0, 3], [5, 7]]) eq FROM long_sequence(1)");
+            assertSql("eq\ntrue\n", "SELECT (ARRAY[[1.0, 3], [5.0, 7]] = ARRAY[[1.0, 3], [5.0, 7]]) eq FROM long_sequence(1)");
             assertSql("eq\nfalse\n", "SELECT (ARRAY[[1.0, 3]] = ARRAY[[1.0, 4]]) eq FROM long_sequence(1)");
             assertSql("eq\nfalse\n", "SELECT (ARRAY[[1.0, 3]] = ARRAY[[1.0, 3, 3]]) eq FROM long_sequence(1)");
             assertSql("eq\nfalse\n", "SELECT (ARRAY[[1.0, 3, 3]] = ARRAY[[1.0, 3]]) eq FROM long_sequence(1)");
@@ -337,15 +405,15 @@ public class ArrayTest extends AbstractCairoTest {
     public void testEqualsColumnAndLiteral() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (arr DOUBLE[][])");
-            execute("INSERT INTO tango VALUES (ARRAY[[1.0, 3], [5, 7]])");
-            assertSql("eq\ntrue\n", "SELECT (arr = ARRAY[[1.0, 3], [5, 7]]) eq FROM tango");
-            assertSql("eq\nfalse\n", "SELECT (arr = ARRAY[[1.0, 4], [5, 7]]) eq FROM tango");
-            assertSql("eq\nfalse\n", "SELECT (arr = ARRAY[[1.0, 3, 3], [5, 7, 9]]) eq FROM tango");
+            execute("INSERT INTO tango VALUES (ARRAY[[1.0, 3], [5.0, 7]])");
+            assertSql("eq\ntrue\n", "SELECT (arr = ARRAY[[1.0, 3], [5.0, 7]]) eq FROM tango");
+            assertSql("eq\nfalse\n", "SELECT (arr = ARRAY[[1.0, 4], [5.0, 7]]) eq FROM tango");
+            assertSql("eq\nfalse\n", "SELECT (arr = ARRAY[[1.0, 3, 3], [5.0, 7, 9]]) eq FROM tango");
             assertSql("eq\nfalse\n", "SELECT (arr = ARRAY[[1.0, 3]]) eq FROM tango");
 
-            assertSql("eq\ntrue\n", "SELECT (ARRAY[[1.0, 3], [5, 7]] = arr) eq FROM tango");
-            assertSql("eq\nfalse\n", "SELECT (ARRAY[[1.0, 4], [5, 7]] = arr) eq FROM tango");
-            assertSql("eq\nfalse\n", "SELECT (ARRAY[[1.0, 3, 3], [5, 7, 9]] = arr) eq FROM tango");
+            assertSql("eq\ntrue\n", "SELECT (ARRAY[[1.0, 3], [5.0, 7]] = arr) eq FROM tango");
+            assertSql("eq\nfalse\n", "SELECT (ARRAY[[1.0, 4], [5.0, 7]] = arr) eq FROM tango");
+            assertSql("eq\nfalse\n", "SELECT (ARRAY[[1.0, 3, 3], [5.0, 7, 9]] = arr) eq FROM tango");
             assertSql("eq\nfalse\n", "SELECT (ARRAY[[1.0, 3]] = arr) eq FROM tango");
         });
     }
@@ -366,7 +434,7 @@ public class ArrayTest extends AbstractCairoTest {
             execute("CREATE TABLE tango (left DOUBLE[][], right DOUBLE[][])");
             execute("INSERT INTO tango VALUES " +
                     "(ARRAY[[1.0, 3]], ARRAY[[1.0, 3]]), " +
-                    "(ARRAY[[1.0, 3], [5, 7]], ARRAY[[1.0, 3], [5, 7]]), " +
+                    "(ARRAY[[1.0, 3], [5.0, 7]], ARRAY[[1.0, 3], [5.0, 7]]), " +
                     "(ARRAY[[1.0, 3]], ARRAY[[1.0, 4]]), " +
                     "(ARRAY[[1.0, 3]], ARRAY[[1.0, 3, 3]]), " +
                     "(ARRAY[[1.0, 3, 3]], ARRAY[[1.0, 3]])"
@@ -381,9 +449,9 @@ public class ArrayTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (left DOUBLE[][], right DOUBLE[][])");
             execute("INSERT INTO tango VALUES " +
-                    "(ARRAY[[1.0, 3], [5, 7]], ARRAY[[1.0, 2], [5, 7]]), " +
-                    "(ARRAY[[1.0], [3]], ARRAY[[2.0], [3]]), " +
-                    "(ARRAY[[1.0], [3]], ARRAY[[2.0], [1]])"
+                    "(ARRAY[[1.0, 3], [5.0, 7]], ARRAY[[1.0, 2], [5.0, 7]]), " +
+                    "(ARRAY[[1.0], [3.0]], ARRAY[[2.0], [3.0]]), " +
+                    "(ARRAY[[1.0], [3.0]], ARRAY[[2.0], [1.0]])"
 
             );
             assertSql("eq\ntrue\ntrue\nfalse\n", "SELECT (left[2] = right[2]) eq FROM tango");
@@ -518,10 +586,6 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testInsertEmpty1d() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE samba (arr LONG[])");
-            execute("INSERT INTO samba VALUES (ARRAY[])");
-            assertSql("arr\n[]\n", "samba");
-
             execute("CREATE TABLE tango (arr DOUBLE[])");
             execute("INSERT INTO tango VALUES (ARRAY[])");
             assertSql("arr\n[]\n", "tango");
@@ -531,12 +595,6 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testInsertEmpty2d() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE samba (arr LONG[][])");
-            execute("INSERT INTO samba VALUES (ARRAY[[]])");
-            execute("INSERT INTO samba VALUES (ARRAY[[],[]])");
-            execute("INSERT INTO samba VALUES (ARRAY[[],[],[]])");
-            assertSql("arr\n[]\n[]\n[]\n", "samba");
-
             execute("CREATE TABLE tango (arr DOUBLE[][])");
             execute("INSERT INTO tango VALUES (ARRAY[[]])");
             execute("INSERT INTO tango VALUES (ARRAY[[],[]])");
@@ -548,12 +606,6 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testInsertEmpty3d() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE samba (arr LONG[][][])");
-            execute("INSERT INTO samba VALUES (ARRAY[[[]]])");
-            execute("INSERT INTO samba VALUES (ARRAY[[[]],[[]]])");
-            execute("INSERT INTO samba VALUES (ARRAY[[[],[]]])");
-            assertSql("arr\n[]\n[]\n[]\n", "samba");
-
             execute("CREATE TABLE tango (arr DOUBLE[][][])");
             execute("INSERT INTO tango VALUES (ARRAY[[[]]])");
             execute("INSERT INTO tango VALUES (ARRAY[[[]],[[]]])");
@@ -598,8 +650,8 @@ public class ArrayTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (left DOUBLE[][], right DOUBLE[][])");
             execute("INSERT INTO tango VALUES " +
-                    "(ARRAY[[1.0, 3]], ARRAY[[5.0], [7]]), " +
-                    "(ARRAY[[1.0, 1, 1], [2, 2, 2]], ARRAY[[3.0], [5], [7]])");
+                    "(ARRAY[[1.0, 3]], ARRAY[[5.0], [7.0]]), " +
+                    "(ARRAY[[1.0, 1, 1], [2.0, 2, 2]], ARRAY[[3.0], [5.0], [7.0]])");
             assertSql("product\n[[26.0]]\n[[15.0],[30.0]]\n", "SELECT matmul(left, right) AS product FROM tango");
         });
     }
@@ -623,7 +675,7 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testMatrixMultiplyTransposed() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4], [5, 6]] arr FROM long_sequence(1))");
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3.0, 4], [5.0, 6]] arr FROM long_sequence(1))");
             assertSql("product\n[[5.0,11.0,17.0],[11.0,25.0,39.0],[17.0,39.0,61.0]]\n",
                     "SELECT matmul(arr, transpose(arr)) product FROM tango");
         });
@@ -661,18 +713,18 @@ public class ArrayTest extends AbstractCairoTest {
              ArrayBinaryFormatParser parserNative = new ArrayBinaryFormatParser();
              DirectUtf8Sink sink = new DirectUtf8Sink(100)
         ) {
-            // [[1, 2], [3, 4], [5, 6]]
-            array.setType(ColumnType.encodeArrayType(ColumnType.LONG, 2));
+            // [[1.0, 2], [3.0, 4], [5.0, 6]]
+            array.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2));
             array.setDimLen(0, 3);
             array.setDimLen(1, 2);
             array.applyShape();
             MemoryA memA = array.startMemoryA();
-            memA.putLong(1);
-            memA.putLong(2);
-            memA.putLong(3);
-            memA.putLong(4);
-            memA.putLong(5);
-            memA.putLong(6);
+            memA.putDouble(1);
+            memA.putDouble(2);
+            memA.putDouble(3);
+            memA.putDouble(4);
+            memA.putDouble(5);
+            memA.putDouble(6);
             sink.clear();
             ArrayTypeDriver.arrayToJson(array, sink, NoopArrayState.INSTANCE);
             String textViewStr = sink.toString();
@@ -703,7 +755,7 @@ public class ArrayTest extends AbstractCairoTest {
             execute("CREATE TABLE tango (left DOUBLE[][], right DOUBLE[][])");
             execute("INSERT INTO tango VALUES " +
                     "(ARRAY[[1.0, 3]], ARRAY[[1.0, 3]]), " +
-                    "(ARRAY[[1.0, 3], [5, 7]], ARRAY[[1.0, 3], [5, 7]]), " +
+                    "(ARRAY[[1.0, 3], [5.0, 7]], ARRAY[[1.0, 3], [5.0, 7]]), " +
                     "(ARRAY[[1.0, 3]], ARRAY[[1.0, 4]]), " +
                     "(ARRAY[[1.0, 3]], ARRAY[[1.0, 3, 3]]), " +
                     "(ARRAY[[1.0, 3, 3]], ARRAY[[1.0, 3]])"
@@ -719,8 +771,8 @@ public class ArrayTest extends AbstractCairoTest {
         execute("CREATE TABLE samba (left DOUBLE[][], right DOUBLE[][])");
         execute("INSERT INTO tango VALUES (null)");
         execute("INSERT INTO samba VALUES (null, null)");
-        execute("INSERT INTO samba VALUES (ARRAY[[1.0],[2]], null)");
-        execute("INSERT INTO samba VALUES (null, ARRAY[[1.0],[2]])");
+        execute("INSERT INTO samba VALUES (ARRAY[[1.0],[2.0]], null)");
+        execute("INSERT INTO samba VALUES (null, ARRAY[[1.0],[2.0]])");
         assertSql("arr\nnull\n", "tango");
         assertSql("arr\nnull\n", "SELECT arr FROM tango");
         assertSql("arr\nnull\n", "SELECT transpose(arr) arr FROM tango");
@@ -873,7 +925,7 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testSlice2d() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4], [5, 6]] arr FROM long_sequence(1))");
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3.0, 4], [5.0, 6]] arr FROM long_sequence(1))");
             assertSql("slice\n[[1.0,2.0]]\n", "SELECT arr[1:2] slice FROM tango");
             assertSql("slice\n[[3.0,4.0],[5.0,6.0]]\n", "SELECT arr[2:] slice FROM tango");
             assertSql("slice\n[[5.0]]\n", "SELECT arr[3:, 1:2] slice FROM tango");
@@ -887,7 +939,7 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testSliceInvalid() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4], [5, 6]] arr FROM long_sequence(1))");
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3.0, 4], [5.0, 6]] arr FROM long_sequence(1))");
             assertExceptionNoLeakCheck("SELECT arr[:1] FROM tango",
                     11, "undefined bind variable: :1"
             );
@@ -909,7 +961,7 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testSliceTransposed() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3, 4], [5, 6]] arr FROM long_sequence(1))");
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3.0, 4], [5.0, 6]] arr FROM long_sequence(1))");
             // transposed array: [[1,3,5],[2,4,6]]; slice takes first row, and first two elements from it
             assertSql("slice\n[[1.0,3.0]]\n", "SELECT transpose(arr)[1:2, 1:3] slice FROM tango");
         });
@@ -946,7 +998,7 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testSubArrayInvalid() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango AS (SELECT ARRAY[[[1.0, 2], [3, 4]], [[5, 6], [7, 8]]] arr FROM long_sequence(1))");
+            execute("CREATE TABLE tango AS (SELECT ARRAY[[[1.0, 2], [3.0, 4]], [[5.0, 6], [7.0, 8]]] arr FROM long_sequence(1))");
             assertExceptionNoLeakCheck("SELECT arr[0] FROM tango",
                     11, "array index out of range [dim=0, index=0, dimLen=2]"
             );
@@ -979,26 +1031,6 @@ public class ArrayTest extends AbstractCairoTest {
             sink.clear();
             ArrayTypeDriver.arrayToJson(array, sink, NoopArrayState.INSTANCE);
             assertEquals("[[1.0,2.0],[3.0,4.0]]", sink.toString());
-        }
-    }
-
-    @Test
-    public void testToJsonLong() {
-        try (DirectArray array = new DirectArray(configuration);
-             DirectUtf8Sink sink = new DirectUtf8Sink(20)
-        ) {
-            array.setType(ColumnType.encodeArrayType(ColumnType.LONG, 2));
-            array.setDimLen(0, 2);
-            array.setDimLen(1, 2);
-            array.applyShape();
-            MemoryA memA = array.startMemoryA();
-            memA.putLong(1);
-            memA.putLong(2);
-            memA.putLong(3);
-            memA.putLong(4);
-            sink.clear();
-            ArrayTypeDriver.arrayToJson(array, sink, NoopArrayState.INSTANCE);
-            assertEquals("[[1,2],[3,4]]", sink.toString());
         }
     }
 
@@ -1072,23 +1104,7 @@ public class ArrayTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "CREATE TABLE y (a DOUBLE[][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][][])", // 33 dimensions
                     18,
-                    "array dimension limit is 32"
-            );
-        });
-    }
-
-    @Test
-    public void testUnsupportedType() throws Exception {
-        assertMemoryLeak(() -> {
-            assertExceptionNoLeakCheck(
-                    "create table x (a SYMBOL[][][])",
-                    18,
-                    "SYMBOL array type is not supported"
-            );
-            assertExceptionNoLeakCheck(
-                    "create table x (abc VARCHAR[][][])",
-                    20,
-                    "VARCHAR array type is not supported"
+                    "too many array dimensions [nDims=33, maxNDims=32]"
             );
         });
     }

@@ -38,17 +38,6 @@ import org.junit.Test;
 public class AlterTableRenameColumnTest extends AbstractCairoTest {
 
     @Test
-    public void testRenameArrayColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table x (arr int[]);");
-            execute("alter table x rename column arr to arr2;");
-            assertSql("column\ttype\n" +
-                            "arr2\tINT[]\n",
-                    "select \"column\", \"type\" from table_columns('x')");
-        });
-    }
-
-    @Test
     public void testBadSyntax() throws Exception {
         assertFailure("alter table x rename column l ,m", 30, "to' expected");
     }
@@ -81,6 +70,16 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
     @Test
     public void testNewNameAlreadyExists() throws Exception {
         assertFailure("alter table x rename column l to b", 33, " column already exists");
+    }
+
+    @Test
+    public void testRenameArrayColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (arr double[]);");
+            execute("alter table x rename column arr to arr2;");
+            assertSql("column\ttype\narr2\tDOUBLE[]\n",
+                    "select \"column\", \"type\" from table_columns('x')");
+        });
     }
 
     @Test
