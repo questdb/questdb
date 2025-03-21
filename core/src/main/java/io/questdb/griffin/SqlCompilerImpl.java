@@ -1353,7 +1353,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         final int matViewNamePosition = lexer.getPosition();
         tok = expectToken(lexer, "materialized view name");
-        assertTableNameIsQuotedOrNotAKeyword(tok, matViewNamePosition);
+        assertNameIsQuotedOrNotAKeyword(tok, matViewNamePosition);
         final TableToken matViewToken = tableExistsOrFail(matViewNamePosition, GenericLexer.unquote(tok), executionContext);
 
         try {
@@ -1380,7 +1380,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private void compileAlterTable(SqlExecutionContext executionContext) throws SqlException {
         final int tableNamePosition = lexer.getPosition();
         CharSequence tok = expectToken(lexer, "table name");
-        assertTableNameIsQuotedOrNotAKeyword(tok, tableNamePosition);
+        assertNameIsQuotedOrNotAKeyword(tok, tableNamePosition);
         final TableToken tableToken = tableExistsOrFail(tableNamePosition, GenericLexer.unquote(tok), executionContext);
         checkMatViewModification(tableToken);
         final SecurityContext securityContext = executionContext.getSecurityContext();
@@ -1774,7 +1774,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
 
                 tok = expectToken(lexer, "table name");
-                assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
                 final CharSequence tableName = GenericLexer.unquote(tok);
                 // define operation to make sure we generate correct errors in case
@@ -1816,7 +1816,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
 
                 tok = expectToken(lexer, "view name");
-                assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
                 final CharSequence matViewName = GenericLexer.unquote(tok);
                 // define operation to make sure we generate correct errors in case
@@ -2037,7 +2037,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (isSemicolon(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected");
         }
-        assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
         final CharSequence matViewName = GenericLexer.unquote(tok);
         final TableToken matViewToken = executionContext.getTableTokenIfExists(matViewName);
@@ -2370,7 +2370,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         boolean partitionsKeyword = isPartitionsKeyword(tok);
         if (partitionsKeyword || isTableKeyword(tok)) {
             tok = expectToken(lexer, "table name");
-            assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+            assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
             CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
             int tableNamePos = lexer.lastTokenPosition();
             CharSequence eol = SqlUtil.fetchNext(lexer);

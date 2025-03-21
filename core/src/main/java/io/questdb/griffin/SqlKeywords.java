@@ -2128,7 +2128,7 @@ public class SqlKeywords {
                 && (tok.charAt(6) | 32) == 'h';
     }
 
-    static void assertTableNameIsQuotedOrNotAKeyword(CharSequence keyword, int position) throws SqlException {
+    static void assertNameIsQuotedOrNotAKeyword(CharSequence keyword, int position) throws SqlException {
         final boolean quoted = Chars.isQuoted(keyword);
         if (!quoted && SqlKeywords.isKeyword(keyword)) {
             throw SqlException.$(position, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"").put(keyword).put('"');

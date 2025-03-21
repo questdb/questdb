@@ -466,7 +466,7 @@ public class SqlParser {
     private ExpressionNode expectLiteral(GenericLexer lexer, @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
         CharSequence tok = tok(lexer, "literal");
         int pos = lexer.lastTokenPosition();
-        assertTableNameIsQuotedOrNotAKeyword(tok, pos);
+        assertNameIsQuotedOrNotAKeyword(tok, pos);
         validateLiteral(pos, tok);
         return rewriteDeclaredVariables(nextLiteral(GenericLexer.immutableOf(GenericLexer.unquote(tok)), pos), decls, null);
     }
@@ -783,7 +783,7 @@ public class SqlParser {
                 throw SqlException.$(lexer.lastTokenPosition(), "'if not exists' expected");
             }
         }
-        assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
         tableOpBuilder.setTableNameExpr(nextLiteral(
                 assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition()), lexer.lastTokenPosition()
         ));
@@ -970,7 +970,7 @@ public class SqlParser {
             tableName = tok;
         }
 
-        assertTableNameIsQuotedOrNotAKeyword(tableName, lexer.lastTokenPosition());
+        assertNameIsQuotedOrNotAKeyword(tableName, lexer.lastTokenPosition());
 
         builder.setTableNameExpr(nextLiteral(
                 assertNoDotsAndSlashes(unquote(tableName), lexer.lastTokenPosition()), lexer.lastTokenPosition()
@@ -1270,7 +1270,7 @@ public class SqlParser {
     private void parseCreateTableColumns(GenericLexer lexer) throws SqlException {
         while (true) {
             CharSequence tok = notTermTok(lexer);
-            assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+            assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
             final CharSequence columnName = GenericLexer.immutableOf(unquote(tok));
             final int columnPosition = lexer.lastTokenPosition();
             final int columnType = toColumnType(lexer, notTermTok(lexer));
@@ -2191,7 +2191,7 @@ public class SqlParser {
         }
 
         tok = tok(lexer, "table name");
-        assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
         model.setTableName(nextLiteral(assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition()), lexer.lastTokenPosition()));
 
         tok = tok(lexer, "'(' or 'select'");
@@ -2203,7 +2203,7 @@ public class SqlParser {
                     throw err(lexer, tok, "missing column name");
                 }
 
-                assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
                 model.addColumn(unquote(tok), lexer.lastTokenPosition());
             } while (Chars.equals((tok = tok(lexer, "','")), ','));
 
@@ -2418,7 +2418,7 @@ public class SqlParser {
         RenameTableModel model = renameTableModelPool.next();
 
         CharSequence tok = tok(lexer, "from table name");
-        assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
         model.setFrom(nextLiteral(unquote(tok), lexer.lastTokenPosition()));
 
@@ -2431,7 +2431,7 @@ public class SqlParser {
         expectTok(lexer, "to");
 
         tok = tok(lexer, "to table name");
-        assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
         model.setTo(nextLiteral(unquote(tok), lexer.lastTokenPosition()));
 
         tok = optTok(lexer);
@@ -2811,13 +2811,13 @@ public class SqlParser {
 
                     if (isAsKeyword(tok)) {
                         tok = tok(lexer, "alias");
-                        assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
                         CharSequence aliasTok = GenericLexer.immutableOf(tok);
                         validateIdentifier(lexer, aliasTok);
                         alias = unquote(aliasTok);
                     } else {
                         validateIdentifier(lexer, tok);
-                        assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+                        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
                         alias = GenericLexer.immutableOf(unquote(tok));
                     }
 
@@ -3023,7 +3023,7 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
         CharSequence tok = tok(lexer, "table name or alias");
-        assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
         CharSequence tableName = GenericLexer.immutableOf(unquote(tok));
         ExpressionNode tableNameExpr = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, tableName, 0, 0);
         updateQueryModel.setTableNameExpr(tableNameExpr);
@@ -3040,7 +3040,7 @@ public class SqlParser {
         if (!isAsKeyword(tok) && !isSetKeyword(tok)) {
             // This is table alias
             CharSequence tableAlias = GenericLexer.immutableOf(tok);
-            assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+            assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
             ExpressionNode tableAliasExpr = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, tableAlias, 0, 0);
             updateQueryModel.setAlias(tableAliasExpr);
             tok = tok(lexer, "SET expected");
@@ -3421,7 +3421,7 @@ public class SqlParser {
             if (tok.length() == 0 || isEmptyAlias(tok)) {
                 throw SqlException.position(lexer.lastTokenPosition()).put("Empty table alias");
             }
-            assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+            assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
             joinModel.setAlias(literal(lexer, tok));
             tok = optTok(lexer);
         }

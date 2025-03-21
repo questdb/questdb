@@ -201,7 +201,7 @@ public class ExpressionParser {
             // when stack unwinds, not every keyword is expected to be column or table name and may not
             // need to be validated as such
             if (exprStackUnwind) {
-                SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(node.token, node.position);
+                SqlKeywords.assertNameIsQuotedOrNotAKeyword(node.token, node.position);
             }
             node.token = GenericLexer.unquote(node.token);
         }
@@ -639,7 +639,7 @@ public class ExpressionParser {
                                         // this means 'distinct' is meant to be used as a column name and not as a keyword.
                                         // at this point we also know 'distinct' is not in double-quotes since otherwise the CASE wouldn't match
                                         // we call assertTableNameIsQuotedOrNotAKeyword() to ensure a consistent error message
-                                        SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tokenStash, lastPos);
+                                        SqlKeywords.assertNameIsQuotedOrNotAKeyword(tokenStash, lastPos);
                                     } else {
                                         en = opStack.peek(1);
                                         if (en.type == ExpressionNode.LITERAL) {
@@ -939,7 +939,7 @@ public class ExpressionParser {
                                             CharacterStoreEntry cse = characterStore.newEntry();
                                             cse.put(en.token).put(GenericLexer.unquote(tok));
                                             final CharSequence lit = cse.toImmutable();
-                                            SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(lit, en.position);
+                                            SqlKeywords.assertNameIsQuotedOrNotAKeyword(lit, en.position);
                                             opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, lit, Integer.MIN_VALUE, en.position));
                                         }
                                         break;
@@ -1376,13 +1376,13 @@ public class ExpressionParser {
                                 break;
                             }
 
-                            SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lastPos);
+                            SqlKeywords.assertNameIsQuotedOrNotAKeyword(tok, lastPos);
                             if (Chars.isQuoted(tok) || en.token instanceof CharacterStore.NameAssemblerCharSequence) {
                                 // replacing node, must remove old one from stack
                                 opStack.pop();
                                 // this was more analogous to 'a."b"'
                                 CharacterStoreEntry cse = characterStore.newEntry();
-                                SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, en.position);
+                                SqlKeywords.assertNameIsQuotedOrNotAKeyword(tok, en.position);
                                 cse.put(en.token).put(GenericLexer.unquoteIfNoDots(tok));
                                 opStack.push(expressionNodePool.next().of(
                                         ExpressionNode.LITERAL, cse.toImmutable(), Integer.MIN_VALUE, en.position));
