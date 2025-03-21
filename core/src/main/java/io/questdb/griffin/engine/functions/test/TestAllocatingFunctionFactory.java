@@ -29,14 +29,21 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
+/**
+ * Always returns 42 long value. Allocates the given number of bytes in native memory
+ * to simplify testing record factory / function leaks.
+ */
 public class TestAllocatingFunctionFactory implements FunctionFactory {
+    private static final long MAX_BYTES = Numbers.SIZE_1MB;
 
     @Override
     public String getSignature() {
@@ -50,8 +57,12 @@ public class TestAllocatingFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) {
-        return new Func(args.getQuick(0).getLong(null));
+    ) throws SqlException {
+        long bytes = args.getQuick(0).getLong(null);
+        if (bytes > MAX_BYTES) {
+            throw SqlException.$(argPositions.getQuick(0), "too much to allocate: ").put(bytes);
+        }
+        return new Func(bytes);
     }
 
     private static class Func extends LongFunction {
@@ -70,7 +81,7 @@ public class TestAllocatingFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            return 1;
+            return 42;
         }
 
         @Override
