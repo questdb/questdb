@@ -70,6 +70,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short CONVERT_PARTITION_TO_NATIVE = CONVERT_PARTITION_TO_PARQUET + 1; // 19
     public final static short FORCE_DROP_PARTITION = CONVERT_PARTITION_TO_NATIVE + 1; // 20
     public final static short SET_TTL_HOURS_OR_MONTHS = FORCE_DROP_PARTITION + 1; // 21
+    public final static short CHANGE_SYMBOL_CAPACITY = SET_TTL_HOURS_OR_MONTHS + 1; // 22
     private static final long BIT_INDEXED = 0x1L;
     private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
@@ -211,6 +212,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         throw AlterTableContextException.INSTANCE;
                     }
                     changeColumnType(svc);
+                    break;
+                case CHANGE_SYMBOL_CAPACITY:
+                    changeSymbolCapacity(svc);
                     break;
                 default:
                     LOG.error()
@@ -662,6 +666,15 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             e.position(columnNamePosition);
             throw e;
         }
+    }
+
+    private void changeSymbolCapacity(MetadataService svc) {
+        if (activeExtraStrInfo.size() != 1) {
+            throw CairoException.nonCritical().put("invalid change column type alter statement");
+        }
+        CharSequence columnName = activeExtraStrInfo.getStrA(0);
+        int newCapacity = (int) extraInfo.get(1);
+        svc.changeSymbolCapacity(columnName, newCapacity, securityContext);
     }
 
     private boolean enableDeduplication(MetadataService svc) {

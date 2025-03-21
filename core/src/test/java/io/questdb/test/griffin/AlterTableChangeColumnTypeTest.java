@@ -218,6 +218,23 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChangeSymbolCapacity() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            drainWalQueue();
+
+            execute("create table y as (select ik from x)", sqlExecutionContext);
+            execute("alter table x alter column ik type symbol capacity 512", sqlExecutionContext);
+            drainWalQueue();
+
+            assertSqlCursorsConvertedStrings(
+                    "select ik from y",
+                    "select ik from x"
+            );
+        });
+    }
+
+    @Test
     public void testChangeStringToIndexedSymbol() throws Exception {
         assertMemoryLeak(() -> {
             createX();

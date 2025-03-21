@@ -78,6 +78,10 @@ public class AlterOperationBuilder implements Mutable {
         tableNamePosition = -1;
     }
 
+    public void convertToChangeSymbolCapacity() {
+        this.command = CHANGE_SYMBOL_CAPACITY;
+    }
+
     public ObjList<CharSequence> getExtraStrInfo() {
         return extraStrInfo;
     }

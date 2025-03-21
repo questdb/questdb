@@ -174,7 +174,18 @@ public class FuzzTransactionGenerator {
             } else if (wantToAddNewColumn && getNonDeletedColumnCount(meta) < MAX_COLUMNS) {
                 meta = generateAddColumn(transactionList, metaVersion++, waitBarrierVersion++, rnd, meta);
             } else if (wantToChangeColumnType && FuzzChangeColumnTypeOperation.canChangeColumnType(meta)) {
-                meta = FuzzChangeColumnTypeOperation.generateColumnTypeChange(transactionList, estimatedTotalRows, metaVersion++, waitBarrierVersion++, rnd, meta);
+                // 20% chance to change symbol capacity
+                if (rnd.nextInt(5) != 0 ||
+                        !FuzzChangeSymbolCapacityOperation.generateSymbolCapacityChange(
+                                transactionList,
+                                metaVersion,
+                                waitBarrierVersion,
+                                rnd,
+                                meta
+                        )) {
+                    // If symbol capacity change was not generated, generate column type change
+                    meta = FuzzChangeColumnTypeOperation.generateColumnTypeChange(transactionList, estimatedTotalRows, metaVersion++, waitBarrierVersion++, rnd, meta);
+                }
             } else {
                 // generate row set
                 int blockRows = rowCount / (transactionCount - i);
