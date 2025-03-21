@@ -472,6 +472,30 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplicitCastDimensionalityChange() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("cast\n" +
+                            "[[1.0,2.0]]\n",
+                    "SELECT ARRAY[1.0, 2.0]::double[][]",
+                    true
+            );
+
+            // no element arrays
+            assertQuery("cast\n" +
+                            "[]\n", // arrays with no elements are always printed as []
+                    "SELECT ARRAY[]::double[][]",
+                    true
+            );
+
+            // casting to less dimensions is not allowed
+            assertException("SELECT ARRAY[[1.0], [2.0]]::double[]",
+                    26,
+                    "cannot cast array to lower dimension [from=DOUBLE[][] (2D), to=DOUBLE[] (1D)]. Use array flattening operation (e.g. 'arr[:]' or 'flatten_array(arr)') instead"
+            );
+        });
+    }
+
+    @Test
     public void testExplicitCastFromArrayToStr() throws Exception {
         assertMemoryLeak(() -> {
             assertSql("cast\n" +

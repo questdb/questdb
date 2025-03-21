@@ -243,6 +243,34 @@ public class IntList implements Mutable, Sinkable {
         }
     }
 
+    /**
+     * Shifts all elements in the list to the right by the specified number of positions.
+     * This creates empty spaces at the beginning of the list which are filled with {@link #NO_ENTRY_VALUE}.
+     * The size of the list is increased by the shift amount.
+     *
+     * <p>For example, if the list contains [1,2,3] and rshift(2) is called, the result would be
+     * [-1,-1,1,2,3] (assuming NO_ENTRY_VALUE is -1).</p>
+     *
+     * @param level the number of positions to shift elements to the right
+     */
+    public void rshift(int level) {
+        if (level == 0) {
+            return;
+        }
+        assert level > 0;
+
+        int newCapacityRequired = pos + level;
+        if (newCapacityRequired > data.length) {
+            int[] buf = new int[newCapacityRequired];
+            System.arraycopy(data, 0, buf, level, pos);
+            data = buf;
+        } else {
+            System.arraycopy(data, 0, data, level, pos);
+        }
+        Arrays.fill(data, 0, level, NO_ENTRY_VALUE);
+        pos += level;
+    }
+
     public void set(int index, int element) {
         if (index < pos) {
             data[index] = element;
