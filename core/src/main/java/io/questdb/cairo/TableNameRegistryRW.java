@@ -59,9 +59,6 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
         if (reverseMapItem != null && tableNameToTableTokenMap.replace(token.getTableName(), token, LOCKED_DROP_TOKEN)) {
             if (token.isWal()) {
                 nameStore.logDropTable(token);
-            }
-
-            if (token.isWal()) {
                 dirNameToTableTokenMap.put(token.getDirName(), ReverseTableMapItem.ofDropped(token));
             } else {
                 dirNameToTableTokenMap.remove(token.getDirName(), reverseMapItem);
