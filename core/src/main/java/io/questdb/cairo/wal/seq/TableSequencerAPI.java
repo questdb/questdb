@@ -69,7 +69,7 @@ public class TableSequencerAPI implements QuietCloseable {
         this.engine = engine;
         this.inactiveTtlUs = configuration.getInactiveWalWriterTTL() * 1000;
         this.recreateDistressedSequencerAttempts = configuration.getWalRecreateDistressedSequencerAttempts();
-        this.createTxnTracker = dir -> new SeqTxnTracker();
+        this.createTxnTracker = dir -> new SeqTxnTracker(configuration);
     }
 
     public void applyRename(TableToken tableToken) {

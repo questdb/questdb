@@ -178,7 +178,7 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             "          functions: [ts::varchar]\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
-                            "                Frame forward scan on: x\n" +
+                            "                Frame forward scan on: x [pre-touch]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n",

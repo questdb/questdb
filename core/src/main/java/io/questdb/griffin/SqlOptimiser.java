@@ -4019,7 +4019,6 @@ public class SqlOptimiser implements Mutable {
     // Rewrites the following:
     // select count(constant) ... -> select count() ...
     private void rewriteCount(QueryModel model) {
-
         if (model == null) {
             return;
         }
