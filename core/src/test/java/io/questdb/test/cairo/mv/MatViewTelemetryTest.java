@@ -32,25 +32,17 @@ import io.questdb.std.NumericException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
-import static io.questdb.PropertyKey.*;
+import static io.questdb.PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT;
+import static io.questdb.PropertyKey.DEV_MODE_ENABLED;
 import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
 import static org.junit.Assert.assertNull;
 
 public class MatViewTelemetryTest extends AbstractCairoTest {
 
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        // needed for static engine instance
-        setProperty(CAIRO_MAT_VIEW_ENABLED, "true");
-        AbstractCairoTest.setUpStatic();
-    }
-
     @Before
     public void setUp() {
-        setProperty(CAIRO_MAT_VIEW_ENABLED, "true");
         setProperty(DEV_MODE_ENABLED, "true");
         setProperty(CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
         super.setUp();
