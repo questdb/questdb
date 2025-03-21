@@ -12,9 +12,9 @@ use parquet2::write::{
 };
 use parquet2::FallibleStreamingIterator;
 
-use crate::parquet::col_type::ColumnTypeTag;
 use crate::parquet_write::schema::{to_encodings, to_parquet_schema, Column, Partition};
 use crate::parquet_write::{binary, boolean, fixed_len_bytes, primitive, string, symbol, varchar};
+use qdb_core::col_type::ColumnTypeTag;
 
 use super::{util, GeoByte, GeoInt, GeoLong, GeoShort, IPv4};
 use crate::parquet::error::{ParquetError, ParquetResult};

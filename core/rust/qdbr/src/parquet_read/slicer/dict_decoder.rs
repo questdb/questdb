@@ -1,4 +1,4 @@
-use crate::parquet::error::{fmt_err, ParquetError, ParquetResult};
+use crate::parquet::error::{fmt_err, ParquetResult};
 use parquet2::page::DictPage;
 use std::mem::size_of;
 use std::ptr;

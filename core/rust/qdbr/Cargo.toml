@@ -11,6 +11,7 @@ name = "questdbr"
 crate-type = ["dylib"]
 
 [dependencies]
+qdb-core = { path = "../qdb-core" }
 jni = "0.21.1"
 num-traits = "0.2.18"
 parquet2 = { path = "parquet2" }

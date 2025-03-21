@@ -2,7 +2,7 @@ use std::mem;
 
 use super::util::ExactSizedIter;
 use crate::allocator::AcVec;
-use crate::parquet::error::{fmt_err, ParquetError, ParquetResult};
+use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, BinaryMaxMin};
 use parquet2::encoding::{delta_bitpacked, Encoding};

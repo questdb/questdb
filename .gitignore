@@ -32,6 +32,7 @@ core/rust/qdbr/parquet2/target
 **/CMakeFiles
 .envrc
 .vscode
+core/rust/qdb-core/target
 core/rust/qdbr/target
 compat/src/test/rust/scenarios/target/
 compat/src/test/rust/scenarios/Cargo.lock

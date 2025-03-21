@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 use crate::allocator::QdbAllocator;
-use crate::parquet::error::{ParquetError, ParquetErrorCause, ParquetErrorExt, ParquetResult};
+use crate::parquet::error::{ParquetError, ParquetErrorExt, ParquetErrorReason, ParquetResult};
 use crate::parquet_write::file::{create_row_group, WriteOptions};
 use crate::parquet_write::schema::{to_encodings, Partition};
 use parquet2::compression::CompressionOptions;
@@ -126,7 +126,7 @@ impl ParquetUpdater {
     pub fn end(&mut self, key_value_metadata: Option<Vec<KeyValue>>) -> ParquetResult<u64> {
         self.parquet_file.end(key_value_metadata).map_err(|s| {
             ParquetError::with_descr(
-                ParquetErrorCause::Parquet2(s),
+                ParquetErrorReason::Parquet2(s),
                 "could not update parquet file",
             )
         })
@@ -145,6 +145,7 @@ impl ParquetUpdater {
 
 #[cfg(test)]
 mod tests {
+    use crate::parquet::tests::ColumnTypeTagExt;
     use bytes::Bytes;
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use parquet2::compression::CompressionOptions;
@@ -159,11 +160,11 @@ mod tests {
     use crate::parquet_write::file::{create_row_group, ParquetWriter, WriteOptions};
     use crate::parquet_write::schema::{to_encodings, to_parquet_schema, Column, Partition};
 
-    use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
     use arrow::datatypes::ToByteSlice;
     use num_traits::float::FloatCore;
     use parquet2::read::read_metadata_with_size;
     use parquet2::write;
+    use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 
     fn save_to_file(bytes: &Bytes) {
         if let Ok(path) = env::var("OUT_PARQUET_FILE") {
