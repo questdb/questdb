@@ -25,55 +25,64 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.NoopArrayState;
+import io.questdb.cairo.arr.SingleElementDoubleArray;
+import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.StringSink;
 
-public class CastDoubleArrayToStrFunctionFactory implements FunctionFactory {
+public class CastDoubleToDoubleArray implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "cast(D[]s)";
+        return "cast(Dd[])";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new Func(args.getQuick(0));
+        int arrType = args.getQuick(1).getType();
+
+        return new Func(args.getQuick(0), arrType);
     }
 
-    public static class Func extends AbstractCastToStrFunction {
-        private final StringSink sinkA = new StringSink();
-        private final StringSink sinkB = new StringSink();
+    public static class Func extends ArrayFunction implements UnaryFunction {
+        private final Function arg;
+        private SingleElementDoubleArray array;
 
-        public Func(Function arg) {
-            super(arg);
+        public Func(Function arg, int arrType) {
+            super.type = arrType;
+            this.arg = arg;
+            this.array = new SingleElementDoubleArray(ColumnType.decodeArrayDimensionality(arrType));
         }
 
         @Override
-        public CharSequence getStrA(Record rec) {
-            return toSinkOrNull(sinkA, rec);
+        public void close() {
+            UnaryFunction.super.close();
+            array = Misc.free(array);
         }
 
         @Override
-        public CharSequence getStrB(Record rec) {
-            return toSinkOrNull(sinkB, rec);
+        public Function getArg() {
+            return arg;
         }
 
-        private CharSequence toSinkOrNull(StringSink sink, Record rec) {
-            ArrayView arrayView = arg.getArray(rec);
-            if (arrayView.isNull()) {
-                return null;
+        @Override
+        public ArrayView getArray(Record rec) {
+            double val = arg.getDouble(rec);
+            if (Numbers.isNull(val)) {
+                return ArrayConstant.NULL;
             }
-            sink.clear();
-            ArrayTypeDriver.arrayToJson(arrayView, sink, NoopArrayState.INSTANCE);
-            return sink;
+            array.of(val);
+            return array;
         }
     }
 }

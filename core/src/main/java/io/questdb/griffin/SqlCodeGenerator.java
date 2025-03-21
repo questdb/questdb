@@ -82,6 +82,9 @@ import io.questdb.griffin.engine.functions.cast.CastByteToVarcharFunctionFactory
 import io.questdb.griffin.engine.functions.cast.CastDateToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDateToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDateToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastDoubleArrayToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastDoubleArrayToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastDoubleToDoubleArray;
 import io.questdb.griffin.engine.functions.cast.CastDoubleToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDoubleToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastFloatToStrFunctionFactory;
@@ -475,11 +478,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ) {
                 return typeA;
             }
-            // array widening is unsupported for now
-            return -1;
-        } else if (aIsArray || bIsArray) {
-            // scalar to array widening is unsupported for now
-            return -1;
+            return VARCHAR;
+        } else if (aIsArray) {
+            if (tagB == DOUBLE) {
+                // if b is scalar then we coarse it to array of the same dimensionality as a is
+                return typeA;
+            }
+            return (tagB == STRING) ? STRING : VARCHAR;
+        } else if (bIsArray) {
+            if (tagA == DOUBLE) {
+                return typeB;
+            }
+            return (tagA == STRING ? STRING : VARCHAR);
         }
 
         int geoBitsA = getGeoHashBits(typeA);
@@ -1690,6 +1700,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         fromType,
                                         toType
                                 );
+                            case ColumnType.ARRAY:
+                                int arrayType = ColumnType.decodeArrayElementType(fromType);
+                                if (arrayType != DOUBLE) {
+                                    throw SqlException.unsupportedCast(
+                                            modelPosition,
+                                            castFromMetadata.getColumnName(i),
+                                            fromType,
+                                            toType
+                                    );
+                                }
+                                castFunctions.add(new CastDoubleArrayToStrFunctionFactory.Func(ArrayColumn.newInstance(i, fromType)));
+                                break;
                             case ColumnType.IPv4:
                                 castFunctions.add(new CastIPv4ToStrFunctionFactory.Func(new IPv4Column(i)));
                                 break;
@@ -2002,6 +2024,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         fromType,
                                         toType
                                 );
+                            case ColumnType.ARRAY:
+                                int arrayType = ColumnType.decodeArrayElementType(fromType);
+                                if (arrayType != DOUBLE) {
+                                    throw SqlException.unsupportedCast(
+                                            modelPosition,
+                                            castFromMetadata.getColumnName(i),
+                                            fromType,
+                                            toType
+                                    );
+                                }
+                                castFunctions.add(new CastDoubleArrayToVarcharFunctionFactory.Func(ArrayColumn.newInstance(i, fromType)));
+                                break;
                             default:
                                 assert false;
                         }
@@ -2010,9 +2044,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         castFunctions.add(IntervalColumn.newInstance(i));
                         break;
                     case ColumnType.ARRAY:
-                        // there is no cast, entity function
-                        castFunctions.add(ArrayColumn.newInstance(i, fromType));
-                        break;
+                        switch (fromTag) {
+                            case ARRAY:
+                                assert fromType == toType;
+                                castFunctions.add(ArrayColumn.newInstance(i, fromType));
+                                break;
+                            case DOUBLE:
+                                assert ColumnType.decodeArrayElementType(toType) == DOUBLE;
+                                castFunctions.add(new CastDoubleToDoubleArray.Func(DoubleColumn.newInstance(i), toType));
+                                break;
+                            default:
+                                assert false;
+
+                        }
                 }
             }
         }

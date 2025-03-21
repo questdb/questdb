@@ -236,6 +236,17 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConcatFailsGracefully() throws Exception {
+        assertMemoryLeak(() -> {
+            assertException(
+                    "SELECT ARRAY[1.0] || ARRAY[2.0, 3.0] FROM long_sequence(1)",
+                    12,
+                    "unsupported type: DOUBLE[]"
+            );
+        });
+    }
+
+    @Test
     public void testCreateAsSelect2d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (a DOUBLE, b DOUBLE)");
@@ -484,6 +495,36 @@ public class ArrayTest extends AbstractCairoTest {
             assertSql("cast\n" +
                             "\n",
                     "SELECT NULL::double[]::string FROM long_sequence(1)");
+        });
+    }
+
+    @Test
+    public void testExplicitCastFromScalarToArray() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("cast\n" +
+                            "[1.0]\n",
+                    "SELECT 1.0::double[] FROM long_sequence(1)",
+                    true
+            );
+
+            // null
+            assertQuery("cast\n" +
+                            "null\n",
+                    "SELECT NULL::double::double[] FROM long_sequence(1)",
+                    true);
+
+            // 2D
+            assertQuery("cast\n" +
+                            "[[1.0]]\n",
+                    "SELECT 1.0::double[][] FROM long_sequence(1)",
+                    true
+            );
+
+            // 2D with null
+            assertQuery("cast\n" +
+                            "null\n",
+                    "SELECT NULL::double::double[][] FROM long_sequence(1)",
+                    true);
         });
     }
 
@@ -1090,6 +1131,36 @@ public class ArrayTest extends AbstractCairoTest {
                 Assert.assertFalse(ColumnType.isAssignableFrom(ColumnType.encodeArrayType(j, i), j));
             }
         }
+    }
+
+    @Test
+    public void testUnionAll() throws Exception {
+        assertMemoryLeak(() -> {
+
+            // 2 arrays of the same type and dimensionality
+            assertQuery("ARRAY\n" +
+                            "[1.0,2.0]\n" +
+                            "[3.0,4.0,5.0]\n",
+                    "SELECT ARRAY[1.0, 2.0] UNION ALL SELECT ARRAY[3.0, 4.0, 5.0] FROM long_sequence(1)",
+                    null, null, false, true
+            );
+
+            // with scalar double
+            assertQuery("ARRAY\n" +
+                            "[1.0,2.0]\n" +
+                            "[3.0]\n",
+                    "SELECT ARRAY[1.0, 2.0] UNION ALL SELECT 3.0 FROM long_sequence(1)",
+                    null, null, false, true
+            );
+
+            // with string
+            assertQuery("ARRAY\n" +
+                            "[1.0,2.0]\n" +
+                            "foo\n",
+                    "SELECT ARRAY[1.0, 2.0] UNION ALL SELECT 'foo' FROM long_sequence(1)",
+                    null, null, false, true
+            );
+        });
     }
 
     @Test

@@ -35,38 +35,40 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
+import org.jetbrains.annotations.Nullable;
 
-public class CastDoubleArrayToStrFunctionFactory implements FunctionFactory {
+public class CastDoubleArrayToVarcharFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "cast(D[]s)";
+        return "cast(D[]ø)";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new Func(args.getQuick(0));
+        return null;
     }
 
-    public static class Func extends AbstractCastToStrFunction {
-        private final StringSink sinkA = new StringSink();
-        private final StringSink sinkB = new StringSink();
+    public static class Func extends AbstractCastToVarcharFunction {
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
 
         public Func(Function arg) {
             super(arg);
         }
 
         @Override
-        public CharSequence getStrA(Record rec) {
+        public @Nullable Utf8Sequence getVarcharA(Record rec) {
             return toSinkOrNull(sinkA, rec);
         }
 
         @Override
-        public CharSequence getStrB(Record rec) {
+        public @Nullable Utf8Sequence getVarcharB(Record rec) {
             return toSinkOrNull(sinkB, rec);
         }
 
-        private CharSequence toSinkOrNull(StringSink sink, Record rec) {
+        private Utf8StringSink toSinkOrNull(Utf8StringSink sink, Record rec) {
             ArrayView arrayView = arg.getArray(rec);
             if (arrayView.isNull()) {
                 return null;
