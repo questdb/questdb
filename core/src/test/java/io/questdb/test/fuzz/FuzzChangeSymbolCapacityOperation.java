@@ -44,7 +44,7 @@ public class FuzzChangeSymbolCapacityOperation implements FuzzTransactionOperati
         this.symbolCapacity = symbolCapacity;
     }
 
-    public static RecordMetadata generateSymbolCapacityChange(
+    public static boolean generateSymbolCapacityChange(
             ObjList<FuzzTransaction> transactionList,
             int metadataVersion,
             int waitBarrierVersion,
@@ -72,12 +72,12 @@ public class FuzzChangeSymbolCapacityOperation implements FuzzTransactionOperati
                 transaction.waitBarrierVersion = waitBarrierVersion;
                 transactionList.add(transaction);
 
-                return tableMetadata;
+                return true;
             }
         }
 
         // nothing to drop, only timestamp column left
-        return null;
+        return false;
     }
 
     @Override
@@ -98,6 +98,6 @@ public class FuzzChangeSymbolCapacityOperation implements FuzzTransactionOperati
             alterOp.withContext(context);
             wApi.apply(alterOp, true);
         }
-        return true;
+        return false;
     }
 }

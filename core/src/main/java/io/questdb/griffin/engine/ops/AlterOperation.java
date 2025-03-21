@@ -673,14 +673,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             throw CairoException.nonCritical().put("invalid change column type alter statement");
         }
         CharSequence columnName = activeExtraStrInfo.getStrA(0);
-        int newType = (int) extraInfo.get(0);
-        int columnNamePosition = (int) extraInfo.get(1);
-        try {
-            svc.changeSymbolCapacity(columnName, newType, securityContext);
-        } catch (CairoException e) {
-            e.position(columnNamePosition);
-            throw e;
-        }
+        int newCapacity = (int) extraInfo.get(1);
+        svc.changeSymbolCapacity(columnName, newCapacity, securityContext);
     }
 
     private boolean enableDeduplication(MetadataService svc) {

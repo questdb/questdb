@@ -1118,8 +1118,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 if (metadata.isIndexed(columnIndex)) {
                     ColumnIndexer indexer = indexers.get(columnIndex);
+                    final long columnTop = columnVersionWriter.getColumnTopQuick(partitionTimestamp, columnIndex);
                     assert indexer != null;
-                    indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), transientRowCount);
+                    indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop);
                 }
             }
 

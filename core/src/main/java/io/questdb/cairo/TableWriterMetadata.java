@@ -263,7 +263,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 null,
                 columnIndex,
                 symbolCapacity,
-                oldMeta.isSymbolIndexFlag(),
+                oldMeta.isDedupKeyFlag(),
                 oldMeta.getReplacingIndex(),
                 oldMeta.isSymbolCacheFlag()
         );
