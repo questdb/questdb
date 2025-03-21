@@ -3091,7 +3091,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToBasicWhereOptimisationBetween() throws Exception {
         assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
+            execute(SampleByTest.FROM_TO_DDL);
 
             final String query = "select ts, avg(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' to '2018-01-31' align to calendar with offset '10:00'";
@@ -3110,7 +3110,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToBasicWhereOptimisationGreaterThanOrEqualTo() throws Exception {
         assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
+            execute(SampleByTest.FROM_TO_DDL);
             final String query = "select ts, avg(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' align to calendar with offset '10:00'";
 
@@ -3127,7 +3127,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToBasicWhereOptimisationLesserThan() throws Exception {
         assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
+            execute(SampleByTest.FROM_TO_DDL);
             final String query = "select ts, avg(x) from fromto\n" +
                     "sample by 5d to '2018-01-31' align to calendar with offset '10:00'";
 
@@ -3147,7 +3147,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToBasicWhereOptimisationNarrowing() throws Exception {
         assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
+            execute(SampleByTest.FROM_TO_DDL);
             final String fromNarrow = "select ts, avg(x) from fromto\n" +
                     "where ts >= '2017-12-20'\n" +
                     "sample by 5d from '2017-12-22' align to calendar with offset '10:00'";
@@ -3165,7 +3165,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToBasicWhereOptimisationWithExistingWhereBetween() throws Exception {
         assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
+            execute(SampleByTest.FROM_TO_DDL);
             final String query = "select ts, avg(x) from fromto\n" +
                     "where s != '5'\n" +
                     "sample by 5d from '2017-12-20' to '2018-01-31' align to calendar with offset '10:00'\n";
@@ -3179,7 +3179,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToBasicWhereOptimisationWithExistingWhereGreaterThanOrEqualTo() throws Exception {
         assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
+            execute(SampleByTest.FROM_TO_DDL);
             final String query = "select ts, avg(x) from fromto\n" +
                     "where s != '5'\n" +
                     "sample by 5d from '2017-12-20' align to calendar with offset '10:00'\n";
@@ -3193,7 +3193,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToBasicWhereOptimisationWithExistingWhereLesserThan() throws Exception {
         assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
+            execute(SampleByTest.FROM_TO_DDL);
             final String query = "select ts, avg(x) from fromto\n" +
                     "where s != '5'\n" +
                     "sample by 5d to '2018-01-31' align to calendar with offset '10:00'\n";
@@ -3207,7 +3207,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToCheckingColumnTypes() throws Exception {
         assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
+            execute(SampleByTest.FROM_TO_DDL);
             final String query =
                     "select ts, avg(x), " +
                             "string_agg(s, ',')," +
@@ -3236,7 +3236,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToDisallowedQueryWithKey() throws Exception {
         assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
+            execute(SampleByTest.FROM_TO_DDL);
             assertException("SELECT ts, count, s\n" +
                     "FROM fromto\n" +
                     "SAMPLE BY 5d FROM '2018-01-01' TO '2019-01-01'\n" +
@@ -3247,7 +3247,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToFillNullWithExtraColumns() throws Exception {
         assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
+            execute(SampleByTest.FROM_TO_DDL);
             final String query = "select ts, avg(x), sum(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n";
 
@@ -3281,7 +3281,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToNotEnoughFillValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
+            execute(SampleByTest.FROM_TO_DDL);
             final String query =
                     "select ts, avg(x), " +
                             "string_agg(s, ',')," +
@@ -3378,7 +3378,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToParallelSampleByRewrite() throws Exception {
         assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
+            execute(SampleByTest.FROM_TO_DDL);
             final String query = "select ts, avg(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n";
 
@@ -3412,7 +3412,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToParallelSampleByRewriteMultipleFills() throws Exception {
         assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
+            execute(SampleByTest.FROM_TO_DDL);
             final String query = "select ts, avg(x), sum(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' to '2018-01-31' fill(42, 41)";
 
@@ -3440,7 +3440,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToParallelSampleByRewritePostfill() throws Exception {
         assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
+            execute(SampleByTest.FROM_TO_DDL);
             final String query = "select ts, avg(x) from fromto\n" +
                     "sample by 5d to '2018-01-31' fill(null)";
 
@@ -3472,7 +3472,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToParallelSampleByRewritePrefill() throws Exception {
         assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
+            execute(SampleByTest.FROM_TO_DDL);
             final String query = "select ts, avg(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' fill(null) ";
 
@@ -3502,8 +3502,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToParallelSampleByRewriteWithExcept() throws Exception {
         assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
-            execute(SampleByTest.DDL_FROMTO.replace("fromto", "fromto2"));
+            execute(SampleByTest.FROM_TO_DDL);
+            execute(SampleByTest.FROM_TO_DDL.replace("fromto", "fromto2"));
 
             final String exceptAllQuery = "select ts, avg(x), sum(x) from fromto sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n" +
                     "except all\n" +
@@ -3578,8 +3578,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToParallelSampleByRewriteWithIntersect() throws Exception {
         assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
-            execute(SampleByTest.DDL_FROMTO.replace("fromto", "fromto2"));
+            execute(SampleByTest.FROM_TO_DDL);
+            execute(SampleByTest.FROM_TO_DDL.replace("fromto", "fromto2"));
 
             final String intersectAllQuery = "select ts, avg(x), sum(x) from fromto sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n" +
                     "intersect all\n" +
@@ -3672,8 +3672,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToParallelSampleByRewriteWithJoin() throws Exception {
         assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
-            execute(SampleByTest.DDL_FROMTO.replace("fromto", "fromto2"));
+            execute(SampleByTest.FROM_TO_DDL);
+            execute(SampleByTest.FROM_TO_DDL.replace("fromto", "fromto2"));
 
 
             final String query = "select fromto.ts, avg(fromto.x)\n" +
@@ -3715,8 +3715,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToParallelSampleByRewriteWithJoin2() throws Exception {
         assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
-            execute(SampleByTest.DDL_FROMTO.replace("fromto", "fromto2"));
+            execute(SampleByTest.FROM_TO_DDL);
+            execute(SampleByTest.FROM_TO_DDL.replace("fromto", "fromto2"));
 
             final String query = "(select ts as five_days, avg(x) as five_days_avg from fromto sample by 5d from '2017-12-20' to '2018-01-31' fill(null))\n" +
                     "asof join\n" +
@@ -3768,7 +3768,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToParallelSampleByRewriteWithKeys() throws Exception {
         assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
+            execute(SampleByTest.FROM_TO_DDL);
             final String shouldFail1a = "select ts, avg(x), s from fromto\n" +
                     "sample by 5d from '2017-12-20' fill(null) ";
 
@@ -3832,8 +3832,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToParallelSampleByRewriteWithUnion() throws Exception {
         assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
-            execute(SampleByTest.DDL_FROMTO.replace("fromto", "fromto2"));
+            execute(SampleByTest.FROM_TO_DDL);
+            execute(SampleByTest.FROM_TO_DDL.replace("fromto", "fromto2"));
 
             final String unionAllQuery = "select ts, avg(x), sum(x) from fromto sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n" +
                     "union all\n" +
@@ -3933,7 +3933,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToParallelSequentialEquivalence() throws Exception {
         assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
+            execute(SampleByTest.FROM_TO_DDL);
 
             final String parallel = "select ts, avg(x) from fromto\n" +
                     "sample by 1w from '2017-12-20' to '2018-01-31' fill(null)";
@@ -4020,7 +4020,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToWithAliases() throws Exception {
         assertMemoryLeak(() -> {
-            execute(SampleByTest.DDL_FROMTO);
+            execute(SampleByTest.FROM_TO_DDL);
             final String query = "select ts as five_days, avg(x) as five_days_avg from fromto \n" +
                     "sample by 5d from '2017-12-20' to '2018-01-31' fill(null)";
 

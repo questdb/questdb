@@ -105,8 +105,9 @@ import io.questdb.griffin.engine.functions.date.DateTruncFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ExtractFromTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.date.TimestampAddFunctionFactory;
 import io.questdb.griffin.engine.functions.date.TimestampCeilFunctionFactory;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFromFunctionFactory;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetFunctionFactory;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
-import io.questdb.griffin.engine.functions.date.TimestampFloorOffsetFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToTimezoneTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.ContainsEqIPv4StrFunctionFactory;
@@ -2497,10 +2498,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     args.add(new StrConstant("{'abc'}"));
                                 } else if (factory instanceof TestSumXDoubleGroupByFunctionFactory && p == 1) {
                                     args.add(new StrConstant("123.456"));
-                                } else if (factory instanceof TimestampFloorFunctionFactory && p == 0) {
+                                } else if ((factory instanceof TimestampFloorFunctionFactory || factory instanceof TimestampFloorFromFunctionFactory || factory instanceof TimestampFloorFromOffsetFunctionFactory) && p == 0) {
                                     args.add(new StrConstant("d"));
-                                } else if (factory instanceof TimestampFloorOffsetFunctionFactory && p == 0) {
-                                    args.add(new StrConstant("d"));
+                                } else if (factory instanceof TimestampFloorFromOffsetFunctionFactory && p == 3) {
+                                    args.add(new StrConstant("00:30"));
                                 } else if (factory instanceof DateTruncFunctionFactory && p == 0) {
                                     args.add(new StrConstant("year"));
                                 } else if (factory instanceof ToUTCTimestampFunctionFactory && p == 1) {
@@ -6849,7 +6850,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Frame forward scan on: a\n"
             );
 
-            // without rewrite
             assertPlanNoLeakCheck(
                     "select first(i) from a sample by 1h fill(null) align to calendar with offset '10:00'",
                     "Sample By\n" +
@@ -6877,7 +6877,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: a\n"
             );
-
         });
     }
 
@@ -6967,7 +6966,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleByFillValueNotKeyed() throws Exception {
         assertMemoryLeak(() -> {
             assertPlanNoLeakCheck(
-                    "create table a ( i int, ts timestamp) timestamp(ts);",
+                    "create table a (i int, ts timestamp) timestamp(ts);",
                     "select first(i) from a sample by 1h fill(1) align to first observation",
                     "Sample By\n" +
                             "  fill: value\n" +
@@ -6977,7 +6976,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Frame forward scan on: a\n"
             );
 
-            // without rewrite
             assertPlanNoLeakCheck(
                     "select first(i) from a sample by 1h fill(1) align to calendar with offset '10:00'",
                     "Sample By\n" +

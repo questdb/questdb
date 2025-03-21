@@ -84,7 +84,7 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
                     );
                 } catch (NumericException e) {
                     Misc.free(timestamp);
-                    throw SqlException.$(argPositions.getQuick(1), "invalid timezone name");
+                    throw SqlException.$(argPositions.getQuick(1), "invalid timezone: ").put(tz);
                 }
             } else {
                 return new OffsetTimestampFunctionFromOffset(

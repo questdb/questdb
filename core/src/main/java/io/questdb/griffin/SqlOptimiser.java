@@ -1670,6 +1670,9 @@ public class SqlOptimiser implements Mutable {
         _model.setNestedModel(_nested);
         _nested.setNestedModel(model);
 
+        _model.setModelPosition(model.getModelPosition());
+        _nested.setModelPosition(model.getModelPosition());
+
         // bubble up the union model, so that wrapper models are
         // subject to set operations
         QueryModel unionModel = model.getUnionModel();
@@ -4807,9 +4810,7 @@ public class SqlOptimiser implements Mutable {
         if (nested != null) {
             // "sample by" details will be on the nested model of the query
             final ExpressionNode sampleBy = nested.getSampleBy();
-            final ExpressionNode sampleByOffset = nested.getSampleByOffset() != null && !isZeroOffset(nested.getSampleByOffset().token)
-                    ? nested.getSampleByOffset()
-                    : null;
+            final ExpressionNode sampleByOffset = nested.getSampleByOffset();
             final ObjList<ExpressionNode> sampleByFill = nested.getSampleByFill();
             final ExpressionNode sampleByTimezoneName = nested.getSampleByTimezoneName() != null && !isUTC(nested.getSampleByTimezoneName().token)
                     ? nested.getSampleByTimezoneName()
@@ -4817,8 +4818,8 @@ public class SqlOptimiser implements Mutable {
             final ExpressionNode sampleByUnit = nested.getSampleByUnit();
             final ExpressionNode timestamp = nested.getTimestamp();
             final int sampleByFillSize = sampleByFill.size();
-            ExpressionNode sampleByFrom = nested.getSampleByFrom();
-            ExpressionNode sampleByTo = nested.getSampleByTo();
+            final ExpressionNode sampleByFrom = nested.getSampleByFrom();
+            final ExpressionNode sampleByTo = nested.getSampleByTo();
 
             final ObjList<ExpressionNode> groupBy = nested.getGroupBy();
             if (sampleBy != null && groupBy != null && groupBy.size() > 0) {
@@ -4828,8 +4829,10 @@ public class SqlOptimiser implements Mutable {
             if (
                     sampleBy != null
                             && timestamp != null
-                            && (sampleByFillSize == 0 || sampleByTimezoneName == null)
-                            && sampleByOffset == null
+                            // null offset means ALIGN TO FIRST OBSERVATION, and we only support ALIGN TO CALENDAR
+                            && sampleByOffset != null
+                            // for now, time zone and offset are supported only when there is no FILL()
+                            && (sampleByFillSize == 0 || (sampleByTimezoneName == null && isZeroOffset(sampleByOffset.token)))
                             && (sampleByFillSize == 0 || (sampleByFillSize == 1 && !isPrevKeyword(sampleByFill.getQuick(0).token) && !isLinearKeyword(sampleByFill.getQuick(0).token)))
                             && sampleByUnit == null
                             && (sampleByFrom == null || ((sampleByFrom.type != BIND_VARIABLE) && (sampleByFrom.type != FUNCTION) && (sampleByFrom.type != OPERATION)))
@@ -4841,7 +4844,6 @@ public class SqlOptimiser implements Mutable {
                 // as group-by keys.
 
                 final ObjList<ExpressionNode> maybeKeyed = new ObjList<>();
-
                 for (int i = 0, n = model.getColumns().size(); i < n; i++) {
                     final QueryColumn column = model.getColumns().getQuick(i);
                     final ExpressionNode ast = column.getAst();
@@ -4852,6 +4854,10 @@ public class SqlOptimiser implements Mutable {
                     if (ast.type == LITERAL || ast.type == FUNCTION || ast.type == OPERATION) {
                         maybeKeyed.add(ast);
                     }
+                }
+
+                if (hasNoAggregateQueryColumns(model)) {
+                    throw SqlException.$(nested.getSampleBy().position, "at least one aggregation function must be present in 'select' clause");
                 }
 
                 // When timestamp is not explicitly selected, we will
@@ -5026,46 +5032,50 @@ public class SqlOptimiser implements Mutable {
                 final ExpressionNode tsFloorFunc = expressionNodePool.next();
                 tsFloorFunc.token = "timestamp_floor";
                 tsFloorFunc.type = FUNCTION;
-                tsFloorFunc.paramCount = sampleByFrom != null ? 3 : 2;
+                tsFloorFunc.paramCount = 4;
 
                 CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
                 characterStoreEntry.put('\'').put(sampleBy.token).put('\'');
 
-                final ExpressionNode tsFloorParam1 = expressionNodePool.next();
-                tsFloorParam1.token = characterStoreEntry.toImmutable();
-                tsFloorParam1.paramCount = 0;
-                tsFloorParam1.type = CONSTANT;
+                final ExpressionNode tsFloorIntervalParam = expressionNodePool.next();
+                tsFloorIntervalParam.token = characterStoreEntry.toImmutable();
+                tsFloorIntervalParam.paramCount = 0;
+                tsFloorIntervalParam.type = CONSTANT;
 
-                final ExpressionNode tsFloorParam2 = expressionNodePool.next();
+                final ExpressionNode tsFloorTsParam = expressionNodePool.next();
                 if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_CONVERT_TIME_ZONE) != 0) {
-                    tsFloorParam2.token = "to_timezone";
-                    tsFloorParam2.type = FUNCTION;
-                    tsFloorParam2.paramCount = 2;
+                    tsFloorTsParam.token = "to_timezone";
+                    tsFloorTsParam.type = FUNCTION;
+                    tsFloorTsParam.paramCount = 2;
                     final ExpressionNode toTzParam = expressionNodePool.next();
                     toTzParam.token = timestampColumn;
                     toTzParam.position = timestamp.position;
                     toTzParam.paramCount = 0;
                     toTzParam.type = LITERAL;
-                    tsFloorParam2.lhs = toTzParam;
-                    tsFloorParam2.rhs = sampleByTimezoneName;
+                    tsFloorTsParam.lhs = toTzParam;
+                    tsFloorTsParam.rhs = sampleByTimezoneName;
                 } else {
-                    tsFloorParam2.token = timestampColumn;
-                    tsFloorParam2.position = timestamp.position;
-                    tsFloorParam2.paramCount = 0;
-                    tsFloorParam2.type = LITERAL;
+                    tsFloorTsParam.token = timestampColumn;
+                    tsFloorTsParam.position = timestamp.position;
+                    tsFloorTsParam.paramCount = 0;
+                    tsFloorTsParam.type = LITERAL;
                 }
 
+                tsFloorFunc.args.add(sampleByOffset);
                 // If SAMPLE BY FROM ... is present, we need to use the variant of timestamp_floor
                 // which includes the `offset` parameter. This value is populated from the FROM clause and anchors
                 // the calendar-aligned buckets to an offset other than the unix epoch.
                 if (sampleByFrom != null) {
                     tsFloorFunc.args.add(sampleByFrom);
-                    tsFloorFunc.args.add(tsFloorParam2);
-                    tsFloorFunc.args.add(tsFloorParam1);
                 } else {
-                    tsFloorFunc.lhs = tsFloorParam1;
-                    tsFloorFunc.rhs = tsFloorParam2;
+                    final ExpressionNode nullExpr = expressionNodePool.next();
+                    nullExpr.type = CONSTANT;
+                    nullExpr.token = "null";
+                    nullExpr.precedence = 0;
+                    tsFloorFunc.args.add(nullExpr);
                 }
+                tsFloorFunc.args.add(tsFloorTsParam);
+                tsFloorFunc.args.add(tsFloorIntervalParam);
 
                 model.getBottomUpColumns().setQuick(
                         timestampPos,
