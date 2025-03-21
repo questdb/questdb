@@ -59,6 +59,10 @@ public class WalTelemetryTest extends AbstractCairoTest {
                 execute("insert into " + tableName +
                         " values (101, 'dfd', '2022-02-24T01', 'asd')");
 
+                var tt = engine.verifyTableName(tableName);
+                var control = engine.getTableSequencerAPI().getTxnTracker(tt).getMemPressureControl();
+                control.setMaxBlockRowCount(1);
+
                 setCurrentMicros(3000);
                 drainWalQueue();
 

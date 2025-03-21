@@ -460,12 +460,15 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 } catch (SQLException e) {
                     exception.set(e);
                 } finally {
+                    // We have to clear thread locals *before* awaiting on the barrier.
+                    // Otherwise, the main test thread might be unblocked before we
+                    // clean up the thread locals and we get a false memory leak failure.
+                    Path.clearThreadLocals();
                     try {
                         barrier.await();
                     } catch (InterruptedException | BrokenBarrierException e) {
                         exception.compareAndSet(null, e);
                     }
-                    Path.clearThreadLocals();
                 }
             }).start();
 
