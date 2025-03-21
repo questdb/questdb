@@ -258,7 +258,7 @@ public class IntList implements Mutable, Sinkable {
     /**
      * Sorts groups of N elements. The size of the group is specified by {@code groupSize}.
      * Comparison between groups is done by comparing the first element of each group, then
-     * if the first elements are equial the second elements are compared and so on.
+     * if the first elements are equal the second elements are compared and so on.
      *
      * @param groupSize size of the group
      */

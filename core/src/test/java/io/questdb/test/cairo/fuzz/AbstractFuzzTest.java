@@ -279,6 +279,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, getRndO3PartitionSplitMaxCount(rnd));
         node1.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, getMaxWalSize(rnd));
         node1.setProperty(PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, getMaxWalFdCache(rnd));
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 1 + rnd.nextInt(200));
 
         int txnCount = Math.max(10, fuzzer.getTransactionCount());
         long walChunk = Math.max(0, rnd.nextInt((int) (3.5 * txnCount)) - txnCount);
