@@ -1136,6 +1136,8 @@ public class ArrayTest extends AbstractCairoTest {
     @Test
     public void testUnionAll() throws Exception {
         assertMemoryLeak(() -> {
+            execute("create table tango (a double)");
+            execute("insert into tango values (null)");
 
             // 2 arrays of the same type and dimensionality
             assertQuery("ARRAY\n" +
@@ -1150,6 +1152,14 @@ public class ArrayTest extends AbstractCairoTest {
                             "[1.0,2.0]\n" +
                             "[3.0]\n",
                     "SELECT ARRAY[1.0, 2.0] UNION ALL SELECT 3.0 FROM long_sequence(1)",
+                    null, null, false, true
+            );
+
+            // with double::null
+            assertQuery("ARRAY\n" +
+                            "[1.0,2.0]\n" +
+                            "null\n",
+                    "SELECT ARRAY[1.0, 2.0] UNION ALL SELECT * from tango",
                     null, null, false, true
             );
 
