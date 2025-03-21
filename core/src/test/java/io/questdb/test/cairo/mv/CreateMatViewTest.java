@@ -668,7 +668,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             createTable(TABLE1);
 
             final String query = "select ts, k, max(v) as v_max from " + TABLE1 + " sample by 1h";
-            execute("CREATE MATERIALIZED VIEW test AS (" + query + ") TTL 7 DAYS;");
+            execute("CREATE MATERIALIZED VIEW test AS (" + query + ") TTL 1 MONTH;");
             assertMatViewDefinition("test", query, TABLE1, 1, 'h');
             assertMatViewMetadata("test", query, TABLE1, 1, 'h');
 
@@ -677,7 +677,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertTrue(metadata.isDedupKey(0));
                 assertTrue(metadata.isDedupKey(1));
                 assertFalse(metadata.isDedupKey(2));
-                assertEquals(7 * 24, metadata.getTtlHoursOrMonths());
+                assertEquals(-1, metadata.getTtlHoursOrMonths());
             }
         });
     }
@@ -1414,8 +1414,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             testCreateMatViewNoPartitionBy(10, 's', PartitionBy.DAY, useParentheses);
             testCreateMatViewNoPartitionBy(1, 'm', PartitionBy.DAY, useParentheses);
-            testCreateMatViewNoPartitionBy(2, 'm', PartitionBy.WEEK, useParentheses);
-            testCreateMatViewNoPartitionBy(1, 'h', PartitionBy.WEEK, useParentheses);
+            testCreateMatViewNoPartitionBy(2, 'm', PartitionBy.MONTH, useParentheses);
+            testCreateMatViewNoPartitionBy(1, 'h', PartitionBy.MONTH, useParentheses);
             testCreateMatViewNoPartitionBy(2, 'h', PartitionBy.YEAR, useParentheses);
             testCreateMatViewNoPartitionBy(70, 'm', PartitionBy.YEAR, useParentheses);
         });
