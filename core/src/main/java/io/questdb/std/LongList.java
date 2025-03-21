@@ -484,9 +484,20 @@ public class LongList implements Mutable, LongVec, Sinkable {
      */
     @Override
     public String toString() {
-        final Utf16Sink sb = Misc.getThreadLocalSink();
-        toSink(sb);
-        return sb.toString();
+        final Utf16Sink sink = Misc.getThreadLocalSink();
+        sink.putAscii('[');
+        // Do not try to print too much, it can hang IntelliJ debugger.
+        for (int i = 0, k = Math.min(pos, 100); i < k; i++) {
+            if (i > 0) {
+                sink.putAscii(',');
+            }
+            sink.put(get(i));
+        }
+        if (pos > 100) {
+            sink.putAscii(", .. ");
+        }
+        sink.putAscii(']');
+        return sink.toString();
     }
 
     public void zero(int value) {

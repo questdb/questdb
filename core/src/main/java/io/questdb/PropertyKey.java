@@ -495,6 +495,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_O3_LAST_PARTITION_MAX_SPLITS("cairo.o3.last.partition.max.splits"),
     CAIRO_O3_PARTITION_SPLIT_MIN_SIZE("cairo.o3.partition.split.min.size"),
     CAIRO_O3_PARTITION_OVERWRITE_CONTROL_ENABLED("cairo.o3.partition.overwrite.control.enabled"),
+    CAIRO_WRITE_BACK_OFF_TIMEOUT_ON_MEM_PRESSURE("cairo.write.back.off.timeout.on.mem.pressure"),
     DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE("debug.wal.purge.wait.before.delete", false, true),
     RAM_USAGE_LIMIT_BYTES("ram.usage.limit.bytes"),
     RAM_USAGE_LIMIT_PERCENT("ram.usage.limit.percent"),
