@@ -630,6 +630,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         return rnd;
     }
 
+    @SuppressWarnings("unused")
     private Rnd generateRandomAndProps(long seed1, long seed2) {
         Rnd rnd = fuzzer.generateRandom(io.questdb.test.AbstractCairoTest.LOG, seed1, seed2);
         setFuzzProperties(rnd);

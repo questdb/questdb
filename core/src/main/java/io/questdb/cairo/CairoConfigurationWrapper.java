@@ -1299,6 +1299,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
         return getDelegate().useFastAsOfJoin();
     }
 
+    @Override
+    public long getWriteBackOffTimeoutOnMemPressureMs() {
+        return getDelegate().getWriteBackOffTimeoutOnMemPressureMs();
+    }
+
     protected CairoConfiguration getDelegate() {
         return delegate.get();
     }
