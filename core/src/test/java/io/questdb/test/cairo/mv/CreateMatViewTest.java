@@ -88,13 +88,16 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final AtomicInteger createCounter = new AtomicInteger();
 
             final Thread creator = new Thread(() -> {
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
-                     SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                try (
+                        MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+                        SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
+                ) {
                     barrier.await();
                     for (int i = 0; i < iterations; i++) {
+                        // Use test alloc() function to make sure that we always free the factory.
                         execute(
                                 "create materialized view if not exists price_1h as (" +
-                                        "  select sym, last(price) as price, ts from base_price sample by 1h" +
+                                        "  select sym, alloc(42), last(price) as price, ts from base_price sample by 1h" +
                                         ") partition by DAY",
                                 executionContext
                         );
@@ -844,9 +847,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                     barrier.await();
                     for (int i = 0; i < iterations; i++) {
+                        // Use test alloc() function to make sure that we always free the factory.
                         execute(
                                 "create materialized view if not exists price_1h as (" +
-                                        "  select sym, last(price) as price, ts from base_price sample by 1h" +
+                                        "  select sym, alloc(42), last(price) as price, ts from base_price sample by 1h" +
                                         ") partition by DAY",
                                 executionContext
                         );

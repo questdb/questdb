@@ -183,7 +183,6 @@ public class MatViewGraphImpl implements MatViewGraph {
             if (state.isDropped()) {
                 // Housekeeping
                 refreshStateByTableDirName.remove(matViewToken.getDirName(), state);
-                state.tryCloseIfDropped();
                 return null;
             }
             return state.getViewDefinition();
