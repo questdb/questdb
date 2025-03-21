@@ -2281,10 +2281,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     );
                     break;
                 case ExecutionModel.CREATE_TABLE:
-                    compiledQuery.ofCreateTable(((CreateTableOperationBuilder) executionModel).build(this, executionContext, sqlText));
+                    compiledQuery.ofCreateTable(((CreateTableOperationBuilder) executionModel)
+                            .build(this, executionContext, sqlText));
                     break;
                 case ExecutionModel.CREATE_MAT_VIEW:
-                    compiledQuery.ofCreateMatView(((CreateMatViewOperationBuilder) executionModel).build(this, executionContext, sqlText));
+                    compiledQuery.ofCreateMatView(((CreateMatViewOperationBuilder) executionModel)
+                            .build(this, executionContext, sqlText));
                     break;
                 case ExecutionModel.COPY:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
