@@ -129,7 +129,7 @@ impl CoreError {
 
 impl Debug for CoreError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "CoreError\n    Cause: {:?}", self.reason)?;
+        writeln!(f, "CoreError\n    Reason: {:?}", self.reason)?;
         writeln!(f, "    Context:")?;
         for line in self.context.iter().rev() {
             writeln!(f, "        {}", line)?;

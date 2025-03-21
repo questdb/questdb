@@ -23,7 +23,7 @@
  ******************************************************************************/
 #![allow(dead_code)]
 
-use crate::parquet::error::{fmt_err, ParquetErrorCause, ParquetResult};
+use crate::parquet::error::{fmt_err, ParquetErrorReason, ParquetResult};
 use qdb_core::col_type::ColumnType;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -147,10 +147,10 @@ pub type QdbMeta = QdbMetaV1;
 impl QdbMeta {
     pub fn deserialize(metadata: &str) -> ParquetResult<Self> {
         let version: VersionMeta = serde_json::from_str(metadata)
-            .map_err(|e| ParquetErrorCause::QdbMeta(e.into()).into_err())?;
+            .map_err(|e| ParquetErrorReason::QdbMeta(e.into()).into_err())?;
         match version.version {
             1 => serde_json::from_str(metadata)
-                .map_err(|e| ParquetErrorCause::QdbMeta(e.into()).into_err()),
+                .map_err(|e| ParquetErrorReason::QdbMeta(e.into()).into_err()),
             _ => Err(fmt_err!(
                 Unsupported,
                 "unsupported questdb metadata version: {}",
@@ -160,7 +160,7 @@ impl QdbMeta {
     }
 
     pub fn serialize(&self) -> ParquetResult<String> {
-        serde_json::to_string(self).map_err(|e| ParquetErrorCause::QdbMeta(e.into()).into_err())
+        serde_json::to_string(self).map_err(|e| ParquetErrorReason::QdbMeta(e.into()).into_err())
     }
 }
 
@@ -206,7 +206,7 @@ mod tests {
 
         let serialized_str = metadata.serialize()?;
         let serialized: Value = serde_json::from_str(serialized_str.as_str())
-            .map_err(|e| ParquetErrorCause::QdbMeta(e.into()).into_err())?;
+            .map_err(|e| ParquetErrorReason::QdbMeta(e.into()).into_err())?;
 
         // Check that it serializes to the expected JSON.
         assert_eq!(serialized, expected);
@@ -228,7 +228,7 @@ mod tests {
         let serialized_str = serde_json::to_string(&metadata).unwrap();
 
         let err = QdbMeta::deserialize(&serialized_str).unwrap_err();
-        assert!(matches!(err.get_cause(), ParquetErrorCause::Unsupported));
+        assert!(matches!(err.reason(), ParquetErrorReason::Unsupported));
 
         let msg = err.to_string();
         assert_eq!(msg, "unsupported questdb metadata version: 2");

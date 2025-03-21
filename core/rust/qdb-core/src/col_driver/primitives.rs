@@ -102,11 +102,11 @@ mod tests {
         assert_eq!(aux_size, None);
 
         let err = IntDriver.col_sizes_for_size(&col, 1).unwrap_err();
-        assert!(matches!(err.get_cause(), CoreErrorReason::InvalidLayout));
+        assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         let msg = format!("{:#}", err);
-        // eprintln!("{}", msg);
+        eprintln!("{}", msg);
         assert!(msg.contains(
-            "data file for int column int_col0 smaller than 1 rows, expected at least 4 bytes but is 0"
+            "data file for int column int_col0 shorter than 1 rows, expected at least 4 bytes but is 0"
         ));
     }
 
@@ -122,11 +122,11 @@ mod tests {
         assert_eq!(aux_size, None);
 
         let err = IntDriver.col_sizes_for_size(&col, 2).unwrap_err();
-        assert!(matches!(err.get_cause(), CoreErrorReason::InvalidLayout));
+        assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         let msg = format!("{:#}", err);
         // eprintln!("{}", msg);
         assert!(msg.contains(
-            "data file for int column int_col1 smaller than 2 rows, expected at least 8 bytes but is 4"
+            "data file for int column int_col1 shorter than 2 rows, expected at least 8 bytes but is 4"
         ));
     }
 
@@ -142,11 +142,11 @@ mod tests {
         assert_eq!(aux_size, None);
 
         let err = TimestampDriver.col_sizes_for_size(&col, 2).unwrap_err();
-        assert!(matches!(err.get_cause(), CoreErrorReason::InvalidLayout));
+        assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         let msg = format!("{:#}", err);
         // eprintln!("{}", msg);
         assert!(msg.contains(
-            "data file for timestamp column timestamp_col1 smaller than 2 rows, expected at least 16 bytes but is 8"
+            "data file for timestamp column timestamp_col1 shorter than 2 rows, expected at least 16 bytes but is 8"
         ));
     }
 }
