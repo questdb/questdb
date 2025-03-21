@@ -305,12 +305,6 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
             if (col == valueColumnIndex) {
                 return baseRecord.getInt(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            // like symbol, we need to provide the key
-            if (col == inColumnIndex) {
-                return cursor.columnPosition;
-            }
-
             return baseRecord.getInt(passthroughIndicesMap.get(col));
         }
 
@@ -381,6 +375,9 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
             if (col == valueColumnIndex) {
                 return baseRecord.getStrA(unpivotForIndices.getQuick(cursor.columnPosition));
             }
+            if (col == inColumnIndex) {
+                return unpivotForNames.getQuick(cursor.columnPosition);
+            }
             return baseRecord.getStrA(passthroughIndicesMap.get(col));
         }
 
@@ -389,6 +386,10 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
             if (col == valueColumnIndex) {
                 return baseRecord.getStrB(unpivotForIndices.getQuick(cursor.columnPosition));
             }
+            if (col == inColumnIndex) {
+                return unpivotForNames.getQuick(cursor.columnPosition);
+            }
+
             return baseRecord.getStrB(passthroughIndicesMap.get(col));
         }
 
@@ -397,6 +398,10 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
             if (col == valueColumnIndex) {
                 return baseRecord.getStrLen(unpivotForIndices.getQuick(cursor.columnPosition));
             }
+            if (col == inColumnIndex) {
+                return unpivotForNames.getQuick(cursor.columnPosition).length();
+            }
+
             return baseRecord.getStrLen(passthroughIndicesMap.get(col));
         }
 
@@ -405,11 +410,6 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
             if (col == valueColumnIndex) {
                 return baseRecord.getSymA(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            if (col == inColumnIndex) {
-                return unpivotForNames.getQuick(cursor.columnPosition);
-            }
-
             return baseRecord.getSymA(passthroughIndicesMap.get(col));
         }
 
@@ -418,11 +418,6 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
             if (col == valueColumnIndex) {
                 return baseRecord.getSymB(unpivotForIndices.getQuick(cursor.columnPosition));
             }
-
-            if (col == inColumnIndex) {
-                return unpivotForNames.getQuick(cursor.columnPosition);
-            }
-
             return baseRecord.getSymB(passthroughIndicesMap.get(col));
         }
 
@@ -465,7 +460,7 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
         abstract boolean mustSkipUnpivotValueColumn(int col);
     }
 
-    public class UnpivotRecordCursor implements RecordCursor, SymbolTable {
+    public class UnpivotRecordCursor implements RecordCursor {
         private final UnpivotRecord unpivotRecord;
         private RecordCursor baseCursor;
         private Record baseRecord = null;
@@ -481,7 +476,9 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void close() {
+
             baseCursor = Misc.free(baseCursor);
+
         }
 
         @Override
@@ -494,14 +491,9 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
             throw new UnsupportedOperationException();
         }
 
-
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            if (columnIndex == inColumnIndex) {
-                return this;
-            } else {
-                return baseCursor.getSymbolTable(columnIndex);
-            }
+            return baseCursor.getSymbolTable(columnIndex);
         }
 
         @Override
@@ -511,7 +503,7 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public SymbolTable newSymbolTable(int columnIndex) {
-            return getSymbolTable(columnIndex);
+            return baseCursor.newSymbolTable(columnIndex);
         }
 
         public void of(SqlExecutionContext executionContext) throws SqlException {
@@ -534,22 +526,6 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
             columnPosition = -1;
             baseRecord = null;
             baseCursor.toTop();
-        }
-
-        @Override
-        public CharSequence valueBOf(int key) {
-            if (key > -1) {
-                return unpivotForNames.getQuick(key);
-            }
-            return null;
-        }
-
-        @Override
-        public CharSequence valueOf(int key) {
-            if (key > -1) {
-                return unpivotForNames.getQuick(key);
-            }
-            return null;
         }
 
         private boolean getNextColumn() {
