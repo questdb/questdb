@@ -172,6 +172,9 @@ public interface SqlExecutionContext extends Closeable {
 
     boolean isColumnPreTouchEnabled();
 
+    // Used to disable column pre-touch without affecting the explain plan
+    boolean isColumnPreTouchEnabledOverride();
+
     // Returns true when where intrinsics are overridden, i.e. by a materialized view refresh
     default boolean isOverriddenIntrinsics(TableToken tableToken) {
         return false;
@@ -201,6 +204,8 @@ public interface SqlExecutionContext extends Closeable {
 
     void pushTimestampRequiredFlag(boolean flag);
 
+    void resetFlags();
+
     void setCacheHit(boolean value);
 
     void setCancelledFlag(AtomicBoolean cancelled);
@@ -208,6 +213,9 @@ public interface SqlExecutionContext extends Closeable {
     void setCloneSymbolTables(boolean cloneSymbolTables);
 
     void setColumnPreTouchEnabled(boolean columnPreTouchEnabled);
+
+    // Used to disable column pre-touch without affecting the explain plan
+    void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride);
 
     void setJitMode(int jitMode);
 
@@ -225,6 +233,4 @@ public interface SqlExecutionContext extends Closeable {
 
     default void storeTelemetry(short event, short origin) {
     }
-
-    void resetFlags();
 }

@@ -65,7 +65,6 @@ public class SimulateCrashFunctionTest extends AbstractCairoTest {
     @Test
     public void testCrashEnabled() throws Exception {
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
-
         // select simulate_crash('C'), This is total crash, don't simulate it
 
         assertMemoryLeak(() -> {

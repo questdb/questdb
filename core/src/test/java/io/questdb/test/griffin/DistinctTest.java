@@ -39,7 +39,7 @@ public class DistinctTest extends AbstractCairoTest {
                         "24814\t24814\n" +
                         "-13027\t-13027\n" +
                         "-22955\t-22955\n",
-                "SELECT DISTINCT event e1, event e2 FROM x;",
+                "SELECT DISTINCT event e1, event e2 FROM x order by 1 desc;",
                 "create table x as (" +
                         "  select" +
                         "    rnd_short() origin," +
@@ -49,7 +49,7 @@ public class DistinctTest extends AbstractCairoTest {
                         ") timestamp(created);",
                 null,
                 true,
-                false
+                true
         );
     }
 
@@ -81,7 +81,7 @@ public class DistinctTest extends AbstractCairoTest {
                         "-24814\t-24814\n" +
                         "13027\t13027\n" +
                         "22955\t22955\n",
-                "SELECT DISTINCT event e1, event e2 FROM (SELECT origin, (-event) event FROM x);",
+                "SELECT DISTINCT event e1, event e2 FROM (SELECT origin, (-event) event FROM x) order by 1;",
                 "create table x as (" +
                         "  select" +
                         "    rnd_short() origin," +
@@ -91,7 +91,7 @@ public class DistinctTest extends AbstractCairoTest {
                         ") timestamp(created);",
                 null,
                 true,
-                false
+                true
         );
     }
 
@@ -100,10 +100,10 @@ public class DistinctTest extends AbstractCairoTest {
         assertQuery(
                 "e1\te2\n" +
                         "42\t42\n" +
-                        "24814\t24814\n" +
+                        "-22955\t-22955\n" +
                         "-13027\t-13027\n" +
-                        "-22955\t-22955\n",
-                "(SELECT 42 e1, 42 e2) UNION (SELECT DISTINCT event e1, event e2 FROM x);",
+                        "24814\t24814\n",
+                "(SELECT 42 e1, 42 e2) UNION (SELECT DISTINCT event e1, event e2 FROM x order by 1);",
                 "create table x as (" +
                         "  select" +
                         "    rnd_short() origin," +
