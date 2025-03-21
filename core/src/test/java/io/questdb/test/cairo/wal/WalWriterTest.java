@@ -25,19 +25,59 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.wal.*;
+import io.questdb.cairo.wal.SymbolMapDiff;
+import io.questdb.cairo.wal.SymbolMapDiffEntry;
+import io.questdb.cairo.wal.WalDataRecord;
+import io.questdb.cairo.wal.WalDirectoryPolicy;
+import io.questdb.cairo.wal.WalEventCursor;
+import io.questdb.cairo.wal.WalReader;
+import io.questdb.cairo.wal.WalTxnType;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolUtils;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
+import io.questdb.std.DirectBinarySequence;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.LongHashSet;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -57,6 +97,21 @@ import static io.questdb.cairo.wal.WalUtils.*;
 import static org.junit.Assert.*;
 
 public class WalWriterTest extends AbstractCairoTest {
+
+    @Test
+    public void apply1RowCommits1Writer() throws Exception {
+        testApply1RowCommitManyWriters(Timestamps.SECOND_MICROS, 1_000_000, 1);
+    }
+
+    @Test
+    public void apply1RowCommitsManyWriters() throws Exception {
+        testApply1RowCommitManyWriters(Timestamps.SECOND_MICROS, 1_000_000, 16);
+    }
+
+    @Test
+    public void apply1RowCommitsManyWritersExceedsBlockSortRanges() throws Exception {
+        testApply1RowCommitManyWriters(Long.MAX_VALUE / 300, 265, 16);
+    }
 
     @Test
     public void testAddColumnRollsUncommittedRowsToNewSegment() throws Exception {
@@ -887,6 +942,74 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testApplyManySmallCommits2Writers() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("sm");
+            long startTs = IntervalUtils.parseFloorPartialTimestamp("2022-02-24");
+            long tsIncrement = Timestamps.MINUTE_MICROS;
+
+            long ts = startTs;
+            int totalRows = 2000;
+            int iterations = 20;
+            int symbolCount = 75;
+
+            Utf8StringSink sink = new Utf8StringSink();
+            StringSink stringSink = new StringSink();
+            for (int c = 0; c < iterations; c++) {
+                try (WalWriter walWriter1 = engine.getWalWriter(tableToken)) {
+                    try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
+
+                        int n = totalRows * (c + 1);
+                        for (int i = c * totalRows; i < n; i += 2) {
+                            TableWriter.Row row = walWriter1.newRow(ts);
+                            row.putInt(0, i);
+                            row.putLong(2, i + 1);
+                            stringSink.clear();
+                            stringSink.put(i);
+                            row.putStr(3, stringSink);
+                            sink.clear();
+                            sink.put(i);
+                            row.putVarchar(4, sink);
+                            stringSink.clear();
+                            stringSink.put(i % symbolCount);
+                            row.putSym(5, stringSink);
+                            row.append();
+                            walWriter1.commit();
+
+                            TableWriter.Row row2 = walWriter2.newRow(ts);
+                            row2.putInt(0, i + 1);
+                            row2.putLong(2, i + 2);
+                            stringSink.clear();
+                            stringSink.put(i + 1);
+                            row2.putStr(3, stringSink);
+                            sink.clear();
+                            sink.put(i + 1);
+                            row2.putVarchar(4, sink);
+                            stringSink.clear();
+                            stringSink.put((i + 1) % symbolCount);
+                            row2.putSym(5, stringSink);
+                            row2.append();
+                            walWriter2.commit();
+
+                            ts += tsIncrement;
+                        }
+                    }
+
+                    drainWalQueue();
+                    Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+                    assertSql("count\tmin\tmax\n" +
+                            (c + 1) * totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - tsIncrement) + "\n", "select count(*), min(ts), max(ts) from sm");
+                    assertSqlCursors("sm", "select * from sm order by id");
+                    assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(s as int)");
+                    assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(v as int)");
+                    assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id % " + symbolCount + " <> cast(m as int)");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCancelRowDoesNotStartsNewSegment() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
@@ -1570,6 +1693,10 @@ public class WalWriterTest extends AbstractCairoTest {
             // Run WAL apply job two times:
             // Tick 1. Put row 2023-08-04T22 into the lag.
             // Tick 2. Instead of putting row 2023-08-04T21 into the lag, we force full commit.
+            // Add memory pressure to switch to 1 by 1 txn commit
+            var pressureControl = engine.getTableSequencerAPI().getTxnTracker(tableToken).getMemPressureControl();
+            pressureControl.setMaxBlockRowCount(1);
+
             tickWalQueue(2);
 
             // We expect all, but the last row to be visible.
@@ -2353,7 +2480,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 assertEquals(0, dataInfo.getMaxTimestamp());
                 assertFalse(dataInfo.isOutOfOrder());
                 SymbolMapDiff symbolMapDiff = dataInfo.nextSymbolMapDiff();
-                assertEquals(1, symbolMapDiff.getSize());
+                assertEquals(1, symbolMapDiff.getRecordCount());
                 assertEquals(2, symbolMapDiff.getColumnIndex());
                 assertEquals(0, symbolMapDiff.getCleanSymbolCount());
 
@@ -3328,6 +3455,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     final File segmentDirFile = new File(dirPath.toString());
                     final File customInitFile = new File(segmentDirFile, "customInitFile");
                     try {
+                        //noinspection ResultOfMethodCallIgnored
                         customInitFile.createNewFile();
                     } catch (IOException e) {
                         throw new RuntimeException(e);
@@ -3419,7 +3547,7 @@ public class WalWriterTest extends AbstractCairoTest {
     private void assertEmptySymbolDiff(WalEventCursor.DataInfo dataInfo, int columnIndex) {
         SymbolMapDiff symbolMapDiff = dataInfo.nextSymbolMapDiff();
         assertEquals(columnIndex, symbolMapDiff.getColumnIndex());
-        assertEquals(0, symbolMapDiff.getSize());
+        assertEquals(0, symbolMapDiff.getRecordCount());
         assertNotNull(symbolMapDiff);
         assertNull(symbolMapDiff.nextEntry());
     }
@@ -3468,6 +3596,79 @@ public class WalWriterTest extends AbstractCairoTest {
             }
         }
         row.append();
+    }
+
+    private void testApply1RowCommitManyWriters(long MAX_VALUE, int totalRows, int walWriters) throws Exception {
+        setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
+        assertMemoryLeak(() -> {
+            execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("sm");
+
+            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-02-24");
+            int symbolCount = 75;
+
+            Utf8StringSink sink = new Utf8StringSink();
+            StringSink stringSink = new StringSink();
+
+            Rnd rnd = TestUtils.generateRandom(LOG, 672802496975500L, 1742393295792L);
+
+            ObjList<WalWriter> writerObjList = new ObjList<>();
+            for (int c = 0; c < walWriters; c++) {
+                writerObjList.add(engine.getWalWriter(tableToken));
+            }
+
+            try {
+                for (int i = 0; i < totalRows; i++) {
+                    var writer = writerObjList.getQuick(rnd.nextInt(walWriters));
+
+                    TableWriter.Row row = writer.newRow(ts);
+                    row.putInt(0, i);
+                    row.putLong(2, i + 1);
+                    stringSink.clear();
+                    stringSink.put(i);
+                    row.putStr(3, stringSink);
+                    sink.clear();
+                    sink.put(i);
+                    row.putVarchar(4, sink);
+                    stringSink.clear();
+                    stringSink.put(i % symbolCount);
+                    row.putSym(5, stringSink);
+                    row.append();
+                    writer.commit();
+
+                    ts += MAX_VALUE;
+                }
+            } finally {
+                Misc.freeObjListIfCloseable(writerObjList);
+            }
+
+            WorkerPool sharedWorkerPool = null;
+            try {
+                sharedWorkerPool = new TestWorkerPool(4, node1.getMetrics());
+                WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
+                sharedWorkerPool.start(LOG);
+
+                long start = Os.currentTimeMicros();
+                drainWalQueue();
+                long end = Os.currentTimeMicros();
+
+                LOG.info().$("Time to drain WAL queue: ").$((end - start) / 1_000_000.0).$("s").$();
+
+            } finally {
+                if (sharedWorkerPool != null) {
+                    sharedWorkerPool.halt();
+                }
+            }
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertSql("count\tmin\tmax\n" +
+                    totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - MAX_VALUE) + "\n", "select count(*), min(ts), max(ts) from sm");
+            assertSqlCursors("sm", "select * from sm order by id");
+            assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(s as int)");
+            assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(v as int)");
+            assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id % " + symbolCount + " <> cast(m as int)");
+
+        });
     }
 
     private void testDesignatedTimestampIncludesSegmentRowNumber(int[] timestampOffsets, boolean expectedOutOfOrder) throws Exception {

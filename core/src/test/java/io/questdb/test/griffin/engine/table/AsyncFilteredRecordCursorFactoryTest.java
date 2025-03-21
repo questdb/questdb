@@ -100,7 +100,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     @Override
     public void setUp() {
         // 0 means max timeout (Long.MAX_VALUE millis)
-        node1.setProperty(PropertyKey.QUERY_TIMEOUT_SEC, 0);
+        node1.setProperty(PropertyKey.QUERY_TIMEOUT, 0);
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, "true");
         node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
