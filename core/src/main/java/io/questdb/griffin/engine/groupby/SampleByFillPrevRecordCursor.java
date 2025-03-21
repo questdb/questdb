@@ -42,7 +42,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
     private final RecordSink keyMapSink;
     private final Map map;
     private final RecordCursor mapCursor;
-    private boolean isHasNextPending;
+    private boolean hasNextPending;
     private boolean isMapBuildPending;
     private boolean isMapInitialized;
     private boolean isOpen;
@@ -122,7 +122,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
         super.of(baseCursor, executionContext);
         rowId = 0;
-        isHasNextPending = false;
+        hasNextPending = false;
         isMapBuildPending = true;
         isMapInitialized = false;
     }
@@ -140,7 +140,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
         super.toTop();
         map.clear();
         rowId = 0;
-        isHasNextPending = false;
+        hasNextPending = false;
         isMapBuildPending = true;
         isMapInitialized = false;
     }
@@ -171,7 +171,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
             if (timestamp < next) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
 
-                if (!isHasNextPending) {
+                if (!hasNextPending) {
                     adjustDstInFlight(timestamp - tzOffset);
                     final MapKey key = map.withKey();
                     keyMapSink.copy(baseRecord, key);
@@ -186,9 +186,9 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
                     }
                 }
 
-                isHasNextPending = true;
+                hasNextPending = true;
                 boolean baseHasNext = baseCursor.hasNext();
-                isHasNextPending = false;
+                hasNextPending = false;
                 // carry on with the loop if we still have data
                 if (baseHasNext) {
                     continue;

@@ -285,6 +285,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean matViewEnabled;
     private final long matViewInsertAsSelectBatchSize;
     private final int matViewMaxRecompileAttempts;
+    private final int matViewMaxRetriesOnOom;
+    private final long matViewMinRefreshInterval;
     private final boolean matViewParallelExecutionEnabled;
     private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewRefreshPoolConfiguration();
     private final long matViewRefreshSleepTimeout;
@@ -294,6 +296,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long matViewRefreshWorkerNapThreshold;
     private final long matViewRefreshWorkerSleepThreshold;
     private final long matViewRefreshWorkerYieldThreshold;
+    private final int matViewRowsPerQueryEstimate;
     private final int maxFileNameLength;
     private final long maxHttpQueryResponseRowLimit;
     private final double maxRequiredDelimiterStdDev;
@@ -1269,6 +1272,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             // reuse wal apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, false);
             this.matViewMaxRecompileAttempts = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_SQL_MAX_RECOMPILE_ATTEMPTS, 10);
+            this.matViewMaxRetriesOnOom = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES_ON_OOM, 3);
+            this.matViewMinRefreshInterval = getMicros(properties, env, PropertyKey.CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL, Timestamps.MINUTE_MICROS);
             this.matViewRefreshWorkerCount = getInt(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT, cpuWalApplyWorkers);
             this.matViewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_AFFINITY, matViewRefreshWorkerCount);
             this.matViewRefreshWorkerHaltOnError = getBoolean(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_HALT_ON_ERROR, false);
@@ -1335,6 +1340,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlInsertModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_INSERT_MODEL_POOL_CAPACITY, 64);
             this.sqlInsertModelBatchSize = getLong(properties, env, PropertyKey.CAIRO_SQL_INSERT_MODEL_BATCH_SIZE, 1_000_000);
             this.matViewInsertAsSelectBatchSize = getLong(properties, env, PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE, sqlInsertModelBatchSize);
+            this.matViewRowsPerQueryEstimate = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 10_000_000);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.columnPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 128);
             this.columnPurgeTaskPoolCapacity = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY, 256);
@@ -2918,6 +2924,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMatViewMaxRecompileAttempts() {
             return matViewMaxRecompileAttempts;
+        }
+
+        @Override
+        public int getMatViewMaxRetriesOnOom() {
+            return matViewMaxRetriesOnOom;
+        }
+
+        @Override
+        public long getMatViewMinRefreshInterval() {
+            return matViewMinRefreshInterval;
+        }
+
+        @Override
+        public int getMatViewRowsPerQueryEstimate() {
+            return matViewRowsPerQueryEstimate;
         }
 
         @Override

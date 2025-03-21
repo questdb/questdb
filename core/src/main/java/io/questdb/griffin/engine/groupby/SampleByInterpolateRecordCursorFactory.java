@@ -264,8 +264,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         private boolean areTimestampsInitialized;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long fixedOffset;
+        private boolean hasNextPending;
         private long hiSample = -1;
-        private boolean isHasNextPending;
         private boolean isMapBuilt;
         private boolean isMapFilled;
         private boolean isMapInitialized;
@@ -344,7 +344,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             hiSample = -1;
             prevSample = -1;
             rowId = 0;
-            isHasNextPending = false;
+            hasNextPending = false;
             isMapInitialized = false;
             isMapFilled = false;
             isMapBuilt = false;
@@ -368,7 +368,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 hiSample = -1;
                 prevSample = -1;
                 rowId = 0;
-                isHasNextPending = false;
+                hasNextPending = false;
                 isMapInitialized = false;
                 isMapFilled = false;
             }
@@ -565,7 +565,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             do {
                 circuitBreaker.statefulThrowExceptionIfTripped();
 
-                if (!isHasNextPending) {
+                if (!hasNextPending) {
                     // this seems inefficient, but we only double-sample
                     // very first record and nothing else
                     long sample = sampler.round(managedRecord.getTimestamp(timestampIndex));
@@ -598,9 +598,9 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                     }
                 }
 
-                isHasNextPending = true;
+                hasNextPending = true;
                 boolean hasNext = managedCursor.hasNext();
-                isHasNextPending = false;
+                hasNextPending = false;
 
                 if (!hasNext) {
                     hiSample = sampler.nextTimestamp(prevSample);
