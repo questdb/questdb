@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -166,11 +165,6 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         public String getName() {
             return "greatest[DOUBLE]";
         }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            MultiArgFunction.super.init(symbolTableSource, executionContext);
-        }
     }
 
     private static class GreatestLongRecordFunction extends LongFunction implements MultiArgFunction {
@@ -201,11 +195,6 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         @Override
         public String getName() {
             return "greatest[LONG]";
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            MultiArgFunction.super.init(symbolTableSource, executionContext);
         }
     }
 }
