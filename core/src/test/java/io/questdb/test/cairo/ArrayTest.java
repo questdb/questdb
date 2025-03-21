@@ -296,11 +296,14 @@ public class ArrayTest extends AbstractCairoTest {
             execute("CREATE TABLE tango (ts TIMESTAMP, uniq LONG, arr DOUBLE[])" +
                     " TIMESTAMP(ts) PARTITION BY HOUR WAL" +
                     " DEDUP UPSERT KEYS (ts, uniq)");
-            execute("INSERT INTO tango VALUES (1, 1, ARRAY[1.0, 2, 3])");
-            execute("INSERT INTO tango VALUES (1, 1, ARRAY[4.0, 5, 6])");
+            execute("INSERT INTO tango VALUES (1, 1, ARRAY[1.0, 2, 3, 4, 5])");
+            execute("INSERT INTO tango VALUES (2, 2, ARRAY[6.0, 7, 8])");
+            execute("INSERT INTO tango VALUES (1, 1, ARRAY[9.0, 10, 11])");
             drainWalQueue();
             assertSql("ts\tuniq\tarr\n" +
-                    "1970-01-01T00:00:00.000001Z\t1\t[4.0,5.0,6.0]\n", "tango");
+                            "1970-01-01T00:00:00.000001Z\t1\t[9.0,10.0,11.0]\n" +
+                            "1970-01-01T00:00:00.000002Z\t2\t[6.0,7.0,8.0]\n",
+                    "tango");
         });
     }
 
