@@ -52,6 +52,7 @@ import io.questdb.griffin.AnyRecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
@@ -953,6 +954,10 @@ public final class TableUtils {
             return false;
         }
 
+        if (SqlKeywords.is_eventKeyword(columnName)) {
+            return false;
+        }
+        
         for (int i = 0; i < length; i++) {
             char c = columnName.charAt(i);
             switch (c) {

@@ -679,6 +679,14 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCannotUse_eventName() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            assertException("alter table x add _event int", 18, "Invalid column name: _event");
+        });
+    }
+
+    @Test
     public void testExpectActionKeyword() throws Exception {
         assertFailure("alter table x", 13, SqlCompilerImpl.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
     }

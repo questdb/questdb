@@ -37,9 +37,18 @@ import org.junit.Test;
 
 public class AlterTableRenameColumnTest extends AbstractCairoTest {
 
+
     @Test
     public void testBadSyntax() throws Exception {
         assertFailure("alter table x rename column l ,m", 30, "to' expected");
+    }
+
+    @Test
+    public void testCannotUse_eventName() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            assertException("alter table x rename column e to _event", 33, "Invalid column name: _event");
+        });
     }
 
     @Test
