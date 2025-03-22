@@ -229,12 +229,12 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
 
     @Test
     public void testRenameColumnWithBadName2() throws Exception {
-        assertFailure("alter table x rename column e to //", 33, "new column name contains invalid characters");
+        assertFailure("alter table x rename column e to //", 33, "Invalid column name: //");
     }
 
     @Test
     public void testRenameColumnWithBadName3() throws Exception {
-        assertFailure("alter table x rename column e to ..", 33, "new column name contains invalid characters");
+        assertFailure("alter table x rename column e to ..", 33, "Invalid column name: ..");
     }
 
     @Test
@@ -244,17 +244,13 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
 
     @Test
     public void testRenameColumnWithBadName5() throws Exception {
-        assertFailure("alter table x rename column e to -", 33, "new column name contains invalid characters");
+        assertFailure("alter table x rename column e to -", 33, "Invalid column name: -");
     }
 
-    @Test
-    public void testRenameColumnWithBadName6() throws Exception {
-        assertFailure("alter table x rename column e to -", 33, "new column name contains invalid characters");
-    }
 
     @Test
     public void testRenameColumnWithBadName7() throws Exception {
-        assertFailure("alter table x rename column e to *", 33, "new column name contains invalid characters");
+        assertFailure("alter table x rename column e to *", 33, "Invalid column name: *");
     }
 
     @Test

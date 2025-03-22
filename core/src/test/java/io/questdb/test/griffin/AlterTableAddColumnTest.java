@@ -74,17 +74,17 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
     @Test
     public void testAddBadColumnNameBackSlash() throws Exception {
-        assertFailure("alter table x add column \\", 25, "new column name contains invalid characters");
+        assertFailure("alter table x add column \\", 25, "Invalid column name: \\");
     }
 
     @Test
     public void testAddBadColumnNameDot() throws Exception {
-        assertFailure("alter table x add column .", 25, "new column name contains invalid characters");
+        assertFailure("alter table x add column .", 25, "Invalid column name: .");
     }
 
     @Test
     public void testAddBadColumnNameFwdSlash() throws Exception {
-        assertFailure("alter table x add column /", 25, "new column name contains invalid characters");
+        assertFailure("alter table x add column /", 25, "Invalid column name: /");
     }
 
     @Test
