@@ -229,12 +229,12 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
 
     @Test
     public void testRenameColumnWithBadName2() throws Exception {
-        assertFailure("alter table x rename column e to //", 33, "Invalid column name: //");
+        assertFailure("alter table x rename column e to //", 33, "Invalid column name: /");
     }
 
     @Test
     public void testRenameColumnWithBadName3() throws Exception {
-        assertFailure("alter table x rename column e to ..", 33, "Invalid column name: ..");
+        assertFailure("alter table x rename column e to ..", 33, "Invalid column name: .");
     }
 
     @Test

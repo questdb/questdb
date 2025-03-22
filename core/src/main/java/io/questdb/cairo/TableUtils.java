@@ -957,7 +957,7 @@ public final class TableUtils {
         if (SqlKeywords.is_eventKeyword(columnName)) {
             return false;
         }
-        
+
         for (int i = 0; i < length; i++) {
             char c = columnName.charAt(i);
             switch (c) {
