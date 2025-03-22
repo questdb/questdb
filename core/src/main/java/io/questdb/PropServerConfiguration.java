@@ -403,6 +403,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlLexerPoolCapacity;
     private final int sqlMapMaxPages;
     private final int sqlMapMaxResizes;
+    private final int sqlMaxArrayElementCount;
     private final int sqlMaxNegativeLimit;
     private final int sqlMaxSymbolNotEqualsCount;
     private final int sqlModelPoolCapacity;
@@ -538,6 +539,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpNetConnectionSndBuf;
     private long httpNetConnectionTimeout;
     private int httpRecvBufferSize;
+    private long httpRecvMaxBufferSize;
     private short integerDefaultColumnType;
     private int jsonQueryConnectionCheckFrequency;
     private int jsonQueryDoubleScale;
@@ -1128,6 +1130,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_CONNECTION_RCVBUF, httpNetConnectionRcvBuf);
             this.httpRecvBufferSize = getIntSize(properties, env, PropertyKey.HTTP_RECEIVE_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.httpRecvBufferSize = getIntSize(properties, env, PropertyKey.HTTP_RECV_BUFFER_SIZE, httpRecvBufferSize);
+            this.httpRecvMaxBufferSize = getLongSize(properties, env, PropertyKey.LINE_HTTP_MAX_RECV_BUFFER_SIZE, Numbers.SIZE_1GB);
 
             this.dateAdapterPoolCapacity = getInt(properties, env, PropertyKey.HTTP_TEXT_DATE_ADAPTER_POOL_CAPACITY, 16);
             this.jsonCacheLimit = getIntSize(properties, env, PropertyKey.HTTP_TEXT_JSON_CACHE_LIMIT, 16384);
@@ -1342,6 +1345,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.columnPurgeRetryDelay = getMicros(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 10_000);
             this.columnPurgeRetryDelayMultiplier = getDouble(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, "10.0");
             this.systemTableNamePrefix = getString(properties, env, PropertyKey.CAIRO_SQL_SYSTEM_TABLE_PREFIX, "sys.");
+            this.sqlMaxArrayElementCount = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_ARRAY_ELEMENT_COUNT, 10_000_000);
 
             this.writerDataIndexKeyAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE, 512 * 1024));
             this.writerDataIndexValueAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, 16 * Numbers.SIZE_1MB));
@@ -3475,6 +3479,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             return cairoTableRegistryCompactionThreshold;
         }
 
+        @Override
         public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
             return telemetryConfiguration;
         }
@@ -3749,6 +3754,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             return walParallelExecutionEnabled;
         }
 
+        @Override
         public boolean isWalSupported() {
             return walSupported;
         }
@@ -3761,6 +3767,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean mangleTableDirNames() {
             return false;
+        }
+
+        @Override
+        public int maxArrayElementCount() {
+            return sqlMaxArrayElementCount;
         }
 
         @Override
@@ -4314,6 +4325,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public CairoConfiguration getCairoConfiguration() {
+            return cairoConfiguration;
+        }
+
+        @Override
         public short getDefaultColumnTypeForFloat() {
             return floatDefaultColumnType;
         }
@@ -4331,6 +4347,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public CharSequence getInfluxPingVersion() {
             return lineHttpPingVersion;
+        }
+
+        @Override
+        public long getMaxRecvBufferSize() {
+            return httpRecvMaxBufferSize;
         }
 
         @Override
@@ -4439,6 +4460,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public CairoConfiguration getCairoConfiguration() {
+            return cairoConfiguration;
+        }
+
+        @Override
         public MillisecondClock getClock() {
             return MillisecondClockImpl.INSTANCE;
         }
@@ -4452,6 +4478,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             );
         }
 
+        @Override
         public long getCommitIntervalDefault() {
             return lineTcpCommitIntervalDefault;
         }
@@ -5212,6 +5239,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             return posthogEnabled;
         }
 
+        @Override
         public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
             settings.put(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), JsonPropertyValueFormatter.bool(isPosthogEnabled()));
             settings.put(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), str(getPosthogApiKey()));

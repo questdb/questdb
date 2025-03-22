@@ -73,6 +73,7 @@ public class BytecodeAssembler {
     private static final int lstore_2 = 0x41;
     private static final int lstore_3 = 0x42;
     private static final int sipush = 0x11;
+    private static final int new_ = 0xbb;
     private final ObjIntHashMap<Class<?>> classCache = new ObjIntHashMap<>();
     private final Utf8Appender utf8Appender = new Utf8Appender();
     private final CharSequenceIntHashMap utf8Cache = new CharSequenceIntHashMap();
@@ -365,6 +366,11 @@ public class BytecodeAssembler {
         putShort(index);
     }
 
+    public void invokespecial(int index) {
+        putByte(183);
+        putShort(index);
+    }
+
     public void irem() {
         putByte(0x70);
     }
@@ -455,6 +461,11 @@ public class BytecodeAssembler {
             LOG.critical().$("could not create an instance of ").$(host.getName()).$(", cause: ").$(e).$();
             throw BytecodeException.INSTANCE;
         }
+    }
+
+    public void new_(int classIndex) {
+        putByte(new_);
+        putShort(classIndex);
     }
 
     public int poolClass(int classIndex) {

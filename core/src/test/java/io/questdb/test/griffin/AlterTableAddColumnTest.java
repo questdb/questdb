@@ -161,10 +161,8 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnIfNoExistsUnexpectedToken() throws Exception {
-        assertFailure("alter table x add column if not a int", 32,
-                "unexpected token 'a' for if not exists"
-        );
+    public void testAddColumnINotExistsWithMissingNotToken() throws Exception {
+        assertFailure("alter table x add column if exists b int", 28, "'not' expected");
     }
 
     @Test
@@ -172,6 +170,12 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
         createX();
         execute("alter table x add column if not exists a int");
         execute("alter table x add column description string");
+    }
+
+    @Test
+    public void testAddColumnIfNotExistsUnexpectedToken() throws Exception {
+        assertFailure("alter table x add column if not a int", 32,
+                "unexpected token 'a' for if not exists");
     }
 
     @Test
@@ -676,6 +680,57 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     );
                 }
         );
+    }
+
+    @Test
+    public void testAlterTableAddArrayColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+            execute("alter table x add column arr double[]");
+
+            assertSql("ddl\n" +
+                            "CREATE TABLE 'x' ( \n" +
+                            "\ti INT,\n" +
+                            "\tsym SYMBOL CAPACITY 128 CACHE,\n" +
+                            "\tamt DOUBLE,\n" +
+                            "\ttimestamp TIMESTAMP,\n" +
+                            "\tb BOOLEAN,\n" +
+                            "\tc STRING,\n" +
+                            "\td DOUBLE,\n" +
+                            "\te FLOAT,\n" +
+                            "\tf SHORT,\n" +
+                            "\tg DATE,\n" +
+                            "\tik SYMBOL CAPACITY 128 CACHE,\n" +
+                            "\tj LONG,\n" +
+                            "\tk TIMESTAMP,\n" +
+                            "\tl BYTE,\n" +
+                            "\tm BINARY,\n" +
+                            "\tn STRING,\n" +
+                            "\tarr DOUBLE[]\n" + // <-- array should be present
+                            ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
+                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+                    "show create table x;");
+        });
+    }
+
+    @Test
+    public void testAlterTableAddArrayColumnWithInvalidArrayType() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            assertException("alter table x add column arr varchar[];", 29, "VARCHAR is not supported as an array element type");
+        });
+    }
+
+    @Test
+    public void testAlterTableAddArrayColumnWithMismatchedBrackets() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            assertException("alter table x add column arr double[;", 36, "']' expected");
+            assertException("alter table x add column arr double[][;", 38, "']' expected");
+            assertException("alter table x add column arr double];", 29, "arr has an unmatched `]` - were you trying to define an array?");
+            assertException("alter table x add column arr double[]];", 29, "arr has an unmatched `]` - were you trying to define an array?");
+        });
     }
 
     @Test

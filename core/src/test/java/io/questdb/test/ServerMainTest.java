@@ -53,6 +53,7 @@ import static org.junit.Assert.assertTrue;
 
 public class ServerMainTest extends AbstractBootstrapTest {
 
+    @Override
     @Before
     public void setUp() {
         super.setUp();
@@ -488,6 +489,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "line.default.partition.by\tQDB_LINE_DEFAULT_PARTITION_BY\tDAY\tdefault\tfalse\tfalse\n" +
                                     "line.float.default.column.type\tQDB_LINE_FLOAT_DEFAULT_COLUMN_TYPE\tDOUBLE\tdefault\tfalse\tfalse\n" +
                                     "line.http.enabled\tQDB_LINE_HTTP_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "line.http.max.recv.buffer.size\tQDB_LINE_HTTP_MAX_RECV_BUFFER_SIZE\t1073741824\tdefault\tfalse\ttrue\n" +
                                     "line.http.ping.version\tQDB_LINE_HTTP_PING_VERSION\tv2.7.4\tdefault\tfalse\tfalse\n" +
                                     "line.integer.default.column.type\tQDB_LINE_INTEGER_DEFAULT_COLUMN_TYPE\tLONG\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.auth.db.path\tQDB_LINE_TCP_AUTH_DB_PATH\t\tdefault\tfalse\tfalse\n" +
@@ -659,6 +661,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.context.ilp.ping\tQDB_HTTP_CONTEXT_ILP_PING\t\tdefault\tfalse\tfalse\n" +
                                     "http.context.settings\tQDB_HTTP_CONTEXT_SETTINGS\t\tdefault\tfalse\tfalse\n" +
                                     "http.context.warnings\tQDB_HTTP_CONTEXT_WARNINGS\t\tdefault\tfalse\tfalse\n" +
+                                    "cairo.max.array.element.count\tQDB_CAIRO_MAX_ARRAY_ELEMENT_COUNT\t10000000\tdefault\tfalse\tfalse\n" +
                                     "telemetry.db.size.estimate.timeout\tQDB_TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT\t1000\tdefault\tfalse\tfalse\n" +
                                     "cairo.write.back.off.timeout.on.mem.pressure\tQDB_CAIRO_WRITE_BACK_OFF_TIMEOUT_ON_MEM_PRESSURE\t4000\tdefault\tfalse\tfalse\n"
                     )

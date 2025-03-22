@@ -26,6 +26,8 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.Metrics;
+import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.FrameFactory;
@@ -133,9 +135,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.tasks.TableWriterTask.*;
@@ -9487,6 +9489,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         void cancel();
 
+        void putArray(int columnIndex, @NotNull ArrayView array);
+
         void putBin(int columnIndex, long address, long len);
 
         void putBin(int columnIndex, BinarySequence sequence);
@@ -9579,6 +9583,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void cancel() {
+            // no-op
+        }
+
+        @Override
+        public void putArray(int columnIndex, @NotNull ArrayView array) {
             // no-op
         }
 
@@ -9767,6 +9776,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         @Override
         public void cancel() {
             rowCancel();
+        }
+
+        @Override
+        public void putArray(int columnIndex, @NotNull ArrayView array) {
+            ArrayTypeDriver.appendValue(
+                    getSecondaryColumn(columnIndex),
+                    getPrimaryColumn(columnIndex),
+                    array
+            );
+            setRowValueNotNull(columnIndex);
         }
 
         @Override
@@ -9969,7 +9988,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             utf8Sink.clear();
             utf8Sink.put(value);
             VarcharTypeDriver.appendValue(
-                    getSecondaryColumn(columnIndex), getPrimaryColumn(columnIndex),
+                    getSecondaryColumn(columnIndex),
+                    getPrimaryColumn(columnIndex),
                     utf8Sink
             );
             setRowValueNotNull(columnIndex);
@@ -9978,7 +9998,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         @Override
         public void putVarchar(int columnIndex, Utf8Sequence value) {
             VarcharTypeDriver.appendValue(
-                    getSecondaryColumn(columnIndex), getPrimaryColumn(columnIndex),
+                    getSecondaryColumn(columnIndex),
+                    getPrimaryColumn(columnIndex),
                     value
             );
             setRowValueNotNull(columnIndex);

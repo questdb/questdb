@@ -916,6 +916,18 @@ public class MemoryPARWImpl implements MemoryARW {
         throw new UnsupportedOperationException();
     }
 
+    @Override
+    public void zeroMem(int length) {
+        if (pageHi - appendPointer >= length) {
+            Unsafe.getUnsafe().setMemory(appendPointer, length, (byte) 0);
+            appendPointer += length;
+        } else {
+            for (int i = 0; i < length; i++) {
+                putByte((byte) 0);
+            }
+        }
+    }
+
     private static void copyStrChars(CharSequence value, int pos, int len, long address) {
         for (int i = 0; i < len; i++) {
             char c = value.charAt(i + pos);
@@ -1273,7 +1285,7 @@ public class MemoryPARWImpl implements MemoryARW {
         }
     }
 
-    private class CharSequenceView extends AbstractCharSequence {
+    public class CharSequenceView extends AbstractCharSequence {
         private int len;
         private long offset;
 

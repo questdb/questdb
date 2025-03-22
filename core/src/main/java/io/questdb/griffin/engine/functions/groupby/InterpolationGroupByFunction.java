@@ -25,7 +25,9 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.PlanSink;
@@ -38,7 +40,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
-public class InterpolationGroupByFunction implements GroupByFunction {
+public class InterpolationGroupByFunction implements GroupByFunction, FunctionExtension {
     private final GroupByFunction wrappedFunction;
     private long current;
     private long endTime;
@@ -66,8 +68,18 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
+    public FunctionExtension extendedOps() {
+        return this;
+    }
+
+    @Override
+    public ArrayView getArray(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public int getArrayLength() {
-        return wrappedFunction.getArrayLength();
+        return wrappedFunction.extendedOps().getArrayLength();
     }
 
     @Override
@@ -161,7 +173,7 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     }
 
     @Override
-    public final @NotNull Interval getInterval(Record rec) {
+    public @NotNull Interval getInterval(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -201,7 +213,7 @@ public class InterpolationGroupByFunction implements GroupByFunction {
 
     @Override
     public Record getRecord(Record rec) {
-        return wrappedFunction.getRecord(rec);
+        return wrappedFunction.extendedOps().getRecord(rec);
     }
 
     @Override
@@ -225,7 +237,7 @@ public class InterpolationGroupByFunction implements GroupByFunction {
 
     @Override
     public CharSequence getStrA(Record rec, int arrayIndex) {
-        return wrappedFunction.getStrA(rec, arrayIndex);
+        return wrappedFunction.extendedOps().getStrA(rec, arrayIndex);
     }
 
     @Override
@@ -235,7 +247,7 @@ public class InterpolationGroupByFunction implements GroupByFunction {
 
     @Override
     public CharSequence getStrB(Record rec, int arrayIndex) {
-        return wrappedFunction.getStrB(rec, arrayIndex);
+        return wrappedFunction.extendedOps().getStrB(rec, arrayIndex);
     }
 
     @Override
@@ -245,7 +257,7 @@ public class InterpolationGroupByFunction implements GroupByFunction {
 
     @Override
     public int getStrLen(Record rec, int arrayIndex) {
-        return wrappedFunction.getStrLen(rec, arrayIndex);
+        return wrappedFunction.extendedOps().getStrLen(rec, arrayIndex);
     }
 
     @Override

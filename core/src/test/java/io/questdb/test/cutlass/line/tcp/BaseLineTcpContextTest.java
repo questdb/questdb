@@ -179,7 +179,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                 return super.getLineAuthenticatorFactory();
             }
         };
-        return new DefaultLineTcpReceiverConfiguration() {
+        return new DefaultLineTcpReceiverConfiguration(configuration) {
             @Override
             public boolean getAutoCreateNewColumns() {
                 return autoCreateNewColumns;

@@ -154,9 +154,9 @@ public class StringToStringArrayFunctionTest {
 
     private static void assertArray(CharSequence expression, CharSequence[] expected) throws SqlException {
         StringToStringArrayFunction function = new StringToStringArrayFunction(5, expression);
-        Assert.assertEquals(expected.length, function.getArrayLength());
+        Assert.assertEquals(expected.length, function.extendedOps().getArrayLength());
         for (int i = 0, n = expected.length; i < n; i++) {
-            Assert.assertEquals(expected[i], function.getStrA(null, i));
+            Assert.assertEquals(expected[i], function.extendedOps().getStrA(null, i));
         }
     }
 

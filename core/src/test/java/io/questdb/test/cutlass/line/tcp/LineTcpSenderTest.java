@@ -34,6 +34,7 @@ import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSender;
+import io.questdb.cutlass.line.array.DoubleArray;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.network.Net;
 import io.questdb.std.Chars;
@@ -44,6 +45,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.security.PrivateKey;
@@ -51,6 +53,7 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.function.Consumer;
 
+import static io.questdb.test.cutlass.http.line.LineHttpSenderTest.createDoubleArray;
 import static io.questdb.test.tools.TestUtils.assertContains;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.Assert.*;
@@ -63,6 +66,41 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     private static final Consumer<Sender> SET_TABLE_NAME_ACTION = s -> s.table("mytable");
     private final static String TOKEN = "UvuVb1USHGRRT08gEnwN2zGZrvM4MsLQ5brgF6SVkAw=";
     private final static PrivateKey AUTH_PRIVATE_KEY1 = AuthUtils.toPrivateKey(TOKEN);
+
+    @Test
+    public void testArrayDouble() throws Exception {
+        runInContext(r -> {
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build();
+                 DoubleArray a4 = new DoubleArray(1, 1, 2, 1).setAll(4);
+                 DoubleArray a5 = new DoubleArray(3, 2, 1, 4, 1).setAll(5);
+                 DoubleArray a6 = new DoubleArray(1, 3, 4, 2, 1, 1).setAll(6);
+            ) {
+                String table = "array_test";
+                long ts = IntervalUtils.parseFloorPartialTimestamp("2025-02-22");
+                double[] arr1d = createDoubleArray(5);
+                double[][] arr2d = createDoubleArray(2, 3);
+                double[][][] arr3d = createDoubleArray(1, 2, 3);
+                sender.table(table)
+                        .symbol("x", "42i")
+                        .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")  // ensuring no array parsing for symbol
+                        .longColumn("l1", 23452345)
+                        .doubleArray("a1", arr1d)
+                        .doubleArray("a2", arr2d)
+                        .doubleArray("a3", arr3d)
+                        .doubleArray("a4", a4)
+                        .doubleArray("a5", a5)
+                        .doubleArray("a6", a6)
+                        .at(ts, ChronoUnit.MICROS);
+                sender.flush();
+
+                assertTableSizeEventually(engine, table, 1);
+                // @todo assert table contents, needs getArray support in TestTableReadCursor
+            }
+        });
+    }
 
     @Test
     public void testAuthSuccess() throws Exception {
@@ -327,6 +365,27 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testInsertBadStringIntoUuidColumn() throws Exception {
         testValueCannotBeInsertedToUuidColumn("totally not a uuid");
+    }
+
+    @Ignore("TODO: support large arrays in TCP sender")
+    @Test
+    public void testInsertLargeArray() throws Exception {
+        String tableName = "arr_large_test";
+        runInContext(r -> {
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()
+            ) {
+                double[] arr = createDoubleArray(1000);
+                sender.table(tableName)
+                        .doubleArray("arr", arr)
+                        .at(100000000000L, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            assertTableSizeEventually(engine, tableName, 1);
+        });
     }
 
     @Test

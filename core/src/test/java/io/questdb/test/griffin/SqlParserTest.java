@@ -1174,7 +1174,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertIdentifierError("select 'a' } ");
         assertIdentifierError("select 'a' { ");
         assertIdentifierError("select 'a' ] ");
-        assertIdentifierError("select 'a' : ");
+        assertSyntaxError("select 'a' : ", 11, "there is no matching operator `:` with the argument type: CHAR");
         assertIdentifierError("select 'a' ? ");
         assertIdentifierError("select 'a' @ ");
         assertSyntaxError("select 'a' ) ", 11, "unexpected token [)]");
@@ -1841,7 +1841,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " t TIMESTAMP," +
                         " x SYMBOL capacity 128 cache," +
                         " z STRING," +
-                        " y BOOLEAN) timestamp(t) partition by MONTH",
+                        " y BOOLEAN," +
+                        " da DOUBLE[]," +
+                        " dpa DOUBLE[]) timestamp(t) partition by MONTH",
                 "create table x (" +
                         "a INT, " +
                         "b BYTE, " +
@@ -1854,7 +1856,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "t TIMESTAMP, " +
                         "x SYMBOL, " +
                         "z STRING, " +
-                        "y BOOLEAN) " +
+                        "y BOOLEAN, " +
+                        "da DOUBLE[], " +
+                        "dpa DOUBLE PRECISION[]) " +
                         "timestamp(t) " +
                         "partition by MONTH"
         );

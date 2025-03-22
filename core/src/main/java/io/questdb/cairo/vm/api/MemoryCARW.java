@@ -78,6 +78,11 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
         Unsafe.getUnsafe().putByte(appendAddressFor(Byte.BYTES), value);
     }
 
+    @Override
+    default void zeroMem(int length) {
+        Unsafe.getUnsafe().setMemory(appendAddressFor(length), length, (byte) 0);
+    }
+
     default void putByte(long offset, byte value) {
         Unsafe.getUnsafe().putByte(appendAddressFor(offset, Byte.BYTES), value);
     }

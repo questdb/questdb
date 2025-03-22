@@ -1286,6 +1286,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int maxArrayElementCount() {
+        return getDelegate().maxArrayElementCount();
+    }
+
+    @Override
     public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
         getDelegate().populateSettings(settings);
     }

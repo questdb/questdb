@@ -63,7 +63,7 @@ import java.util.concurrent.TimeUnit;
  *     <li>Use {@link #stringColumn(CharSequence, CharSequence)}, {@link #longColumn(CharSequence, long)},
  *     {@link #doubleColumn(CharSequence, double)}, {@link #boolColumn(CharSequence, boolean)},
  *     {@link #timestampColumn(CharSequence, long, ChronoUnit)} to add remaining columns columns</li>
- *     <li>Use {@link #at(long, ChronoUnit)} (long)} to finish a row with an explicit timestamp.Alternatively, you can use use
+ *     <li>Use {@link #at(long, ChronoUnit)} (long)} to finish a row with an explicit timestamp.Alternatively, you can use
  *     {@link #atNow()} which will add a timestamp on a server.</li>
  *     <li>Optionally: You can use {@link #flush()} to send locally buffered data into a server</li>
  * </ol>
@@ -79,7 +79,7 @@ import java.util.concurrent.TimeUnit;
  * <p>
  * Error-handling: Most errors throw an instance of {@link LineSenderException}.
  */
-public interface Sender extends Closeable {
+public interface Sender extends Closeable, ArraySender<Sender> {
 
     /**
      * Create a Sender builder instance from a configuration string.
