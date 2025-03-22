@@ -1984,6 +1984,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compiledQuery.ofSelect(
                     generateSelectWithRetries(queryModel, executionContext, false)
             );
+        } catch (SqlException e) {
+            e.setPosition(e.getPosition() + createTableOp.getSelectTextPosition());
+            QueryProgress.logError(e, -1, sqlText, executionContext, beginNanos);
+            throw e;
         } catch (Throwable th) {
             QueryProgress.logError(th, -1, sqlText, executionContext, beginNanos);
             throw th;
