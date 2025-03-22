@@ -138,6 +138,14 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
         sink.child(base);
     }
 
+    @Override
+    protected void _close() {
+        passthroughIndicesMap.clear();
+        unpivotForIndices.clear();
+        unpivotForNames.clear();
+        base.close();
+        super._close();
+    }
 
     private class UnpivotExcludeNullsRecord extends UnpivotRecord {
 
