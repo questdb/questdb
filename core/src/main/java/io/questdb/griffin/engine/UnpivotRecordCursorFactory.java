@@ -99,7 +99,7 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public int getScanDirection() {
-        return SCAN_DIRECTION_OTHER; // we are generating new rows, ordering is not guaranteed
+        return SCAN_DIRECTION_OTHER;
     }
 
     @Override
@@ -197,7 +197,7 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
         Three cases:
             1. col == valueColumnIndex. This is the case where the parent cursor is trying to retrieve an unpivoted value.
                 We look up the right column in our base record and then retrieve the value.
-            2. col == inColumnIndex. This is only for SYMBOL, and means that the parent cursor is trying to retrieve
+            2. col == inColumnIndex. This means that the parent cursor is trying to retrieve
                 the name of the unpivoted column. We look up the name from our names list.
             3. Otherwise, column is a passthrough column. We look up its value in the base record and return it.
      */
@@ -476,9 +476,7 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void close() {
-
             baseCursor = Misc.free(baseCursor);
-
         }
 
         @Override

@@ -91,210 +91,184 @@ public class UnpivotTest extends AbstractSqlParserTest {
 
     @Test
     public void testBasicUnpivotExcludeNulls() throws Exception { // default behaviour
-        assertMemoryLeak(() -> {
-            execute(ddlMonthlySales);
-            execute(dmlMonthlySales);
-
-            String unpivot = "monthly_sales UNPIVOT EXCLUDE NULLS (\n" +
-                    "    sales\n" +
-                    "    FOR month IN (jan, feb, mar, apr, may, jun)\n" +
-                    ");";
-
-            assertPlanNoLeakCheck(unpivot, "Unpivot\n" +
-                    "  into: sales\n" +
-                    "  for: month\n" +
-                    "  in: [Jan,Feb,Mar,Apr,May,Jun]\n" +
-                    "  nulls: excluded\n" +
-                    "    PageFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Frame forward scan on: monthly_sales\n");
-
-            assertSql("empid\tdept\tmonth\tsales\n" +
-                            "1\telectronics\tJan\t1\n" +
-                            "1\telectronics\tFeb\t2\n" +
-                            "1\telectronics\tMar\t3\n" +
-                            "1\telectronics\tApr\t4\n" +
-                            "1\telectronics\tMay\t5\n" +
-                            "1\telectronics\tJun\t6\n" +
-                            "2\tclothes\tJan\t10\n" +
-                            "2\tclothes\tFeb\t20\n" +
-                            "2\tclothes\tMar\t30\n" +
-                            "2\tclothes\tApr\t40\n" +
-                            "2\tclothes\tMay\t50\n" +
-                            "2\tclothes\tJun\t60\n" +
-                            "3\tcars\tJan\t100\n" +
-                            "3\tcars\tFeb\t200\n" +
-                            "3\tcars\tMar\t300\n" +
-                            "3\tcars\tApr\t400\n" +
-                            "3\tcars\tMay\t500\n" +
-                            "3\tcars\tJun\t600\n" +
-                            "4\tappliances\tJan\t100\n" +
-                            "4\tappliances\tMar\t100\n" +
-                            "4\tappliances\tApr\t50\n" +
-                            "4\tappliances\tMay\t20\n" +
-                            "4\tappliances\tJun\t350\n",
-                    unpivot);
-        });
+        assertQueryAndPlan(
+                "empid\tdept\tmonth\tsales\n",
+                "monthly_sales UNPIVOT EXCLUDE NULLS (\n" +
+                        "    sales\n" +
+                        "    FOR month IN (jan, feb, mar, apr, may, jun)\n" +
+                        ");",
+                ddlMonthlySales,
+                null,
+                dmlMonthlySales,
+                "empid\tdept\tmonth\tsales\n" +
+                        "1\telectronics\tJan\t1\n" +
+                        "1\telectronics\tFeb\t2\n" +
+                        "1\telectronics\tMar\t3\n" +
+                        "1\telectronics\tApr\t4\n" +
+                        "1\telectronics\tMay\t5\n" +
+                        "1\telectronics\tJun\t6\n" +
+                        "2\tclothes\tJan\t10\n" +
+                        "2\tclothes\tFeb\t20\n" +
+                        "2\tclothes\tMar\t30\n" +
+                        "2\tclothes\tApr\t40\n" +
+                        "2\tclothes\tMay\t50\n" +
+                        "2\tclothes\tJun\t60\n" +
+                        "3\tcars\tJan\t100\n" +
+                        "3\tcars\tFeb\t200\n" +
+                        "3\tcars\tMar\t300\n" +
+                        "3\tcars\tApr\t400\n" +
+                        "3\tcars\tMay\t500\n" +
+                        "3\tcars\tJun\t600\n" +
+                        "4\tappliances\tJan\t100\n" +
+                        "4\tappliances\tMar\t100\n" +
+                        "4\tappliances\tApr\t50\n" +
+                        "4\tappliances\tMay\t20\n" +
+                        "4\tappliances\tJun\t350\n",
+                false,
+                false,
+                false,
+                "Unpivot\n" +
+                        "  into: sales\n" +
+                        "  for: month\n" +
+                        "  in: [Jan,Feb,Mar,Apr,May,Jun]\n" +
+                        "  nulls: excluded\n" +
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: monthly_sales\n");
     }
 
     @Test
     public void testBasicUnpivotIncludeNulls() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(ddlMonthlySales);
-            execute(dmlMonthlySales);
-
-            String unpivot = "monthly_sales UNPIVOT INCLUDE NULLS (\n" +
-                    "    sales\n" +
-                    "    FOR month IN (jan, feb, mar, apr, may, jun)\n" +
-                    ");";
-
-            assertPlanNoLeakCheck(unpivot, "Unpivot\n" +
-                    "  into: sales\n" +
-                    "  for: month\n" +
-                    "  in: [Jan,Feb,Mar,Apr,May,Jun]\n" +
-                    "  nulls: included\n" +
-                    "    PageFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Frame forward scan on: monthly_sales\n");
-
-            assertSql("empid\tdept\tmonth\tsales\n" +
-                            "1\telectronics\tJan\t1\n" +
-                            "1\telectronics\tFeb\t2\n" +
-                            "1\telectronics\tMar\t3\n" +
-                            "1\telectronics\tApr\t4\n" +
-                            "1\telectronics\tMay\t5\n" +
-                            "1\telectronics\tJun\t6\n" +
-                            "2\tclothes\tJan\t10\n" +
-                            "2\tclothes\tFeb\t20\n" +
-                            "2\tclothes\tMar\t30\n" +
-                            "2\tclothes\tApr\t40\n" +
-                            "2\tclothes\tMay\t50\n" +
-                            "2\tclothes\tJun\t60\n" +
-                            "3\tcars\tJan\t100\n" +
-                            "3\tcars\tFeb\t200\n" +
-                            "3\tcars\tMar\t300\n" +
-                            "3\tcars\tApr\t400\n" +
-                            "3\tcars\tMay\t500\n" +
-                            "3\tcars\tJun\t600\n" +
-                            "4\tappliances\tJan\t100\n" +
-                            "4\tappliances\tFeb\tnull\n" +
-                            "4\tappliances\tMar\t100\n" +
-                            "4\tappliances\tApr\t50\n" +
-                            "4\tappliances\tMay\t20\n" +
-                            "4\tappliances\tJun\t350\n",
-                    unpivot);
-        });
+        assertQueryAndPlan(
+                "empid\tdept\tmonth\tsales\n",
+                "monthly_sales UNPIVOT INCLUDE NULLS (\n" +
+                        "    sales\n" +
+                        "    FOR month IN (jan, feb, mar, apr, may, jun)\n" +
+                        ");",
+                ddlMonthlySales,
+                null,
+                dmlMonthlySales,
+                "empid\tdept\tmonth\tsales\n" +
+                        "1\telectronics\tJan\t1\n" +
+                        "1\telectronics\tFeb\t2\n" +
+                        "1\telectronics\tMar\t3\n" +
+                        "1\telectronics\tApr\t4\n" +
+                        "1\telectronics\tMay\t5\n" +
+                        "1\telectronics\tJun\t6\n" +
+                        "2\tclothes\tJan\t10\n" +
+                        "2\tclothes\tFeb\t20\n" +
+                        "2\tclothes\tMar\t30\n" +
+                        "2\tclothes\tApr\t40\n" +
+                        "2\tclothes\tMay\t50\n" +
+                        "2\tclothes\tJun\t60\n" +
+                        "3\tcars\tJan\t100\n" +
+                        "3\tcars\tFeb\t200\n" +
+                        "3\tcars\tMar\t300\n" +
+                        "3\tcars\tApr\t400\n" +
+                        "3\tcars\tMay\t500\n" +
+                        "3\tcars\tJun\t600\n" +
+                        "4\tappliances\tJan\t100\n" +
+                        "4\tappliances\tFeb\tnull\n" +
+                        "4\tappliances\tMar\t100\n" +
+                        "4\tappliances\tApr\t50\n" +
+                        "4\tappliances\tMay\t20\n" +
+                        "4\tappliances\tJun\t350\n",
+                false,
+                false,
+                false,
+                "Unpivot\n" +
+                        "  into: sales\n" +
+                        "  for: month\n" +
+                        "  in: [Jan,Feb,Mar,Apr,May,Jun]\n" +
+                        "  nulls: included\n" +
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: monthly_sales\n");
     }
 
     @Test
-    public void testPivotUnpivotRoundTrip() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(ddlCities);
-            execute(dmlCities);
-            execute(ddlTrades);
-            execute(dmlTrades);
-            drainWalQueue();
-
-            String pivotUnpivotCities = "(\n" +
-                    "  cities\n" +
-                    "    PIVOT (\n" +
-                    "      SUM(population)\n" +
-                    "      FOR year IN (2000, 2010, 2020)\n" +
-                    "      GROUP BY country\n" +
-                    "    )\n" +
-                    ") UNPIVOT (\n" +
-                    "    sum_population\n" +
-                    "    FOR year IN (2000, 2010, 2020)\n" +
-                    "  );\n";
-
-            String pivotUnpivotTrades = "(\n" +
-                    "  trades\n" +
-                    "    PIVOT (\n" +
-                    "      avg(price) \n" +
-                    "      FOR symbol IN ('BTC-USD', 'ETH-USD')\n" +
-                    "    )\n" +
-                    ") UNPIVOT (\n" +
-                    "    avg_price\n" +
-                    "    FOR symbol IN ('BTC-USD', 'ETH-USD')\n" +
-                    "  );";
-
-            assertPlanNoLeakCheck(pivotUnpivotCities,
-                    "Unpivot\n" +
-                            "  into: sum_population\n" +
-                            "  for: year\n" +
-                            "  in: [2000,2010,2020]\n" +
-                            "  nulls: excluded\n" +
-                            "    GroupBy vectorized: false\n" +
-                            "      keys: [country]\n" +
-                            "      values: [sum(case([SUM,nullL,year])),sum(case([SUM,nullL,year])),sum(case([SUM,nullL,year]))]\n" +
-                            "        Async JIT Group By workers: 1\n" +
-                            "          keys: [country,year]\n" +
-                            "          values: [sum(population)]\n" +
-                            "          filter: year in [2000,2010,2020]\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: cities\n");
-
-            assertSql("country\tyear\tsum_population\n" +
-                            "NL\t2000\t1005\n" +
-                            "NL\t2010\t1065\n" +
-                            "NL\t2020\t1158\n" +
-                            "US\t2000\t8579\n" +
-                            "US\t2010\t8783\n" +
-                            "US\t2020\t9510\n",
-                    pivotUnpivotCities);
-
-            assertPlanNoLeakCheck(pivotUnpivotTrades,
-                    "Unpivot\n" +
-                            "  into: avg_price\n" +
-                            "  for: symbol\n" +
-                            "  in: [BTC-USD,ETH-USD]\n" +
-                            "  nulls: excluded\n" +
-                            "    GroupBy vectorized: false\n" +
-                            "      values: [avg(case([avg,NaN,symbol])),avg(case([avg,NaN,symbol]))]\n" +
-                            "        Async JIT Group By workers: 1\n" +
-                            "          keys: [symbol]\n" +
-                            "          values: [avg(price)]\n" +
-                            "          filter: symbol in [BTC-USD,ETH-USD]\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: trades\n");
-
-            assertSql("symbol\tavg_price\n" +
-                            "BTC-USD\t101500.66363636362\n" +
-                            "ETH-USD\t3678.0850000000005\n",
-                    pivotUnpivotTrades);
-        });
+    public void testPivotUnpivotRoundTripCities() throws Exception {
+        assertQueryAndPlan(
+                "country\tyear\tsum_population\n",
+                "(\n" +
+                        "  cities\n" +
+                        "    PIVOT (\n" +
+                        "      SUM(population)\n" +
+                        "      FOR year IN (2000, 2010, 2020)\n" +
+                        "      GROUP BY country\n" +
+                        "    )\n" +
+                        ") UNPIVOT (\n" +
+                        "    sum_population\n" +
+                        "    FOR year IN (2000, 2010, 2020)\n" +
+                        "  );\n",
+                ddlCities,
+                null,
+                dmlCities,
+                "country\tyear\tsum_population\n" +
+                        "NL\t2000\t1005\n" +
+                        "NL\t2010\t1065\n" +
+                        "NL\t2020\t1158\n" +
+                        "US\t2000\t8579\n" +
+                        "US\t2010\t8783\n" +
+                        "US\t2020\t9510\n",
+                false,
+                false,
+                false,
+                "Unpivot\n" +
+                        "  into: sum_population\n" +
+                        "  for: year\n" +
+                        "  in: [2000,2010,2020]\n" +
+                        "  nulls: excluded\n" +
+                        "    GroupBy vectorized: false\n" +
+                        "      keys: [country]\n" +
+                        "      values: [sum(case([SUM,nullL,year])),sum(case([SUM,nullL,year])),sum(case([SUM,nullL,year]))]\n" +
+                        "        Async JIT Group By workers: 1\n" +
+                        "          keys: [country,year]\n" +
+                        "          values: [sum(population)]\n" +
+                        "          filter: year in [2000,2010,2020]\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: cities\n");
     }
 
-//    @Test
-//    public void testUnpivotWithMultipleDestinationColumns() throws Exception {
-//        assertMemoryLeak(() -> {
-//            execute(ddlMonthlySales);
-//            execute(dmlMonthlySales);
-//            drainWalQueue();
-//
-//            String query = "monthly_sales\n" +
-//                    "UNPIVOT (\n" +
-//                    "    (month_1_sales, month_2_sales, month_3_sales)\n" +
-//                    "    FOR quarter IN (\n" +
-//                    "        (jan, feb, mar) AS q1,\n" +
-//                    "        (apr, may, jun) AS q2\n" +
-//                    "    )\n" +
-//                    ");";
-//
-//            assertPlanNoLeakCheck(query, "abc");
-//
-//            assertSql("empid\tdept\tquarter\tmonth_1_sales\tmonth_2_sales\tmonth_3_sales\n" +
-//                            "1\telectronics\tq1\t1\t2\t3\n" +
-//                            "1\telectronics\tq2\t4\t5\t6\n" +
-//                            "2\tclothes\tq1\t10\t20\t30\n" +
-//                            "2\tclothes\tq2\t40\t50\t60\n" +
-//                            "3\tcars\tq1\t100\t200\t300\n" +
-//                            "3\tcars\tq2\t400\t500\t600\n",
-//                    query);
-//        });
-//    }
+    @Test
+    public void testPivotUnpivotRoundTripTrades() throws Exception {
+        assertQueryAndPlan(
+                "symbol\tavg_price\n",
+                "(\n" +
+                        "  trades\n" +
+                        "    PIVOT (\n" +
+                        "      avg(price) \n" +
+                        "      FOR symbol IN ('BTC-USD', 'ETH-USD')\n" +
+                        "    )\n" +
+                        ") UNPIVOT (\n" +
+                        "    avg_price\n" +
+                        "    FOR symbol IN ('BTC-USD', 'ETH-USD')\n" +
+                        "  );",
+                ddlTrades,
+                null,
+                dmlTrades,
+                "symbol\tavg_price\n" +
+                        "BTC-USD\t101500.66363636362\n" +
+                        "ETH-USD\t3678.0850000000005\n",
+                false,
+                false,
+                false,
+                "Unpivot\n" +
+                        "  into: avg_price\n" +
+                        "  for: symbol\n" +
+                        "  in: [BTC-USD,ETH-USD]\n" +
+                        "  nulls: excluded\n" +
+                        "    GroupBy vectorized: false\n" +
+                        "      values: [avg(case([avg,NaN,symbol])),avg(case([avg,NaN,symbol]))]\n" +
+                        "        Async JIT Group By workers: 1\n" +
+                        "          keys: [symbol]\n" +
+                        "          values: [avg(price)]\n" +
+                        "          filter: symbol in [BTC-USD,ETH-USD]\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: trades\n");
+    }
 }
 
 
