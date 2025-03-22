@@ -979,6 +979,51 @@ Java_io_questdb_std_Vect_mergeShuffleVarcharColumnFromManyAddresses(
     return row_count;
 }
 
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_mergeShuffleArrayColumnFromManyAddresses(
+        JNIEnv *env,
+        jclass cl,
+        jlong indexFormat,
+        jlong srcPrimaryAddresses,
+        jlong srcSecondaryAddresses,
+        jlong dstPrimaryAddress,
+        jlong dstSecondaryAddress,
+        jlong mergeIndex,
+        jlong dstVarOffset,
+        jlong dstDataSize
+) {
+    auto merge_index_address = reinterpret_cast<const index_l *>(mergeIndex);
+    auto src_primary = reinterpret_cast<const char **>(srcPrimaryAddresses);
+    auto src_secondary = reinterpret_cast<const int64_t **>(srcSecondaryAddresses);
+    auto dst_primary = reinterpret_cast<char *>(dstPrimaryAddress);
+    auto dst_secondary = reinterpret_cast<int64_t *>(dstSecondaryAddress);
+    auto dst_var_offset = __JLONG_REINTERPRET_CAST__(int64_t, dstVarOffset);
+    auto dst_data_size = __JLONG_REINTERPRET_CAST__(int64_t, dstDataSize);
+    auto row_count = read_row_count(indexFormat);
+    auto index_segment_encoding_bytes = read_segment_bytes(indexFormat);
+    auto format = read_format(indexFormat);
+
+    if (format != shuffle_index_format && format != dedup_shuffle_index_format) {
+        // Error, invalid format
+        return -2;
+    }
+
+    int64_t end_dst_var_offset = merge_shuffle_array_column_from_many_addresses(
+            src_primary, src_secondary,
+            dst_primary, dst_secondary,
+            merge_index_address, row_count,
+            dst_var_offset,
+            index_segment_encoding_bytes * 8u,
+            dst_data_size
+    );
+    if (end_dst_var_offset < 0) {
+        // Error occurred, this is error code
+        return end_dst_var_offset;
+    }
+
+    return row_count;
+}
+
 
 JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_mergeShuffleSymbolColumnFromManyAddresses(

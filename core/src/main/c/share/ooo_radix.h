@@ -486,6 +486,59 @@ inline int64_t merge_shuffle_string_column_from_many_addresses(
     return dstVarOffset;
 }
 
+int64_t merge_shuffle_array_column_from_many_addresses(
+        const char **src_primary,
+        const int64_t **src_secondary,
+        char *dst_primary,
+        int64_t *dst_secondary,
+        const index_l *merge_index,
+        int64_t row_count,
+        int64_t dst_var_offset,
+        uint16_t segment_bits,
+        int64_t dst_data_size
+) {
+    // mask to extract segment ID from merge index
+    const uint64_t segment_mask = (1ULL << segment_bits) - 1;
+    // mask for the 48-bit offset portion of the first 64 bits
+    const uint64_t OFFSET_MASK = (1ULL << 48) - 1;
+    // mask for the reserved bits in first word (top 16 bits)
+    const uint64_t RESERVED_BITS_MASK = ~OFFSET_MASK;
+    // mask for the size bits in second word (lower 32 bits)
+    const uint64_t SIZE_MASK = 0xFFFFFFFF;
+
+    for (int64_t l = 0; l < row_count; l++) {
+        auto index = merge_index[l].i;
+        auto row_index = index >> segment_bits;
+        auto src_index = index & segment_mask;
+
+        // get source array information (2 entries per row: offset+reserved, size+reserved)
+        const int64_t src_offset_word = src_secondary[src_index][row_index * 2];
+        const int64_t src_size_word = src_secondary[src_index][row_index * 2 + 1];
+
+        // extract the actual offset and size
+        auto src_offset = src_offset_word & OFFSET_MASK;
+        auto src_size = (int32_t)(src_size_word & SIZE_MASK);
+
+        // preserve the reserved bits from both words
+        auto reserved_bits_first_word = src_offset_word & RESERVED_BITS_MASK;
+        auto reserved_bits_second_word = src_size_word & ~SIZE_MASK;
+
+        // write destination AUX entry - first word: new offset in lower 48 bits + preserved reserved bits
+        dst_secondary[l * 2] = (dst_var_offset & OFFSET_MASK) | reserved_bits_first_word;
+
+        // write destination AUX entry - second word: size in lower 32 bits + preserved reserved bits
+        dst_secondary[l * 2 + 1] = (src_size & SIZE_MASK) | reserved_bits_second_word;
+
+        // only copy data if the array is not NULL (size > 0)
+        if (src_size > 0) {
+            assertm(dst_var_offset + src_size <= dst_data_size, "destination array buffer is too small");
+            __MEMCPY(dst_primary + dst_var_offset, src_primary[src_index] + src_offset, src_size);
+            dst_var_offset += src_size;
+        }
+    }
+    return dst_var_offset;
+}
+
 int64_t merge_shuffle_varchar_column_from_many_addresses(
         const char **src_primary,
         const int64_t **src_secondary,
