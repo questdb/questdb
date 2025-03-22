@@ -406,6 +406,12 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public long mergeShuffleColumnFromManyAddresses(long indexFormat, long primaryAddressList, long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndex, long destDataOffset, long destDataSize) {
+        // todo: implement. introduced with small commit optimisation
+        throw new UnsupportedOperationException("todo: implement");
+    }
+
+    @Override
     public boolean isSparseDataVector(long auxMemAddr, long dataMemAddr, long rowCount) {
         long lastSizeInDataVector = 0;
         for (int row = 0; row < rowCount; row++) {

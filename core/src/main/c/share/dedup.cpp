@@ -1006,6 +1006,5 @@ Java_io_questdb_std_Vect_dedupMergeArrayColumnSize(JNIEnv *env, jclass cl,
     return dst_var_offset;
 }
 
-}
 } // extern C
 
