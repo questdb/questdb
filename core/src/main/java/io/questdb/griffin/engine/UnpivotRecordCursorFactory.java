@@ -110,11 +110,8 @@ public class UnpivotRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Unpivot");
-
         sink.attr("into").val(unpivotMetadata.getColumnName(valueColumnIndex));
         sink.attr("for").val(unpivotMetadata.getColumnName(inColumnIndex));
-
-
         sink.attr("in");
         sink.val('[');
 

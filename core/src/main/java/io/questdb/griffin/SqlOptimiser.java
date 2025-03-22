@@ -6552,22 +6552,25 @@ public class SqlOptimiser implements Mutable {
             model.getBottomUpColumns().clear();
             model.getWildcardColumnNames().clear();
 
-            // add sample by if needed
-            if (timestampColumn != null) {
-                // todo(nwoolmer): only do this if they haven't specified it
-                model.addBottomUpColumn(timestampColumn);
-                model.moveSampleByFrom(nested);
-            }
-
-            model.moveOrderByFrom(nested);
-//            model.moveLimitFrom(nested);
-
 
             QueryModel groupByModel = queryModelPool.next();
             groupByModel.setSelectModelType(SELECT_MODEL_CHOOSE);
 
             QueryModel bonusModel = queryModelPool.next();
             bonusModel.setSelectModelType(SELECT_MODEL_CHOOSE);
+
+
+            // add sample by if needed
+            if (timestampColumn != null) {
+                // todo(nwoolmer): only do this if they haven't specified it
+                model.addBottomUpColumn(timestampColumn);
+                groupByModel.moveSampleByFrom(nested);
+                groupByModel.addBottomUpColumn(timestampColumn);
+                bonusModel.addBottomUpColumn(timestampColumn);
+            }
+
+            model.moveOrderByFrom(nested);
+//            model.moveLimitFrom(nested);
 
 
             // add the group by column
