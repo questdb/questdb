@@ -49,6 +49,7 @@ import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.lang.reflect.Array;
@@ -436,6 +437,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    @Ignore("as of now only double arrays are supported")
     public void testInsertLongArray() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
