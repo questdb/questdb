@@ -546,6 +546,33 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplicitCastFromArrayToVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql("cast\n" +
+                            "[1.0]\n",
+                    "SELECT ARRAY[1.0]::varchar FROM long_sequence(1)");
+
+            assertSql("cast\n" +
+                            "[1.0,2.0]\n",
+                    "SELECT ARRAY[1.0, 2.0]::varchar FROM long_sequence(1)");
+
+            assertSql("cast\n" +
+                            "[[1.0,2.0],[3.0,4.0]]\n",
+                    "SELECT ARRAY[[1.0, 2.0], [3.0, 4.0]]::varchar FROM long_sequence(1)");
+
+            // array with no elements is always printed as []
+            assertSql("cast\n" +
+                            "[]\n",
+                    "SELECT ARRAY[[], []]::double[][]::varchar FROM long_sequence(1)");
+
+            // null case, 'assertSql()' prints 'null' as an empty string
+            assertSql("cast\n" +
+                            "\n",
+                    "SELECT NULL::double[]::varchar FROM long_sequence(1)");
+        });
+    }
+
+    @Test
     public void testExplicitCastFromScalarToArray() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery("cast\n" +

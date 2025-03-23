@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -50,7 +51,6 @@ public class CastDoubleToDoubleArray implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         int arrType = args.getQuick(1).getType();
-
         return new Func(args.getQuick(0), arrType);
     }
 
@@ -83,6 +83,11 @@ public class CastDoubleToDoubleArray implements FunctionFactory {
             }
             array.of(val);
             return array;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getArg()).val("::").val(ColumnType.nameOf(type));
         }
     }
 }

@@ -47,7 +47,7 @@ public class CastDoubleArrayToVarcharFunctionFactory implements FunctionFactory 
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return null;
+        return new Func(args.getQuick(0));
     }
 
     public static class Func extends AbstractCastToVarcharFunction {
