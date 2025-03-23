@@ -71,7 +71,7 @@ import io.questdb.std.QuietCloseable;
  * order doesn't matter to the calculation. It only affects the meaning of each
  * coordinate in the array access expression.
  *
- * <h3>>Slice</h3>
+ * <h3>Slice</h3>
  * <p>
  * Slicing the array means limiting the range of an index. Example: `arr[1:2]`.
  * This constrains index `i` to be at least 1. But, we don't expose that to the
