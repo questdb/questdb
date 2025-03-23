@@ -50,7 +50,6 @@ import io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InTimestampIntervalFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InUuidFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastDoubleArrayToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToRegClassFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToStrArrayFunctionFactory;
@@ -2427,8 +2426,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
             FunctionFactoryCache cache = engine.getFunctionFactoryCache();
             LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> factories = cache.getFactories();
             factories.forEach((key, value) -> {
-                System.out.println(key);
-
                 FUNCTIONS:
                 for (int i = 0, n = value.size(); i < n; i++) {
                     planSink.clear();
@@ -2437,9 +2434,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     FunctionFactory factory = descriptor.getFactory();
                     if (factory instanceof ReadParquetFunctionFactory) {
                         continue;
-                    }
-                    if (factory instanceof CastDoubleArrayToVarcharFunctionFactory) {
-                        System.out.println("gotcha!");
                     }
                     int sigArgCount = descriptor.getSigArgCount();
 
