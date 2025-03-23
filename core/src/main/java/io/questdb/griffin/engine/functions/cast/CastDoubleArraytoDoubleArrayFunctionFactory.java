@@ -46,7 +46,8 @@ public final class CastDoubleArraytoDoubleArrayFunctionFactory implements Functi
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        int fromType = args.getQuick(0).getType();
+        Function fromFun = args.getQuick(0);
+        int fromType = fromFun.getType();
         int toType = args.getQuick(1).getType();
         int dimsToAdd = ColumnType.decodeArrayDimensionality(toType) - ColumnType.decodeArrayDimensionality(fromType);
         if (dimsToAdd < 0) {
@@ -59,10 +60,10 @@ public final class CastDoubleArraytoDoubleArrayFunctionFactory implements Functi
         }
         if (dimsToAdd == 0) {
             // nothing to do
-            return args.getQuick(0);
+            return fromFun;
         }
 
-        return new Func(args.getQuick(0), args.getQuick(1).getType(), dimsToAdd);
+        return new Func(fromFun, toType, dimsToAdd);
     }
 
     public static final class Func extends ArrayFunction implements UnaryFunction {

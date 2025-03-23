@@ -50,7 +50,6 @@ import io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InTimestampIntervalFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.InUuidFunctionFactory;
-import io.questdb.griffin.engine.functions.cast.CastStrToDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToRegClassFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToStrArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.StringToStringArrayFunction;
@@ -154,8 +153,10 @@ import io.questdb.std.Files;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -2428,6 +2429,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             factories.forEach((key, value) -> {
                 FUNCTIONS:
                 for (int i = 0, n = value.size(); i < n; i++) {
+                    long memUsedBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ND_ARRAY);
+
                     planSink.clear();
 
                     FunctionFactoryDescriptor descriptor = value.get(i);
@@ -2515,7 +2518,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     args.add(new ArrayConstant(new double[]{1.0}));
                                     break;
                                 } else if (isArray && sigArgType == ColumnType.DOUBLE) {
-                                    if (factory instanceof CastStrToDoubleArrayFunctionFactory && p == 1) {
+                                    if (p == 1 && factory.getSignature().startsWith("cast(")) {
                                         args.add(new ArrayTypeConstant(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2)));
                                     } else {
                                         args.add(new ArrayConstant(new double[][]{{1}, {1}}));
@@ -2669,6 +2672,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 }
                             } finally {
                                 Misc.free(function);
+
+                                long memUsedAfter = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ND_ARRAY);
+                                if (memUsedAfter > memUsedBefore) {
+                                    LOG.error().$("Memory leak detected in ").$(factory.getSignature()).$();
+                                    Assert.fail("Memory leak detected in " + factory.getSignature());
+                                }
                             }
                         } catch (Exception t) {
                             LOG.info().$(t).$();
