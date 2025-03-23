@@ -80,7 +80,7 @@ public final class DirectArray extends MutableArray implements Mutable {
         strides.clear();
         flatViewLength = 0;
         borrowedFlatView().reset();
-        for (int n = getDimCount(), i = 0; i < n; i++) {
+        for (int n = shape.size(), i = 0; i < n; i++) {
             shape.set(i, 0);
         }
     }
