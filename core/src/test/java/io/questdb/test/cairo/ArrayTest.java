@@ -371,6 +371,8 @@ public class ArrayTest extends AbstractCairoTest {
 
     @Test
     public void testDedup() throws Exception {
+        // this validates that dedup works with table with array columns
+        // as long as the array columns are not part of the dedup key
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP, uniq LONG, arr DOUBLE[])" +
                     " TIMESTAMP(ts) PARTITION BY HOUR WAL" +
@@ -384,6 +386,18 @@ public class ArrayTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000002Z\t2\t[6.0,7.0,8.0]\n",
                     "tango");
         });
+    }
+
+    @Test
+    public void testDudupArrayAsKey() throws Exception {
+        // when an array is part of the dedup key
+        // it fails gracefully and with an informative error message
+        assertException("CREATE TABLE tango (ts TIMESTAMP, arr DOUBLE[])" +
+                        " TIMESTAMP(ts) PARTITION BY HOUR WAL" +
+                        " DEDUP UPSERT KEYS (ts, arr)",
+                107,
+                "dedup key columns cannot include ARRAY [column=arr, type=DOUBLE[]]"
+        );
     }
 
     @Test
