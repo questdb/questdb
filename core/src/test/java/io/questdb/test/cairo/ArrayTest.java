@@ -387,6 +387,15 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayCanBeClearedAfterInstantiation() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectArray array = new DirectArray(configuration)) {
+                array.clear();
+            }
+        });
+    }
+
+    @Test
     public void testEmptyArrayToJsonDouble() {
         try (DirectArray array = new DirectArray(configuration);
              DirectUtf8Sink sink = new DirectUtf8Sink(20)
