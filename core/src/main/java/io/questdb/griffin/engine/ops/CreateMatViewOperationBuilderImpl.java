@@ -98,7 +98,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     public void setBaseTableNamePosition(int baseTableNamePosition) {
         this.baseTableNamePosition = baseTableNamePosition;
     }
-    
+
     public void setRefreshType(int refreshType) {
         this.refreshType = refreshType;
     }
