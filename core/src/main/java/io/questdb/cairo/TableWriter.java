@@ -136,9 +136,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.tasks.TableWriterTask.*;
@@ -1159,27 +1159,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Useful for debugging
             assert txWriter.getLagRowCount() == 0;
 
-            updateIndexes();
-            columnVersionWriter.commit();
             txWriter.setSeqTxn(seqTxn);
             txWriter.setLagTxnCount(0);
             txWriter.setLagOrdered(true);
 
-            syncColumns();
-            txWriter.setColumnVersion(columnVersionWriter.getVersion());
-            txWriter.commit(denseSymbolMapWriters);
+            commit00();
             lastWalCommitTimestampMicros = configuration.getMicrosecondClock().getTicks();
-
-            squashSplitPartitions(minSplitPartitionTimestamp, txWriter.maxTimestamp, configuration.getO3LastPartitionMaxSplits());
-
-            // Bookmark masterRef to track how many rows is in uncommitted state
-            committedMasterRef = masterRef;
-            processPartitionRemoveCandidates();
-
-            metrics.tableWriterMetrics().incrementCommits();
-
+            housekeep();
             shrinkO3Mem();
-            enforceTtl();
         }
 
         // Nothing was committed to the table, only copied to LAG.
@@ -3960,20 +3947,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long committedRowCount = txWriter.unsafeCommittedFixedRowCount() + txWriter.unsafeCommittedTransientRowCount();
             final long rowsAdded = txWriter.getRowCount() - committedRowCount;
 
-            updateIndexes();
-            syncColumns();
-            columnVersionWriter.commit();
-            txWriter.setColumnVersion(columnVersionWriter.getVersion());
-            txWriter.commit(denseSymbolMapWriters);
-
-            // Check if partitions are split into too many pieces and merge few of them back.
-            squashSplitPartitions(minSplitPartitionTimestamp, txWriter.getMaxTimestamp(), configuration.getO3LastPartitionMaxSplits());
-
-            // Bookmark masterRef to track how many rows is in uncommitted state
-            this.committedMasterRef = masterRef;
-            processPartitionRemoveCandidates();
-
-            metrics.tableWriterMetrics().incrementCommits();
+            commit00();
+            housekeep();
             metrics.tableWriterMetrics().addCommittedRows(rowsAdded);
             if (!o3) {
                 // If `o3`, the metric is tracked inside `o3Commit`, possibly async.
@@ -3981,8 +3956,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             noOpRowCount = 0L;
-            enforceTtl();
         }
+    }
+
+    private void commit00() {
+        updateIndexes();
+        syncColumns();
+        columnVersionWriter.commit();
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        txWriter.commit(denseSymbolMapWriters);
+        // Bookmark masterRef to track how many rows is in uncommitted state
+        this.committedMasterRef = masterRef;
     }
 
     private void configureAppendPosition() {
@@ -5489,6 +5473,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         path.trimTo(pathSize);
         other.trimTo(pathSize);
         purgingOperator.add(columnIndex, columnName, columnType, isIndexed, columnNameTxn, partitionTimestamp, partitionNameTxn);
+    }
+
+    /**
+     * House keeps table after commit. The tricky bit is to run this housekeeping on each commit. Commit() itself
+     * has a contract that if exception is thrown, the data is not committed. However, if this housekeeping fails,
+     * the data IS committed.
+     * <p>
+     * What we need to achieve, is to report that data has been committed, but table writes should be discarded. It is
+     * necessary when housekeeping runs into an error. To indicate the situation where data is committed.
+     */
+    private void housekeep() {
+        try {
+            squashSplitPartitions(minSplitPartitionTimestamp, txWriter.getMaxTimestamp(), configuration.getO3LastPartitionMaxSplits());
+            processPartitionRemoveCandidates();
+            metrics.tableWriterMetrics().incrementCommits();
+            enforceTtl();
+        } catch (CairoException e) {
+            e.setHousekeeping(true);
+            throw e;
+        } catch (Throwable e) {
+            CairoException ex = CairoException.nonCritical().put("could not perform housekeeping on commit() [ex=").put((Sinkable) e).put(']');
+            ex.setHousekeeping(true);
+            throw ex;
+        }
     }
 
     private void indexHistoricPartitions(SymbolColumnIndexer indexer, CharSequence columnName, int indexValueBlockSize, int columnIndex) {
