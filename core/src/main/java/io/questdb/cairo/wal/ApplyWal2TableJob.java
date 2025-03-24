@@ -548,7 +548,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
             case SQL:
                 try (WalEventReader eventReader = walEventReader) {
-                    final WalEventCursor walEventCursor = eventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
+                    final WalEventCursor walEventCursor = eventReader.of(walPath, segmentTxn);
                     final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();
                     walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);
                     processWalSql(writer, sqlInfo, operationExecutor, seqTxn);
@@ -571,11 +571,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 mvRefreshTask.invalidationReason = "truncate operation";
                 return 1;
             case MAT_VIEW_INVALIDATE:
-                long txn_old = writer.getTxn();
                 writer.setSeqTxn(seqTxn);
-                if (writer.getTxn() == txn_old) {
-                    writer.markSeqTxnCommitted(seqTxn);
-                }
+                writer.markSeqTxnCommitted(seqTxn);
                 lastCommittedRows = 0;
                 return 1;
             default:

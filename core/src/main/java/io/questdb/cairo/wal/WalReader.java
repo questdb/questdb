@@ -50,7 +50,6 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
-import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 
 public class WalReader implements Closeable {
     private static final Log LOG = LogFactory.getLog(WalReader.class);
@@ -85,7 +84,7 @@ public class WalReader implements Closeable {
             events = new WalEventReader(ff);
             LOG.debug().$("open [table=").$(tableName).I$();
             int pathLen = path.size();
-            eventCursor = events.of(path.slash().put(segmentId), WAL_FORMAT_VERSION, -1L);
+            eventCursor = events.of(path.slash().put(segmentId), -1L);
             path.trimTo(pathLen);
             openSymbolMaps(eventCursor, configuration);
             path.slash().put(segmentId);

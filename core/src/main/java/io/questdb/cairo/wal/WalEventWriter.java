@@ -134,6 +134,9 @@ class WalEventWriter implements Closeable {
 
         appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
         eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        if (txnType == WalTxnType.MAT_VIEW_DATA) {
+            eventMem.putInt(WAL_FORMAT_OFFSET_32, WALE_MAT_VIEW_FORMAT_VERSION);
+        }
         return txn++;
     }
 
@@ -213,7 +216,7 @@ class WalEventWriter implements Closeable {
 
     private void init() {
         eventMem.putInt(0);
-        eventMem.putInt(WAL_FORMAT_VERSION);
+        eventMem.putInt(WALE_FORMAT_VERSION);
         eventMem.putInt(-1);
 
         appendIndex(WALE_HEADER_SIZE);
@@ -307,6 +310,7 @@ class WalEventWriter implements Closeable {
 
         appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
         eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        eventMem.putInt(WAL_FORMAT_OFFSET_32, WALE_MAT_VIEW_FORMAT_VERSION);
         return txn++;
     }
 

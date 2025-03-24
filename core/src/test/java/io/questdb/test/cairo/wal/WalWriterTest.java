@@ -1595,84 +1595,39 @@ public class WalWriterTest extends AbstractCairoTest {
     @Test
     public void testExtractNewWalEvents() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = "testExtractNewWalEvents";
-            TableToken tableToken;
-            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
-                    .col("a", ColumnType.BYTE)
-                    .col("b", ColumnType.SYMBOL)
-                    .timestamp("ts")
-                    .wal();
-            tableToken = createTable(model);
+            String expected = "a\tb\n" +
+                    "0\tsym0\n" +
+                    "1\tsym1\n" +
+                    "2\tsym2\n" +
+                    "3\tsym3\n" +
+                    "4\tsym4\n" +
+                    "5\tsym5\n" +
+                    "6\tsym6\n" +
+                    "7\tsym7\n" +
+                    "8\tsym8\n" +
+                    "9\tsym9\n";
+            // old format only
+            final String tableName = "testExtractNoNewWalEvents";
             final long refreshTxn = 42;
-            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
-                walWriter.invalidate(true, "test_invalidate0");
-                for (int i = 0; i < 10; i++) {
-                    TableWriter.Row row = walWriter.newRow(0);
-                    row.putByte(0, (byte) i);
-                    row.putSym(1, "sym" + i);
-                    row.append();
-                    if (i % 2 == 0) {
-                        walWriter.commit();
-                    } else {
-                        walWriter.commitWithExtra(refreshTxn + i, i);
-                    }
-                }
-                walWriter.invalidate(false, "test_invalidate1");
-            }
+            TableToken tableToken = createPopulateTable(tableName, refreshTxn, false);
 
-            try (Path path = new Path();
-                 WalEventReader walEventReader = new WalEventReader(configuration.getFilesFacade());
-                 TransactionLogCursor transactionLogCursor = engine.getTableSequencerAPI().getCursor(tableToken, 0)) {
-                path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-                int pathLen = path.size();
-                int i = 0;
-                while (transactionLogCursor.hasNext()) {
-                    final int walId = transactionLogCursor.getWalId();
-                    final int segmentId = transactionLogCursor.getSegmentId();
-                    final int segmentTxn = transactionLogCursor.getSegmentTxn();
-                    path.trimTo(pathLen).concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
-                    WalEventCursor walEventCursor = walEventReader.of(path, WAL_FORMAT_VERSION, segmentTxn);
-                    if (walEventCursor.getType() == WalTxnType.MAT_VIEW_INVALIDATE) {
-                        WalEventCursor.InvalidationInfo info = walEventCursor.getInvalidationInfo();
-                        if (i == 0) {
-                            assertTrue(info.isInvalid());
-                            assertEquals("test_invalidate0", info.getInvalidationReason().toString());
-                        } else {
-                            assertFalse(info.isInvalid());
-                            assertEquals("test_invalidate1", info.getInvalidationReason().toString());
-                        }
-                    }
-                    if (WalTxnType.isDataType(walEventCursor.getType())) {
-                        WalEventCursor.DataInfo info = walEventCursor.getDataInfo();
-                        assertEquals(segmentTxn - 1, info.getStartRowID());
-                        assertEquals(segmentTxn, info.getEndRowID());
-                    }
-                    if (walEventCursor.getType() == WalTxnType.MAT_VIEW_DATA) {
-                        WalEventCursor.DataInfoExt info = walEventCursor.getDataInfoExt();
-                        assertEquals(segmentTxn - 1, info.getStartRowID());
-                        assertEquals(segmentTxn, info.getEndRowID());
-                        assertEquals(refreshTxn + segmentTxn - 1, info.getLastRefreshBaseTableTxn());
-                        assertEquals(segmentTxn - 1, info.getLastRefreshTimestamp());
-                    }
-                    i++;
-                }
-            }
+            checkWalEvents(tableToken, refreshTxn, false);
 
             drainWalQueue();
+
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertSql(
-                    "a\tb\n" +
-                            "0\tsym0\n" +
-                            "1\tsym1\n" +
-                            "2\tsym2\n" +
-                            "3\tsym3\n" +
-                            "4\tsym4\n" +
-                            "5\tsym5\n" +
-                            "6\tsym6\n" +
-                            "7\tsym7\n" +
-                            "8\tsym8\n" +
-                            "9\tsym9\n", "select a,b from " + tableName
-            );
+            assertSql(expected, "select a,b from " + tableName);
+
+            // mix with new format
+            final String tableName1 = "testExtractNewWalEvents";
+            TableToken tableToken1 = createPopulateTable(tableName1, refreshTxn, true);
+
+            checkWalEvents(tableToken1, refreshTxn, true);
+
+            drainWalQueue();
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken1));
+            assertSql(expected, "select a,b from " + tableName1);
         });
     }
 
@@ -3687,6 +3642,47 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
+    private static void checkWalEvents(TableToken tableToken, long refreshTxn, boolean newFormat) {
+        try (Path path = new Path();
+             WalEventReader walEventReader = new WalEventReader(configuration.getFilesFacade());
+             TransactionLogCursor transactionLogCursor = engine.getTableSequencerAPI().getCursor(tableToken, 0)) {
+            path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+            int pathLen = path.size();
+            while (transactionLogCursor.hasNext()) {
+                final int walId = transactionLogCursor.getWalId();
+                final int segmentId = transactionLogCursor.getSegmentId();
+                final int segmentTxn = transactionLogCursor.getSegmentTxn();
+                path.trimTo(pathLen).concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+                WalEventCursor walEventCursor = walEventReader.of(path, segmentTxn);
+                if (walEventCursor.getType() == WalTxnType.MAT_VIEW_INVALIDATE) {
+                    if (newFormat) {
+                        WalEventCursor.InvalidationInfo info = walEventCursor.getInvalidationInfo();
+                        assertTrue(info.isInvalid());
+                        assertEquals("test_invalidate", info.getInvalidationReason().toString());
+                    } else {
+                        Assert.fail("Invalidation event should not be present in old format");
+                    }
+                }
+                if (WalTxnType.isDataType(walEventCursor.getType())) {
+                    WalEventCursor.DataInfo info = walEventCursor.getDataInfo();
+                    assertEquals(segmentTxn, info.getStartRowID());
+                    assertEquals(segmentTxn + 1, info.getEndRowID());
+                }
+                if (walEventCursor.getType() == WalTxnType.MAT_VIEW_DATA) {
+                    if (newFormat) {
+                        WalEventCursor.DataInfoExt info = walEventCursor.getDataInfoExt();
+                        assertEquals(segmentTxn, info.getStartRowID());
+                        assertEquals(segmentTxn + 1, info.getEndRowID());
+                        assertEquals(refreshTxn + segmentTxn, info.getLastRefreshBaseTableTxn());
+                        assertEquals(segmentTxn, info.getLastRefreshTimestamp());
+                    } else {
+                        Assert.fail("MVData event should not be present in old format");
+                    }
+                }
+            }
+        }
+    }
+
     private static Path constructPath(Path path, TableToken tableName, CharSequence walName, long segment, CharSequence fileName) {
         return segment < 0
                 ? path.concat(tableName).slash().concat(walName).slash().concat(fileName)
@@ -3739,6 +3735,38 @@ public class WalWriterTest extends AbstractCairoTest {
         } finally {
             path.trimTo(pathLen);
         }
+    }
+
+    private TableToken createPopulateTable(String tableName, long refreshTxn, boolean newFormat) {
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                .col("a", ColumnType.BYTE)
+                .col("b", ColumnType.SYMBOL)
+                .timestamp("ts")
+                .wal();
+
+        TableToken tableToken = createTable(model);
+        try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+            for (int i = 0; i < 10; i++) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putByte(0, (byte) i);
+                row.putSym(1, "sym" + i);
+                row.append();
+                walWriter.commit();
+                if (i % 2 == 0) {
+                    walWriter.commit();
+                } else {
+                    if (newFormat) {
+                        walWriter.commitWithExtra(refreshTxn + i, i);
+                    } else {
+                        walWriter.commit();
+                    }
+                }
+            }
+            if (newFormat) {
+                walWriter.invalidate(true, "test_invalidate");
+            }
+        }
+        return tableToken;
     }
 
     private void generateRow(WalWriter writer, Rnd threadRnd, long timestamp) {
