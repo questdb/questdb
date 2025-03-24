@@ -40,6 +40,7 @@ import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.cast.CastCharToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntervalToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastStrToDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToUuidFunctionFactory;
@@ -1022,11 +1023,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.SYMBOL:
                 if (toType == ColumnType.UUID) {
                     return new CastStrToUuidFunctionFactory.Func(function);
-                }
-                if (toType == ColumnType.TIMESTAMP) {
+                } else if (toType == ColumnType.TIMESTAMP) {
                     return new CastStrToTimestampFunctionFactory.Func(function);
-                }
-                if (ColumnType.isGeoHash(toType)) {
+                } else if (ColumnType.isArray(toType)) {
+                    assert ColumnType.decodeArrayElementType(toType) == ColumnType.DOUBLE;
+                    return new CastStrToDoubleArrayFunctionFactory.Func(function, toType);
+                } else if (ColumnType.isGeoHash(toType)) {
                     return CastStrToGeoHashFunctionFactory.newInstance(position, toType, function);
                 }
                 break;

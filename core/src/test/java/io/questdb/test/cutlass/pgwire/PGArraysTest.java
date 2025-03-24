@@ -24,11 +24,14 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.Chars;
+import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
+import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -50,6 +53,7 @@ import static org.junit.Assert.fail;
 @RunWith(Parameterized.class)
 public class PGArraysTest extends BasePGTest {
 
+    private final Rnd bufferSizeRnd = TestUtils.generateRandom(LOG);
     private final boolean walEnabled;
 
     public PGArraysTest(WalMode walMode) {
@@ -63,6 +67,27 @@ public class PGArraysTest extends BasePGTest {
                 {WalMode.WITH_WAL},
                 {WalMode.NO_WAL},
         });
+    }
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        selectCacheBlockCount = -1;
+        sendBufferSize = 512 * (1 + bufferSizeRnd.nextInt(15));
+        forceSendFragmentationChunkSize = (int) (10 + bufferSizeRnd.nextInt(Math.min(512, sendBufferSize) - 10) * bufferSizeRnd.nextDouble() * 1.2);
+
+        recvBufferSize = 512 * (1 + bufferSizeRnd.nextInt(15));
+        forceRecvFragmentationChunkSize = (int) (10 + bufferSizeRnd.nextInt(Math.min(512, recvBufferSize) - 10) * bufferSizeRnd.nextDouble() * 1.2);
+
+        LOG.info().$("fragmentation params [sendBufferSize=").$(sendBufferSize)
+                .$(", forceSendFragmentationChunkSize=").$(forceSendFragmentationChunkSize)
+                .$(", recvBufferSize=").$(recvBufferSize)
+                .$(", forceRecvFragmentationChunkSize=").$(forceRecvFragmentationChunkSize)
+                .I$();
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+        node1.setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
+        inputRoot = TestUtils.getCsvRoot();
     }
 
     @Test
@@ -236,6 +261,64 @@ public class PGArraysTest extends BasePGTest {
             }
         }, () -> {
             sendBufferSize = 1000 * 1024; // use large enough buffer, otherwise we will get fragmented messages and this currently leads to non-deterministic results of rnd_double_array
+        });
+    }
+
+    @Test
+    public void testArrayUpdateBind() throws Exception {
+        // todo: binding array vars in UPDATE statement does not work in WAL mode!
+        skipOnWalRun();
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement stmt = connection.prepareStatement("create table x (al double[], i int, ts timestamp) timestamp(ts) partition by hour")) {
+                stmt.execute();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("insert into x values (?, ?, ?)")) {
+                stmt.setArray(1, connection.createArrayOf("int8", new Double[]{1d, 2d, 3d, 4d, 5d}));
+                stmt.setInt(2, 0);
+                stmt.setTimestamp(3, new java.sql.Timestamp(0));
+                stmt.execute();
+
+                stmt.setArray(1, connection.createArrayOf("int8", new Double[]{6d, 7d, 8d, 9d, 10d}));
+                stmt.setInt(2, 1);
+                stmt.setTimestamp(3, new java.sql.Timestamp(1));
+                stmt.execute();
+            }
+
+            drainWalQueue();
+
+            // sanity check
+            try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("al[ARRAY],i[INTEGER],ts[TIMESTAMP]\n" +
+                                    "{1.0,2.0,3.0,4.0,5.0},0,1970-01-01 00:00:00.0\n" +
+                                    "{6.0,7.0,8.0,9.0,10.0},1,1970-01-01 00:00:00.001\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("update x set al = ? where i = ?")) {
+                stmt.setArray(1, connection.createArrayOf("int8", new Double[]{11d, 12d, 13d, 14d, 15d}));
+                stmt.setInt(2, 1);
+                stmt.execute();
+            }
+            drainWalQueue();
+
+            try (PreparedStatement stmt = connection.prepareStatement("select * from x")) {
+                sink.clear();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    assertResultSet("al[ARRAY],i[INTEGER],ts[TIMESTAMP]\n" +
+                                    "{1.0,2.0,3.0,4.0,5.0},0,1970-01-01 00:00:00.0\n" +
+                                    "{11.0,12.0,13.0,14.0,15.0},1,1970-01-01 00:00:00.001\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
         });
     }
 
