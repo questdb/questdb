@@ -5489,11 +5489,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             processPartitionRemoveCandidates();
             metrics.tableWriterMetrics().incrementCommits();
             enforceTtl();
-        } catch (CairoException e) {
-            e.setHousekeeping(true);
-            throw e;
         } catch (Throwable e) {
-            CairoException ex = CairoException.nonCritical().put("could not perform housekeeping on commit() [ex=").put((Sinkable) e).put(']');
+            CairoException ex = CairoException.nonCritical().put("Data has been persisted, but we could not perform housekeeping [ex=").put((Sinkable) e).put(']');
             ex.setHousekeeping(true);
             throw ex;
         }
