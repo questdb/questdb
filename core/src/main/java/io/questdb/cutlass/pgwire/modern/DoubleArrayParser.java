@@ -132,10 +132,14 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
             }
 
             switch (c) {
+                case '[':
+                    // fallthrough
                 case '{': {
                     currentDimSizes.add(0);
                     break;
                 }
+                case ']':
+                    // fallthrough
                 case '}': {
                     if (state == STATE_IN_NUMBER) {
                         parseAndAddNumber(input, numberStart, position, currentDimSizes);
