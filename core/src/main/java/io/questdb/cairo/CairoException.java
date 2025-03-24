@@ -58,6 +58,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     private boolean authorizationError = false;
     private boolean cacheable;
     private boolean cancellation; // when query is explicitly cancelled by user
+    private boolean housekeeping;
     private boolean interruption; // used when a query times out
     private int messagePosition;
     private boolean outOfMemory;
@@ -240,6 +241,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return errno != NON_CRITICAL && errno != PARTITION_MANIPULATION_RECOVERABLE && errno != METADATA_VALIDATION_RECOVERABLE;
     }
 
+    public boolean isHousekeeping() {
+        return housekeeping;
+    }
+
     public boolean isInterruption() {
         return interruption;
     }
@@ -325,6 +330,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return this;
     }
 
+    public void setHousekeeping(boolean housekeeping) {
+        this.housekeeping = housekeeping;
+    }
+
     public CairoException setInterruption(boolean interruption) {
         this.interruption = interruption;
         return this;
@@ -382,5 +391,6 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         authorizationError = false;
         messagePosition = 0;
         outOfMemory = false;
+        housekeeping = false;
     }
 }
