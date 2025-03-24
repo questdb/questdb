@@ -292,7 +292,8 @@ public final class ColumnType {
     }
 
     public static boolean isComparable(int columnType) {
-        return columnType != BINARY && columnType != INTERVAL;
+        short typeTag = tagOf(columnType);
+        return typeTag != BINARY && typeTag != INTERVAL && typeTag != ARRAY;
     }
 
     public static boolean isCursor(int columnType) {

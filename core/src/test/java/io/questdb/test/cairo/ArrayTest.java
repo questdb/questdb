@@ -910,6 +910,15 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByFailsGracefully() throws Exception {
+        assertException("select * from tab order by arr",
+                "create table tab as (select rnd_double_array(2, 1) arr from long_sequence(10))",
+                27,
+                "unsupported column type: DOUBLE[][]"
+        );
+    }
+
+    @Test
     public void testPartitionConversionToParquetFailsGracefully() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts timestamp, i int, arr double[]) timestamp(ts) partition by DAY");
