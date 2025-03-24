@@ -1491,6 +1491,10 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 'v';
     }
 
+    public static boolean isPublicKeyword(CharSequence tok) {
+        return isPublicKeyword(tok, tok.length());
+    }
+
     public static boolean isPublicKeyword(CharSequence tok, int len) {
         return len == 6
                 && (tok.charAt(0) | 32) == 'p'

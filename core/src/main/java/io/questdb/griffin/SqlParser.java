@@ -786,13 +786,26 @@ public class SqlParser {
         ));
 
         tok = tok(lexer, "'as' or 'with' or 'refresh'");
-        String baseTableName = null;
+        CharSequence baseTableName = null;
         if (isWithKeyword(tok)) {
             expectTok(lexer, "base");
-            baseTableName = Chars.toString(unquote(tok(lexer, "base table expected")));
+            mvOpBuilder.setBaseTableNamePosition(lexer.getPosition());
+            baseTableName = unquote(tok(lexer, "base table expected"));
+            if (isPublicKeyword(baseTableName)) {
+                expectTok(lexer, ".");
+                baseTableName = tok(lexer, "base table");
+            } else {
+                final int dot = Chars.indexOf(baseTableName, '.');
+                if (dot > -1) {
+                    if (Chars.startsWith(baseTableName, "public.")) {
+                        baseTableName = baseTableName.subSequence(7, baseTableName.length());
+                    }
+                }
+            }
+            mvOpBuilder.setBaseTableName(Chars.toString(baseTableName));
+
             tok = tok(lexer, "'as' or 'refresh'");
         }
-        mvOpBuilder.setBaseTableName(Chars.toString(baseTableName));
 
         // For now, incremental refresh is the only supported refresh type.
         int refreshType = MatViewDefinition.INCREMENTAL_REFRESH_TYPE;

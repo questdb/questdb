@@ -1205,6 +1205,27 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testBaseTableNameWithPublicSchema() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create materialized view x_view with base public.x as (select ts, max(v) from x sample by 1d) partition by day;");
+            execute("create materialized view x_view2 with base 'public.x' as (select ts, max(v) from x sample by 1d) partition by day;");
+            execute("create materialized view x_view3 with base \"public.x\" as (select ts, max(v) from x sample by 1d) partition by day;");
+
+            assertSyntaxError(
+                    "create materialized view x_view4 with base 'dfc.x' as (select ts, max(v) from x sample by 1d) partition by day",
+                    43,
+                    "table does not exist [table=dfc.x]"
+            );
+            assertSyntaxError(
+                    "create materialized view x_view4 with base public.",
+                    50,
+                    "base table expected"
+            );
+        });
+    }
+
+    @Test
     public void testBetween() throws Exception {
         assertQuery(
                 "select-choose t from (select [t] from x where t between ('2020-01-01','2021-01-02'))",
