@@ -78,7 +78,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD + "=1",
                 PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD + "=100",
                 PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE + "=100",
-                PropertyKey.QUERY_TIMEOUT_SEC + "=150",
+                PropertyKey.QUERY_TIMEOUT + "=150000",
                 // JIT doesn't support ARM, and we want exec plans to be the same.
                 PropertyKey.CAIRO_SQL_JIT_MODE + "=off",
                 PropertyKey.DEBUG_ENABLE_TEST_FACTORIES + "=true"
@@ -139,7 +139,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         }
                     } catch (Throwable th) {
                         errors.incrementAndGet();
-                        th.printStackTrace();
+                        th.printStackTrace(System.out);
                     } finally {
                         doneLatch.countDown();
                     }
@@ -163,7 +163,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 "QUERY PLAN[VARCHAR]\n" +
                         "Async Filter workers: 4\n" +
                         "  limit: 10\n" +
-                        "  filter: key='k3'\n" +
+                        "  filter: key='k3' [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n",
