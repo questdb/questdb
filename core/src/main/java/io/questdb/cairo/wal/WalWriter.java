@@ -56,7 +56,6 @@ import io.questdb.cairo.wal.seq.MetadataServiceStub;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.SymbolMapWriterLite;
 import io.questdb.griffin.engine.ops.AbstractOperation;
@@ -1812,19 +1811,6 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void changeSymbolCapacity(CharSequence columnName, int symbolCapacity, SecurityContext securityContext) {
-            int columnIndex = validateExistingColumnName(columnName, "cannot change symbol capacity");
-            if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex))) {
-                throw CairoException.nonCritical().put("column '").put(columnName).put("' is not of symbol type");
-            }
-            try {
-                TableUtils.validateSymbolCapacity(0, symbolCapacity);
-            } catch (SqlException e) {
-                throw CairoException.nonCritical().put(e.getMessage());
-            }
-        }
-
-        @Override
         public void disableDeduplication() {
             structureVersion++;
         }
@@ -2067,11 +2053,6 @@ public class WalWriter implements TableWriterAPI {
             } else {
                 throw CairoException.nonCritical().put("column '").put(columnNameSeq).put("' does not exists");
             }
-        }
-
-        @Override
-        public void changeSymbolCapacity(CharSequence columnName, int symbolCapacity, SecurityContext securityContext) {
-            // No op
         }
 
         @Override
