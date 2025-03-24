@@ -49,10 +49,10 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.vm.api.NullMemory;
 import io.questdb.cairo.wal.MetadataService;
-import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.SymbolMapDiff;
 import io.questdb.cairo.wal.SymbolMapDiffCursor;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
+import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WriterRowUtils;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
@@ -134,9 +134,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.tasks.TableWriterTask.*;
@@ -1039,8 +1039,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         int columnIndex = metadata.getColumnIndexQuiet(colName);
         if (columnIndex < 0) {
-            throw CairoException.nonCritical().put("cannot change column type, column does not exist [table=")
-                    .put(tableToken.getTableName()).put(", column=").put(colName).put(']');
+            throw CairoException.nonCritical()
+                    .put("cannot change column type, column does not exist [table=").put(tableToken.getTableName())
+                    .put(", column=").put(colName).put(']');
         }
         String columnName = metadata.getColumnName(columnIndex);
 
@@ -1048,8 +1049,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert existingType > 0;
 
         if (!ColumnType.isSymbol(existingType)) {
-            throw CairoException.nonCritical().put("cannot symbol capacity, column is not symbol [table=")
-                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+            throw CairoException.nonCritical()
+                    .put("cannot symbol capacity, column is not symbol [table=").put(tableToken.getTableName())
+                    .put(", column=").put(columnName).put(']');
         }
 
 
@@ -1062,9 +1064,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             TableUtils.validateSymbolCapacity(0, newSymbolCapacity);
         } catch (SqlException e) {
-            LOG.error().$("invalid symbol capacity to change to [table=").$(tableToken).$(", column=").utf8(columnName)
+            LOG.error().$("invalid symbol capacity to change to [table=").$(tableToken)
+                    .$(", column=").utf8(columnName)
                     .$(", from=").$(oldCapacity)
-                    .$(", to=").$(newSymbolCapacity).I$();
+                    .$(", to=").$(newSymbolCapacity)
+                    .I$();
 
             throw CairoException.nonCritical().put("invalid symbol capacity [name=").put(columnName).put(", capacity=").put(newSymbolCapacity).put(']');
         }
@@ -1087,8 +1091,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 // remove _todo
                 clearTodoLog();
-
-                var newSymbolWriter = createSymbolMapWriterObj(columnName, columnNameTxn, newSymbolCapacity, symbolCacheFlag, symbolDenseIndex);
+                var newSymbolWriter = createSymbolMapWriterObj(
+                        columnName,
+                        columnNameTxn,
+                        newSymbolCapacity,
+                        symbolCacheFlag,
+                        symbolDenseIndex
+                );
 
                 newSymbolWriter.copySymbols(oldSymbolWriter);
                 symbolMapWriters.set(columnIndex, newSymbolWriter);
@@ -1096,7 +1105,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 Misc.free(oldSymbolWriter);
 
                 // swap of the files has to be done after _todo is removed
-                hardLinkAndPurgeColumnFiles(columnName, columnIndex, metadata.isIndexed(columnIndex), columnName, ColumnType.SYMBOL, false);
+                hardLinkAndPurgeColumnFiles(
+                        columnName,
+                        columnIndex,
+                        metadata.isIndexed(columnIndex),
+                        columnName,
+                        ColumnType.SYMBOL,
+                        false
+                );
             } catch (CairoException e) {
                 throwDistressException(e);
             }
@@ -1123,7 +1139,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop);
                 }
             }
-
         } catch (Throwable th) {
             LOG.critical().$("could not change column type [table=").$(tableToken.getTableName()).$(", column=").utf8(columnName)
                     .$(", error=").$(th).I$();
@@ -5564,10 +5579,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (ColumnType.isSymbol(columnType)) {
                 if (copySymbolRoot) {
                     // Link .o, .c, .k, .v symbol files in the table root folder
-                    linkFile(ff, offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                    linkFile(ff, charFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                    linkFile(ff, keyFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                    linkFile(ff, valueFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    try {
+                        linkFile(ff, offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                        linkFile(ff, charFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                        linkFile(ff, keyFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                        linkFile(ff, valueFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    } catch (Throwable e) {
+                        ff.remove(offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                        ff.remove(charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                        ff.remove(keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                        // remove all but the last, if last fails - it wasn't created in the first place
+                        throw e;
+                    }
                 }
                 purgingOperator.add(columnIndex, columnName, columnType, isIndexed, defaultColumnNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1L);
             }

@@ -250,7 +250,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         oldColumnMetadata.rename(newNameStr);
     }
 
-    void updateColumnSymbolCapacity(int columnIndex, int symbolCapacity) {
+    void updateColumnSymbolCapacity(int columnIndex, int newSymbolCapacity) {
         TableColumnMetadata oldMeta = columnMetadata.getQuick(columnIndex);
         assert oldMeta.getColumnType() == ColumnType.SYMBOL;
 
@@ -262,7 +262,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 oldMeta.isSymbolTableStatic(),
                 null,
                 columnIndex,
-                symbolCapacity,
+                newSymbolCapacity,
                 oldMeta.isDedupKeyFlag(),
                 oldMeta.getReplacingIndex(),
                 oldMeta.isSymbolCacheFlag()
