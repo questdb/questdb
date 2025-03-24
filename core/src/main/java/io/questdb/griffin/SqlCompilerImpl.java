@@ -517,7 +517,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 || (from == ColumnType.IPv4 && to == ColumnType.VARCHAR);
     }
 
-    private int addColumnWithType(AlterOperationBuilder addColumn, CharSequence columnName, int columnNamePosition) throws SqlException {
+    private int addColumnWithType(
+            AlterOperationBuilder addColumn,
+            CharSequence columnName,
+            int columnNamePosition,
+            boolean symbolsCanHaveIndex
+    ) throws SqlException {
         CharSequence tok;
         tok = expectToken(lexer, "column type");
 
@@ -604,6 +609,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             indexed = Chars.equalsLowerCaseAsciiNc("index", tok);
             if (indexed) {
+                if (!symbolsCanHaveIndex) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "INDEX is not supported when changing SYMBOL capacity");
+                }
                 tok = SqlUtil.fetchNext(lexer);
             }
 
@@ -711,7 +719,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
             }
 
-            addColumnWithType(addColumn, columnName, columnNamePosition);
+            addColumnWithType(addColumn, columnName, columnNamePosition, true);
             tok = SqlUtil.fetchNext(lexer);
 
             if (tok == null || (!isSingleQueryMode && isSemicolon(tok))) {
@@ -745,7 +753,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 tableMetadata.getTableId()
         );
         int existingColumnType = tableMetadata.getColumnType(columnIndex);
-        int newColumnType = addColumnWithType(changeColumn, columnName, columnNamePosition);
+        int newColumnType = addColumnWithType(changeColumn, columnName, columnNamePosition, existingColumnType != ColumnType.SYMBOL);
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok != null && !isSemicolon(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to change column type");
