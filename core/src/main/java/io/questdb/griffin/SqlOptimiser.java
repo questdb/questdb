@@ -4965,7 +4965,9 @@ public class SqlOptimiser implements Mutable {
                 for (int i = 0, k = 0, n = model.getBottomUpColumns().size(); i < n; k++) {
                     QueryColumn qc = model.getBottomUpColumns().getQuick(i);
                     boolean isAFunctionUsingTimestampColumn = (qc.getAst().type == FUNCTION || qc.getAst().type == OPERATION)
-                            && nonAggregateFunctionDependsOn(qc.getAst(), nested.getTimestamp());
+                            && nonAggregateFunctionDependsOn(qc.getAst(), nested.getTimestamp())
+                            // exclude timestamp column itself
+                            && !Chars.equalsIgnoreCase(qc.getAst().token, timestamp.token);
 
                     if (
                             isAFunctionUsingTimestampColumn ||

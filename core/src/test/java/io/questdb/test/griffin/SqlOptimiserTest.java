@@ -4083,6 +4083,32 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleByWithDesignedTimestamp() throws Exception {
+        execute("CREATE TABLE 't' (\n" +
+                "  name SYMBOL capacity 256 CACHE,\n" +
+                "  price DOUBLE,\n" +
+                "  timestamp TIMESTAMP\n" +
+                ") timestamp (timestamp) PARTITION BY DAY;");
+        execute("INSERT INTO t (name, price, timestamp) VALUES" +
+                " ('a', 10, '2023-09-01T00:00:00.000Z')," +
+                " ('a', 11, '2023-09-01T00:10:00.000Z')");
+
+        assertMemoryLeak(() -> {
+            final String query = "SELECT " +
+                    "min(price) AS min_price, max(price) AS max_price, timestamp (timestamp + 1000000) AS new_ts " +
+                    "FROM t " +
+                    "WHERE timestamp > '2023-03-21' and name='a' " +
+                    "SAMPLE BY 1h " +
+                    "order by new_ts asc";
+
+            final String result = "min_price\tmax_price\tnew_ts\n" +
+                    "10.0\t11.0\t2023-09-01T00:00:00.000000Z\n";
+
+            assertSql(result, query);
+        });
+    }
+
+    @Test
     public void testSelectMultipleColumnsIncludingLastFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
