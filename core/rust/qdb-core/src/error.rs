@@ -241,7 +241,6 @@ mod tests {
             "    Context:\n",
             "        wider_context\n",
             "        context_msg\n",
-            "    "
         )));
         let source = err.source().unwrap();
         assert_eq!(source.to_string(), "io_error");
@@ -273,11 +272,15 @@ mod tests {
 
     #[test]
     pub fn format_with_backtrace() {
-        let bt_env = std::env::var("RUST_BACKTRACE");
-        if bt_env.is_ok_and(|val| ["1", "short", "full"].contains(&val.as_str())) {
-            let err = fmt_err!(InvalidType, "message");
-            let alternate = format!("{:#}", err);
+        let err = fmt_err!(InvalidType, "message");
+        let alternate = format!("{:#}", err);
+        assert!(alternate.starts_with("message"));
+
+        let backtraces_enabled = Backtrace::capture().status() == BacktraceStatus::Captured;
+        if backtraces_enabled {
             assert!(alternate.contains("\n   0: "));
+        } else {
+            assert!(!alternate.contains("\n   0: "));
         }
     }
 }
