@@ -246,7 +246,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             parser = new SqlParser(
                     configuration,
-                    optimiser,
                     characterStore,
                     sqlNodePool,
                     queryColumnPool,

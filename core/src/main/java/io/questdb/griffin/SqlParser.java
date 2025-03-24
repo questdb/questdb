@@ -94,7 +94,6 @@ public class SqlParser {
     private final ExpressionParser expressionParser;
     private final ExpressionTreeBuilder expressionTreeBuilder;
     private final ObjectPool<InsertModel> insertModelPool;
-    private final SqlOptimiser optimiser;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final ObjectPool<RenameTableModel> renameTableModelPool;
@@ -114,7 +113,6 @@ public class SqlParser {
 
     SqlParser(
             CairoConfiguration configuration,
-            SqlOptimiser optimiser,
             CharacterStore characterStore,
             ObjectPool<ExpressionNode> expressionNodePool,
             ObjectPool<QueryColumn> queryColumnPool,
@@ -135,7 +133,6 @@ public class SqlParser {
         this.configuration = configuration;
         this.traversalAlgo = traversalAlgo;
         this.characterStore = characterStore;
-        this.optimiser = optimiser;
         boolean tempCairoSqlLegacyOperatorPrecedence = configuration.getCairoSqlLegacyOperatorPrecedence();
         if (tempCairoSqlLegacyOperatorPrecedence) {
             this.expressionParser = new ExpressionParser(
@@ -784,18 +781,18 @@ public class SqlParser {
             }
         }
         tok = sansPublicSchema(tok, lexer);
-        assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
         tableOpBuilder.setTableNameExpr(nextLiteral(
                 assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition()), lexer.lastTokenPosition()
         ));
 
         tok = tok(lexer, "'as' or 'with' or 'refresh'");
-        CharSequence baseTableName = null;
+        CharSequence baseTableName;
         if (isWithKeyword(tok)) {
             expectTok(lexer, "base");
             tok = tok(lexer, "base table expected");
             baseTableName = sansPublicSchema(tok, lexer);
-            assertTableNameIsQuotedOrNotAKeyword(baseTableName, lexer.lastTokenPosition());
+            assertNameIsQuotedOrNotAKeyword(baseTableName, lexer.lastTokenPosition());
             mvOpBuilder.setBaseTableNamePosition(lexer.lastTokenPosition());
             mvOpBuilder.setBaseTableName(Chars.toString(unquote(baseTableName)));
             tok = tok(lexer, "'as' or 'refresh'");
@@ -2196,7 +2193,7 @@ public class SqlParser {
 
         tok = tok(lexer, "table name");
         tok = sansPublicSchema(tok, lexer);
-        assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
         model.setTableName(nextLiteral(assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition()), lexer.lastTokenPosition()));
 
         tok = tok(lexer, "'(' or 'select'");
@@ -2424,7 +2421,7 @@ public class SqlParser {
 
         CharSequence tok = tok(lexer, "from table name");
         tok = sansPublicSchema(tok, lexer);
-        assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
         model.setFrom(nextLiteral(unquote(tok), lexer.lastTokenPosition()));
 
@@ -2438,7 +2435,7 @@ public class SqlParser {
 
         tok = tok(lexer, "to table name");
         tok = sansPublicSchema(tok, lexer);
-        assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
         model.setTo(nextLiteral(unquote(tok), lexer.lastTokenPosition()));
 
         tok = optTok(lexer);
@@ -3033,7 +3030,7 @@ public class SqlParser {
     ) throws SqlException {
         CharSequence tok = tok(lexer, "table name or alias");
         tok = sansPublicSchema(tok, lexer);
-        assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
+        assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
         CharSequence tableName = GenericLexer.immutableOf(unquote(tok));
         ExpressionNode tableNameExpr = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, tableName, 0, 0);
         updateQueryModel.setTableNameExpr(tableNameExpr);
