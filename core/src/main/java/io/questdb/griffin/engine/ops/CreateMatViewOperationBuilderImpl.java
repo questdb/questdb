@@ -44,6 +44,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
     public static final ObjectFactory<CreateMatViewOperationBuilderImpl> FACTORY = CreateMatViewOperationBuilderImpl::new;
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
     private String baseTableName;
+    private int baseTableNamePosition = 0;
     private int refreshType = -1;
     private String timeZone;
     private String timeZoneOffset;
@@ -56,6 +57,7 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
                 createTableOperation,
                 refreshType,
                 baseTableName,
+                baseTableNamePosition,
                 timeZone,
                 timeZoneOffset
         );
@@ -93,6 +95,10 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         this.baseTableName = baseTableName;
     }
 
+    public void setBaseTableNamePosition(int baseTableNamePosition) {
+        this.baseTableNamePosition = baseTableNamePosition;
+    }
+    
     public void setRefreshType(int refreshType) {
         this.refreshType = refreshType;
     }
