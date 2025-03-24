@@ -330,6 +330,22 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     "select ik from y",
                     "select ik from x"
             );
+
+            assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                    "ik\tSYMBOL\ttrue\t256\tfalse\t512\tfalse\tfalse\n", "(SHOW COLUMNS FROM x) WHERE column = 'ik'");
+
+
+            execute("alter table x alter column ik type symbol capacity 1000", sqlExecutionContext);
+
+            drainWalQueue();
+
+            assertSqlCursorsConvertedStrings(
+                    "select ik from y",
+                    "select ik from x"
+            );
+
+            assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                    "ik\tSYMBOL\ttrue\t256\tfalse\t1024\tfalse\tfalse\n", "(SHOW COLUMNS FROM x) WHERE column = 'ik'");
         });
     }
 
