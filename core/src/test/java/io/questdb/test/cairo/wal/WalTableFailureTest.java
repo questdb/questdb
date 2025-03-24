@@ -66,6 +66,7 @@ import io.questdb.test.cairo.Overrides;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -1006,6 +1007,29 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 assertSql("x\tsym\tts\tsym2\n" +
                         "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableName);
             }
+        });
+    }
+
+    @Test
+    public void testMissingWalSegmentColumnFile() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+
+            execute("insert into " + tableToken.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
+
+            engine.releaseInactive();
+            Path path = Path.getThreadLocal(root).concat(tableToken).concat("wal1").concat("0").concat("x.d");
+            Assert.assertTrue(configuration.getFilesFacade().removeQuiet(path.$()));
+
+            drainWalQueue();
+
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            execute("insert into " + tableToken.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            execute("ALTER TABLE " + tableToken.getTableName() + " RESUME WAL FROM TXN 3");
+
+            drainWalQueue();
+            assertSql("x\tsym\tts\tsym2\n" +
+                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n", tableToken.getTableName());
         });
     }
 

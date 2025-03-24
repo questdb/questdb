@@ -477,7 +477,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(7_000, configuration.getWalApplyPoolConfiguration().getNapThreshold());
         Assert.assertEquals(10_000, configuration.getWalApplyPoolConfiguration().getSleepThreshold());
         Assert.assertEquals(1000, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
-        Assert.assertEquals(20, configuration.getCairoConfiguration().getWalApplyLookAheadTransactionCount());
+        Assert.assertEquals(200, configuration.getCairoConfiguration().getWalApplyLookAheadTransactionCount());
         Assert.assertEquals(4, configuration.getCairoConfiguration().getO3LagCalculationWindowsSize());
         Assert.assertEquals(200_000, configuration.getCairoConfiguration().getWalSegmentRolloverRowCount());
         Assert.assertEquals(20.0d, configuration.getCairoConfiguration().getWalLagRowsMultiplier(), 0.00001);
