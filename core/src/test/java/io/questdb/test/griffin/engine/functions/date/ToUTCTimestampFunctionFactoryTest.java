@@ -45,7 +45,7 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractCairoTest {
                 assertExceptionNoLeakCheck("select to_utc(0, '25:40')");
             } catch (SqlException e) {
                 Assert.assertEquals(17, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone name");
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone");
             }
         });
     }
@@ -57,7 +57,7 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractCairoTest {
                 assertExceptionNoLeakCheck("select to_utc(0, 'UUU')");
             } catch (SqlException e) {
                 Assert.assertEquals(17, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone name");
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone");
             }
         });
     }
