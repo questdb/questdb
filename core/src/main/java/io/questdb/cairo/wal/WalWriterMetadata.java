@@ -77,13 +77,26 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             boolean suspended,
             RecordMetadata metadata
     ) {
+        final boolean firstWrite = metaMem.getAppendOffset() == 0;
         metaMem.jumpTo(0);
         // Size of metadata
-        metaMem.skip(Integer.BYTES);
+        if (firstWrite) {
+            metaMem.putInt(0);
+        } else {
+            // When overwriting the file, don't "blip" the size to zero
+            // in case there are concurrent readers.
+            metaMem.skip(Integer.BYTES);
+        }
         metaMem.putInt(WAL_FORMAT_VERSION);
         metaMem.putLong(structureVersion);
         final long columnCountOffset = metaMem.getAppendOffset();
-        metaMem.skip(Integer.BYTES); // (over)written last to avoid problems with concurrent reads
+        if (firstWrite) {
+            metaMem.putInt(0);
+        } else {
+            // Same as for the file-size, keep the old size until
+            // a new col count is patched at the end.
+            metaMem.skip(Integer.BYTES);
+        }
         metaMem.putInt(timestampIndex);
         metaMem.putInt(tableId);
         metaMem.putBool(suspended);
