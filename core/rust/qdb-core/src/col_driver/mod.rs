@@ -82,3 +82,48 @@ pub fn lookup_driver(col_type: ColumnType) -> &'static dyn ColumnDriver {
         (ColumnTypeTag::Varchar, _) => &VarcharDriver,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_lookup_driver() {
+        let cases = vec![
+            (ColumnTypeTag::Boolean.into_type(), "boolean"),
+            (ColumnTypeTag::Byte.into_type(), "byte"),
+            (ColumnTypeTag::Short.into_type(), "short"),
+            (ColumnTypeTag::Char.into_type(), "char"),
+            (ColumnTypeTag::Int.into_type(), "int"),
+            (ColumnTypeTag::Long.into_type(), "long"),
+            (ColumnTypeTag::Date.into_type(), "date"),
+            (ColumnTypeTag::Timestamp.into_type(), "timestamp"),
+            (
+                ColumnTypeTag::Timestamp
+                    .into_type()
+                    .into_designated()
+                    .unwrap(),
+                "designated-timestamp",
+            ),
+            (ColumnTypeTag::Float.into_type(), "float"),
+            (ColumnTypeTag::Double.into_type(), "double"),
+            (ColumnTypeTag::String.into_type(), "string"),
+            (ColumnTypeTag::Symbol.into_type(), "symbol"),
+            (ColumnTypeTag::Long256.into_type(), "long256"),
+            (ColumnTypeTag::GeoByte.into_type(), "geobyte"),
+            (ColumnTypeTag::GeoShort.into_type(), "geoshort"),
+            (ColumnTypeTag::GeoInt.into_type(), "geoint"),
+            (ColumnTypeTag::GeoLong.into_type(), "geolong"),
+            (ColumnTypeTag::Binary.into_type(), "binary"),
+            (ColumnTypeTag::Uuid.into_type(), "uuid"),
+            (ColumnTypeTag::Long128.into_type(), "long128"),
+            (ColumnTypeTag::IPv4.into_type(), "ipv4"),
+            (ColumnTypeTag::Varchar.into_type(), "varchar"),
+        ];
+        for (col_type, exp_descr) in cases.iter().copied() {
+            let driver = lookup_driver(col_type);
+            let actual_descr = driver.descr();
+            assert_eq!(actual_descr, exp_descr);
+        }
+    }
+}

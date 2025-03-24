@@ -143,16 +143,11 @@ impl Debug for CoreError {
 
 impl Display for CoreError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        self.fmt_msg(f)?;
-        Ok(())
-    }
-}
-
-pub struct CoreErrorWithBacktraceDisplay<'a>(&'a CoreError);
-
-impl Display for CoreErrorWithBacktraceDisplay<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt_msg_with_backtrace(f)?;
+        if f.alternate() {
+            self.fmt_msg_with_backtrace(f)?;
+        } else {
+            self.fmt_msg(f)?;
+        }
         Ok(())
     }
 }
@@ -222,3 +217,67 @@ macro_rules! fmt_err {
 }
 
 pub(crate) use fmt_err;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error;
+
+    #[test]
+    pub fn test_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::Other, "io_error");
+        let mut err = CoreErrorReason::Io(Arc::new(io_err)).into_err();
+        err.add_context("context_msg");
+        let result: Result<(), _> = Err(err);
+        let err = result.context("wider_context").unwrap_err();
+        let reason = err.reason();
+        assert!(matches!(reason, CoreErrorReason::Io(_)));
+        let display = err.to_string();
+        assert_eq!(display, "wider_context: context_msg: io_error");
+        let debug = format!("{:?}", err);
+        assert!(debug.starts_with(concat!(
+            "CoreError\n",
+            "    Reason: Io(Custom { kind: Other, error: \"io_error\" })\n",
+            "    Context:\n",
+            "        wider_context\n",
+            "        context_msg\n",
+            "    "
+        )));
+        let source = err.source().unwrap();
+        assert_eq!(source.to_string(), "io_error");
+
+        let (reason, context, _backtrace) = err.into_tuple();
+        assert!(matches!(reason, CoreErrorReason::Io(_)));
+        assert_eq!(&context, &["context_msg", "wider_context"]);
+    }
+
+    #[test]
+    fn io_err_into_coreerror() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::Other, "io_error");
+        let err: CoreError = io_err.into();
+        assert_eq!(err.to_string(), "io_error");
+    }
+
+    #[test]
+    pub fn test_ok_result_context() {
+        let res: CoreResult<()> = Ok(());
+        res.context("context_msg").unwrap();
+    }
+
+    #[test]
+    pub fn test_no_context() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::Other, "io_error");
+        let err = CoreErrorReason::Io(Arc::new(io_err)).into_err();
+        assert_eq!(err.to_string(), "io_error");
+    }
+
+    #[test]
+    pub fn format_with_backtrace() {
+        let bt_env = std::env::var("RUST_BACKTRACE");
+        if bt_env.is_ok_and(|val| ["1", "short", "full"].contains(&val.as_str())) {
+            let err = fmt_err!(InvalidType, "message");
+            let alternate = format!("{:#}", err);
+            assert!(alternate.contains("\n   0: "));
+        }
+    }
+}
