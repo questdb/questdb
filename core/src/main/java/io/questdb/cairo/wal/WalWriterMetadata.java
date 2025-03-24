@@ -79,10 +79,11 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     ) {
         metaMem.jumpTo(0);
         // Size of metadata
-        metaMem.putInt(0);
+        metaMem.skip(Integer.BYTES);
         metaMem.putInt(WAL_FORMAT_VERSION);
         metaMem.putLong(structureVersion);
-        metaMem.putInt(columnCount);
+        final long columnCountOffset = metaMem.getAppendOffset();
+        metaMem.skip(Integer.BYTES); // (over)written last to avoid problems with concurrent reads
         metaMem.putInt(timestampIndex);
         metaMem.putInt(tableId);
         metaMem.putBool(suspended);
@@ -92,8 +93,11 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             metaMem.putStr(metadata.getColumnName(i));
         }
 
-        // update metadata size
-        metaMem.putInt(0, (int) metaMem.getAppendOffset());
+        // To avoid consistency issues with concurrent readers,
+        // update the column count and file size last.
+        final long size = metaMem.getAppendOffset();
+        metaMem.putInt(0, (int) size);
+        metaMem.putInt(columnCountOffset, columnCount);
     }
 
     @Override
