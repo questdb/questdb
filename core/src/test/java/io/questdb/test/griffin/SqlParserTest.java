@@ -7184,7 +7184,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-choose a, sum from (select-group-by [a, sum(b) sum, timestamp_floor('2m',t) t] a, sum(b) sum, timestamp_floor('2m',t) t from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t) order by a)",
+                "select-choose a, sum from (select-group-by [a, sum(b) sum, timestamp_floor('2m',t,null,'00:00') t] a, sum(b) sum, timestamp_floor('2m',t,null,'00:00') t from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t) order by a)",
                 "select a, sum(b) from (tab order by t) timestamp(t) sample by 2m order by a",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -7193,8 +7193,44 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-choose a, sum from (select-group-by [a, sum(b) sum, timestamp_floor('2m',t) t] a, sum(b) sum, timestamp_floor('2m',t) t from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t) order by a)",
+                "select-choose a, sum from (select-group-by [a, sum(b) sum, timestamp_floor('2m',t,null,'00:00') t] a, sum(b) sum, timestamp_floor('2m',t,null,'00:00') t from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t) order by a)",
                 "select a, sum(b) from (tab order by t) timestamp(t) sample by 2m align to calendar order by a",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
+
+        assertQuery(
+                "select-choose a, sum from (select-virtual [a, sum] a, sum, to_utc(t,'Europe/Paris') t from (select-group-by [a, sum(b) sum, timestamp_floor('2m',to_timezone(t,'Europe/Paris'),null,'00:00') t] a, sum(b) sum, timestamp_floor('2m',to_timezone(t,'Europe/Paris'),null,'00:00') t from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t))) order by a",
+                "select a, sum(b) from (tab order by t) timestamp(t) sample by 2m align to calendar time zone 'Europe/Paris' order by a",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
+
+        assertQuery(
+                "select-choose a, sum from (select-virtual [a, sum] a, sum, to_utc(t,'Europe/Paris') t from (select-group-by [a, sum(b) sum, timestamp_floor('2m',to_timezone(t,'Europe/Paris'),null,'00:00') t] a, sum(b) sum, timestamp_floor('2m',to_timezone(t,'Europe/Paris'),null,'00:00') t from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t))) order by a desc",
+                "select a, sum(b) from (tab order by t) timestamp(t) sample by 2m align to calendar time zone 'Europe/Paris' order by 1 desc",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
+
+        assertQuery(
+                "select-choose a10, sum from (select-virtual [a10, sum] a10, sum, to_utc(t,'Europe/Paris') t from (select-group-by [10 * a a10, sum(b) sum, timestamp_floor('2m',to_timezone(t,'Europe/Paris'),null,'00:00') t] 10 * a a10, sum(b) sum, timestamp_floor('2m',to_timezone(t,'Europe/Paris'),null,'00:00') t from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t))) order by a10",
+                "select 10*a as a10, sum(b) from (tab order by t) timestamp(t) sample by 2m align to calendar time zone 'Europe/Paris' order by a10",
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+                        .col("b", ColumnType.INT)
+                        .col("t", ColumnType.TIMESTAMP)
+        );
+
+        assertQuery(
+                "select-choose a0, sum from (select-virtual [a0, sum, 10 * a0 column] a0, sum, 10 * a0 column from (select-virtual [a0, sum] a0, sum, to_utc(t,'Europe/Paris') t from (select-group-by [a0, sum(b) sum, timestamp_floor('2m',to_timezone(t,'Europe/Paris'),null,'00:00') t] a0, sum(b) sum, timestamp_floor('2m',to_timezone(t,'Europe/Paris'),null,'00:00') t from (select-choose [a a0, b, t] a a0, b, t from (select-choose [t, a, b] a, b, t from (select [t, a, b] from tab) order by t) timestamp (t)))) order by column desc, a0)",
+                "select a as a0, sum(b) from (tab order by t) timestamp(t) sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a desc, 1 asc",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
