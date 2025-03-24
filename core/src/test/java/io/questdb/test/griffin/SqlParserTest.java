@@ -7557,7 +7557,46 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testPublicSchemaRemovaCreateTableAsSelect() throws SqlException {
+    public void testPublicSchemaRemovalCreateTable() throws SqlException {
+        assertModel(
+                "create atomic table tab (a INT)",
+                "create table public.tab (a int)",
+                ExecutionModel.CREATE_TABLE
+        );
+
+        assertModel(
+                "create atomic table tab (a INT)",
+                "create table \"public\".tab (a int)",
+                ExecutionModel.CREATE_TABLE
+        );
+
+        assertModel(
+                "create atomic table tab (a INT)",
+                "create table \"public\".\"tab\" (a int)",
+                ExecutionModel.CREATE_TABLE
+        );
+
+        assertModel(
+                "create atomic table tab (a INT)",
+                "create table public.\"tab\" (a int)",
+                ExecutionModel.CREATE_TABLE
+        );
+
+        assertModel(
+                "create atomic table public (a INT)",
+                "create table public (a int)",
+                ExecutionModel.CREATE_TABLE
+        );
+
+        assertModel(
+                "create atomic table public (a INT)",
+                "create table \"public\" (a int)",
+                ExecutionModel.CREATE_TABLE
+        );
+    }
+
+    @Test
+    public void testPublicSchemaRemovalCreateTableAsSelect() throws SqlException {
         assertModel(
                 "create batch 1000000 table tab as (select-choose * from (src))",
                 "create table public.tab as (select * from public.src)",
@@ -7605,45 +7644,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "create table public.tab as (select * from public)",
                 ExecutionModel.CREATE_TABLE,
                 modelOf("public").col("x", ColumnType.INT)
-        );
-    }
-
-    @Test
-    public void testPublicSchemaRemovalCreateTable() throws SqlException {
-        assertModel(
-                "create atomic table tab (a INT)",
-                "create table public.tab (a int)",
-                ExecutionModel.CREATE_TABLE
-        );
-
-        assertModel(
-                "create atomic table tab (a INT)",
-                "create table \"public\".tab (a int)",
-                ExecutionModel.CREATE_TABLE
-        );
-
-        assertModel(
-                "create atomic table tab (a INT)",
-                "create table \"public\".\"tab\" (a int)",
-                ExecutionModel.CREATE_TABLE
-        );
-
-        assertModel(
-                "create atomic table tab (a INT)",
-                "create table public.\"tab\" (a int)",
-                ExecutionModel.CREATE_TABLE
-        );
-
-        assertModel(
-                "create atomic table public (a INT)",
-                "create table public (a int)",
-                ExecutionModel.CREATE_TABLE
-        );
-
-        assertModel(
-                "create atomic table public (a INT)",
-                "create table \"public\" (a int)",
-                ExecutionModel.CREATE_TABLE
         );
     }
 
