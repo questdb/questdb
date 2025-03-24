@@ -71,6 +71,7 @@ import static io.questdb.cairo.ErrorTag.OUT_OF_MEMORY;
 import static io.questdb.cairo.ErrorTag.resolveTag;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
+import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
 import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
@@ -525,6 +526,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
         switch (walTxnType) {
             case DATA:
+            case MAT_VIEW_DATA:
                 walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);
                 writer.commitWalInsertTransactions(
                         walPath,
@@ -567,6 +569,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 // Invalidate dependent mat views on truncate.
                 mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
                 mvRefreshTask.invalidationReason = "truncate operation";
+                return 1;
+            case MAT_VIEW_INVALIDATE:
+                long txn_old = writer.getTxn();
+                writer.setSeqTxn(seqTxn);
+                if (writer.getTxn() == txn_old) {
+                    writer.markSeqTxnCommitted(seqTxn);
+                }
+                lastCommittedRows = 0;
                 return 1;
             default:
                 throw new UnsupportedOperationException("Unsupported WAL txn type: " + walTxnType);

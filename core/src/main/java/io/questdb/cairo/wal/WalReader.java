@@ -50,7 +50,6 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
-import static io.questdb.cairo.wal.WalTxnType.DATA;
 import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 
 public class WalReader implements Closeable {
@@ -241,7 +240,7 @@ public class WalReader implements Closeable {
 
     private void openSymbolMaps(WalEventCursor eventCursor, CairoConfiguration configuration) {
         while (eventCursor.hasNext()) {
-            if (eventCursor.getType() == DATA) {
+            if (WalTxnType.isDataType(eventCursor.getType())) {
                 WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
                 SymbolMapDiff symbolDiff = dataInfo.nextSymbolMapDiff();
                 while (symbolDiff != null) {

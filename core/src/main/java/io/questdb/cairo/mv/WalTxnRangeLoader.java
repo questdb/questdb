@@ -122,7 +122,7 @@ public class WalTxnRangeLoader {
                     lastSegmentTxn = segmentTxn;
                 }
 
-                if (walEventCursor.getType() != WalTxnType.DATA) {
+                if (!WalTxnType.isDataType(walEventCursor.getType())) {
                     // Skip non-inserts
                     continue;
                 }

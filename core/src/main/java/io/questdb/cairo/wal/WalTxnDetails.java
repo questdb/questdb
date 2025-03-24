@@ -46,7 +46,6 @@ import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cairo.wal.WalTxnType.DATA;
 import static io.questdb.cairo.wal.WalTxnType.NONE;
 import static io.questdb.cairo.wal.WalUtils.*;
 
@@ -648,7 +647,7 @@ public class WalTxnDetails implements QuietCloseable {
                         }
 
                         walTxnType = walEventCursor.getType();
-                        if (walTxnType == DATA) {
+                        if (WalTxnType.isDataType(walTxnType)) {
                             WalEventCursor.DataInfo commitInfo = walEventCursor.getDataInfo();
                             transactionMeta.set(txnMetaOffset + SEQ_TXN_OFFSET, seqTxn);
                             transactionMeta.set(txnMetaOffset + COMMIT_TO_TIMESTAMP_OFFSET, -1); // commit to timestamp
