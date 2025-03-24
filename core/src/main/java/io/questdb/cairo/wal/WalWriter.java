@@ -94,6 +94,7 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_DEFAULT;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 
@@ -141,6 +142,9 @@ public class WalWriter implements TableWriterAPI {
     private long currentTxnStartRowNum = -1;
     private boolean distressed;
     private boolean isCommittingData;
+    private short lastDedupMode = WAL_DEDUP_MODE_DEFAULT;
+    private long lastReplaceRangeHiTs = Long.MAX_VALUE;
+    private long lastReplaceRangeLowTs = Long.MIN_VALUE;
     private int lastSegmentTxn = -1;
     private long lastSeqTxn = NO_TXN;
     private boolean open;
@@ -303,12 +307,29 @@ public class WalWriter implements TableWriterAPI {
 
     @Override
     public void commit() {
+        commitWitParams(0, 0, WAL_DEDUP_MODE_DEFAULT);
+    }
+
+    public void commitWitParams(long replaceRangeLowTs, long replaceRangeHiTs, byte dedupMode) {
         checkDistressed();
-        try {
-            if (inTransaction()) {
+        if (inTransaction() || (replaceRangeLowTs < replaceRangeHiTs)) {
+            try {
+                lastReplaceRangeLowTs = replaceRangeLowTs;
+                lastReplaceRangeHiTs = replaceRangeHiTs;
+                lastDedupMode = dedupMode;
+
                 isCommittingData = true;
                 final long rowsToCommit = getUncommittedRowCount();
-                lastSegmentTxn = events.appendData(currentTxnStartRowNum, segmentRowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+                lastSegmentTxn = events.appendData(
+                        currentTxnStartRowNum,
+                        segmentRowCount,
+                        txnMinTimestamp,
+                        txnMaxTimestamp,
+                        txnOutOfOrder,
+                        replaceRangeLowTs,
+                        replaceRangeHiTs,
+                        dedupMode
+                );
                 // flush disk before getting next txn
                 syncIfRequired();
                 final long seqTxn = getSequencerTxn();
@@ -320,18 +341,18 @@ public class WalWriter implements TableWriterAPI {
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
                 metrics.walMetrics().addRowsWritten(rowsToCommit);
+            } catch (CairoException ex) {
+                distressed = true;
+                throw ex;
+            } catch (Throwable th) {
+                // If distressed, no need to rollback, WalWriter will not be used anymore
+                if (!isDistressed()) {
+                    rollback();
+                }
+                throw th;
+            } finally {
+                isCommittingData = false;
             }
-        } catch (CairoException ex) {
-            distressed = true;
-            throw ex;
-        } catch (Throwable th) {
-            // If distressed, no need to rollback, WalWriter will not be used anymore
-            if (!isDistressed()) {
-                rollback();
-            }
-            throw th;
-        } finally {
-            isCommittingData = false;
         }
     }
 
@@ -1519,7 +1540,16 @@ public class WalWriter implements TableWriterAPI {
         if (isCommittingData) {
             // When current transaction is not a data transaction but a column add transaction
             // there is no need to add a record about it to the new segment event file.
-            lastSegmentTxn = events.appendData(0, uncommittedRows, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
+            lastSegmentTxn = events.appendData(
+                    0,
+                    uncommittedRows,
+                    txnMinTimestamp,
+                    txnMaxTimestamp,
+                    txnOutOfOrder,
+                    lastReplaceRangeLowTs,
+                    lastReplaceRangeHiTs,
+                    lastDedupMode
+            );
         }
         events.sync();
     }

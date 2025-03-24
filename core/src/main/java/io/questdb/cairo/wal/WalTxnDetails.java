@@ -65,7 +65,9 @@ public class WalTxnDetails implements QuietCloseable {
     private static final int WAL_TXN_ROW_HI_OFFSET = WAL_TXN_ROW_LO_OFFSET + 1;
     private static final int WAL_TXN_ROW_IN_ORDER_DATA_TYPE = WAL_TXN_ROW_HI_OFFSET + 1;
     private static final int WAL_TXN_SYMBOL_DIFF_OFFSET = WAL_TXN_ROW_IN_ORDER_DATA_TYPE + 1;
-    public static final int TXN_METADATA_LONGS_SIZE = WAL_TXN_SYMBOL_DIFF_OFFSET + 1;
+    private static final int WAL_TXN_REPLACE_RANGE_TS_LOW = WAL_TXN_SYMBOL_DIFF_OFFSET + 1;
+    private static final int WAL_TXN_REPLACE_RANGE_TS_HI = WAL_TXN_REPLACE_RANGE_TS_LOW + 1;
+    public static final int TXN_METADATA_LONGS_SIZE = WAL_TXN_REPLACE_RANGE_TS_HI + 1;
     private static final int SYMBOL_MAP_COLUMN_RECORD_HEADER_INTS = 6;
     private static final int SYMBOL_MAP_RECORD_HEADER_INTS = 4;
     private final CairoConfiguration config;
@@ -283,6 +285,11 @@ public class WalTxnDetails implements QuietCloseable {
         return value == LAST_ROW_COMMIT ? FORCE_FULL_COMMIT : value;
     }
 
+    public byte getDedupMode(long seqTxn) {
+        int isOutOfOrder = Numbers.decodeLowInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ROW_IN_ORDER_DATA_TYPE)));
+        return (byte) (isOutOfOrder >> 24);
+    }
+
     public long getFullyCommittedTxn(long fromSeqTxn, long toSeqTxn, long maxCommittedTimestamp) {
         for (long seqTxn = fromSeqTxn + 1; seqTxn <= toSeqTxn; seqTxn++) {
             long maxTimestamp = getCommitMaxTimestamp(seqTxn);
@@ -303,6 +310,14 @@ public class WalTxnDetails implements QuietCloseable {
 
     public long getMinTimestamp(long seqTxn) {
         return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + WAL_TXN_MIN_TIMESTAMP_OFFSET);
+    }
+
+    public long getReplaceRangeTsHi(long seqTxn) {
+        return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + WAL_TXN_REPLACE_RANGE_TS_HI);
+    }
+
+    public long getReplaceRangeTsLow(long seqTxn) {
+        return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + WAL_TXN_REPLACE_RANGE_TS_LOW);
     }
 
     public int getSegmentId(long seqTxn) {
@@ -342,10 +357,6 @@ public class WalTxnDetails implements QuietCloseable {
 
     public byte getWalTxnType(long seqTxn) {
         return (byte) Numbers.decodeHighInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ROW_IN_ORDER_DATA_TYPE)));
-    }
-
-    public boolean hasRecord(long seqTxn) {
-        return (seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE < transactionMeta.size();
     }
 
     public boolean isLastSegmentUsage(long seqTxn) {
@@ -670,8 +681,11 @@ public class WalTxnDetails implements QuietCloseable {
                             } else {
                                 flags |= FLAG_IS_LAST_SEGMENT_USAGE;
                             }
+                            flags |= (commitInfo.getDedupMode() << 24);
                             transactionMeta.set(txnMetaOffset + WAL_TXN_ROW_IN_ORDER_DATA_TYPE, Numbers.encodeLowHighInts(flags, walTxnType));
                             transactionMeta.set(txnMetaOffset + WAL_TXN_SYMBOL_DIFF_OFFSET, saveSymbols(commitInfo, seqTxn));
+                            transactionMeta.set(txnMetaOffset + WAL_TXN_REPLACE_RANGE_TS_LOW, commitInfo.getReplaceRangeTsLow());
+                            transactionMeta.set(txnMetaOffset + WAL_TXN_REPLACE_RANGE_TS_HI, commitInfo.getReplaceRangeTsHi());
                             continue;
                         }
                     } else {

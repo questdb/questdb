@@ -2660,6 +2660,46 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceRangeSingleCommit() throws Exception {
+        setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
+        assertMemoryLeak(() -> {
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("rg");
+
+            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
+                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(100)");
+
+            drainWalQueue();
+
+            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T14:30");
+            assertSql("min\tmax\tcount\n" +
+                    "2022-02-24T12:30:00.000000Z\t2022-02-25T13:15:00.000000Z\t100\n", "select min(ts), max(ts), count(*) from rg");
+
+            Utf8StringSink sink = new Utf8StringSink();
+
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                TableWriter.Row row = ww.newRow(ts);
+                row.putInt(0, 100);
+                row.putLong(2, 1000);
+                row.putStr(3, "hello");
+                sink.clear();
+                sink.put("world");
+                row.putVarchar(4, sink);
+                row.putSym(5, "a");
+                row.append();
+
+                long rangeStart = IntervalUtils.parseFloorPartialTimestamp("2022-02-24");
+                long rangeEnd = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                ww.commitWitParams(rangeStart, rangeEnd, WAL_DEDUP_MODE_DEFAULT);
+            }
+            drainWalQueue();
+
+            assertSql("min\tmax\tcount\n" +
+                    "2022-02-24T14:30:00.000000Z\t2022-02-25T13:15:00.000000Z\t51\n", "select min(ts), max(ts), count(*) from rg");
+        });
+    }
+
+    @Test
     public void testRollToNextSegment() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();

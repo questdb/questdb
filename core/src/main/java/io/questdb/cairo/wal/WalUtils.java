@@ -66,6 +66,10 @@ public class WalUtils {
     public static final String WAL_PENDING_FS_MARKER = ".pending";
     public static final int WAL_SEQUENCER_FORMAT_VERSION_V1 = 0;
     public static final int WAL_SEQUENCER_FORMAT_VERSION_V2 = 1;
+    public static final byte WAL_DEDUP_MODE_DEFAULT = 0;
+    public static final byte WAL_DEDUP_MODE_NO_DEDUP = 1;
+    public static final byte WAL_DEDUP_MODE_REPLACE_RANGE = 3;
+    public static final byte WAL_DEDUP_MODE_UPSERT_NEW = 2;
 
     public static void createTxnLogFile(FilesFacade ff, MemoryMARW mem, Path txnSeqDirPath, long tableCreateDate, int chunkSize, int mkDirMode) {
         int rootLen = txnSeqDirPath.size();
