@@ -3406,6 +3406,34 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByBrokenTimestampClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE 'trades' ( " +
+                            "  symbol SYMBOL, " +
+                            "  side SYMBOL, " +
+                            "  price DOUBLE, " +
+                            "  amount DOUBLE, " +
+                            "  timestamp TIMESTAMP " +
+                            ") timestamp(timestamp) PARTITION BY DAY;"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "SELECT " +
+                            "    min(price) AS min_ltp, " +
+                            "    max(price) AS max_ltp, " +
+                            "    timestamp(timestamp) AS hour " +
+                            "FROM trades " +
+                            "WHERE timestamp > '2021-03-21' and symbol='ETH-USD' " +
+                            "SAMPLE BY 1h " +
+                            "ORDER BY hour ASC;",
+                    0,
+                    "unexpected timestamp expression"
+            );
+        });
+    }
+
+    @Test
     public void testSampleByCountWithNoTsColSelected() throws Exception {
         assertQuery(
                 "count\n" +

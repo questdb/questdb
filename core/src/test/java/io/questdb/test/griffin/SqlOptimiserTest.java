@@ -3095,14 +3095,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             final String query = "select ts, avg(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' to '2018-01-31' align to calendar with offset '10:00'";
-            final String model = "select-group-by ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' and ts < '2018-01-31') sample by 5d from '2017-12-20' to '2018-01-31' align to calendar with offset '10:00'";
+            final String model = "select-group-by timestamp_floor('5d',ts,'2017-12-20','10:00') ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' and ts < '2018-01-31' from '2017-12-20' to '2018-01-31' stride 5d) order by ts";
             assertModel(model, query, ExecutionModel.QUERY);
 
             final String target = "select ts, avg(x) from fromto\n" +
                     "where ts >= '2017-12-20' and ts < '2018-01-31'\n" +
                     "sample by 5d from '2017-12-20' to '2018-01-31' align to calendar with offset '10:00'";
 
-            final String tmodel = "select-group-by ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' and ts < '2018-01-31' and ts >= '2017-12-20' and ts < '2018-01-31') sample by 5d from '2017-12-20' to '2018-01-31' align to calendar with offset '10:00'";
+            final String tmodel = "select-group-by timestamp_floor('5d',ts,'2017-12-20','10:00') ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' and ts < '2018-01-31' and ts >= '2017-12-20' and ts < '2018-01-31' from '2017-12-20' to '2018-01-31' stride 5d) order by ts";
             assertModel(tmodel, target, ExecutionModel.QUERY);
         });
     }
@@ -3114,13 +3114,13 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select ts, avg(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' align to calendar with offset '10:00'";
 
-            assertModel("select-group-by ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20') sample by 5d from '2017-12-20' align to calendar with offset '10:00'", query, ExecutionModel.QUERY);
+            assertModel("select-group-by timestamp_floor('5d',ts,'2017-12-20','10:00') ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' from '2017-12-20' stride 5d) order by ts", query, ExecutionModel.QUERY);
 
             final String target = "select ts, avg(x) from fromto\n" +
                     "where ts >= '2017-12-20'\n" +
                     "sample by 5d from '2017-12-20' align to calendar with offset '10:00'";
 
-            assertModel("select-group-by ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' and ts >= '2017-12-20') sample by 5d from '2017-12-20' align to calendar with offset '10:00'", target, ExecutionModel.QUERY);
+            assertModel("select-group-by timestamp_floor('5d',ts,'2017-12-20','10:00') ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' and ts >= '2017-12-20' from '2017-12-20' stride 5d) order by ts", target, ExecutionModel.QUERY);
         });
     }
 
@@ -3131,15 +3131,15 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select ts, avg(x) from fromto\n" +
                     "sample by 5d to '2018-01-31' align to calendar with offset '10:00'";
 
-            final String model = "select-group-by ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2018-01-31') sample by 5d to '2018-01-31' align to calendar with offset '10:00'";
+            final String model = "select-group-by timestamp_floor('5d',ts,null,'10:00') ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2018-01-31' to '2018-01-31' stride 5d) order by ts";
             assertModel(model, query, ExecutionModel.QUERY);
 
             final String target = "select ts, avg(x) from fromto\n" +
                     "where ts < '2018-01-31'\n" +
                     "sample by 5d to '2018-01-31' align to calendar with offset '10:00'";
 
-
-            final String targetModel = "select-group-by ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2018-01-31' and ts < '2018-01-31') sample by 5d to '2018-01-31' align to calendar with offset '10:00'";
+            // TODO: where clause looks weird
+            final String targetModel = "select-group-by timestamp_floor('5d',ts,null,'10:00') ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2018-01-31' to '2018-01-31' stride 5d) order by ts";
             assertModel(targetModel, target, ExecutionModel.QUERY);
         });
     }
@@ -3152,13 +3152,13 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "where ts >= '2017-12-20'\n" +
                     "sample by 5d from '2017-12-22' align to calendar with offset '10:00'";
 
-            assertModel("select-group-by ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-22' and ts >= '2017-12-20') sample by 5d from '2017-12-22' align to calendar with offset '10:00'", fromNarrow, ExecutionModel.QUERY);
+            assertModel("select-group-by timestamp_floor('5d',ts,'2017-12-22','10:00') ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-22' and ts >= '2017-12-20' from '2017-12-22' stride 5d) order by ts", fromNarrow, ExecutionModel.QUERY);
 
             final String toNarrow = "select ts, avg(x) from fromto\n" +
                     "where ts >= '2017-12-20'\n" +
                     "sample by 5d TO '2017-12-22' align to calendar with offset '10:00'";
 
-            assertModel("select-group-by ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2017-12-22' and ts >= '2017-12-20') sample by 5d to '2017-12-22' align to calendar with offset '10:00'", toNarrow, ExecutionModel.QUERY);
+            assertModel("select-group-by timestamp_floor('5d',ts,null,'10:00') ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2017-12-22' and ts >= '2017-12-20' to '2017-12-22' stride 5d) order by ts", toNarrow, ExecutionModel.QUERY);
         });
     }
 
@@ -3170,7 +3170,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "where s != '5'\n" +
                     "sample by 5d from '2017-12-20' to '2018-01-31' align to calendar with offset '10:00'\n";
 
-            final String model = "select-group-by ts, avg(x) avg from (select [ts, x, s] from fromto timestamp (ts) where ts >= '2017-12-20' and ts < '2018-01-31' and s != '5') sample by 5d from '2017-12-20' to '2018-01-31' align to calendar with offset '10:00'";
+            final String model = "select-group-by timestamp_floor('5d',ts,'2017-12-20','10:00') ts, avg(x) avg from (select [ts, x, s] from fromto timestamp (ts) where ts >= '2017-12-20' and ts < '2018-01-31' and s != '5' from '2017-12-20' to '2018-01-31' stride 5d) order by ts";
 
             assertModel(model, query, ExecutionModel.QUERY);
         });
@@ -3184,7 +3184,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "where s != '5'\n" +
                     "sample by 5d from '2017-12-20' align to calendar with offset '10:00'\n";
 
-            final String model = "select-group-by ts, avg(x) avg from (select [ts, x, s] from fromto timestamp (ts) where ts >= '2017-12-20' and s != '5') sample by 5d from '2017-12-20' align to calendar with offset '10:00'";
+            final String model = "select-group-by timestamp_floor('5d',ts,'2017-12-20','10:00') ts, avg(x) avg from (select [ts, x, s] from fromto timestamp (ts) where ts >= '2017-12-20' and s != '5' from '2017-12-20' stride 5d) order by ts";
 
             assertModel(model, query, ExecutionModel.QUERY);
         });
@@ -3198,7 +3198,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "where s != '5'\n" +
                     "sample by 5d to '2018-01-31' align to calendar with offset '10:00'\n";
 
-            final String model = "select-group-by ts, avg(x) avg from (select [ts, x, s] from fromto timestamp (ts) where ts < '2018-01-31' and s != '5') sample by 5d to '2018-01-31' align to calendar with offset '10:00'";
+            final String model = "select-group-by timestamp_floor('5d',ts,null,'10:00') ts, avg(x) avg from (select [ts, x, s] from fromto timestamp (ts) where ts < '2018-01-31' and s != '5' to '2018-01-31' stride 5d) order by ts";
 
             assertModel(model, query, ExecutionModel.QUERY);
         });
@@ -3302,76 +3302,64 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSampleByFromToParallelDeduceTimeStampColumn() throws Exception {
-        execute("CREATE TABLE 't' (\n" +
-                "  name SYMBOL capacity 256 CACHE,\n" +
-                "  timestamp TIMESTAMP\n" +
-                ") timestamp (timestamp) PARTITION BY DAY;");
-        execute("INSERT INTO t (name, timestamp) VALUES" +
-                " ('a', '2023-09-01T00:00:00.000Z')," +
-                " ('a', '2023-09-01T00:10:00.000Z')");
-
+    public void testSampleByFromToParallelDeduceTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            final String query = "SELECT timestamp+60000000 as 'timestamp', 0 AS extra_column, 0 AS extra_column2 \n" +
-                    "FROM t\n" +
-                    "WHERE name = 'a'\n" +
-                    "SAMPLE BY (1m);\n";
+            execute(
+                    "CREATE TABLE 't' (" +
+                            "  name SYMBOL capacity 256 CACHE," +
+                            "  timestamp TIMESTAMP" +
+                            ") timestamp (timestamp) PARTITION BY DAY;"
+            );
+            execute(
+                    "INSERT INTO t (name, timestamp) VALUES" +
+                            " ('a', '2023-09-01T00:00:00.000Z')," +
+                            " ('a', '2023-09-01T00:10:00.000Z')"
+            );
 
-            final String result = "timestamp\textra_column\textra_column2\n" +
-                    "2023-09-01T00:01:00.000000Z\t0\t0\n" +
-                    "2023-09-01T00:11:00.000000Z\t0\t0\n";
+            assertSql(
+                    "timestamp\textra_column\textra_column2\tfirst\n" +
+                            "2023-09-01T00:01:00.000000Z\t0\t0\ta\n" +
+                            "2023-09-01T00:11:00.000000Z\t0\t0\ta\n",
+                    "SELECT timestamp+60000000 as 'timestamp', 0 AS extra_column, 0 AS extra_column2, first(name) \n" +
+                            "FROM t\n" +
+                            "WHERE name = 'a'\n" +
+                            "SAMPLE BY (1m);\n"
+            );
 
-            assertSql(result, query);
-        });
+            assertSql(
+                    "timestamp\tname\tcount\n" +
+                            "2023-09-02T00:00:00.000000Z\ta\t1\n" +
+                            "2023-09-02T00:10:00.000000Z\ta\t1\n",
+                    "select dateadd('d', 1, timestamp) timestamp, name, count() from t sample by 10m"
+            );
 
-        assertMemoryLeak(() -> {
-            final String query = "select dateadd('d', 1, timestamp) timestamp, name from t sample by 10m";
+            assertSql(
+                    "timestamp\ttimestamp2\tname\tcount\n" +
+                            "2023-09-02T00:00:00.000000Z\t2023-09-03T00:00:00.000000Z\ta\t1\n" +
+                            "2023-09-02T00:10:00.000000Z\t2023-09-03T00:10:00.000000Z\ta\t1\n",
+                    "select dateadd('d', 1, timestamp) timestamp, dateadd('d', 2, timestamp) timestamp2, name, count() from t sample by 10m"
+            );
 
-            final String result = "timestamp\tname\n" +
-                    "2023-09-02T00:00:00.000000Z\ta\n" +
-                    "2023-09-02T00:10:00.000000Z\ta\n";
+            assertSql(
+                    "timestamp\ttimestamp1\tcount\n" +
+                            "2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\t1\n" +
+                            "2023-09-01T00:11:00.000000Z\t2023-09-01T00:10:00.000000Z\t1\n",
+                    "select timestamp + 60000000 as 'timestamp', timestamp, count() from t where name = 'a' sample by (1m)"
+            );
 
-            assertSql(result, query);
-        });
+            assertSql(
+                    "timestamp1\ttimestamp\tcount\n" +
+                            "2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\t1\n" +
+                            "2023-09-01T00:11:00.000000Z\t2023-09-01T00:10:00.000000Z\t1\n",
+                    "select timestamp + 60000000 as 'timestamp1', timestamp, count() from t where name = 'a' sample by (1m)"
+            );
 
-        assertMemoryLeak(() -> {
-            final String query = "select dateadd('d', 1, timestamp) timestamp, dateadd('d', 2, timestamp) timestamp2, name from t sample by 10m";
-
-            final String result = "timestamp\ttimestamp2\tname\n" +
-                    "2023-09-02T00:00:00.000000Z\t2023-09-03T00:00:00.000000Z\ta\n" +
-                    "2023-09-02T00:10:00.000000Z\t2023-09-03T00:10:00.000000Z\ta\n";
-
-            assertSql(result, query);
-        });
-
-        assertMemoryLeak(() -> {
-            final String query = "select timestamp + 60000000 as 'timestamp', timestamp  from t where name = 'a' sample by (1m)";
-
-            final String result = "timestamp\ttimestamp1\n" +
-                    "2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\n" +
-                    "2023-09-01T00:11:00.000000Z\t2023-09-01T00:10:00.000000Z\n";
-
-            assertSql(result, query);
-        });
-
-        assertMemoryLeak(() -> {
-            final String query = "select timestamp + 60000000 as 'timestamp1', timestamp  from t where name = 'a' sample by (1m)";
-
-            final String result = "timestamp1\ttimestamp\n" +
-                    "2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\n" +
-                    "2023-09-01T00:11:00.000000Z\t2023-09-01T00:10:00.000000Z\n";
-
-            assertSql(result, query);
-        });
-
-        assertMemoryLeak(() -> {
-            final String query = "select timestamp + 60000000 as 'timestamp', timestamp as 'timestamp1'  from t where name = 'a' sample by (1m)";
-
-            final String result = "timestamp\ttimestamp1\n" +
-                    "2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\n" +
-                    "2023-09-01T00:11:00.000000Z\t2023-09-01T00:10:00.000000Z\n";
-
-            assertSql(result, query);
+            assertSql(
+                    "timestamp\ttimestamp1\tcount\n" +
+                            "2023-09-01T00:01:00.000000Z\t2023-09-01T00:00:00.000000Z\t1\n" +
+                            "2023-09-01T00:11:00.000000Z\t2023-09-01T00:10:00.000000Z\t1\n",
+                    "select timestamp + 60000000 as 'timestamp', timestamp as 'timestamp1', count() from t where name = 'a' sample by (1m)"
+            );
         });
     }
 

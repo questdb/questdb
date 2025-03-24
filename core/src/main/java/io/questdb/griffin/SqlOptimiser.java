@@ -2169,6 +2169,19 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private void evalConstOrRuntimeConstOrDie(ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (expr != null) {
+            final Function func = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
+            try {
+                if (!func.isConstant() && !func.isRuntimeConstant()) {
+                    throw SqlException.$(expr.position, "timezone must be a constant expression of STRING or CHAR type");
+                }
+            } finally {
+                Misc.free(func);
+            }
+        }
+    }
+
     private long evalNonNegativeLongConstantOrDie(ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (expr != null) {
             final Function loFunc = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
@@ -4891,7 +4904,7 @@ public class SqlOptimiser implements Mutable {
      *              the typical sample by model consists of two objects, the outer one with the
      *              list of columns and the inner one with sample by clauses
      */
-    private QueryModel rewriteSampleBy(@Nullable QueryModel model) throws SqlException {
+    private QueryModel rewriteSampleBy(@Nullable QueryModel model, @Transient SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (model == null) {
             return null;
         }
@@ -4932,7 +4945,6 @@ public class SqlOptimiser implements Mutable {
                 // error-prone. For example, additive table metadata changes (adding a column)
                 // will change the outcome of existing queries, if those supported wildcards for
                 // as group-by keys.
-
                 final ObjList<ExpressionNode> maybeKeyed = new ObjList<>();
                 for (int i = 0, n = model.getColumns().size(); i < n; i++) {
                     final QueryColumn column = model.getColumns().getQuick(i);
@@ -4949,6 +4961,8 @@ public class SqlOptimiser implements Mutable {
                 if (hasNoAggregateQueryColumns(model)) {
                     throw SqlException.$(nested.getSampleBy().position, "at least one aggregation function must be present in 'select' clause");
                 }
+
+                evalConstOrRuntimeConstOrDie(sampleByTimezoneName, sqlExecutionContext);
 
                 // When timestamp is not explicitly selected, we will
                 // need to add it artificially to enable group-by to
@@ -5043,16 +5057,16 @@ public class SqlOptimiser implements Mutable {
 
                     if (isKeyed) {
                         // drop out early, since we don't handle keyed
-                        nested.setNestedModel(rewriteSampleBy(nested.getNestedModel()));
+                        nested.setNestedModel(rewriteSampleBy(nested.getNestedModel(), sqlExecutionContext));
 
                         // join models
                         for (int j = 1, m = nested.getJoinModels().size(); j < m; j++) {
                             QueryModel joinModel = nested.getJoinModels().getQuick(j);
-                            joinModel.setNestedModel(rewriteSampleBy(joinModel.getNestedModel()));
+                            joinModel.setNestedModel(rewriteSampleBy(joinModel.getNestedModel(), sqlExecutionContext));
                         }
 
                         // unions
-                        model.setUnionModel(rewriteSampleBy(model.getUnionModel()));
+                        model.setUnionModel(rewriteSampleBy(model.getUnionModel(), sqlExecutionContext));
                         return model;
                     }
                 }
@@ -5126,6 +5140,9 @@ public class SqlOptimiser implements Mutable {
                 }
 
                 final int timestampPos = model.getColumnAliasIndex(timestampAlias);
+                if (timestampPos == -1) {
+                    throw SqlException.$(timestamp.position, "unexpected timestamp expression");
+                }
 
                 final ExpressionNode tsFloorFunc = expressionNodePool.next();
                 tsFloorFunc.token = "timestamp_floor";
@@ -5286,17 +5303,17 @@ public class SqlOptimiser implements Mutable {
             }
 
             // recurse nested models
-            nested.setNestedModel(rewriteSampleBy(nested.getNestedModel()));
+            nested.setNestedModel(rewriteSampleBy(nested.getNestedModel(), sqlExecutionContext));
 
             // join models
             for (int i = 1, n = nested.getJoinModels().size(); i < n; i++) {
                 QueryModel joinModel = nested.getJoinModels().getQuick(i);
-                joinModel.setNestedModel(rewriteSampleBy(joinModel.getNestedModel()));
+                joinModel.setNestedModel(rewriteSampleBy(joinModel.getNestedModel(), sqlExecutionContext));
             }
         }
 
         // unions
-        model.setUnionModel(rewriteSampleBy(model.getUnionModel()));
+        model.setUnionModel(rewriteSampleBy(model.getUnionModel(), sqlExecutionContext));
         return model;
     }
 
@@ -6628,7 +6645,7 @@ public class SqlOptimiser implements Mutable {
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
             rewriteSampleByFromTo(rewrittenModel);
             rewrittenModel = rewriteDistinct(rewrittenModel);
-            rewrittenModel = rewriteSampleBy(rewrittenModel);
+            rewrittenModel = rewriteSampleBy(rewrittenModel, sqlExecutionContext);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             rewriteCount(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
