@@ -44,7 +44,6 @@ import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
 
 import java.util.Objects;
 
@@ -81,8 +80,8 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
         private int pos;
         private MetricsRegistry registry;
         private int size;
-        private int subPos;
         private int subLimit;
+        private int subPos;
 
         public PrometheusMetricsCursor() {
             DirectUtf8Sink sink = new DirectUtf8Sink(255);
@@ -171,106 +170,13 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
             public static final int LABELS = KIND + 1;
             public DirectUtf8Sink sink;
             Target target;
-            LongList values;
             DirectUtf8String value;
+            LongList values;
 
             public PrometheusMetricsRecord(DirectUtf8Sink sink, LongList values, DirectUtf8String value) {
                 this.sink = sink;
                 this.values = values;
                 this.value = value;
-            }
-
-            long getLo(int slot) {
-                return values.get(slot*2);
-            }
-
-            long getHi(int slot) {
-                return values.get(slot*2+1);
-            }
-
-            void setLo(int slot, long lo) {
-                values.set(slot*2, lo);
-            }
-
-            void setHi(int slot, long hi) {
-                values.set(slot*2+1, hi);
-            }
-
-            public PrometheusMetricsRecord setName(CharSequence name) {
-                return setProp(NAME, name);
-            }
-
-            public PrometheusMetricsRecord setCounterName(CharSequence name) {
-                setLo(NAME, sink.hi());
-                PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
-                setHi(NAME, sink.hi());
-                return this;
-            }
-
-            public PrometheusMetricsRecord setGaugeName(CharSequence name) {
-                setLo(NAME, sink.hi());
-                sink.put(PrometheusFormatUtils.METRIC_NAME_PREFIX);
-                sink.put(name);
-                setHi(NAME, sink.hi());
-                return this;
-            }
-
-            public PrometheusMetricsRecord setMemoryTagName(CharSequence name) {
-                setLo(NAME, sink.hi());
-                sink.putAscii(PrometheusFormatUtils.METRIC_NAME_PREFIX);
-                sink.putAscii(MEMORY_TAG_PREFIX);
-                sink.put(name);
-                setHi(NAME, sink.hi());
-                return this;
-            }
-
-            public PrometheusMetricsRecord setType(CharSequence type) {
-                return setProp(TYPE, type);
-            }
-
-            public PrometheusMetricsRecord setKind(CharSequence type) {
-                return setProp(KIND, type);
-            }
-
-            public PrometheusMetricsRecord setValue(long l) {
-                setLo(VALUE, sink.hi());
-                sink.put(l);
-                setHi(VALUE, sink.hi());
-                return this;
-            }
-
-            public PrometheusMetricsRecord setValue(double d) {
-                setLo(VALUE, sink.hi());
-                sink.put(d);
-                setHi(VALUE, sink.hi());
-                return this;
-            }
-
-            // replace with array of strings later
-            public PrometheusMetricsRecord setLabels(CharSequence... labels) {
-                setLo(LABELS, sink.hi());
-                sink.putAscii("{ ");
-                for (int i = 0, n = labels.length; i < n; i += 2) {
-                    sink.putAscii('"');
-                    sink.putAscii(labels[i]);
-                    sink.putAscii("\" : \"");
-                    sink.putAscii(labels[i+1]);
-                    sink.putAscii('"');
-                    if (i + 2 < n) {
-                        sink.putAscii(", ");
-                    }
-                }
-                sink.putAscii(" }");
-                setHi(LABELS, sink.hi());
-                return this;
-            }
-
-            // assume ascii by convention
-            public PrometheusMetricsRecord setProp(int slot, CharSequence value) {
-                setLo(slot, sink.hi());
-                sink.putAscii(value);
-                setHi(slot, sink.hi());
-                return this;
             }
 
             public Utf8Sequence getProp(int slot) {
@@ -285,13 +191,6 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
             @Override
             public long getRowId() {
                 return Record.super.getRowId();
-            }
-
-            @Override
-            public CharSequence getSymA(int col) {
-                sink.clear();
-
-                throw new UnsupportedOperationException();
             }
 
             @Override
@@ -324,6 +223,99 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
                 sink.clear();
                 this.values.setAll(10, -1);
                 this.target.scrapeIntoRecord(record, index);
+            }
+
+            public PrometheusMetricsRecord setCounterName(CharSequence name) {
+                setLo(NAME, sink.hi());
+                PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
+                setHi(NAME, sink.hi());
+                return this;
+            }
+
+            public PrometheusMetricsRecord setGaugeName(CharSequence name) {
+                setLo(NAME, sink.hi());
+                sink.put(PrometheusFormatUtils.METRIC_NAME_PREFIX);
+                sink.put(name);
+                setHi(NAME, sink.hi());
+                return this;
+            }
+
+            public PrometheusMetricsRecord setKind(CharSequence type) {
+                return setProp(KIND, type);
+            }
+
+            // replace with array of strings later
+            public PrometheusMetricsRecord setLabels(CharSequence... labels) {
+                setLo(LABELS, sink.hi());
+                sink.putAscii("{ ");
+                for (int i = 0, n = labels.length; i < n; i += 2) {
+                    sink.putAscii('"');
+                    sink.putAscii(labels[i]);
+                    sink.putAscii("\" : \"");
+                    sink.putAscii(labels[i + 1]);
+                    sink.putAscii('"');
+                    if (i + 2 < n) {
+                        sink.putAscii(", ");
+                    }
+                }
+                sink.putAscii(" }");
+                setHi(LABELS, sink.hi());
+                return this;
+            }
+
+            public PrometheusMetricsRecord setMemoryTagName(CharSequence name) {
+                setLo(NAME, sink.hi());
+                sink.putAscii(PrometheusFormatUtils.METRIC_NAME_PREFIX);
+                sink.putAscii(MEMORY_TAG_PREFIX);
+                sink.put(name);
+                setHi(NAME, sink.hi());
+                return this;
+            }
+
+            public PrometheusMetricsRecord setName(CharSequence name) {
+                return setProp(NAME, name);
+            }
+
+            // assume ascii by convention
+            public PrometheusMetricsRecord setProp(int slot, CharSequence value) {
+                setLo(slot, sink.hi());
+                sink.putAscii(value);
+                setHi(slot, sink.hi());
+                return this;
+            }
+
+            public PrometheusMetricsRecord setType(CharSequence type) {
+                return setProp(TYPE, type);
+            }
+
+            public PrometheusMetricsRecord setValue(long l) {
+                setLo(VALUE, sink.hi());
+                sink.put(l);
+                setHi(VALUE, sink.hi());
+                return this;
+            }
+
+            public PrometheusMetricsRecord setValue(double d) {
+                setLo(VALUE, sink.hi());
+                sink.put(d);
+                setHi(VALUE, sink.hi());
+                return this;
+            }
+
+            long getHi(int slot) {
+                return values.get(slot * 2 + 1);
+            }
+
+            long getLo(int slot) {
+                return values.get(slot * 2);
+            }
+
+            void setHi(int slot, long hi) {
+                values.set(slot * 2 + 1, hi);
+            }
+
+            void setLo(int slot, long lo) {
+                values.set(slot * 2, lo);
             }
         }
     }
