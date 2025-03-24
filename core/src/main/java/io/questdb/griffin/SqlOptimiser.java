@@ -4990,7 +4990,13 @@ public class SqlOptimiser implements Mutable {
 
                 // the timestamp could be selected but also aliased
                 CharSequence timestampColumn = timestamp.token;
-                CharSequence timestampAlias = model.getColumnNameToAliasMap().get(timestampColumn);
+                CharSequence timestampAlias = null;
+                for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+                    final QueryColumn qc = model.getBottomUpColumns().getQuick(i);
+                    if (qc.getAst().type == LITERAL && Chars.equalsIgnoreCase(qc.getName(), timestampColumn)) {
+                        timestampAlias = qc.getAlias();
+                    }
+                }
 
                 if (timestampAlias == null) {
                     // Let's not give up yet, the timestamp column might be prefixed

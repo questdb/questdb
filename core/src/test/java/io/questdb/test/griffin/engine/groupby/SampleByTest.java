@@ -3427,8 +3427,8 @@ public class SampleByTest extends AbstractCairoTest {
                             "WHERE timestamp > '2021-03-21' and symbol='ETH-USD' " +
                             "SAMPLE BY 1h " +
                             "ORDER BY hour ASC;",
-                    0,
-                    "unexpected timestamp expression"
+                    180,
+                    "Invalid column: hour"
             );
         });
     }
