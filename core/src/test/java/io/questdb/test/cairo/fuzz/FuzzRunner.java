@@ -274,6 +274,7 @@ public class FuzzRunner {
                         }
                     }
                 } catch (CairoException | CairoError e) {
+                    boolean housekeeping = (e instanceof CairoException) && ((CairoException) e).isHousekeeping();
                     int failures = ff.failureGenerated();
                     if (failures > failuresObserved) {
                         failuresObserved = failures;
@@ -299,7 +300,9 @@ public class FuzzRunner {
                             }
                         }
                         // Retry the last transaction now that the failure is handled.
-                        i--;
+                        if (!housekeeping) {
+                            i--;
+                        }
                     } else {
                         throw e;
                     }
