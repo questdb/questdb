@@ -2927,7 +2927,7 @@ public class SqlOptimiser implements Mutable {
         }
 
         if (lo == hi) {
-            throw SqlException.$(tableNamePosition, "come on, where is table name?");
+            throw SqlException.$(tableNamePosition, "come on, where is the table name?");
         }
 
         final TableToken tableToken = executionContext.getTableTokenIfExists(tableName, lo, hi);
