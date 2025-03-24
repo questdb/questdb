@@ -29,6 +29,7 @@ import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
+@SuppressWarnings("BooleanMethodIsAlwaysInverted")
 public class SqlKeywords {
     public static final int CASE_KEYWORD_LENGTH = 4;
     public static final String CONCAT_FUNC_NAME = "concat";
@@ -2022,15 +2023,6 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 'e'
                 && (tok.charAt(4) | 32) == 'r'
                 && (tok.charAt(5) | 32) == 't';
-    }
-
-    public static boolean isUsingKeyword(CharSequence tok) {
-        return tok.length() == 5
-                && (tok.charAt(0) | 32) == 'u'
-                && (tok.charAt(1) | 32) == 's'
-                && (tok.charAt(2) | 32) == 'i'
-                && (tok.charAt(3) | 32) == 'n'
-                && (tok.charAt(4) | 32) == 'g';
     }
 
     public static boolean isValuesKeyword(CharSequence tok) {
