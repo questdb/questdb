@@ -100,7 +100,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     @Override
     public void setUp() {
         // 0 means max timeout (Long.MAX_VALUE millis)
-        node1.setProperty(PropertyKey.QUERY_TIMEOUT_SEC, 0);
+        node1.setProperty(PropertyKey.QUERY_TIMEOUT, 0);
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, "true");
         node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
@@ -309,6 +309,23 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             } catch (Throwable e) {
                 TestUtils.assertContains(e.getMessage(), "unexpected filter error");
             }
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Radix sort light\n" +
+                            "  keys: [timestamp]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [timestamp]\n" +
+                            "      values: [count(*)]\n" +
+                            "      filter: (symbol ~ .*?.ETH [state-shared] and row_id!=100)\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n",
+                    "explain select timestamp, count() as trades" +
+                            " from x" +
+                            " where symbol like '%_ETH' and (row_id != 100)" +
+                            " sample by 1h"
+            );
         }, 4, 4);
     }
 
@@ -1121,11 +1138,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public void resetFlags() {
-            sqlExecutionContext.resetFlags();
-        }
-
-        @Override
         public long getRequestFd() {
             return sqlExecutionContext.getRequestFd();
         }
@@ -1166,6 +1178,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isColumnPreTouchEnabledOverride() {
+            return sqlExecutionContext.isColumnPreTouchEnabledOverride();
+        }
+
+        @Override
         public boolean isParallelFilterEnabled() {
             return sqlExecutionContext.isParallelFilterEnabled();
         }
@@ -1201,6 +1218,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public void resetFlags() {
+            sqlExecutionContext.resetFlags();
+        }
+
+        @Override
         public void setCacheHit(boolean value) {
             sqlExecutionContext.setCacheHit(value);
         }
@@ -1218,6 +1240,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void setColumnPreTouchEnabled(boolean columnPreTouchEnabled) {
             sqlExecutionContext.setColumnPreTouchEnabled(columnPreTouchEnabled);
+        }
+
+        @Override
+        public void setColumnPreTouchEnabledOverride(boolean columnPreTouchEnabledOverride) {
+            sqlExecutionContext.setColumnPreTouchEnabledOverride(columnPreTouchEnabledOverride);
         }
 
         @Override

@@ -2188,7 +2188,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         final boolean enableParallelFilter = executionContext.isParallelFilterEnabled();
-        final boolean preTouchColumns = configuration.isSqlParallelFilterPreTouchEnabled();
         if (enableParallelFilter && factory.supportsPageFrameCursor()) {
             final boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED
                     && (!model.isUpdate() || executionContext.isWalApplication());
@@ -2231,7 +2230,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ),
                             limitLoFunction,
                             limitLoPos,
-                            preTouchColumns,
                             executionContext.getSharedWorkerCount()
                     );
                 } catch (SqlException | LimitOverflowException ex) {
@@ -2266,7 +2264,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         ),
                         limitLoFunction,
                         limitLoPos,
-                        preTouchColumns,
                         executionContext.getSharedWorkerCount()
                 );
             } catch (Throwable e) {
@@ -2662,7 +2659,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 ),
                                 null,
                                 0,
-                                false,
                                 executionContext.getSharedWorkerCount()
                         );
                     } else {
@@ -2713,7 +2709,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 ),
                                 null,
                                 0,
-                                false,
                                 executionContext.getSharedWorkerCount()
                         );
                     } else {
@@ -3148,9 +3143,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             listColumnFilterA.add(-index - 1);
                         } else {
                             listColumnFilterA.add(index + 1);
-                            if (i == 0 && metadata.getColumnType(index) == ColumnType.TIMESTAMP) {
-                                orderedByTimestampIndex = index;
-                            }
+                        }
+                        if (i == 0 && metadata.getColumnType(index) == ColumnType.TIMESTAMP) {
+                            orderedByTimestampIndex = index;
                         }
                     }
                 }
@@ -3227,9 +3222,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         );
                     } else {
                         final int columnType = orderedMetadata.getColumnType(firstOrderByColumnIndex);
-                        if (configuration.isSqlOrderBySortEnabled()
-                                && orderByColumnNames.size() == 1
-                                && LongSortedLightRecordCursorFactory.isSupportedColumnType(columnType)) {
+                        if (
+                                configuration.isSqlOrderBySortEnabled()
+                                        && orderByColumnNames.size() == 1
+                                        && LongSortedLightRecordCursorFactory.isSupportedColumnType(columnType)
+                        ) {
                             return new LongSortedLightRecordCursorFactory(
                                     configuration,
                                     orderedMetadata,

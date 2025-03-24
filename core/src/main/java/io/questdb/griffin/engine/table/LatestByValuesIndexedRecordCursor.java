@@ -26,7 +26,11 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
@@ -63,10 +67,7 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
 
     @Override
     public boolean hasNext() {
-        if (!isTreeMapBuilt) {
-            buildTreeMap();
-            isTreeMapBuilt = true;
-        }
+        buildTreeMapConditionally();
         if (index > -1) {
             final long rowId = rows.get(index);
             frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId), recordA);
@@ -93,7 +94,7 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
 
     @Override
     public long size() {
-        return rows.size();
+        return isTreeMapBuilt ? rows.size() : -1;
     }
 
     @Override
@@ -152,5 +153,12 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         }
 
         index = rows.size() - 1;
+    }
+
+    private void buildTreeMapConditionally() {
+        if (!isTreeMapBuilt) {
+            buildTreeMap();
+            isTreeMapBuilt = true;
+        }
     }
 }

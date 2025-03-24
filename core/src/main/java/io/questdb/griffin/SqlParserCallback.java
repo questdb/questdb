@@ -37,26 +37,34 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public interface SqlParserCallback {
 
-    default RecordCursorFactory generateShowCreateMatViewFactory(QueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
-        TableToken viewToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
-        if (executionContext.getTableStatus(path, viewToken) != TableUtils.TABLE_EXISTS) {
-            throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
-        }
+    static @NotNull TableToken getMatViewToken(ExpressionNode tableNameExpr, SqlExecutionContext executionContext, Path path) throws SqlException {
+        final TableToken viewToken = getTableToken(tableNameExpr, executionContext, path,
+                SqlException.matViewDoesNotExist(tableNameExpr.position, tableNameExpr.token)
+        );
         if (!viewToken.isMatView()) {
-            throw SqlException.$(model.getTableNameExpr().position, "materialized view name expected, got table name");
+            throw SqlException.$(tableNameExpr.position, "materialized view name expected, got table name");
         }
+        return viewToken;
+    }
+
+    static TableToken getTableToken(ExpressionNode tableNameExpr, SqlExecutionContext executionContext, Path path) throws SqlException {
+        return getTableToken(tableNameExpr, executionContext, path,
+                SqlException.tableDoesNotExist(tableNameExpr.position, tableNameExpr.token)
+        );
+    }
+
+    default RecordCursorFactory generateShowCreateMatViewFactory(QueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
+        final TableToken viewToken = getMatViewToken(model.getTableNameExpr(), executionContext, path);
         return new ShowCreateMatViewRecordCursorFactory(viewToken, model.getTableNameExpr().position);
     }
 
     default RecordCursorFactory generateShowCreateTableFactory(QueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
-        TableToken tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
-        if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
-            throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
-        }
+        final TableToken tableToken = getTableToken(model.getTableNameExpr(), executionContext, path);
         return new ShowCreateTableRecordCursorFactory(tableToken, model.getTableNameExpr().position);
     }
 
@@ -96,5 +104,13 @@ public interface SqlParserCallback {
             ObjectPool<ExpressionNode> expressionNodePool
     ) throws SqlException {
         return -1;
+    }
+
+    private static TableToken getTableToken(ExpressionNode tableNameExpr, SqlExecutionContext executionContext, Path path, SqlException notExistsError) throws SqlException {
+        final TableToken tableToken = executionContext.getTableTokenIfExists(tableNameExpr.token);
+        if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
+            throw notExistsError;
+        }
+        return tableToken;
     }
 }

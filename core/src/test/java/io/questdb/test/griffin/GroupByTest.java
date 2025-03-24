@@ -2157,7 +2157,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "      values: [sum(case([seller='sf',-1.0*volume_mw,buyer='sf',1.0*volume_mw,0.0]))]\n" +
                             "        SelectedRecord\n" +
                             "            Async JIT Filter workers: 1\n" +
-                            "              filter: (seller='sf' or buyer='sf')\n" +
+                            "              filter: (seller='sf' or buyer='sf') [pre-touch]\n" +
                             "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: trades\n"
@@ -2549,16 +2549,14 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     "Radix sort light\n" +
                             "  keys: [ref0]\n" +
-                            "    Distinct\n" +
-                            "      keys: ref0\n" +
-                            "        VirtualRecord\n" +
-                            "          functions: [created]\n" +
-                            "            Async JIT Group By workers: 1\n" +
-                            "              keys: [created]\n" +
-                            "              filter: null!=created\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tab\n"
+                            "    VirtualRecord\n" +
+                            "      functions: [created]\n" +
+                            "        Async JIT Group By workers: 1\n" +
+                            "          keys: [created]\n" +
+                            "          filter: null!=created\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n"
             );
 
             assertQueryNoLeakCheck(
@@ -2569,7 +2567,7 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     "ref0",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -2587,20 +2585,19 @@ public class GroupByTest extends AbstractCairoTest {
                     "GROUP BY tab.created " +
                     "ORDER BY dateadd('h', 1, tab.created)";
 
+
             assertPlanNoLeakCheck(
                     query,
                     "Radix sort light\n" +
                             "  keys: [ref0]\n" +
-                            "    Distinct\n" +
-                            "      keys: ref0\n" +
-                            "        VirtualRecord\n" +
-                            "          functions: [dateadd('h',1,created)]\n" +
-                            "            Async JIT Group By workers: 1\n" +
-                            "              keys: [created]\n" +
-                            "              filter: null!=created\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tab\n"
+                            "    VirtualRecord\n" +
+                            "      functions: [dateadd('h',1,created)]\n" +
+                            "        Async JIT Group By workers: 1\n" +
+                            "          keys: [created]\n" +
+                            "          filter: null!=created\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n"
             );
 
             assertQueryNoLeakCheck(
@@ -2611,7 +2608,7 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     "ref0",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -2633,14 +2630,12 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     "Radix sort light\n" +
                             "  keys: [created]\n" +
-                            "    Distinct\n" +
-                            "      keys: created\n" +
-                            "        Async JIT Group By workers: 1\n" +
-                            "          keys: [created]\n" +
-                            "          filter: null!=created\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tab\n"
+                            "    Async JIT Group By workers: 1\n" +
+                            "      keys: [created]\n" +
+                            "      filter: null!=created\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
             );
 
             assertQueryNoLeakCheck(
@@ -2651,7 +2646,7 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     "created",
                     true,
-                    false
+                    true
             );
         });
     }

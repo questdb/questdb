@@ -212,7 +212,7 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
         this.frameSequence = frameSequence;
         final AsyncGroupByNotKeyedAtom atom = frameSequence.getAtom();
         recordA.of(atom.getOwnerMapValue());
-        Function.init(groupByFunctions, frameSequence.getSymbolTableSource(), executionContext);
+        Function.init(groupByFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
         isValueBuilt = false;
         frameLimit = -1;
         toTop();
