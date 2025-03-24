@@ -170,6 +170,15 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayCanBeClearedAfterInstantiation() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectArray array = new DirectArray(configuration)) {
+                array.clear();
+            }
+        });
+    }
+
+    @Test
     public void testBasicArithmetic1d() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[])");
@@ -398,15 +407,6 @@ public class ArrayTest extends AbstractCairoTest {
                 107,
                 "dedup key columns cannot include ARRAY [column=arr, type=DOUBLE[]]"
         );
-    }
-
-    @Test
-    public void testArrayCanBeClearedAfterInstantiation() throws Exception {
-        assertMemoryLeak(() -> {
-            try (DirectArray array = new DirectArray(configuration)) {
-                array.clear();
-            }
-        });
     }
 
     @Test
@@ -1242,6 +1242,14 @@ public class ArrayTest extends AbstractCairoTest {
                             "[1.0,2.0]\n" +
                             "foo\n",
                     "SELECT ARRAY[1.0, 2.0] UNION ALL SELECT 'foo' FROM long_sequence(1)",
+                    null, null, false, true
+            );
+
+            // 1D and 2D arrays
+            assertQuery("ARRAY\n" +
+                            "[[1.0,2.0]]\n" +
+                            "[[3.0,4.0],[5.0,6.0]]\n",
+                    "SELECT ARRAY[1.0, 2.0] UNION ALL SELECT ARRAY[[3.0, 4.0], [5.0, 6.0]] FROM long_sequence(1)",
                     null, null, false, true
             );
         });

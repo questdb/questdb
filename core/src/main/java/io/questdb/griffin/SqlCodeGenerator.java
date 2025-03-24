@@ -84,6 +84,7 @@ import io.questdb.griffin.engine.functions.cast.CastDateToTimestampFunctionFacto
 import io.questdb.griffin.engine.functions.cast.CastDateToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDoubleArrayToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDoubleArrayToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastDoubleArraytoDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDoubleToDoubleArray;
 import io.questdb.griffin.engine.functions.cast.CastDoubleToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDoubleToVarcharFunctionFactory;
@@ -473,12 +474,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final boolean aIsArray = tagA == ColumnType.ARRAY;
         final boolean bIsArray = tagB == ColumnType.ARRAY;
         if (aIsArray && bIsArray) {
-            if (decodeArrayElementType(typeA) == decodeArrayElementType(typeB) &&
-                    decodeArrayDimensionality(typeA) == decodeArrayDimensionality(typeB)
-            ) {
-                return typeA;
+            short elementTypeA = decodeArrayElementType(typeA);
+            if (elementTypeA != decodeArrayElementType(typeB)) {
+                return VARCHAR;
             }
-            return VARCHAR;
+            return ColumnType.encodeArrayType(elementTypeA, Math.max(decodeArrayDimensionality(typeA), decodeArrayDimensionality(typeB)));
         } else if (aIsArray) {
             if (tagB == DOUBLE) {
                 // if b is scalar then we coarse it to array of the same dimensionality as a is
@@ -2046,8 +2046,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     case ColumnType.ARRAY:
                         switch (fromTag) {
                             case ARRAY:
-                                assert fromType == toType;
-                                castFunctions.add(ArrayColumn.newInstance(i, fromType));
+                                assert ColumnType.decodeArrayElementType(fromType) == DOUBLE;
+                                assert ColumnType.decodeArrayElementType(toType) == DOUBLE;
+                                int fromDims = ColumnType.decodeArrayDimensionality(fromType);
+                                int toDims = ColumnType.decodeArrayDimensionality(toType);
+                                if (fromDims == toDims) {
+                                    castFunctions.add(ArrayColumn.newInstance(i, fromType));
+                                } else {
+                                    assert fromDims < toDims; // can cast to higher dimensionality only
+                                    castFunctions.add(new CastDoubleArraytoDoubleArrayFunctionFactory.Func(ArrayColumn.newInstance(i, toType), toType, toDims - fromDims));
+                                }
                                 break;
                             case DOUBLE:
                                 assert ColumnType.decodeArrayElementType(toType) == DOUBLE;
