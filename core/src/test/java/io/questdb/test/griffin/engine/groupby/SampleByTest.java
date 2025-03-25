@@ -3418,7 +3418,6 @@ public class SampleByTest extends AbstractCairoTest {
                             ") timestamp(timestamp) PARTITION BY DAY;"
             );
 
-            // TODO: handle SELECT to_timezone(ts) local_ts ... ORDER BY local_ts desc;
             assertExceptionNoLeakCheck(
                     "SELECT " +
                             "    min(price) AS min_ltp, " +
@@ -3428,8 +3427,8 @@ public class SampleByTest extends AbstractCairoTest {
                             "WHERE timestamp > '2021-03-21' and symbol='ETH-USD' " +
                             "SAMPLE BY 1h " +
                             "ORDER BY hour ASC;",
-                    180,
-                    "Invalid column: hour"
+                    65,
+                    "unknown function name: timestamp(TIMESTAMP)"
             );
         });
     }

@@ -181,8 +181,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void test2686LeftJoinDoesNotMoveOtherInnerJoinPredicate() throws Exception {
         test2686Prepare();
-
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(
+        assertPlan(
                 "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)\n" +
                         "from table_1 as a \n" +
                         "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) " +
@@ -204,14 +203,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: table_2\n"
-        ));
+        );
     }
 
     @Test
     public void test2686LeftJoinDoesNotMoveOtherLeftJoinPredicate() throws Exception {
         test2686Prepare();
-
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(
+        assertPlan(
                 "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)\n" +
                         "from table_1 as a \n" +
                         "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) " +
@@ -232,14 +230,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: table_2\n"
-        ));
+        );
     }
 
     @Test
     public void test2686LeftJoinDoesNotMoveOtherTwoTableEqJoinPredicate() throws Exception {
         test2686Prepare();
-
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(
+        assertPlan(
                 "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)\n" +
                         "from table_1 as a \n" +
                         "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) " +
@@ -261,14 +258,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: table_2\n"
-        ));
+        );
     }
 
     @Test
     public void test2686LeftJoinDoesNotPushJoinPredicateToLeftTable() throws Exception {
         test2686Prepare();
-
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(
+        assertPlan(
                 "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)\n" +
                         "from table_1 as a \n" +
                         "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) and a.age = 10 ",
@@ -283,14 +279,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: table_2\n"
-        ));
+        );
     }
 
     @Test
     public void test2686LeftJoinDoesNotPushJoinPredicateToRightTable() throws Exception {
         test2686Prepare();
-
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(
+        assertPlan(
                 "select a.name, a.age, b.address, a.ts \n" +
                         "from table_1 as a \n" +
                         "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) and b.age = 10 ",
@@ -303,14 +298,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: table_2\n"
-        ));
+        );
     }
 
     @Test
     public void test2686LeftJoinDoesNotPushWherePredicateToRightTable() throws Exception {
         test2686Prepare();
-
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(
+        assertPlan(
                 "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)\n" +
                         "from table_1 as a \n" +
                         "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)" +
@@ -327,14 +321,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: table_2\n"
-        ));
+        );
     }
 
     @Test
     public void test2686LeftJoinPushesWherePredicateToLeftJoinCondition() throws Exception {
         test2686Prepare();
-
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(
+        assertPlan(
                 "select a.name, a.age, b.address, a.ts\n" +
                         "from table_1 as a \n" +
                         "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) " +
@@ -349,13 +342,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: table_2\n"
-        ));
+        );
     }
 
     @Test
     public void test2686LeftJoinPushesWherePredicateToLeftTable() throws Exception {
         test2686Prepare();
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(
+        assertPlan(
                 "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)\n" +
                         "from table_1 as a \n" +
                         "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)" +
@@ -373,7 +366,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: table_2\n"
-        ));
+        );
     }
 
     @Test
@@ -7708,6 +7701,73 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: x\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByOrderByTimestampFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
+
+            assertPlanNoLeakCheck(
+                    "select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by berlin_ts desc",
+                    "Radix sort light\n" +
+                            "  keys: [berlin_ts desc]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [a,sum,to_utc(ts,1)]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [a,ts]\n" +
+                            "          values: [sum(b)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by 3 asc",
+                    "Radix sort light\n" +
+                            "  keys: [berlin_ts]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [a,sum,to_utc(ts,1)]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [a,ts]\n" +
+                            "          values: [sum(b)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by to_timezone(ts, 'Europe/Berlin')",
+                    "Radix sort light\n" +
+                            "  keys: [berlin_ts]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [a,sum,to_utc(ts,1)]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [a,ts]\n" +
+                            "          values: [sum(b)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select a, timestamp_floor('M', ts) month_ts, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by berlin_ts desc, a asc, month_ts asc",
+                    "Sort light\n" +
+                            "  keys: [berlin_ts desc, a, month_ts]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [a,timestamp_floor('month',ts),sum,to_utc(ts,1)]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [a,ts]\n" +
+                            "          values: [sum(b)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
             );
         });
     }

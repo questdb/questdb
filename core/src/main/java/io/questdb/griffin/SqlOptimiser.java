@@ -5254,8 +5254,6 @@ public class SqlOptimiser implements Mutable {
 
                 if (nested.getOrderBy().size() == 0) {
                     // There is no explicit ORDER BY, so we need to add one.
-                    // If there is to_utc() conversion due to time zone, we need to place the ORDER BY
-                    // at the to_utc() level as to_utc() may change the order of rows.
                     final ExpressionNode orderBy = expressionNodePool.next();
                     orderBy.token = timestampAlias;
                     orderBy.type = LITERAL;
@@ -5283,9 +5281,15 @@ public class SqlOptimiser implements Mutable {
                     orderByModel = model.getNestedModel();
                 }
 
-                if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_CONVERT_TIME_ZONE) != 0 && nested.getOrderBy().size() > 0) {
-                    // We have to deal with to_utc() conversion and an explicit ORDER BY, so let's move
-                    // ORDER BY upper-level, after the conversion and rewritten timestamp copies.
+                // We need to move explicit ORDER BY upper level in two cases:
+                // 1. If there is to_utc() conversion due to time zone, we need to place the ORDER BY
+                //    at the to_utc() level as to_utc() may change the order of rows.
+                // 2. If we removed functions with timestamp column as an argument, they could be
+                //    used in the ORDER BY clause, so we need to move it at the level where
+                //    the functions are restored.
+                final boolean shouldMoveOrderBy = (wrapAction & SAMPLE_BY_REWRITE_WRAP_CONVERT_TIME_ZONE) != 0
+                        || (wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0;
+                if (shouldMoveOrderBy && nested.getOrderBy().size() > 0) {
                     final ObjList<ExpressionNode> orderBy = nested.getOrderBy();
                     final IntList orderByDirection = nested.getOrderByDirection();
                     for (int i = 0, n = orderBy.size(); i < n; i++) {
