@@ -3138,8 +3138,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "where ts < '2018-01-31'\n" +
                     "sample by 5d to '2018-01-31' align to calendar with offset '10:00'";
 
-            // TODO: where clause looks weird
-            final String targetModel = "select-group-by timestamp_floor('5d',ts,null,'10:00') ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2018-01-31' to '2018-01-31' stride 5d) order by ts";
+            final String targetModel = "select-group-by timestamp_floor('5d',ts,null,'10:00') ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2018-01-31' and ts < '2018-01-31' to '2018-01-31' stride 5d) order by ts";
             assertModel(targetModel, target, ExecutionModel.QUERY);
         });
     }
@@ -3710,46 +3709,52 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "asof join\n" +
                     "(select ts as ten_days, avg(x) as ten_days_avg from fromto2 sample by 10d from '2017-12-20' to '2018-01-31' fill(null))\n";
 
-            assertPlanNoLeakCheck(query, "SelectedRecord\n" +
-                    "    AsOf Join\n" +
-                    "        Sort\n" +
-                    "          keys: [five_days]\n" +
-                    "            Fill Range\n" +
-                    "              range: ('2017-12-20','2018-01-31')\n" +
-                    "              stride: '5d'\n" +
-                    "              values: [null]\n" +
-                    "                Async Group By workers: 1\n" +
-                    "                  keys: [five_days]\n" +
-                    "                  values: [avg(x)]\n" +
-                    "                  filter: null\n" +
-                    "                    PageFrame\n" +
-                    "                        Row forward scan\n" +
-                    "                        Interval forward scan on: fromto\n" +
-                    "                          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
-                    "        Sort\n" +
-                    "          keys: [ten_days]\n" +
-                    "            Fill Range\n" +
-                    "              range: ('2017-12-20','2018-01-31')\n" +
-                    "              stride: '10d'\n" +
-                    "              values: [null]\n" +
-                    "                Async Group By workers: 1\n" +
-                    "                  keys: [ten_days]\n" +
-                    "                  values: [avg(x)]\n" +
-                    "                  filter: null\n" +
-                    "                    PageFrame\n" +
-                    "                        Row forward scan\n" +
-                    "                        Interval forward scan on: fromto2\n" +
-                    "                          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
-            assertSql("five_days\tfive_days_avg\tten_days\tten_days_avg\n" +
-                    "2017-12-20T00:00:00.000000Z\tnull\t2017-12-20T00:00:00.000000Z\tnull\n" +
-                    "2017-12-25T00:00:00.000000Z\tnull\t2017-12-20T00:00:00.000000Z\tnull\n" +
-                    "2017-12-30T00:00:00.000000Z\t72.5\t2017-12-30T00:00:00.000000Z\t192.5\n" +
-                    "2018-01-04T00:00:00.000000Z\t264.5\t2017-12-30T00:00:00.000000Z\t192.5\n" +
-                    "2018-01-09T00:00:00.000000Z\t432.5\t2018-01-09T00:00:00.000000Z\t432.5\n" +
-                    "2018-01-14T00:00:00.000000Z\tnull\t2018-01-09T00:00:00.000000Z\t432.5\n" +
-                    "2018-01-19T00:00:00.000000Z\tnull\t2018-01-19T00:00:00.000000Z\tnull\n" +
-                    "2018-01-24T00:00:00.000000Z\tnull\t2018-01-19T00:00:00.000000Z\tnull\n" +
-                    "2018-01-29T00:00:00.000000Z\tnull\t2018-01-29T00:00:00.000000Z\tnull\n", query);
+            assertPlanNoLeakCheck(
+                    query,
+                    "SelectedRecord\n" +
+                            "    AsOf Join\n" +
+                            "        Sort\n" +
+                            "          keys: [five_days]\n" +
+                            "            Fill Range\n" +
+                            "              range: ('2017-12-20','2018-01-31')\n" +
+                            "              stride: '5d'\n" +
+                            "              values: [null]\n" +
+                            "                Async Group By workers: 1\n" +
+                            "                  keys: [five_days]\n" +
+                            "                  values: [avg(x)]\n" +
+                            "                  filter: null\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Interval forward scan on: fromto\n" +
+                            "                          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
+                            "        Sort\n" +
+                            "          keys: [ten_days]\n" +
+                            "            Fill Range\n" +
+                            "              range: ('2017-12-20','2018-01-31')\n" +
+                            "              stride: '10d'\n" +
+                            "              values: [null]\n" +
+                            "                Async Group By workers: 1\n" +
+                            "                  keys: [ten_days]\n" +
+                            "                  values: [avg(x)]\n" +
+                            "                  filter: null\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Interval forward scan on: fromto2\n" +
+                            "                          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n"
+            );
+            assertSql(
+                    "five_days\tfive_days_avg\tten_days\tten_days_avg\n" +
+                            "2017-12-20T00:00:00.000000Z\tnull\t2017-12-20T00:00:00.000000Z\tnull\n" +
+                            "2017-12-25T00:00:00.000000Z\tnull\t2017-12-20T00:00:00.000000Z\tnull\n" +
+                            "2017-12-30T00:00:00.000000Z\t72.5\t2017-12-30T00:00:00.000000Z\t192.5\n" +
+                            "2018-01-04T00:00:00.000000Z\t264.5\t2017-12-30T00:00:00.000000Z\t192.5\n" +
+                            "2018-01-09T00:00:00.000000Z\t432.5\t2018-01-09T00:00:00.000000Z\t432.5\n" +
+                            "2018-01-14T00:00:00.000000Z\tnull\t2018-01-09T00:00:00.000000Z\t432.5\n" +
+                            "2018-01-19T00:00:00.000000Z\tnull\t2018-01-19T00:00:00.000000Z\tnull\n" +
+                            "2018-01-24T00:00:00.000000Z\tnull\t2018-01-19T00:00:00.000000Z\tnull\n" +
+                            "2018-01-29T00:00:00.000000Z\tnull\t2018-01-29T00:00:00.000000Z\tnull\n",
+                    query
+            );
         });
     }
 
@@ -4012,31 +4017,36 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select ts as five_days, avg(x) as five_days_avg from fromto \n" +
                     "sample by 5d from '2017-12-20' to '2018-01-31' fill(null)";
 
-            assertPlanNoLeakCheck(query, "Sort\n" +
-                    "  keys: [five_days]\n" +
-                    "    Fill Range\n" +
-                    "      range: ('2017-12-20','2018-01-31')\n" +
-                    "      stride: '5d'\n" +
-                    "      values: [null]\n" +
-                    "        Async Group By workers: 1\n" +
-                    "          keys: [five_days]\n" +
-                    "          values: [avg(x)]\n" +
-                    "          filter: null\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Interval forward scan on: fromto\n" +
-                    "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
-
-            assertSql("five_days\tfive_days_avg\n" +
-                    "2017-12-20T00:00:00.000000Z\tnull\n" +
-                    "2017-12-25T00:00:00.000000Z\tnull\n" +
-                    "2017-12-30T00:00:00.000000Z\t72.5\n" +
-                    "2018-01-04T00:00:00.000000Z\t264.5\n" +
-                    "2018-01-09T00:00:00.000000Z\t432.5\n" +
-                    "2018-01-14T00:00:00.000000Z\tnull\n" +
-                    "2018-01-19T00:00:00.000000Z\tnull\n" +
-                    "2018-01-24T00:00:00.000000Z\tnull\n" +
-                    "2018-01-29T00:00:00.000000Z\tnull\n", query);
+            assertPlanNoLeakCheck(
+                    query,
+                    "Sort\n" +
+                            "  keys: [five_days]\n" +
+                            "    Fill Range\n" +
+                            "      range: ('2017-12-20','2018-01-31')\n" +
+                            "      stride: '5d'\n" +
+                            "      values: [null]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [five_days]\n" +
+                            "          values: [avg(x)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Interval forward scan on: fromto\n" +
+                            "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n"
+            );
+            assertSql(
+                    "five_days\tfive_days_avg\n" +
+                            "2017-12-20T00:00:00.000000Z\tnull\n" +
+                            "2017-12-25T00:00:00.000000Z\tnull\n" +
+                            "2017-12-30T00:00:00.000000Z\t72.5\n" +
+                            "2018-01-04T00:00:00.000000Z\t264.5\n" +
+                            "2018-01-09T00:00:00.000000Z\t432.5\n" +
+                            "2018-01-14T00:00:00.000000Z\tnull\n" +
+                            "2018-01-19T00:00:00.000000Z\tnull\n" +
+                            "2018-01-24T00:00:00.000000Z\tnull\n" +
+                            "2018-01-29T00:00:00.000000Z\tnull\n",
+                    query
+            );
         });
     }
 

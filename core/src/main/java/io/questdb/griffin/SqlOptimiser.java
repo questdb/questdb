@@ -2169,19 +2169,6 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void evalConstOrRuntimeConstOrDie(ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        if (expr != null) {
-            final Function func = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
-            try {
-                if (!func.isConstant() && !func.isRuntimeConstant()) {
-                    throw SqlException.$(expr.position, "timezone must be a constant expression of STRING or CHAR type");
-                }
-            } finally {
-                Misc.free(func);
-            }
-        }
-    }
-
     private long evalNonNegativeLongConstantOrDie(ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (expr != null) {
             final Function loFunc = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
@@ -4962,7 +4949,7 @@ public class SqlOptimiser implements Mutable {
                     throw SqlException.$(nested.getSampleBy().position, "at least one aggregation function must be present in 'select' clause");
                 }
 
-                evalConstOrRuntimeConstOrDie(sampleByTimezoneName, sqlExecutionContext);
+                validateConstOrRuntimeConstFunction(sampleByTimezoneName, sqlExecutionContext);
 
                 // When timestamp is not explicitly selected, we will
                 // need to add it artificially to enable group-by to
@@ -4993,7 +4980,7 @@ public class SqlOptimiser implements Mutable {
                 CharSequence timestampAlias = null;
                 for (int i = 0, n = model.getColumns().size(); i < n; i++) {
                     final QueryColumn qc = model.getBottomUpColumns().getQuick(i);
-                    if (qc.getAst().type == LITERAL && Chars.equalsIgnoreCase(qc.getName(), timestampColumn)) {
+                    if (qc.getAst().type == LITERAL && Chars.equalsIgnoreCase(qc.getAst().token, timestampColumn)) {
                         timestampAlias = qc.getAlias();
                     }
                 }
@@ -5329,7 +5316,6 @@ public class SqlOptimiser implements Mutable {
      * <p>
      * This is to allow for the generation of an interval scan and minimise reading of un-needed data.
      */
-    @SuppressWarnings("ConstantValue")
     private void rewriteSampleByFromTo(QueryModel model) {
         QueryModel curr;
         QueryModel fromToModel;
@@ -5344,7 +5330,6 @@ public class SqlOptimiser implements Mutable {
         }
 
         fromToModel = model.getNestedModel();
-
         if (fromToModel == null) {
             return;
         }
@@ -5352,12 +5337,10 @@ public class SqlOptimiser implements Mutable {
         sampleFrom = fromToModel.getSampleByFrom();
         sampleTo = fromToModel.getSampleByTo();
 
-        // if no from-to
+        // if from-to is present
         if (sampleFrom != null || sampleTo != null) {
             curr = model;
-
             ExpressionNode whereClause = null;
-
             while (curr != null && whereClause == null) {
                 whereClause = curr.getWhereClause();
                 if (whereClause != null) {
@@ -5371,9 +5354,7 @@ public class SqlOptimiser implements Mutable {
             // add it anyway, as it will be ANDed with the existing clause narrowing down existing filtering.
 
             ExpressionNode intervalClause = null;
-
             ExpressionNode timestamp = fromToModel.getTimestamp();
-
             QueryModel toAddWhereClause = fromToModel;
 
             if (timestamp == null) {
@@ -5383,7 +5364,6 @@ public class SqlOptimiser implements Mutable {
                     timestamp = whereModel.getTimestamp();
                 }
             }
-
             assert timestamp != null;
 
             if (Chars.indexOf(timestamp.token, '.') < 0) {
@@ -5425,15 +5405,12 @@ public class SqlOptimiser implements Mutable {
                 geqNode.rhs = sampleFrom;
                 geqNode.paramCount = 2;
                 intervalClause = geqNode;
-            } else if (sampleTo != null) {
+            } else { // sampleTo != null
                 ExpressionNode ltNode = expressionNodePool.next().of(OPERATION, opLt.operator.token, opLt.precedence, 0);
                 ltNode.lhs = timestamp;
                 ltNode.rhs = sampleTo;
                 ltNode.paramCount = 2;
                 intervalClause = ltNode;
-            } else {
-                // unreachable
-                assert false;
             }
 
             if (whereClause != null) {
@@ -6445,11 +6422,9 @@ public class SqlOptimiser implements Mutable {
                 if (joinModels.getQuick(i).getAliasToColumnMap().excludes(columnAlias)) {
                     continue;
                 }
-
                 if (index != -1) {
                     throw SqlException.ambiguousColumn(position, columnAlias);
                 }
-
                 index = i;
             }
 
@@ -6458,16 +6433,27 @@ public class SqlOptimiser implements Mutable {
             }
         } else {
             index = model.getModelAliasIndex(columnAlias, 0, dot);
-
             if (index == -1) {
                 throw SqlException.$(position, "Invalid table name or alias");
             }
-
             if (joinModels.getQuick(index).getAliasToColumnMap().excludes(columnAlias, dot + 1, columnAlias.length())) {
                 throw SqlException.invalidColumn(position, columnAlias);
             }
         }
         return index;
+    }
+
+    private void validateConstOrRuntimeConstFunction(ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (expr != null) {
+            final Function func = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
+            try {
+                if (!func.isConstant() && !func.isRuntimeConstant()) {
+                    throw SqlException.$(expr.position, "timezone must be a constant expression of STRING or CHAR type");
+                }
+            } finally {
+                Misc.free(func);
+            }
+        }
     }
 
     /* Throws exception if given node tree contains reference to aggregate or window function that are not allowed in GROUP BY clause. */
