@@ -616,17 +616,19 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testDropSplitLastPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            createXSplit(2000, 750); // 2000 records per day
-                    execute("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
-                    assertSql("count\n0\n", "select count() from x where timestamp in '2018-01-01'");
-                }
-        );
+        assertMemoryLeak
+                (() -> {
+                            createXSplit(2000, 750); // 2000 records per day
+                            execute("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
+                            assertSql("count\n0\n", "select count() from x where timestamp in '2018-01-01'");
+                        }
+                );
     }
 
     @Test
     public void testDropSplitMidPartition() throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(
+                () -> {
                     createXSplit(Timestamps.DAY_MICROS / 300, 299); // 300 records per day
                     execute("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
                     assertSql("count\n0\n", "select count() from x where timestamp in '2018-01-01'");
