@@ -6811,6 +6811,153 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByAliasesAndOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
+
+            assertPlanNoLeakCheck(
+                    "select x1.a, sum(x1.b) from x x1 sample by 2m align to first observation order by x1.a",
+                    "Sort\n" +
+                            "  keys: [a]\n" +
+                            "    Sample By\n" +
+                            "      keys: [a]\n" +
+                            "      values: [sum(b)]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select \"x1.a\", sum(\"x1.b\") from x \"x1\" sample by 2m order by \"x1.a\"",
+                    "SelectedRecord\n" +
+                            "    Radix sort light\n" +
+                            "      keys: [a]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [a,ts]\n" +
+                            "          values: [sum(b)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select \"x1.a\", sum(\"x1.b\") from x \"x1\" sample by 2m align to calendar time zone 'Europe/Paris' order by \"x1.a\"",
+                    "Radix sort light\n" +
+                            "  keys: [a]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [a,sum]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [a,ts]\n" +
+                            "          values: [sum(b)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select \"x1.a\", sum(\"x1.b\") from x \"x1\" sample by 2m align to calendar time zone 'Europe/Paris' order by 10*\"x1.a\"",
+                    "SelectedRecord\n" +
+                            "    Radix sort light\n" +
+                            "      keys: [column]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [a,sum,10*a]\n" +
+                            "            VirtualRecord\n" +
+                            "              functions: [a,sum]\n" +
+                            "                Async Group By workers: 1\n" +
+                            "                  keys: [a,ts]\n" +
+                            "                  values: [sum(b)]\n" +
+                            "                  filter: null\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select x1.a, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 1 desc",
+                    "Radix sort light\n" +
+                            "  keys: [a desc]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [a,sum]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [a,ts]\n" +
+                            "          values: [sum(b)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select 10*x1.a as a10, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by a10",
+                    "Radix sort light\n" +
+                            "  keys: [a10]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [a10,sum]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [a10,ts]\n" +
+                            "          values: [sum(b)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select x1.a as a0, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc",
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [column desc, a0]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [a0,sum,10*a0]\n" +
+                            "            VirtualRecord\n" +
+                            "              functions: [a0,sum]\n" +
+                            "                Async Group By workers: 1\n" +
+                            "                  keys: [a0,ts]\n" +
+                            "                  values: [sum(b)]\n" +
+                            "                  filter: null\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select x1.a as a0, sum(x1.b), x1.ts from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc",
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [column desc, a0]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [a0,sum,to_utc(ts,-1),10*a0]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [a0,ts]\n" +
+                            "              values: [sum(b)]\n" +
+                            "              filter: null\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select x1.ts, to_utc(x1.ts, 'Europe/Berlin') berlin_ts, x1.a as a0, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 3 asc, berlin_ts desc",
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [column desc, a0, berlin_ts desc]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [to_utc(ts,-1),berlin_ts,a0,sum,10*a0]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [ts,berlin_ts,a0]\n" +
+                            "              values: [sum(b)]\n" +
+                            "              filter: null\n" +
+                            "                SelectedRecord\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: x\n"
+            );
+        });
+    }
+
+    @Test
     public void testSampleByFillLinear() throws Exception {
         assertMemoryLeak(() -> {
             assertPlanNoLeakCheck(
