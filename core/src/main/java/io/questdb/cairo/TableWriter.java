@@ -1901,6 +1901,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public void enforceTtl() {
+        partitionRemoveCandidates.clear();
         int ttl = metadata.getTtlHoursOrMonths();
         if (ttl == 0) {
             return;
@@ -1916,13 +1917,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         long maxTimestamp = getMaxTimestamp();
         long evictedPartitionTimestamp = -1;
+        boolean dropped = false;
         do {
             long partitionTimestamp = getPartitionTimestamp(0);
             long floorTimestamp = floorFn.floor(partitionTimestamp);
             if (evictedPartitionTimestamp != -1 && floorTimestamp == evictedPartitionTimestamp) {
                 assert partitionTimestamp != floorTimestamp : "Expected a higher part of a split partition";
-                dropPartitionByExactTimestamp(partitionTimestamp);
-                continue;
+                dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
             }
             assert partitionTimestamp == floorTimestamp :
                     String.format("partitionTimestamp %s != floor(partitionTimestamp) %s, evictedPartitionTimestamp %s",
@@ -1939,13 +1940,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .$("Partition's TTL expired, evicting. table=").$(metadata.getTableName())
                         .$(" partitionTs=").microTime(partitionTimestamp)
                         .$();
-                dropPartitionByExactTimestamp(partitionTimestamp);
+                dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
                 evictedPartitionTimestamp = partitionTimestamp;
             } else {
                 // Partitions are sorted by timestamp, no need to check the rest
                 break;
             }
         } while (getPartitionCount() > 1);
+
+        if (dropped) {
+            removePartitionCommit();
+        }
     }
 
     @Override
@@ -2796,6 +2801,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public boolean removePartition(long timestamp) {
+        partitionRemoveCandidates.clear();
         if (!PartitionBy.isPartitioned(partitionBy)) {
             return false;
         }
@@ -2817,6 +2823,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ) == logicalPartitionTimestampToDelete) {
                 dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
             }
+        }
+
+        if (dropped) {
+            removePartitionCommit();
         }
         return dropped;
     }
@@ -5111,16 +5121,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
 
+            // NOTE: this method should not commit to _txn file
+            // In case multiple partition parts are deleted, they should be deleted atomically
             txWriter.beginPartitionSizeUpdate();
             txWriter.removeAttachedPartitions(timestamp);
             txWriter.finishPartitionSizeUpdate(index == 0 ? Long.MAX_VALUE : txWriter.getMinTimestamp(), nextMaxTimestamp);
             txWriter.bumpTruncateVersion();
             columnVersionWriter.removePartition(timestamp);
             columnVersionWriter.replaceInitialPartitionRecords(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount());
-
-            columnVersionWriter.commit();
-            txWriter.setColumnVersion(columnVersionWriter.getVersion());
-            txWriter.commit(denseSymbolMapWriters);
 
             // No need to truncate before, files to be deleted.
             closeActivePartition(false);
@@ -5145,20 +5153,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 nextMinTimestamp = readMinTimestamp();
             }
 
+            // NOTE: this method should not commit to _txn file
+            // In case multiple partition parts are deleted, they should be deleted atomically
             txWriter.beginPartitionSizeUpdate();
             txWriter.removeAttachedPartitions(timestamp);
             txWriter.setMinTimestamp(nextMinTimestamp);
             txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
             txWriter.bumpTruncateVersion();
             columnVersionWriter.removePartition(timestamp);
-
-            columnVersionWriter.commit();
-            txWriter.setColumnVersion(columnVersionWriter.getVersion());
-            txWriter.commit(denseSymbolMapWriters);
         }
 
-        // Call O3 methods to remove check TxnScoreboard and remove partition directly
-        safeDeletePartitionDir(timestamp, partitionNameTxn);
+        partitionRemoveCandidates.add(timestamp, partitionNameTxn);
         return true;
     }
 
@@ -8144,6 +8149,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             path.trimTo(pathSize);
         }
+    }
+
+    private void removePartitionCommit() {
+        columnVersionWriter.commit();
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        txWriter.commit(denseSymbolMapWriters);
+        processPartitionRemoveCandidates();
     }
 
     private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
