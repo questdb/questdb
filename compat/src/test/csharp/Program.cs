@@ -42,6 +42,11 @@ public class TestRunner
         foreach (var test in testData.Tests)
         {
             var iterations = test.Iterations ?? 50;
+            if (test.Exclude.Contains("csharp"))
+            {
+                Console.WriteLine($"Skipping test '{test.Name}' because it's excluded for C#.");
+                continue;
+            }
             for (var i = 0; i < iterations; i++)
             {
                 Console.WriteLine($"Running test '{test.Name}' (iteration {i + 1})");
@@ -351,6 +356,7 @@ public class Test
     public List<Step> Steps { get; set; } = new();
     public List<Step>? Teardown { get; set; }
     public string Description { get; set; } = "";
+    public List<string> Exclude { get; set; } = new();
 }
 
 public enum Action
