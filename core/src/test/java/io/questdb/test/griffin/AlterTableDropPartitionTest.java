@@ -648,22 +648,23 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
             }
 
         };
-        assertMemoryLeak(ff, () -> {
-            createXSplit(Timestamps.DAY_MICROS / 300, 290);
-            assertSql("count\n308\n", "select count() from x where timestamp in '2018-01-01'");
+        assertMemoryLeak(ff,
+                () -> {
+                    createXSplit(Timestamps.DAY_MICROS / 300, 290);
+                    assertSql("count\n308\n", "select count() from x where timestamp in '2018-01-01'");
 
-            try {
-                execute("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
-                Assert.fail();
-            } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "could not read long");
-            }
+                    try {
+                        execute("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
+                        Assert.fail();
+                    } catch (CairoException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "could not read long");
+                    }
 
-            // no split partition deleted
-            assertSql("count\n308\n", "select count() from x where timestamp in '2018-01-01'");
+                    // no split partition deleted
+                    assertSql("count\n308\n", "select count() from x where timestamp in '2018-01-01'");
 
-            // Retry should work
-            execute("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
+                    // Retry should work
+                    execute("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
                     assertSql("count\n0\n", "select count() from x where timestamp in '2018-01-01'");
                 }
         );
