@@ -78,6 +78,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final String timeZone;
     private final String timeZoneOffset;
     private String baseTableName;
+    private int baseTableNamePosition;
     private CreateTableOperationImpl createTableOperation;
     private long samplingInterval;
     private char samplingIntervalUnit;
@@ -88,6 +89,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             @NotNull CreateTableOperationImpl createTableOperation,
             int refreshType,
             @Nullable String baseTableName,
+            int baseTableNamePosition,
             @Nullable String timeZone,
             @Nullable String timeZoneOffset
     ) {
@@ -95,6 +97,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         this.createTableOperation = createTableOperation;
         this.refreshType = refreshType;
         this.baseTableName = baseTableName;
+        this.baseTableNamePosition = baseTableNamePosition;
         this.timeZone = timeZone;
         this.timeZoneOffset = timeZoneOffset;
     }
@@ -328,10 +331,10 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
         final TableToken baseTableToken = sqlExecutionContext.getTableTokenIfExists(baseTableName);
         if (baseTableToken == null) {
-            throw SqlException.tableDoesNotExist(0, baseTableName);
+            throw SqlException.tableDoesNotExist(baseTableNamePosition, baseTableName);
         }
         if (!baseTableToken.isWal()) {
-            throw SqlException.$(0, "base table has to be WAL enabled");
+            throw SqlException.$(baseTableNamePosition, "base table has to be WAL enabled");
         }
 
         // Find sampling interval.
