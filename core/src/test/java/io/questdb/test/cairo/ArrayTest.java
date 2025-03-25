@@ -1265,6 +1265,93 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionDistinct() throws Exception {
+        assertMemoryLeak(() -> {
+            int i = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+
+            execute("create table alpha (arr double[])");
+            execute("create table bravo (arr double[])");
+
+            execute("insert into alpha values (ARRAY[1.0, 2.0])");
+            assertQuery("arr\n[1.0,2.0]\n",
+                    "select * from alpha union select * from bravo",
+                    null,
+                    null,
+                    false,
+                    false
+            );
+
+            execute("insert into bravo values (ARRAY[1.0, 2.0])");
+            assertQuery("arr\n[1.0,2.0]\n",
+                    "select * from alpha union select * from bravo",
+                    null,
+                    null,
+                    false,
+                    false
+            );
+
+            execute("insert into alpha values (ARRAY[1.0, 2.0, 3.0])");
+            assertQuery("arr\n" +
+                            "[1.0,2.0]\n" +
+                            "[1.0,2.0,3.0]\n",
+                    "select * from alpha union select * from bravo",
+                    null,
+                    null,
+                    false,
+                    false
+            );
+
+            execute("insert into bravo values (ARRAY[1.0, 2.0, 3.0])");
+            assertQuery("arr\n" +
+                            "[1.0,2.0]\n" +
+                            "[1.0,2.0,3.0]\n",
+                    "select * from alpha union select * from bravo",
+                    null,
+                    null,
+                    false,
+                    false
+            );
+
+            execute("insert into alpha values (ARRAY[])");
+            assertQuery("arr\n" +
+                            "[1.0,2.0]\n" +
+                            "[1.0,2.0,3.0]\n" +
+                            "[]\n",
+                    "select * from alpha union select * from bravo",
+                    null,
+                    null,
+                    false,
+                    false
+            );
+
+            execute("insert into bravo values (ARRAY[])");
+            assertQuery("arr\n" +
+                            "[1.0,2.0]\n" +
+                            "[1.0,2.0,3.0]\n" +
+                            "[]\n",
+                    "select * from alpha union select * from bravo",
+                    null,
+                    null,
+                    false,
+                    false
+            );
+
+            execute("insert into alpha values (null)");
+            assertQuery("arr\n" +
+                            "[1.0,2.0]\n" +
+                            "[1.0,2.0,3.0]\n" +
+                            "[]\n" +
+                            "null\n",
+                    "select * from alpha union select * from bravo",
+                    null,
+                    null,
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testUnsupportedDimensionality() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (a DOUBLE[][][][][][][][][][][][][][][][])");

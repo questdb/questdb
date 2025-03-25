@@ -734,6 +734,11 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         final IntList recordedTypes = new IntList();
 
         @Override
+        public void putArray(ArrayView view) {
+            recordedTypes.add(view.getType());
+        }
+
+        @Override
         public void putBin(BinarySequence value) {
             recordedTypes.add(ColumnType.BINARY);
         }

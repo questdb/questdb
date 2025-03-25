@@ -232,6 +232,22 @@ public abstract class ArrayView implements QuietCloseable {
     }
 
     /**
+     * Returns the number of elements in this array.
+     *
+     * @return the number of elements in this array
+     */
+    public int getCardinality() {
+        if (isVanilla) {
+            return flatViewLength;
+        }
+        int cardinality = 1;
+        for (int i = 0; i < shape.size(); i++) {
+            cardinality *= shape.getQuick(i);
+        }
+        return cardinality;
+    }
+
+    /**
      * Returns the number of dimensions in this array (i.e., its dimensionality).
      */
     public final int getDimCount() {

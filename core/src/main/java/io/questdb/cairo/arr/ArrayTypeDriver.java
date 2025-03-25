@@ -143,6 +143,46 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         }
     }
 
+    public static int appendPlainValue(long appendAddress, @NotNull ArrayView value) {
+        final long origAddress = appendAddress;
+        if (value.isNull()) {
+            Unsafe.getUnsafe().putShort(appendAddress, ColumnType.NULL);
+            return Short.BYTES;
+        }
+        short elemType = value.getElemType();
+        Unsafe.getUnsafe().putShort(appendAddress, elemType);
+        appendAddress += Short.BYTES;
+
+        int dimCount = value.getDimCount();
+        Unsafe.getUnsafe().putInt(appendAddress, dimCount);
+        appendAddress += Integer.BYTES;
+
+        for (int i = 0; i < dimCount; i++) {
+            Unsafe.getUnsafe().putInt(appendAddress, value.getDimLen(i));
+            appendAddress += Integer.BYTES;
+        }
+
+        int cardinality = value.getCardinality();
+        Unsafe.getUnsafe().putInt(appendAddress, cardinality);
+        appendAddress += Integer.BYTES;
+
+        // todo: we only support vanilla arrays for now
+        assert value.isVanilla();
+        for (int i = 0, n = value.getFlatViewLength(); i < n; i++) {
+            switch (elemType) {
+                case ColumnType.DOUBLE:
+                    Unsafe.getUnsafe().putDouble(appendAddress, value.getDouble(i));
+                    appendAddress += Double.BYTES;
+                    break;
+                default:
+                    throw new UnsupportedOperationException("Unsupported array element type: " + elemType);
+            }
+        }
+        long bytesWritten = appendAddress - origAddress;
+        assert bytesWritten > 0 && bytesWritten <= Integer.MAX_VALUE;
+        return (int) bytesWritten;
+    }
+
     public static void appendValue(
             @NotNull MemoryA auxMem,
             @NotNull MemoryA dataMem,
@@ -250,6 +290,17 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
     public static long getAuxVectorOffsetStatic(long row) {
         return ARRAY_AUX_WIDTH_BYTES * row;
+    }
+
+    public static int getSingleMemValueByteCount(@NotNull ArrayView value) {
+        if (value.isNull()) {
+            return Short.BYTES;
+        }
+        return Short.BYTES // element type
+                + Integer.BYTES // number of dimensions
+                + value.getDimCount() * Integer.BYTES // dimension sizes
+                + Integer.BYTES // size of the data vector
+                + ColumnType.sizeOf(value.getElemType()) * value.getCardinality();
     }
 
     @Override
@@ -406,20 +457,6 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public long mergeShuffleColumnFromManyAddresses(long indexFormat, long primaryAddressList, long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndex, long destDataOffset, long destDataSize) {
-        return Vect.mergeShuffleArrayColumnFromManyAddresses(
-                indexFormat,
-                primaryAddressList,
-                secondaryAddressList,
-                outPrimaryAddress,
-                outSecondaryAddress,
-                mergeIndex,
-                destDataOffset,
-                destDataSize
-        );
-    }
-
-    @Override
     public boolean isSparseDataVector(long auxMemAddr, long dataMemAddr, long rowCount) {
         long lastSizeInDataVector = 0;
         for (int row = 0; row < rowCount; row++) {
@@ -431,6 +468,20 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             lastSizeInDataVector = getDataVectorSizeAt(auxMemAddr, row);
         }
         return false;
+    }
+
+    @Override
+    public long mergeShuffleColumnFromManyAddresses(long indexFormat, long primaryAddressList, long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndex, long destDataOffset, long destDataSize) {
+        return Vect.mergeShuffleArrayColumnFromManyAddresses(
+                indexFormat,
+                primaryAddressList,
+                secondaryAddressList,
+                outPrimaryAddress,
+                outSecondaryAddress,
+                mergeIndex,
+                destDataOffset,
+                destDataSize
+        );
     }
 
     @Override
