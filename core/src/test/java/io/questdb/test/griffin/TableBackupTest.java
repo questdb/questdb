@@ -48,6 +48,7 @@ import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.AbstractTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -69,8 +70,7 @@ import java.util.Arrays;
 import java.util.Collection;
 
 @RunWith(Parameterized.class)
-public class TableBackupTest {
-
+public class TableBackupTest extends AbstractTest {
     private static final int ERRNO_EIO = 5;
     private static final StringSink sink1 = new StringSink();
     private static final StringSink sink2 = new StringSink();
@@ -106,7 +106,6 @@ public class TableBackupTest {
                 {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.WEEK},
                 {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.MONTH},
                 {AbstractCairoTest.WalMode.WITH_WAL, PartitionBy.YEAR},
-
                 {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.NONE},
                 {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.HOUR},
                 {AbstractCairoTest.WalMode.NO_WAL, PartitionBy.DAY},

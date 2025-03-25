@@ -71,6 +71,7 @@ import org.jetbrains.annotations.Nullable;
  */
 public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final CharSequenceHashSet baseKeyColumnNames = new CharSequenceHashSet();
+    private final int baseTableNamePosition;
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();
     private final MatViewDefinition matViewDefinition = new MatViewDefinition();
     private final int refreshType;
@@ -78,7 +79,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final String timeZone;
     private final String timeZoneOffset;
     private String baseTableName;
-    private int baseTableNamePosition;
     private CreateTableOperationImpl createTableOperation;
     private long samplingInterval;
     private char samplingIntervalUnit;
@@ -401,43 +401,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         createTableOperation.initColumnMetadata(createColumnModelMap);
     }
 
-    private static ExpressionNode findSampleByNode(QueryModel model) {
-        while (model != null) {
-
-            if (SqlUtil.isNotPlainSelectModel(model)) {
-                return null;
-            }
-
-            final ExpressionNode sampleBy = model.getSampleBy();
-            if (sampleBy != null && sampleBy.type == ExpressionNode.CONSTANT) {
-                return sampleBy;
-            }
-
-            model = model.getNestedModel();
-        }
-        return null;
-    }
-
-    private static QueryColumn findTimestampFloorColumn(QueryModel model) {
-        while (model != null) {
-
-            if (SqlUtil.isNotPlainSelectModel(model)) {
-                return null;
-            }
-
-            final ObjList<QueryColumn> queryColumns = model.getBottomUpColumns();
-            for (int i = 0, n = queryColumns.size(); i < n; i++) {
-                final QueryColumn queryColumn = queryColumns.getQuick(i);
-                final ExpressionNode ast = queryColumn.getAst();
-                if (ast.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase("timestamp_floor", ast.token)) {
-                    return queryColumn;
-                }
-            }
-            model = model.getNestedModel();
-        }
-        return null;
-    }
-
     @Override
     public void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, TableReaderMetadata baseTableMetadata) throws SqlException {
         // SELECT validation
@@ -524,5 +487,40 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 copyBaseTableColumnNames(node, model.getJoinModels().getQuick(i), baseTableName, target);
             }
         }
+    }
+
+    private static ExpressionNode findSampleByNode(QueryModel model) {
+        while (model != null) {
+            if (SqlUtil.isNotPlainSelectModel(model)) {
+                return null;
+            }
+
+            final ExpressionNode sampleBy = model.getSampleBy();
+            if (sampleBy != null && sampleBy.type == ExpressionNode.CONSTANT) {
+                return sampleBy;
+            }
+
+            model = model.getNestedModel();
+        }
+        return null;
+    }
+
+    private static QueryColumn findTimestampFloorColumn(QueryModel model) {
+        while (model != null) {
+            if (SqlUtil.isNotPlainSelectModel(model)) {
+                return null;
+            }
+
+            final ObjList<QueryColumn> queryColumns = model.getBottomUpColumns();
+            for (int i = 0, n = queryColumns.size(); i < n; i++) {
+                final QueryColumn queryColumn = queryColumns.getQuick(i);
+                final ExpressionNode ast = queryColumn.getAst();
+                if (ast.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase("timestamp_floor", ast.token)) {
+                    return queryColumn;
+                }
+            }
+            model = model.getNestedModel();
+        }
+        return null;
     }
 }
