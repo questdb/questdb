@@ -404,6 +404,12 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     @Override
     public void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, TableReaderMetadata baseTableMetadata) throws SqlException {
         // SELECT validation
+        if (createTableOperation.getTimestampColumnName() == null) {
+            if (selectMetadata.getTimestampIndex() == -1) {
+                throw SqlException.position(createTableOperation.getSelectTextPosition())
+                        .put("materialized view query is required to have designated timestamp");
+            }
+        }
         createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata);
         // Key column validation (best effort):
         // Option 1. Base table has no dedup.

@@ -851,6 +851,7 @@ public class SqlParser {
 
             final String matViewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);
             tableOpBuilder.setSelectText(matViewSql);
+            tableOpBuilder.setSelectTextPosition(startOfQuery);
             tableOpBuilder.setSelectModel(queryModel); // transient model, for toSink() purposes only
 
             expectTok(lexer, ')');
