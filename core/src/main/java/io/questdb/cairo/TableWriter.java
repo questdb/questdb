@@ -49,10 +49,10 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.vm.api.NullMemory;
 import io.questdb.cairo.wal.MetadataService;
-import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.SymbolMapDiff;
 import io.questdb.cairo.wal.SymbolMapDiffCursor;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
+import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WriterRowUtils;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
@@ -3939,6 +3939,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.commit(denseSymbolMapWriters);
         // Bookmark masterRef to track how many rows is in uncommitted state
         this.committedMasterRef = masterRef;
+    }
+
+    private void commitRemovePartitionOperation() {
+        columnVersionWriter.commit();
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        txWriter.commit(denseSymbolMapWriters);
+        processPartitionRemoveCandidates();
     }
 
     private void configureAppendPosition() {
@@ -8160,13 +8167,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             path.trimTo(pathSize);
         }
-    }
-
-    private void commitRemovePartitionOperation() {
-        columnVersionWriter.commit();
-        txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        txWriter.commit(denseSymbolMapWriters);
-        processPartitionRemoveCandidates();
     }
 
     private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
