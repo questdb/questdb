@@ -1924,6 +1924,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (evictedPartitionTimestamp != -1 && floorTimestamp == evictedPartitionTimestamp) {
                 assert partitionTimestamp != floorTimestamp : "Expected a higher part of a split partition";
                 dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
+                continue;
             }
             assert partitionTimestamp == floorTimestamp :
                     String.format("partitionTimestamp %s != floor(partitionTimestamp) %s, evictedPartitionTimestamp %s",
@@ -5481,9 +5482,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             metrics.tableWriterMetrics().incrementCommits();
             enforceTtl();
         } catch (Throwable e) {
-            CairoException ex = CairoException.nonCritical().put("Data has been persisted, but we could not perform housekeeping [ex=").put((Sinkable) e).put(']');
-            ex.setHousekeeping(true);
-            throw ex;
+            // Log the exception stack.
+            LOG.error().$("data has been persisted, but we could not perform housekeeping [table=").$(tableToken)
+                    .$(", error=").$(e)
+                    .I$();
+            if (e instanceof Sinkable) {
+                CairoException ex = CairoException.nonCritical().put("Data has been persisted, but we could not perform housekeeping [ex=").put((Sinkable) e).put(']');
+                ex.setHousekeeping(true);
+                throw ex;
+            } else {
+                CairoException ex = CairoException.nonCritical().put("Data has been persisted, but we could not perform housekeeping [ex=").put(e.getMessage()).put(']');
+                ex.setHousekeeping(true);
+                throw ex;
+            }
         }
     }
 
