@@ -5287,9 +5287,9 @@ public class SqlOptimiser implements Mutable {
                 // 2. If we removed functions with timestamp column as an argument, they could be
                 //    used in the ORDER BY clause, so we need to move it at the level where
                 //    the functions are restored.
-                final boolean shouldMoveOrderBy = (wrapAction & SAMPLE_BY_REWRITE_WRAP_CONVERT_TIME_ZONE) != 0
+                final boolean orderByMoveRequired = (wrapAction & SAMPLE_BY_REWRITE_WRAP_CONVERT_TIME_ZONE) != 0
                         || (wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0;
-                if (shouldMoveOrderBy && nested.getOrderBy().size() > 0) {
+                if (orderByMoveRequired && nested.getOrderBy().size() > 0) {
                     final ObjList<ExpressionNode> orderBy = nested.getOrderBy();
                     final IntList orderByDirection = nested.getOrderByDirection();
                     for (int i = 0, n = orderBy.size(); i < n; i++) {

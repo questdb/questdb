@@ -5015,9 +5015,9 @@ public class SampleByTest extends AbstractCairoTest {
                     "select ts1 a, ts1 b, sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
                             "sample by 1m align to calendar ",
-                    "SelectedRecord\n" +
-                            "    Radix sort light\n" +
-                            "      keys: [b]\n" +
+                    "Radix sort light\n" +
+                            "  keys: [b]\n" +
+                            "    SelectedRecord\n" +
                             "        Async Group By workers: 1\n" +
                             "          keys: [b,sym]\n" +
                             "          values: [first(val),avg(val),last(val),max(val)]\n" +
@@ -5037,9 +5037,9 @@ public class SampleByTest extends AbstractCairoTest {
                     "select ts1 a, ts1 b, first(val), avg(val), last(val), max(val) " +
                             "from x " +
                             "sample by 1m align to calendar ",
-                    "SelectedRecord\n" +
-                            "    Radix sort light\n" +
-                            "      keys: [b]\n" +
+                    "Radix sort light\n" +
+                            "  keys: [b]\n" +
+                            "    SelectedRecord\n" +
                             "        Async Group By workers: 1\n" +
                             "          keys: [b]\n" +
                             "          values: [first(val),avg(val),last(val),max(val)]\n" +
@@ -5059,9 +5059,9 @@ public class SampleByTest extends AbstractCairoTest {
                     "select ts1 a, ts1 b, sym, first(val), avg(val), ts1 e, last(val), max(val), ts1 c, ts1 d " +
                             "from x " +
                             "sample by 1m align to calendar ",
-                    "SelectedRecord\n" +
-                            "    Radix sort light\n" +
-                            "      keys: [d]\n" +
+                    "Radix sort light\n" +
+                            "  keys: [d]\n" +
+                            "    SelectedRecord\n" +
                             "        Async Group By workers: 1\n" +
                             "          keys: [d,sym]\n" +
                             "          values: [first(val),avg(val),last(val),max(val)]\n" +
@@ -5167,14 +5167,14 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByRewriteWith() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            execute("create table if not exists x (ts1 timestamp, ts2 timestamp, sym symbol, val long) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
                     "with y as (select ts1 a, ts1 b, sym, first(val), avg(val), ts1 e, last(val), max(val), ts1 c, ts1 d " +
                             "from x " +
                             "sample by 1m align to calendar) select * from y ",
-                    "SelectedRecord\n" +
-                            "    Radix sort light\n" +
-                            "      keys: [d]\n" +
+                    "Radix sort light\n" +
+                            "  keys: [d]\n" +
+                            "    SelectedRecord\n" +
                             "        Async Group By workers: 1\n" +
                             "          keys: [d,sym]\n" +
                             "          values: [first(val),avg(val),last(val),max(val)]\n" +
