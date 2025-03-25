@@ -492,7 +492,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private static ExpressionNode findSampleByNode(QueryModel model) {
         while (model != null) {
             if (SqlUtil.isNotPlainSelectModel(model)) {
-                return null;
+                break;
             }
 
             final ExpressionNode sampleBy = model.getSampleBy();
@@ -508,7 +508,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private static QueryColumn findTimestampFloorColumn(QueryModel model) {
         while (model != null) {
             if (SqlUtil.isNotPlainSelectModel(model)) {
-                return null;
+                break;
             }
 
             final ObjList<QueryColumn> queryColumns = model.getBottomUpColumns();
