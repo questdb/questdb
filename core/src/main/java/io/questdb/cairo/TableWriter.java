@@ -1950,7 +1950,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } while (getPartitionCount() > 1);
 
         if (dropped) {
-            removePartitionCommit();
+            commitRemovePartitionOperation();
         }
     }
 
@@ -2827,7 +2827,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         if (dropped) {
-            removePartitionCommit();
+            commitRemovePartitionOperation();
         }
         return dropped;
     }
@@ -8162,7 +8162,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void removePartitionCommit() {
+    private void commitRemovePartitionOperation() {
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         txWriter.commit(denseSymbolMapWriters);
