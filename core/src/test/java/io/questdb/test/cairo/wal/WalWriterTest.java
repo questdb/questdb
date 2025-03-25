@@ -3751,7 +3751,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 row.putByte(0, (byte) i);
                 row.putSym(1, "sym" + i);
                 row.append();
-                walWriter.commit();
+
                 if (i % 2 == 0) {
                     walWriter.commit();
                 } else {
