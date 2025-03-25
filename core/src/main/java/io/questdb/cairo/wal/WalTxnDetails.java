@@ -244,6 +244,10 @@ public class WalTxnDetails implements QuietCloseable {
             if (getCommitToTimestamp(nextTxn) == FORCE_FULL_COMMIT || totalRowCount > maxBlockRecordCount) {
                 break;
             }
+            if (getDedupMode(nextTxn) != WAL_DEDUP_MODE_DEFAULT) {
+                // If there is a deduplication mode, we need to commit the transaction one by one
+                break;
+            }
             blockSize++;
         }
 
@@ -286,8 +290,8 @@ public class WalTxnDetails implements QuietCloseable {
     }
 
     public byte getDedupMode(long seqTxn) {
-        int isOutOfOrder = Numbers.decodeLowInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ROW_IN_ORDER_DATA_TYPE)));
-        return (byte) (isOutOfOrder >> 24);
+        int flags = Numbers.decodeLowInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ROW_IN_ORDER_DATA_TYPE)));
+        return (byte) (flags >> 24);
     }
 
     public long getFullyCommittedTxn(long fromSeqTxn, long toSeqTxn, long maxCommittedTimestamp) {

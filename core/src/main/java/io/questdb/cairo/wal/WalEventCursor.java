@@ -339,9 +339,9 @@ public class WalEventCursor {
             maxTimestamp = readLong();
             outOfOrder = readBool();
 
-            dedupMode = eventMem.getByte(nextOffset - Byte.BYTES - Long.BYTES - Long.BYTES);
-            replaceRangeTsLow = eventMem.getLong(nextOffset - Long.BYTES - Long.BYTES);
-            replaceRangeTsHi = eventMem.getLong(nextOffset - Long.BYTES);
+            replaceRangeTsLow = eventMem.getLong(nextOffset - Long.BYTES - Long.BYTES - Byte.BYTES);
+            replaceRangeTsHi = eventMem.getLong(nextOffset - Long.BYTES - Byte.BYTES);
+            dedupMode = eventMem.getByte(nextOffset - Byte.BYTES);
         }
     }
 

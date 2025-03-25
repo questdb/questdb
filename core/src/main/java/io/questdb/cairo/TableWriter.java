@@ -54,6 +54,7 @@ import io.questdb.cairo.wal.SymbolMapDiff;
 import io.questdb.cairo.wal.SymbolMapDiffCursor;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
 import io.questdb.cairo.wal.WalTxnDetails;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WriterRowUtils;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.ConvertOperatorImpl;
@@ -262,6 +263,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long committedMasterRef;
     private ConvertOperatorImpl convertOperatorImpl;
     private DedupColumnCommitAddresses dedupColumnCommitAddresses;
+    private byte dedupMode;
     private String designatedTimestampColumnName;
     private boolean distressed = false;
     private DropIndexOperator dropIndexOperator;
@@ -2658,6 +2660,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long rowLo = walTxnDetails.getSegmentRowLo(seqTxn);
         long rowHi = walTxnDetails.getSegmentRowHi(seqTxn);
         boolean inOrder = walTxnDetails.getTxnInOrder(seqTxn);
+        byte dedupMode = walTxnDetails.getDedupMode(seqTxn);
+        long replaceRangeTsLo = walTxnDetails.getReplaceRangeTsLow(seqTxn);
+        long replaceRangeTsHi = walTxnDetails.getReplaceRangeTsHi(seqTxn);
 
         LOG.info().$("processing WAL [path=").$substr(pathRootSize, walPath)
                 .$(", roLo=").$(rowLo)
@@ -2672,20 +2677,153 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         SymbolMapDiffCursor mapDiffCursor = walTxnDetails.getWalSymbolDiffCursor(seqTxn);
 
         long walIdSegmentId = Numbers.encodeLowHighInts(segmentId, walId);
-        committed = processWalCommit(
-                walPath,
-                inOrder,
-                rowLo,
-                rowHi,
-                txnMinTs,
-                txnMaxTs,
-                mapDiffCursor,
-                commitToTimestamp,
-                walIdSegmentId,
-                isLastSegmentUsage,
-                pressureControl
-        );
-        return committed;
+        if (dedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE) {
+            return processWalCommit_dedupReplace(
+                    walPath,
+                    inOrder,
+                    rowLo,
+                    rowHi,
+                    txnMinTs,
+                    txnMaxTs,
+                    mapDiffCursor,
+                    walIdSegmentId,
+                    isLastSegmentUsage,
+                    pressureControl,
+                    replaceRangeTsLo,
+                    replaceRangeTsHi
+            );
+        } else {
+            return processWalCommit(
+                    walPath,
+                    inOrder,
+                    rowLo,
+                    rowHi,
+                    txnMinTs,
+                    txnMaxTs,
+                    mapDiffCursor,
+                    commitToTimestamp,
+                    walIdSegmentId,
+                    isLastSegmentUsage,
+                    pressureControl
+            );
+        }
+    }
+
+    public boolean processWalCommit_dedupReplace(
+            @Transient Path walPath,
+            boolean ordered,
+            long rowLo,
+            long rowHi,
+            final long o3TimestampMin,
+            final long o3TimestampMax,
+            @Nullable SymbolMapDiffCursor mapDiffCursor,
+            long walIdSegmentId,
+            boolean isLastSegmentUsage,
+            TableWriterPressureControl pressureControl,
+            long replaceRangeTsLow,
+            long replaceRangeTsHi
+    ) {
+        assert txWriter.getLagRowCount() == 0;
+        assert replaceRangeTsLow <= o3TimestampMin;
+        assert replaceRangeTsHi >= o3TimestampMax;
+
+        int initialSize = segmentFileCache.getWalMappedColumns().size();
+        int timestampIndex = metadata.getTimestampIndex();
+        int walRootPathLen = walPath.size();
+        boolean success = true;
+        try {
+            segmentFileCache.mmapSegments(metadata, walPath, walIdSegmentId, rowLo, rowHi);
+            o3Columns = segmentFileCache.getWalMappedColumns();
+            long initialPartitionTimestampHi = partitionTimestampHi;
+
+            long o3Hi = rowHi;
+            try {
+                long o3Lo = rowLo;
+                long commitRowCount = rowHi - rowLo;
+                boolean copiedToMemory;
+
+
+                // Re-valuate WAL lag min/max with impact of the current transaction.
+                boolean needsOrdering = !ordered;
+
+                MemoryCR walTimestampColumn = segmentFileCache.getWalMappedColumns().getQuick(getPrimaryColumnIndex(timestampIndex));
+                o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
+
+//                if (needsOrdering) {
+                LOG.debug().$("sorting WAL [table=").$(tableToken)
+                        .$(", ordered=").$(ordered)
+                        .$(", walRowLo=").$(rowLo)
+                        .$(", walRowHi=").$(rowHi).I$();
+
+                final long timestampMemorySize = (commitRowCount + 2) << 4;
+                o3TimestampMem.jumpTo(timestampMemorySize);
+                o3TimestampMemCpy.jumpTo(timestampMemorySize);
+
+                MemoryMA timestampColumn = columns.get(getPrimaryColumnIndex(timestampIndex));
+                final long mappedTimestampIndexAddr = walTimestampColumn.addressOf(rowLo << 4);
+                long timestampAddr = o3TimestampMem.getAddress();
+
+                // Add virtual index records with replaceRangeTsLow with index -1
+                Unsafe.getUnsafe().putLong(timestampAddr, replaceRangeTsLow);
+                Unsafe.getUnsafe().putLong(timestampAddr + Long.BYTES, -1);
+
+                // Copy the timestamp index from WAL to memory
+                Vect.memcpy(timestampAddr + 2 * Long.BYTES, mappedTimestampIndexAddr, commitRowCount << 4);
+
+                // Add virtual index record with replaceRangeTsHi with index -2
+                long rangeHiOffset = (commitRowCount + 1) << 4;
+                Unsafe.getUnsafe().putLong(timestampAddr + rangeHiOffset, replaceRangeTsHi - 1);
+                Unsafe.getUnsafe().putLong(timestampAddr + rangeHiOffset + Long.BYTES, -2);
+
+                if (needsOrdering) {
+                    Vect.radixSortLongIndexAscInPlaceBounded(
+                            timestampAddr + 2 * Long.BYTES,
+                            commitRowCount,
+                            o3TimestampMemCpy.addressOf(0),
+                            o3TimestampMin,
+                            o3TimestampMax
+                    );
+                    // Keep other column mapped and unshuffled
+                }
+//                    dispatchColumnTasks(timestampAddr + 2, commitRowCount, 0, rowLo, rowHi, cthMergeWalColumnWithLag);
+//                    swapO3ColumnsExcept(timestampIndex);
+//                }
+
+                // total rows to process is commitRowCount + 2 virtual index records
+                // Sorted data is now sorted in memory copy of the data from mmap files
+                // Row indexes start from 0, not rowLo
+                o3Hi = commitRowCount + 2;
+                o3Lo = 0L;
+                if (o3Columns != o3ColumnOverrides) {
+                    o3ColumnOverrides.clear();
+                    o3ColumnOverrides.addAll(o3Columns);
+                    o3Columns = o3ColumnOverrides;
+                }
+
+                assert o3TimestampMem == o3MemColumns1.get(getPrimaryColumnIndex(timestampIndex));
+                o3ColumnOverrides.set(getPrimaryColumnIndex(timestampIndex), o3MemColumns1.get(getPrimaryColumnIndex(timestampIndex)));
+                txWriter.setLagMinTimestamp(replaceRangeTsLow);
+                txWriter.setLagMaxTimestamp(replaceRangeTsHi);
+                this.dedupMode = WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
+
+                processWalCommitFinishApply(0, timestampAddr, o3Lo, o3Hi, pressureControl, false, initialPartitionTimestampHi);
+            } finally {
+                finishO3Append(0);
+                o3Columns = o3MemColumns1;
+            }
+
+            return true;
+        } catch (Throwable th) {
+            success = false;
+            throw th;
+        } finally {
+            this.dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
+            if (memColumnShifted) {
+                clearMemColumnShifts();
+            }
+            walPath.trimTo(walRootPathLen);
+            segmentFileCache.closeWalFiles(isLastSegmentUsage || !success, walIdSegmentId, initialSize);
+        }
     }
 
     public void publishAsyncWriterCommand(AsyncWriterCommand asyncWriterCommand) {

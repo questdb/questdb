@@ -2689,8 +2689,8 @@ public class WalWriterTest extends AbstractCairoTest {
                 row.append();
 
                 long rangeStart = IntervalUtils.parseFloorPartialTimestamp("2022-02-24");
-                long rangeEnd = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
-                ww.commitWitParams(rangeStart, rangeEnd, WAL_DEDUP_MODE_DEFAULT);
+                long rangeEnd = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T23");
+                ww.commitWitParams(rangeStart, rangeEnd, WAL_DEDUP_MODE_REPLACE_RANGE);
             }
             drainWalQueue();
 

@@ -142,7 +142,7 @@ public class WalWriter implements TableWriterAPI {
     private long currentTxnStartRowNum = -1;
     private boolean distressed;
     private boolean isCommittingData;
-    private short lastDedupMode = WAL_DEDUP_MODE_DEFAULT;
+    private byte lastDedupMode = WAL_DEDUP_MODE_DEFAULT;
     private long lastReplaceRangeHiTs = Long.MAX_VALUE;
     private long lastReplaceRangeLowTs = Long.MIN_VALUE;
     private int lastSegmentTxn = -1;
