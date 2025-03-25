@@ -2542,6 +2542,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     throw kaput().put("invalid UTF8 encoding for string value [variableIndex=").put(variableIndex).put(']');
                 }
             }
+        } catch (BadProtocolException ex) {
+            throw ex;
         } catch (Throwable ex) {
             throw kaput().put(ex);
         }
