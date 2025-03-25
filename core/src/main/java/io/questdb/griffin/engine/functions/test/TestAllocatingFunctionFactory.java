@@ -32,6 +32,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
@@ -58,11 +59,14 @@ public class TestAllocatingFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        long bytes = args.getQuick(0).getLong(null);
-        if (bytes > MAX_BYTES) {
-            throw SqlException.$(argPositions.getQuick(0), "too much to allocate: ").put(bytes);
+        if (configuration.isDevModeEnabled()) {
+            long bytes = args.getQuick(0).getLong(null);
+            if (bytes > MAX_BYTES) {
+                throw SqlException.$(argPositions.getQuick(0), "too much to allocate: ").put(bytes);
+            }
+            return new Func(bytes);
         }
-        return new Func(bytes);
+        return LongConstant.ZERO;
     }
 
     private static class Func extends LongFunction {
