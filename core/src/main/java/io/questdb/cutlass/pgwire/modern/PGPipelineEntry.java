@@ -1645,7 +1645,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 int nativeType;
                 if (f != null) {
                     nativeType = f.getType();
-                    assert nativeType != ColumnType.UNDEFINED : "function type is undefined";
                     if (oid == PG_UNSPECIFIED || oid == X_PG_VOID) {
                         // oid is stored as Big Endian
                         // since that's what clients expects - pgwire is big endian
