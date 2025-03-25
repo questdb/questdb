@@ -6465,7 +6465,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-virtual day(ts) day, isin, last from (select-group-by [timestamp_floor('1d',ts,null,'00:00') ts, isin, last(start_price) last] isin, last(start_price) last, timestamp_floor('1d',ts,null,'00:00') ts from (select [ts, isin, start_price] from xetra timestamp (ts) where isin = 'DE000A0KRJS4' stride 1d) order by ts)",
+                "select-choose day, isin, last from (select-virtual [day(ts) day, isin, last, ts] day(ts) day, isin, last, ts from (select-choose [ts, isin, last] ts, isin, last from (select-group-by [timestamp_floor('1d',ts,null,'00:00') ts, isin, last(start_price) last] isin, last(start_price) last, timestamp_floor('1d',ts,null,'00:00') ts from (select [ts, isin, start_price] from xetra timestamp (ts) where isin = 'DE000A0KRJS4' stride 1d))) order by ts)",
                 "select day(ts), isin, last(start_price) from xetra where isin='DE000A0KRJS4' sample by 1d",
                 modelOf("xetra")
                         .timestamp("ts")
@@ -6474,7 +6474,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
 
         assertQuery(
-                "select-virtual day(ts) day, isin, last from (select-group-by [timestamp_floor('1d',ts,null,'00:00') ts, isin, last(start_price) last] isin, last(start_price) last, timestamp_floor('1d',ts,null,'00:00') ts from (select [ts, isin, start_price] from xetra timestamp (ts) where isin = 'DE000A0KRJS4' stride 1d) order by ts)",
+                "select-choose day, isin, last from (select-virtual [day(ts) day, isin, last, ts] day(ts) day, isin, last, ts from (select-choose [ts, isin, last] ts, isin, last from (select-group-by [timestamp_floor('1d',ts,null,'00:00') ts, isin, last(start_price) last] isin, last(start_price) last, timestamp_floor('1d',ts,null,'00:00') ts from (select [ts, isin, start_price] from xetra timestamp (ts) where isin = 'DE000A0KRJS4' stride 1d))) order by ts)",
                 "select day(ts), isin, last(start_price) from xetra where isin='DE000A0KRJS4' sample by 1d align to calendar",
                 modelOf("xetra")
                         .timestamp("ts")
