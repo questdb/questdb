@@ -373,9 +373,19 @@ public class WalEventCursor {
     public class InvalidationInfo {
         private final StringSink error = new StringSink();
         private boolean invalid;
+        private long lastRefreshBaseTableTxn;
+        private long lastRefreshTimestamp;
 
         public CharSequence getInvalidationReason() {
             return error;
+        }
+
+        public long getLastRefreshBaseTableTxn() {
+            return lastRefreshBaseTableTxn;
+        }
+
+        public long getLastRefreshTimestamp() {
+            return lastRefreshTimestamp;
         }
 
         public boolean isInvalid() {
@@ -383,6 +393,8 @@ public class WalEventCursor {
         }
 
         private void read() {
+            lastRefreshBaseTableTxn = readLong();
+            lastRefreshTimestamp = readLong();
             invalid = readBool();
             error.clear();
             error.put(readStr());
