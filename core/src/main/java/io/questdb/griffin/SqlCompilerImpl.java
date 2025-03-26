@@ -1967,27 +1967,28 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         lexer.unparseLast();
 
-        this.sqlText = createTableOp.getSelectText();
+        sqlText = createTableOp.getSelectText();
         compiledQuery.withContext(executionContext);
 
         final int startPos = lexer.getPosition();
         final long beginNanos = configuration.getNanosecondClock().getTicks();
 
+        final int selectTextPosition = createTableOp.getSelectTextPosition();
         try {
-            final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
-            if (executionModel.getModelType() != ExecutionModel.QUERY) {
-                throw SqlException.$(startPos, "SELECT query expected");
+            final QueryModel queryModel;
+            try {
+                final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
+                if (executionModel.getModelType() != ExecutionModel.QUERY) {
+                    throw SqlException.$(startPos, "SELECT query expected");
+                }
+                queryModel = optimiser.optimise((QueryModel) executionModel, executionContext, this);
+            } catch (SqlException e) {
+                e.setPosition(e.getPosition() + selectTextPosition);
+                throw e;
             }
-            final QueryModel queryModel = optimiser.optimise((QueryModel) executionModel, executionContext, this);
-            createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser, queryModel);
+            createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser, queryModel, selectTextPosition);
             queryModel.setIsMatView(true);
-            compiledQuery.ofSelect(
-                    generateSelectWithRetries(queryModel, executionContext, false)
-            );
-        } catch (SqlException e) {
-            e.setPosition(e.getPosition() + createTableOp.getSelectTextPosition());
-            QueryProgress.logError(e, -1, sqlText, executionContext, beginNanos);
-            throw e;
+            compiledQuery.ofSelect(generateSelectWithRetries(queryModel, executionContext, false));
         } catch (Throwable th) {
             QueryProgress.logError(th, -1, sqlText, executionContext, beginNanos);
             throw th;

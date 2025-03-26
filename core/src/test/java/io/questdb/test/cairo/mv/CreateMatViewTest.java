@@ -269,7 +269,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view testView as (" + query + ") timestamp(k) partition by week");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "TIMESTAMP column expected [actual=SYMBOL]");
+                TestUtils.assertContains(e.getMessage(), "[96] TIMESTAMP column expected [actual=SYMBOL]");
             }
             assertNull(getMatViewDefinition("testView"));
         });
@@ -413,7 +413,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (select * from " + TABLE1 + " where v % 2 = 0) partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "materialized view query requires a sampling interval");
+                TestUtils.assertContains(e.getMessage(), "[34] materialized view query requires a sampling interval");
             }
             assertNull(getMatViewDefinition("test"));
         });

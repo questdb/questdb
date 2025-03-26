@@ -273,7 +273,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     public void validateAndUpdateMetadataFromModel(
             SqlExecutionContext sqlExecutionContext,
             SqlOptimiser optimiser,
-            QueryModel queryModel
+            QueryModel queryModel,
+            int selectTextPosition
     ) throws SqlException {
         // Create view columns based on query.
         final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
@@ -301,9 +302,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         final int timestampPos = createTableOperation.getTimestampColumnNamePosition();
         if (timestamp != null) {
             final CreateTableColumnModel timestampModel = createColumnModelMap.get(timestamp);
-            if (timestampModel == null) {
-                throw SqlException.position(timestampPos).put("TIMESTAMP column does not exist [name=").put(timestamp).put(']');
-            }
+            assert timestampModel != null : "TIMESTAMP column does not exist [name=" + timestamp;
             final int timestampType = timestampModel.getColumnType();
             // type can be -1 for create table as select because types aren't known yet
             if (timestampType != ColumnType.TIMESTAMP && timestampType != ColumnType.UNDEFINED) {
@@ -320,10 +319,10 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             tableNames.clear();
             SqlParser.collectTables(queryModel, tableNames);
             if (tableNames.size() < 1) {
-                throw SqlException.$(0, "missing base table, materialized views have to be based on a table");
+                throw SqlException.$(selectTextPosition, "missing base table, materialized views have to be based on a table");
             }
             if (tableNames.size() > 1) {
-                throw SqlException.$(0, "more than one table used in query, base table has to be set using 'WITH BASE'");
+                throw SqlException.$(selectTextPosition, "more than one table used in query, base table has to be set using 'WITH BASE'");
             }
             baseTableName = Chars.toString(tableNames.get(0));
         }
@@ -363,9 +362,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                         createTableOperation.setTimestampColumnName(Chars.toString(queryColumn.getName()));
                         createTableOperation.setTimestampColumnNamePosition(ast.position);
                         final CreateTableColumnModel timestampModel = createColumnModelMap.get(queryColumn.getName());
-                        if (timestampModel == null) {
-                            throw SqlException.position(ast.position).put("TIMESTAMP column does not exist [name=").put(queryColumn.getName()).put(']');
-                        }
+                        assert timestampModel != null : "TIMESTAMP column does not exist [name=" + queryColumn.getName();
                         timestampModel.setIsDedupKey(); // set dedup for timestamp column
                     }
                     break;
@@ -373,7 +370,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             }
         }
         if (intervalExpr == null) {
-            throw SqlException.$(intervalPos, "materialized view query requires a sampling interval");
+            throw SqlException.$(selectTextPosition, "materialized view query requires a sampling interval");
         }
 
         // Parse sampling interval expression.
