@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -379,6 +380,7 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     }
 
     protected class RecordChainRecord implements Record {
+        private final ObjList<BorrowedArray> arrays;
         private final ObjList<MemoryCR.ByteSequenceView> bsViews;
         private final ObjList<DirectString> csViewsA;
         private final ObjList<DirectString> csViewsB;
@@ -399,6 +401,14 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
             this.longs256B = new ObjList<>(columnCount);
             this.utf8ViewsA = new ObjList<>(columnCount);
             this.utf8ViewsB = new ObjList<>(columnCount);
+            this.arrays = new ObjList<>(columnCount);
+        }
+
+        @Override
+        public ArrayView getArray(int col, int columnType) {
+            long offset = varWidthColumnOffset(col);
+            long addr = mem.addressOf(offset);
+            return ArrayTypeDriver.getPlainValue(addr, array(col));
         }
 
         @Override
@@ -587,6 +597,13 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
                 return VarcharTypeDriver.getPlainValueSize(mem, offset);
             }
             return TableUtils.NULL_LEN;
+        }
+
+        private BorrowedArray array(int columnIndex) {
+            if (arrays.getQuiet(columnIndex) == null) {
+                arrays.extendAndSet(columnIndex, new BorrowedArray());
+            }
+            return arrays.getQuick(columnIndex);
         }
 
         private MemoryCR.ByteSequenceView bsView(int columnIndex) {

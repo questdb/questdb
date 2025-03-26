@@ -932,7 +932,39 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOrderByFailsGracefully() throws Exception {
+    public void testOrderBy() throws Exception {
+        // this test is to ensure that we can order results set containing arrays
+        // but array column is NOT used as part of the ORDER BY clause
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts timestamp, i int, arr double[]) timestamp(ts) partition by DAY");
+            execute("INSERT INTO tango VALUES ('2001-01', 1, '{1.0, 2.0}')");
+            execute("INSERT INTO tango VALUES ('2001-02', 2, '{3.0, 4.0}')");
+            execute("INSERT INTO tango VALUES ('2001-03', 3, '{5.0, 6.0, 7.0}')");
+            execute("INSERT INTO tango VALUES ('2001-04', 42, null)");
+
+            assertQuery("ts\ti\tarr\n" +
+                            "2001-04-01T00:00:00.000000Z\t42\tnull\n" +
+                            "2001-03-01T00:00:00.000000Z\t3\t[5.0,6.0,7.0]\n" +
+                            "2001-02-01T00:00:00.000000Z\t2\t[3.0,4.0]\n" +
+                            "2001-01-01T00:00:00.000000Z\t1\t[1.0,2.0]\n",
+                    "select * from tango order by i desc",
+                    true
+            );
+
+            // test also with no rowId - this simulates ordering output of a factory which does not support rowId
+            assertQuery("ts\ti\tarr\n" +
+                            "2001-04-01T00:00:00.000000Z\t42\tnull\n" +
+                            "2001-03-01T00:00:00.000000Z\t3\t[5.0,6.0,7.0]\n" +
+                            "2001-02-01T00:00:00.000000Z\t2\t[3.0,4.0]\n" +
+                            "2001-01-01T00:00:00.000000Z\t1\t[1.0,2.0]\n",
+                    "select * from '*!*tango' order by i desc",
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testOrderByArrayColFailsGracefully() throws Exception {
         assertException("select * from tab order by arr",
                 "create table tab as (select rnd_double_array(2, 1) arr from long_sequence(10))",
                 27,
