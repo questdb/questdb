@@ -33,6 +33,7 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshState;
+import io.questdb.cairo.mv.MatViewRefreshStateReader;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -1027,13 +1028,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 // Reader should ignore unknown block.
                 try (BlockFileReader reader = new BlockFileReader(configuration)) {
                     reader.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                    MatViewRefreshState actualState = new MatViewRefreshState(
-                            matViewDefinition,
-                            false,
-                            (event, tableToken, baseTableTxn, errorMessage, latencyUs) -> {
-                            }
-                    );
-                    MatViewRefreshState.readFrom(reader, actualState);
+                    MatViewRefreshStateReader actualState = new MatViewRefreshStateReader();
+                    MatViewRefreshStateReader.readFrom(reader, actualState, matViewToken);
 
                     assertEquals(matViewRefreshState.isInvalid(), actualState.isInvalid());
                     assertEquals(matViewRefreshState.getLastRefreshBaseTxn(), actualState.getLastRefreshBaseTxn());
@@ -1282,13 +1278,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 // Reader should fail to load unknown state file.
                 try (BlockFileReader reader = new BlockFileReader(configuration)) {
                     reader.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                    MatViewRefreshState actualState = new MatViewRefreshState(
-                            matViewDefinition,
-                            false,
-                            (event, tableToken, baseTableTxn, errorMessage, latencyUs) -> {
-                            }
-                    );
-                    MatViewRefreshState.readFrom(reader, actualState);
+                    MatViewRefreshStateReader actualState = new MatViewRefreshStateReader();
+                    MatViewRefreshState.readFrom(reader, actualState, matViewToken);
                     Assert.fail("exception expected");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "cannot read materialized view state, block not found");

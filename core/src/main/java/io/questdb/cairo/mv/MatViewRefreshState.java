@@ -24,12 +24,8 @@
 
 package io.questdb.cairo.mv;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.AppendableBlock;
-import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
-import io.questdb.cairo.file.ReadableBlock;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.std.Chars;
@@ -44,9 +40,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.TelemetrySystemEvent.*;
 
-public class MatViewRefreshState implements QuietCloseable {
-    public static final String MAT_VIEW_STATE_FILE_NAME = "_mv.s";
-    public static final int MAT_VIEW_STATE_FORMAT_MSG_TYPE = 0;
+public class MatViewRefreshState extends MatViewRefreshStateReader implements QuietCloseable {
 
     // used to avoid concurrent refresh runs
     private final AtomicBoolean latch = new AtomicBoolean(false);
@@ -54,22 +48,17 @@ public class MatViewRefreshState implements QuietCloseable {
     private final MatViewDefinition viewDefinition;
     private RecordCursorFactory cursorFactory;
     private volatile boolean dropped;
-    private volatile boolean invalid;
-    private volatile String invalidationReason;
-    private volatile long lastRefreshBaseTxn = -1;
-    private volatile long lastRefreshTimestamp = Numbers.LONG_NULL;
     private volatile boolean pendingInvalidation;
     private long recordRowCopierMetadataVersion;
     private RecordToRowCopier recordToRowCopier;
 
     public MatViewRefreshState(
             @NotNull MatViewDefinition viewDefinition,
-            boolean invalid,
             MatViewTelemetryFacade telemetryFacade
     ) {
+        super();
         this.viewDefinition = viewDefinition;
         this.telemetryFacade = telemetryFacade;
-        this.invalid = invalid;
     }
 
     // refreshState can be null, in this case "default" record will be written
@@ -92,26 +81,6 @@ public class MatViewRefreshState implements QuietCloseable {
         block.putStr(refreshState.getInvalidationReason());
     }
 
-    public static void readFrom(@NotNull BlockFileReader reader, @NotNull MatViewRefreshState refreshState) {
-        final BlockFileReader.BlockCursor cursor = reader.getCursor();
-        // Iterate through the block until we find the one we recognize.
-        while (cursor.hasNext()) {
-            final ReadableBlock block = cursor.next();
-            if (block.type() != MAT_VIEW_STATE_FORMAT_MSG_TYPE) {
-                // Unknown block, skip.
-                continue;
-            }
-            refreshState.invalid = block.getBool(0);
-            refreshState.lastRefreshBaseTxn = block.getLong(Byte.BYTES);
-            refreshState.invalidationReason = Chars.toString(block.getStr(Long.BYTES + Byte.BYTES));
-            return;
-        }
-        final TableToken matViewToken = refreshState.getViewDefinition().getMatViewToken();
-        throw CairoException.critical(0).put("cannot read materialized view state, block not found [view=")
-                .put(matViewToken.getTableName())
-                .put(']');
-    }
-
     public RecordCursorFactory acquireRecordFactory() {
         assert latch.get();
         RecordCursorFactory factory = cursorFactory;
@@ -122,19 +91,6 @@ public class MatViewRefreshState implements QuietCloseable {
     @Override
     public void close() {
         cursorFactory = Misc.free(cursorFactory);
-    }
-
-    @Nullable
-    public String getInvalidationReason() {
-        return invalidationReason;
-    }
-
-    public long getLastRefreshBaseTxn() {
-        return lastRefreshBaseTxn;
-    }
-
-    public long getLastRefreshTimestamp() {
-        return lastRefreshTimestamp;
     }
 
     public long getRecordRowCopierMetadataVersion() {
@@ -155,10 +111,6 @@ public class MatViewRefreshState implements QuietCloseable {
 
     public boolean isDropped() {
         return dropped;
-    }
-
-    public boolean isInvalid() {
-        return invalid;
     }
 
     public boolean isLocked() {
