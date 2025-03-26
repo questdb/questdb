@@ -6566,7 +6566,6 @@ public class SqlOptimiser implements Mutable {
                 model.addBottomUpColumn(timestampColumn);
                 groupByModel.moveSampleByFrom(nested);
                 groupByModel.addBottomUpColumn(timestampColumn);
-                bonusModel.addBottomUpColumn(timestampColumn);
             }
 
             model.moveOrderByFrom(nested);
@@ -6599,16 +6598,17 @@ public class SqlOptimiser implements Mutable {
                 model.addGroupBy(groupByModel.getGroupBy().getQuick(i));
             }
 
-            // add extra group bys and where filters
-
 
             // copy pivot for expressions into group by and where filter
             for (int i = 0, n = nested.getPivotFor().size(); i < n; i++) {
                 ExpressionNode forExpr = nested.getPivotFor().getQuick(i);
 
                 ExpressionNode groupByName = rewritePivotGetAppropriateNameFromInExpr(forExpr);
-                // add to group by
-                groupByModel.addGroupBy(groupByName);
+
+                if (groupByModel.getSampleBy() == null) {
+                    // add to group by
+                    groupByModel.addGroupBy(groupByName);
+                }
 
                 if (!groupByModel.getAliasToColumnMap().contains(groupByName.token)) {
                     // add to select
@@ -6617,7 +6617,6 @@ public class SqlOptimiser implements Mutable {
                             groupByName
                     ));
                 }
-
 
                 // add to where clause
                 if (nested.getWhereClause() == null) {

@@ -657,7 +657,7 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithSampleBy() throws Exception {
         assertQueryAndPlan(
-                "country\t2000\t2010\t2020\n",
+                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n",
                 "(trades where symbol in 'ETH-USDT')\n" +
                         "  pivot (\n" +
                         "    sum(price)\n" +
@@ -678,13 +678,16 @@ public class PivotTest extends AbstractSqlParserTest {
                 true,
                 true,
                 false,
-                "Async Group By workers: 1\n" +
+                "GroupBy vectorized: false\n" +
                         "  keys: [timestamp]\n" +
-                        "  values: [sum(case([(symbol='ETH-USDT' and side='buy'),price,null])),sum(case([(symbol='ETH-USDT' and side='sell'),price,null]))]\n" +
-                        "  filter: symbol in [ETH-USDT]\n" +
-                        "    PageFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: trades\n");
+                        "  values: [sum(case([(symbol='ETH-USDT' and side='buy'),sum,null])),sum(case([(symbol='ETH-USDT' and side='sell'),sum,null]))]\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [timestamp,symbol,side]\n" +
+                        "      values: [sum(price)]\n" +
+                        "      filter: (symbol in [ETH-USDT] and symbol in [ETH-USDT])\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: trades\n");
     }
 
     @Test

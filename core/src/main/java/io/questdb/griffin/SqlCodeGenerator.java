@@ -3908,6 +3908,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             columnCrossIndex.add(timestampIndex);
         }
 
+        if (selectMetadata.getColumnCount() == 0) {
+            // fall out
+            return factory;
+        }
+
         return new SelectedRecordCursorFactory(selectMetadata, columnCrossIndex, factory);
     }
 
