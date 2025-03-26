@@ -483,8 +483,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return getPrimaryColumnIndex(index) + 1;
     }
 
-    public static long getTimestampIndexValue(long timestampIndex, long indexRow) {
-        return Unsafe.getUnsafe().getLong(timestampIndex + indexRow * 16);
+    public static long getTimestampIndexValue(long timestampIndexAddr, long indexRow) {
+        return Unsafe.getUnsafe().getLong(timestampIndexAddr + indexRow * 16);
+    }
+
+    public static void validateDesignatedTimestampBounds(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
+        }
+        if (timestamp < Timestamps.O3_MIN_TS) {
+            throw CairoException.nonCritical().put("designated timestamp before 1970-01-01 is not allowed");
+        }
+        if (timestamp >= Timestamps.YEAR_10000) {
+            throw CairoException.nonCritical().put(
+                    "designated timestamp beyond 9999-12-31 is not allowed");
+        }
     }
 
     @Override
@@ -2292,17 +2305,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public Row newRow(long timestamp) {
+        if (rowAction != ROW_ACTION_NO_TIMESTAMP) {
+            validateDesignatedTimestampBounds(timestamp);
+        }
         switch (rowAction) {
             case ROW_ACTION_NO_PARTITION:
-
-                if (timestamp < Timestamps.O3_MIN_TS) {
-                    throw CairoException.nonCritical().put("timestamp before 1970-01-01 is not allowed");
-                }
-
                 if (timestamp < txWriter.getMaxTimestamp()) {
-                    throw CairoException.nonCritical().put("cannot insert rows out of order to non-partitioned table. Table=").put(path);
+                    throw CairoException.nonCritical()
+                            .put("cannot insert rows out of order to non-partitioned table. Table=").put(path);
                 }
-
                 bumpMasterRef();
                 updateMaxTimestamp(timestamp);
                 break;
@@ -2314,24 +2325,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 o3TimestampSetter(timestamp);
                 return row;
             case ROW_ACTION_OPEN_PARTITION:
-
-                if (timestamp == Numbers.LONG_NULL) {
-                    throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
-                }
-
-                if (timestamp < Timestamps.O3_MIN_TS) {
-                    throw CairoException.nonCritical().put("timestamp before 1970-01-01 is not allowed");
-                }
-
                 if (txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
                     txWriter.setMinTimestamp(timestamp);
                     initLastPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
                 }
-                // fall thru
-
                 rowAction = ROW_ACTION_SWITCH_PARTITION;
-
-            default: // switch partition
+                // fall thru
+            case ROW_ACTION_SWITCH_PARTITION:
                 bumpMasterRef();
                 if (timestamp > partitionTimestampHi || timestamp < txWriter.getMaxTimestamp()) {
                     if (timestamp < txWriter.getMaxTimestamp()) {
@@ -2349,6 +2349,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 updateMaxTimestamp(timestamp);
                 break;
+            default:
+                throw new AssertionError("Invalid row action constant");
         }
         txWriter.append();
         return row;
@@ -5774,13 +5776,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long o3TimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
             if (o3TimestampMin < Timestamps.O3_MIN_TS) {
                 o3InError = true;
-                throw CairoException.nonCritical().put("timestamps before 1970-01-01 are not allowed for O3");
+                throw CairoException.nonCritical().put("O3 commit encountered timestamp before 1970-01-01");
             }
 
             long o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, o3RowCount - 1);
             if (o3TimestampMax < Timestamps.O3_MIN_TS) {
                 o3InError = true;
-                throw CairoException.nonCritical().put("timestamps before 1970-01-01 are not allowed for O3");
+                throw CairoException.nonCritical().put("O3 commit encountered timestamp before 1970-01-01");
             }
 
             // Safe check of the sort. No known way to reproduce
