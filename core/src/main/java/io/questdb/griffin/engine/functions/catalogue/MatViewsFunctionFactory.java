@@ -154,8 +154,6 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
                             TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());
                             final long lastRefreshedBaseTxn = viewState.getLastRefreshBaseTxn();
-                            // todo: add lastRefreshTimestamp to the state file
-                            //  currently this is always empty
                             final long lastRefreshTimestamp = viewState.getLastRefreshTimestamp();
                             // Read base table txn after mat view's last refreshed txn to avoid
                             // showing obsolete base table txn.
