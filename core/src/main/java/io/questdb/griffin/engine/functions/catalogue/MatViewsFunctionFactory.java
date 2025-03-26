@@ -35,6 +35,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.mv.MatViewRefreshState;
 import io.questdb.cairo.mv.MatViewRefreshStateReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -143,11 +144,10 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
                             final MatViewRefreshStateReader viewState;
                             final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, viewToken.getDirName());
-                            path.trimTo(pathLen).concat(viewToken.getDirName()).concat(MatViewRefreshStateReader.MAT_VIEW_STATE_FILE_NAME);
+                            path.trimTo(pathLen).concat(viewToken.getDirName()).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
                             if (isMatViewStateExists) {
                                 reader.of(path.$());
-                                viewState = new MatViewRefreshStateReader();
-                                MatViewRefreshStateReader.readFrom(reader, viewState, viewToken);
+                                viewState = new MatViewRefreshStateReader().of(reader, viewToken);
                             } else {
                                 throw new CairoException().put("materialized view state not found [").put(viewToken).put("]");
                             }

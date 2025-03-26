@@ -113,7 +113,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void apply1RowCommitsManyWritersExceedsBlockSortRanges() throws Exception {
-        testApply1RowCommitManyWriters(Long.MAX_VALUE / 300, 265, 16);
+        testApply1RowCommitManyWriters(Timestamps.YEAR_10000 / 300, 265, 16);
     }
 
     @Test
@@ -3815,7 +3815,7 @@ public class WalWriterTest extends AbstractCairoTest {
         row.append();
     }
 
-    private void testApply1RowCommitManyWriters(long MAX_VALUE, int totalRows, int walWriters) throws Exception {
+    private void testApply1RowCommitManyWriters(long tsStep, int totalRows, int walWriterCount) throws Exception {
         setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
         assertMemoryLeak(() -> {
             execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
@@ -3830,13 +3830,13 @@ public class WalWriterTest extends AbstractCairoTest {
             Rnd rnd = TestUtils.generateRandom(LOG, 672802496975500L, 1742393295792L);
 
             ObjList<WalWriter> writerObjList = new ObjList<>();
-            for (int c = 0; c < walWriters; c++) {
+            for (int c = 0; c < walWriterCount; c++) {
                 writerObjList.add(engine.getWalWriter(tableToken));
             }
 
             try {
                 for (int i = 0; i < totalRows; i++) {
-                    var writer = writerObjList.getQuick(rnd.nextInt(walWriters));
+                    var writer = writerObjList.getQuick(rnd.nextInt(walWriterCount));
 
                     TableWriter.Row row = writer.newRow(ts);
                     row.putInt(0, i);
@@ -3853,7 +3853,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     row.append();
                     writer.commit();
 
-                    ts += MAX_VALUE;
+                    ts += tsStep;
                 }
             } finally {
                 Misc.freeObjListIfCloseable(writerObjList);
@@ -3878,10 +3878,8 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertSql(
-                    "count\tmin\tmax\n" +
-                            totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - MAX_VALUE) + "\n", "select count(*), min(ts), max(ts) from sm"
-            );
+            assertSql("count\tmin\tmax\n" +
+                    totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - tsStep) + "\n", "select count(*), min(ts), max(ts) from sm");
             assertSqlCursors("sm", "select * from sm order by id");
             assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(s as int)");
             assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(v as int)");

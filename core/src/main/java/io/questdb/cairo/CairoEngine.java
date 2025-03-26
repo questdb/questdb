@@ -35,7 +35,6 @@ import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewRefreshState;
-import io.questdb.cairo.mv.MatViewRefreshStateReader;
 import io.questdb.cairo.mv.MatViewRefreshStateStore;
 import io.questdb.cairo.mv.MatViewRefreshStateStoreImpl;
 import io.questdb.cairo.mv.MatViewRefreshTask;
@@ -1450,7 +1449,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             path.trimTo(pathLen).concat(tableToken.getDirName()).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
                             if (isMatViewStateExists) {
                                 reader.of(path.$());
-                                MatViewRefreshStateReader.readFrom(reader, state, tableToken);
+                                MatViewRefreshState.readFrom(reader, state);
                             } else {
                                 blockFileWriter.of(path.$());
                                 MatViewRefreshState.append(state, blockFileWriter);

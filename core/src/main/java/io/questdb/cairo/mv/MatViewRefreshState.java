@@ -24,8 +24,12 @@
 
 package io.questdb.cairo.mv;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.AppendableBlock;
+import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.file.ReadableBlock;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.std.Chars;
@@ -40,7 +44,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.TelemetrySystemEvent.*;
 
-public class MatViewRefreshState extends MatViewRefreshStateReader implements QuietCloseable {
+public class MatViewRefreshState implements QuietCloseable {
+    public static final String MAT_VIEW_STATE_FILE_NAME = "_mv.s";
+    public static final int MAT_VIEW_STATE_FORMAT_MSG_TYPE = 0;
+    public static final int MAT_VIEW_STATE_FORMAT_V2_MSG_TYPE = 1;
 
     // used to avoid concurrent refresh runs
     private final AtomicBoolean latch = new AtomicBoolean(false);
@@ -48,6 +55,10 @@ public class MatViewRefreshState extends MatViewRefreshStateReader implements Qu
     private final MatViewDefinition viewDefinition;
     private RecordCursorFactory cursorFactory;
     private volatile boolean dropped;
+    private volatile boolean invalid;
+    private volatile String invalidationReason;
+    private volatile long lastRefreshBaseTxn = -1;
+    private volatile long lastRefreshTimestamp = Numbers.LONG_NULL;
     private volatile boolean pendingInvalidation;
     private long recordRowCopierMetadataVersion;
     private RecordToRowCopier recordToRowCopier;
@@ -56,7 +67,6 @@ public class MatViewRefreshState extends MatViewRefreshStateReader implements Qu
             @NotNull MatViewDefinition viewDefinition,
             MatViewTelemetryFacade telemetryFacade
     ) {
-        super();
         this.viewDefinition = viewDefinition;
         this.telemetryFacade = telemetryFacade;
     }
@@ -65,20 +75,51 @@ public class MatViewRefreshState extends MatViewRefreshStateReader implements Qu
     public static void append(@Nullable MatViewRefreshState refreshState, @NotNull BlockFileWriter writer) {
         final AppendableBlock block = writer.append();
         append(refreshState, block);
-        block.commit(MAT_VIEW_STATE_FORMAT_MSG_TYPE);
+        block.commit(MAT_VIEW_STATE_FORMAT_V2_MSG_TYPE);
         writer.commit();
     }
 
     public static void append(@Nullable MatViewRefreshState refreshState, @NotNull AppendableBlock block) {
         if (refreshState == null) {
             block.putBool(false);
-            block.putLong(-1);
+            block.putLong(-1L);
+            block.putLong(Numbers.LONG_NULL);
             block.putStr(null);
             return;
         }
-        block.putBool(refreshState.isInvalid());
+        block.putBool(refreshState.invalid);
         block.putLong(refreshState.lastRefreshBaseTxn);
-        block.putStr(refreshState.getInvalidationReason());
+        block.putLong(refreshState.lastRefreshTimestamp);
+        block.putStr(refreshState.invalidationReason);
+    }
+
+    public static void readFrom(@NotNull BlockFileReader reader, @NotNull MatViewRefreshState refreshState) {
+        boolean matViewStateBlockFound = false;
+        final BlockFileReader.BlockCursor cursor = reader.getCursor();
+        while (cursor.hasNext()) {
+            final ReadableBlock block = cursor.next();
+            if (block.type() == MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_TYPE) {
+                matViewStateBlockFound = true;
+                refreshState.invalid = block.getBool(0);
+                refreshState.lastRefreshBaseTxn = block.getLong(Byte.BYTES);
+                refreshState.invalidationReason = Chars.toString(block.getStr(Long.BYTES + Byte.BYTES));
+                // keep going, because V2 block might follow
+                continue;
+            }
+            if (block.type() == MatViewRefreshState.MAT_VIEW_STATE_FORMAT_V2_MSG_TYPE) {
+                refreshState.invalid = block.getBool(0);
+                refreshState.lastRefreshBaseTxn = block.getLong(Byte.BYTES);
+                refreshState.lastRefreshTimestamp = block.getLong(Long.BYTES + Byte.BYTES);
+                refreshState.invalidationReason = Chars.toString(block.getStr(Long.BYTES + Long.BYTES + Byte.BYTES));
+                return;
+            }
+        }
+        if (!matViewStateBlockFound) {
+            final TableToken matViewToken = refreshState.getViewDefinition().getMatViewToken();
+            throw CairoException.critical(0).put("cannot read materialized view state, block not found [view=")
+                    .put(matViewToken.getTableName())
+                    .put(']');
+        }
     }
 
     public RecordCursorFactory acquireRecordFactory() {
@@ -91,6 +132,19 @@ public class MatViewRefreshState extends MatViewRefreshStateReader implements Qu
     @Override
     public void close() {
         cursorFactory = Misc.free(cursorFactory);
+    }
+
+    @Nullable
+    public String getInvalidationReason() {
+        return invalidationReason;
+    }
+
+    public long getLastRefreshBaseTxn() {
+        return lastRefreshBaseTxn;
+    }
+
+    public long getLastRefreshTimestamp() {
+        return lastRefreshTimestamp;
     }
 
     public long getRecordRowCopierMetadataVersion() {
@@ -111,6 +165,10 @@ public class MatViewRefreshState extends MatViewRefreshStateReader implements Qu
 
     public boolean isDropped() {
         return dropped;
+    }
+
+    public boolean isInvalid() {
+        return invalid;
     }
 
     public boolean isLocked() {
@@ -155,8 +213,8 @@ public class MatViewRefreshState extends MatViewRefreshStateReader implements Qu
 
     public void refreshFail(@NotNull BlockFileWriter blockFileWriter, @NotNull Path dbRoot, long refreshTimestamp, String errorMessage) {
         assert latch.get();
-        markAsInvalid(blockFileWriter, dbRoot, errorMessage);
         this.lastRefreshTimestamp = refreshTimestamp;
+        markAsInvalid(blockFileWriter, dbRoot, errorMessage);
         telemetryFacade.store(MAT_VIEW_REFRESH_FAIL, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, errorMessage, 0);
     }
 
