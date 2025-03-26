@@ -258,6 +258,22 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewGroupByTimestamp3() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            try {
+                final String query = "select ts as ts2, avg from (select timestamp_floor('1m', ts) as ts, avg(v) avg from " + TABLE1 + ")";
+                execute("create materialized view test as (" + query + ") partition by day");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "TIMESTAMP column does not exist [name=ts]");
+            }
+            assertNull(getMatViewDefinition("testView"));
+        });
+    }
+
+    @Test
     public void testCreateMatViewInvalidTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
