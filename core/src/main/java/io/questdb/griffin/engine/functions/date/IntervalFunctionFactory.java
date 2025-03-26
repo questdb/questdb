@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.date;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
@@ -77,7 +78,7 @@ public class IntervalFunctionFactory implements FunctionFactory {
         return new Func(loFunc, hiFunc);
     }
 
-    private static class Func extends IntervalFunction implements BinaryFunction {
+    private static class Func extends IntervalFunction implements BinaryFunction, FunctionExtension {
         private final Function hiFunc;
         private final Interval interval = new Interval();
         private final Function loFunc;
@@ -85,6 +86,16 @@ public class IntervalFunctionFactory implements FunctionFactory {
         public Func(Function loFunc, Function hiFunc) {
             this.loFunc = loFunc;
             this.hiFunc = hiFunc;
+        }
+
+        @Override
+        public FunctionExtension extendedOps() {
+            return this;
+        }
+
+        @Override
+        public int getArrayLength() {
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -111,12 +122,32 @@ public class IntervalFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Record getRecord(Record rec) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public Function getRight() {
             return hiFunc;
         }
+
+        @Override
+        public CharSequence getStrA(Record rec, int arrayIndex) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec, int arrayIndex) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int getStrLen(Record rec, int arrayIndex) {
+            throw new UnsupportedOperationException();
+        }
     }
 
-    private static class RuntimeConstFunc extends IntervalFunction implements BinaryFunction {
+    private static class RuntimeConstFunc extends IntervalFunction implements BinaryFunction, FunctionExtension {
         private final Function hiFunc;
         private final Interval interval = new Interval();
         private final Function loFunc;
@@ -126,6 +157,16 @@ public class IntervalFunctionFactory implements FunctionFactory {
             this.position = position;
             this.loFunc = loFunc;
             this.hiFunc = hiFunc;
+        }
+
+        @Override
+        public FunctionExtension extendedOps() {
+            return this;
+        }
+
+        @Override
+        public int getArrayLength() {
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -144,8 +185,28 @@ public class IntervalFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Record getRecord(Record rec) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public Function getRight() {
             return hiFunc;
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec, int arrayIndex) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec, int arrayIndex) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int getStrLen(Record rec, int arrayIndex) {
+            throw new UnsupportedOperationException();
         }
 
         @Override

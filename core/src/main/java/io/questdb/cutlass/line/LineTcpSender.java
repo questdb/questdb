@@ -106,14 +106,14 @@ public class LineTcpSender extends AbstractLineSender {
     @Override
     public final AbstractLineSender timestampColumn(CharSequence name, Instant value) {
         // micros
-        writeFieldName(name).put((value.getEpochSecond() * Timestamps.SECOND_NANOS + value.getNano()) / 1000).put('t');
+        writeFieldName(name, false).put((value.getEpochSecond() * Timestamps.SECOND_NANOS + value.getNano()) / 1000).put('t');
         return this;
     }
 
     @Override
     public final AbstractLineSender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
         // micros
-        writeFieldName(name).put(Timestamps.toMicros(value, unit)).put('t');
+        writeFieldName(name, false).put(Timestamps.toMicros(value, unit)).put('t');
         return this;
     }
 

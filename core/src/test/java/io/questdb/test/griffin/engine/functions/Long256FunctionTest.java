@@ -53,6 +53,11 @@ public class Long256FunctionTest {
     };
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetArray() {
+        function.getArray(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetBin() {
         function.getBin(null);
     }

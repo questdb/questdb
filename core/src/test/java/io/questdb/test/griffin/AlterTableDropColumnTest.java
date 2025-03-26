@@ -88,6 +88,16 @@ public class AlterTableDropColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropArrayColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (arr double[]);");
+            execute("alter table x drop column arr;");
+            assertSql("column\ttype\n",
+                    "select \"column\", \"type\" from table_columns('x')");
+        });
+    }
+
+    @Test
     public void testDropExpectColumnKeyword() throws Exception {
         assertFailure("alter table x drop", 18, "'column' or 'partition' expected");
     }

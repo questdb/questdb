@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
@@ -438,6 +439,9 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                 case ColumnType.UUID:
                     dstFixMem.putLong(masterRecord.getLong128Lo(i));
                     dstFixMem.putLong(masterRecord.getLong128Hi(i));
+                    break;
+                case ColumnType.ARRAY:
+                    ArrayTypeDriver.appendValue(dstFixMem, dstVarMem, masterRecord.getArray(i, toType));
                     break;
                 default:
                     throw CairoException.nonCritical()

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.bool;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
@@ -44,13 +45,13 @@ public class AllNotEqVarcharFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        // second argument is still a string array
-        return "<>all(Øs[])";
+        // even though this is as VARCHAR function, the second argument is still a string array
+        return "<>all(Øw)";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        Function arrayFunction = args.getQuick(1);
+        FunctionExtension arrayFunction = args.getQuick(1).extendedOps();
         int arraySize = arrayFunction.getArrayLength();
         if (arraySize == 0) {
             return BooleanConstant.TRUE;
