@@ -487,6 +487,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         configuration = node1.getConfiguration();
         securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getRootContext();
         engine = node1.getEngine();
+        engine.load();
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.clearCache();
         }
