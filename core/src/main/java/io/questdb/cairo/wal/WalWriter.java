@@ -91,6 +91,7 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableWriter.validateDesignatedTimestampBounds;
@@ -303,36 +304,13 @@ public class WalWriter implements TableWriterAPI {
 
     @Override
     public void commit() {
-        checkDistressed();
-        try {
-            if (inTransaction()) {
-                isCommittingData = true;
-                final long rowsToCommit = getUncommittedRowCount();
-                lastSegmentTxn = events.appendData(currentTxnStartRowNum, segmentRowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
-                // flush disk before getting next txn
-                syncIfRequired();
-                final long seqTxn = getSequencerTxn();
-                LOG.info().$("commit [wal=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
-                        .$(", segTxn=").$(lastSegmentTxn)
-                        .$(", seqTxn=").$(seqTxn)
-                        .$(", rowLo=").$(currentTxnStartRowNum).$(", rowHi=").$(segmentRowCount)
-                        .$(", minTs=").$ts(txnMinTimestamp).$(", maxTs=").$ts(txnMaxTimestamp).I$();
-                resetDataTxnProperties();
-                mayRollSegmentOnNextRow();
-                metrics.walMetrics().addRowsWritten(rowsToCommit);
-            }
-        } catch (CairoException ex) {
-            distressed = true;
-            throw ex;
-        } catch (Throwable th) {
-            // If distressed, no need to rollback, WalWriter will not be used anymore
-            if (!isDistressed()) {
-                rollback();
-            }
-            throw th;
-        } finally {
-            isCommittingData = false;
-        }
+        // plain old commit
+        commit0(Long.MIN_VALUE, Long.MIN_VALUE);
+    }
+
+    public void commitWithExtra(long lastRefreshBaseTxn, long lastRefreshTimestamp) {
+        assert lastRefreshBaseTxn != Numbers.LONG_NULL;
+        commit0(lastRefreshBaseTxn, lastRefreshTimestamp);
     }
 
     public void doClose(boolean truncate) {
@@ -433,6 +411,16 @@ public class WalWriter implements TableWriterAPI {
 
     public boolean inTransaction() {
         return segmentRowCount > currentTxnStartRowNum;
+    }
+
+    public void invalidate(boolean invalid, @Nullable CharSequence invalidationReason) {
+        try {
+            lastSegmentTxn = events.invalidate(invalid, invalidationReason);
+            getSequencerTxn();
+        } catch (Throwable th) {
+            rollback();
+            throw th;
+        }
     }
 
     public boolean isDistressed() {
@@ -933,6 +921,47 @@ public class WalWriter implements TableWriterAPI {
             } else {
                 ff.close(secondaryFd);
             }
+        }
+    }
+
+    private void commit0(long lastRefreshBaseTxn, long lastRefreshTimestamp) {
+        checkDistressed();
+        try {
+            if (inTransaction()) {
+                isCommittingData = true;
+                final long rowsToCommit = getUncommittedRowCount();
+                lastSegmentTxn = events.appendData(
+                        currentTxnStartRowNum,
+                        segmentRowCount,
+                        txnMinTimestamp,
+                        txnMaxTimestamp,
+                        txnOutOfOrder,
+                        lastRefreshBaseTxn,
+                        lastRefreshTimestamp
+                );
+                // flush disk before getting next txn
+                syncIfRequired();
+                final long seqTxn = getSequencerTxn();
+                LOG.info().$("commit [wal=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
+                        .$(", segTxn=").$(lastSegmentTxn)
+                        .$(", seqTxn=").$(seqTxn)
+                        .$(", rowLo=").$(currentTxnStartRowNum).$(", rowHi=").$(segmentRowCount)
+                        .$(", minTs=").$ts(txnMinTimestamp).$(", maxTs=").$ts(txnMaxTimestamp).I$();
+                resetDataTxnProperties();
+                mayRollSegmentOnNextRow();
+                metrics.walMetrics().addRowsWritten(rowsToCommit);
+            }
+        } catch (CairoException ex) {
+            distressed = true;
+            throw ex;
+        } catch (Throwable th) {
+            // If distressed, no need to rollback, WalWriter will not be used anymore
+            if (!isDistressed()) {
+                rollback();
+            }
+            throw th;
+        } finally {
+            isCommittingData = false;
         }
     }
 
