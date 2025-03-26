@@ -653,6 +653,28 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByArrayKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][], i int)");
+            execute("INSERT INTO tango VALUES (ARRAY[[1.0, 2.0], [3.0, 4.0]], 0)");
+            execute("INSERT INTO tango VALUES (ARRAY[[1.0, 2.0], [3.0, 4.0]], 1)");
+            execute("INSERT INTO tango VALUES (ARRAY[[1.0, 2.0], [3.0, 4.1]], 2)");
+            execute("INSERT INTO tango VALUES (ARRAY[[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], 0)");
+            execute("INSERT INTO tango VALUES (null, 0)");
+
+            assertQuery("arr\tcount\n" +
+                            "[[1.0,2.0],[3.0,4.0]]\t2\n" +
+                            "[[1.0,2.0],[3.0,4.1]]\t1\n" +
+                            "[[1.0,2.0],[3.0,4.0],[5.0,6.0]]\t1\n" +
+                            "null\t1\n",
+                    "select arr, count(*)\n" +
+                            "from tango\n" +
+                            "group by arr;",
+                    true);
+        });
+    }
+
+    @Test
     public void testInsertAsSelectDoubleNoWAL() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table blah (a double[][])");

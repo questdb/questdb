@@ -157,14 +157,14 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         Unsafe.getUnsafe().putInt(appendAddress, dimCount);
         appendAddress += Integer.BYTES;
 
+        int cardinality = value.getCardinality();
+        Unsafe.getUnsafe().putInt(appendAddress, cardinality);
+        appendAddress += Integer.BYTES;
+
         for (int i = 0; i < dimCount; i++) {
             Unsafe.getUnsafe().putInt(appendAddress, value.getDimLen(i));
             appendAddress += Integer.BYTES;
         }
-
-        int cardinality = value.getCardinality();
-        Unsafe.getUnsafe().putInt(appendAddress, cardinality);
-        appendAddress += Integer.BYTES;
 
         // todo: we only support vanilla arrays for now
         assert value.isVanilla();
@@ -290,6 +290,26 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
     public static long getAuxVectorOffsetStatic(long row) {
         return ARRAY_AUX_WIDTH_BYTES * row;
+    }
+
+    public static BorrowedArray getPlainValue(long dataMemAddr, @NotNull BorrowedArray value) {
+        short elementType = Unsafe.getUnsafe().getShort(dataMemAddr);
+        if (elementType == ColumnType.NULL) {
+            value.ofNull();
+            return value;
+        }
+        dataMemAddr += Short.BYTES;
+
+        int nDim = Unsafe.getUnsafe().getInt(dataMemAddr);
+        dataMemAddr += Integer.BYTES;
+
+        int cardinality = Unsafe.getUnsafe().getInt(dataMemAddr);
+        dataMemAddr += Integer.BYTES;
+
+        int type = ColumnType.encodeArrayType(elementType, nDim);
+        long valuePtr = dataMemAddr + (long) nDim * Integer.BYTES;
+        value.of(type, nDim, dataMemAddr, valuePtr, cardinality * ColumnType.sizeOf(elementType));
+        return value;
     }
 
     public static int getSingleMemValueByteCount(@NotNull ArrayView value) {

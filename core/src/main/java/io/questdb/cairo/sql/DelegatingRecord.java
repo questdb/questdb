@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
@@ -32,6 +33,11 @@ import io.questdb.std.str.Utf8Sequence;
 
 public class DelegatingRecord implements Record {
     protected Record base;
+
+    @Override
+    public ArrayView getArray(int col, int columnType) {
+        return base.getArray(col, columnType);
+    }
 
     @Override
     public BinarySequence getBin(int col) {

@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.LimitOverflowException;
@@ -67,8 +68,11 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
     }
 
     @Override
-    public void putArray(ArrayView view) {
-        throw new UnsupportedOperationException("not implemented yet");
+    public void putArray(ArrayView value) {
+        int byteCount = ArrayTypeDriver.getSingleMemValueByteCount(value);
+        checkCapacity(byteCount);
+        ArrayTypeDriver.appendPlainValue(appendAddress, value);
+        appendAddress += byteCount;
     }
 
     @Override
