@@ -33,13 +33,13 @@ import org.junit.Before;
 import org.junit.Test;
 
 public class WalTablesInitialisationTest extends AbstractBootstrapTest {
+
     @Before
     public void setUp() {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
     }
-
 
     @Test
     public void testWalTablesFunctionBeforeSeqTrackerInitialized() throws Exception {
