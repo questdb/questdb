@@ -247,10 +247,31 @@ public class ArrayTest extends AbstractCairoTest {
                             "  case \n" +
                             "    when ts in '2020' then array[]::double[]\n" +
                             "    when ts in '2021' then array[1.0] \n" +
-                            "    when ts in '2022' then array[1.0, 2.0] \n" +
+                            "    when ts in '2022' then '{1.0, 2.0}'::double[] \n" +
                             "    when ts in '2023' then array[1.0, 2.0, 3.0] \n" +
                             "    when ts in '2024' then array[1.0, 2.0, 3.0, 4.0] \n" +
                             "    else a \n" +
+                            "  end, *\n" +
+                            "from tango;",
+                    null,
+                    "ts",
+                    true,
+                    true);
+
+            assertQuery("case\tts\ti\ta\n" +
+                            "empty\t2020-01-01T00:00:00.000000Z\t0\t[]\n" +
+                            "literal\t2021-01-01T00:00:00.000000Z\t1\t[-1.0]\n" +
+                            "casting\t2022-01-01T00:00:00.000000Z\t2\t[-1.0,-2.0]\n" +
+                            "whatever\t2023-01-01T00:00:00.000000Z\t3\t[-1.0,-2.0,-3.0]\n" +
+                            "whatever\t2024-01-01T00:00:00.000000Z\t4\t[-1.0,-2.0,-3.0,-4.0]\n" +
+                            "whatever\t2025-01-01T00:00:00.000000Z\t5\t[-1.0,-2.0,-3.0,-4.0,-5.0]\n",
+                    "select \n" +
+                            "  case \n" +
+                            "    when a = ARRAY[-1.0] then 'literal'\n" +
+                            "    when a = '{-1,-2}'::double[] then 'casting'\n" +
+                            "    when a = ARRAY[[1.0],[2.0]] then 'never'\n" +
+                            "    when a = ARRAY[]::double[] then 'empty'\n" +
+                            "    else 'whatever'\n" +
                             "  end, *\n" +
                             "from tango;",
                     null,
