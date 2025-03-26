@@ -230,11 +230,25 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateMatViewGroupByTimestamp() throws Exception {
+    public void testCreateMatViewGroupByTimestamp1() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
             final String query = "select timestamp_floor('1m', ts) as ts, avg(v) from " + TABLE1 + " order by ts";
+            execute("create materialized view test as (" + query + ") partition by day");
+
+            assertQuery("ts\tavg\n", "test", "ts", true, true);
+            assertMatViewDefinition("test", query, TABLE1, 1, 'm');
+            assertMatViewMetadata("test", query, TABLE1, 1, 'm');
+        });
+    }
+
+    @Test
+    public void testCreateMatViewGroupByTimestamp2() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query = "select timestamp_floor('1m', ts, 0::timestamp) as ts, avg(v) from " + TABLE1;
             execute("create materialized view test as (" + query + ") partition by day");
 
             assertQuery("ts\tavg\n", "test", "ts", true, true);
