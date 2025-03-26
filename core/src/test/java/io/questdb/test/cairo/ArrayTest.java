@@ -222,6 +222,55 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseWhen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, i int, a DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO tango VALUES " +
+                    "('2020-01-01T00:00:00.000Z', 0, ARRAY[]), " +
+                    "('2021-01-01T00:00:00.000Z', 1, ARRAY[-1.0]), " +
+                    "('2022-01-01T00:00:00.000Z', 2, ARRAY[-1.0, -2.0]), " +
+                    "('2023-01-01T00:00:00.000Z', 3, ARRAY[-1.0, -2.0, -3.0]), " +
+                    "('2024-01-01T00:00:00.000Z', 4, ARRAY[-1.0, -2.0, -3.0, -4.0]), " +
+                    "('2025-01-01T00:00:00.000Z', 5, ARRAY[-1.0, -2.0, -3.0, -4.0, -5.0]);"
+            );
+
+            drainWalQueue();
+
+            assertQuery("case\tts\ti\ta\n" +
+                            "[]\t2020-01-01T00:00:00.000000Z\t0\t[]\n" +
+                            "[1.0]\t2021-01-01T00:00:00.000000Z\t1\t[-1.0]\n" +
+                            "[1.0,2.0]\t2022-01-01T00:00:00.000000Z\t2\t[-1.0,-2.0]\n" +
+                            "[1.0,2.0,3.0]\t2023-01-01T00:00:00.000000Z\t3\t[-1.0,-2.0,-3.0]\n" +
+                            "[1.0,2.0,3.0,4.0]\t2024-01-01T00:00:00.000000Z\t4\t[-1.0,-2.0,-3.0,-4.0]\n" +
+                            "[-1.0,-2.0,-3.0,-4.0,-5.0]\t2025-01-01T00:00:00.000000Z\t5\t[-1.0,-2.0,-3.0,-4.0,-5.0]\n",
+                    "select \n" +
+                            "  case \n" +
+                            "    when ts in '2020' then array[]::double[]\n" +
+                            "    when ts in '2021' then array[1.0] \n" +
+                            "    when ts in '2022' then array[1.0, 2.0] \n" +
+                            "    when ts in '2023' then array[1.0, 2.0, 3.0] \n" +
+                            "    when ts in '2024' then array[1.0, 2.0, 3.0, 4.0] \n" +
+                            "    else a \n" +
+                            "  end, *\n" +
+                            "from tango;",
+                    null,
+                    "ts",
+                    true,
+                    true);
+
+            assertException("select \n" +
+                            "  case \n" +
+                            "    when ts in '2021' then array[1.0] \n" +
+                            "    when ts in '2024' then 1 \n" +
+                            "    else a \n" +
+                            "  end, *\n" +
+                            "from tango;",
+                    82,
+                    "inconvertible types: INT -> DOUBLE[]");
+        });
+    }
+
+    @Test
     public void testChangeColumnToUnsupportedType() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (n LONG)");
