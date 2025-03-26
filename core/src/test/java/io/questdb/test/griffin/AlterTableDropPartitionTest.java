@@ -34,6 +34,8 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
@@ -614,8 +616,20 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testDropSplitLastPartition() throws Exception {
-        assertMemoryLeak(() -> {
-                    createXSplit(Timestamps.DAY_MICROS / 2000); // 300 records per day
+        assertMemoryLeak
+                (() -> {
+                            createXSplit(2000, 750); // 2000 records per day
+                            execute("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
+                            assertSql("count\n0\n", "select count() from x where timestamp in '2018-01-01'");
+                        }
+                );
+    }
+
+    @Test
+    public void testDropSplitMidPartition() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    createXSplit(Timestamps.DAY_MICROS / 300, 299); // 300 records per day
                     execute("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
                     assertSql("count\n0\n", "select count() from x where timestamp in '2018-01-01'");
                 }
@@ -623,9 +637,35 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDropSplitMidPartition() throws Exception {
-        assertMemoryLeak(() -> {
-                    createXSplit(Timestamps.DAY_MICROS / 300); // 300 records per day
+    public void testDropSplitMidPartitionFails() throws Exception {
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            int i = 0;
+
+            @Override
+            public long read(long fd, long buf, long len, long offset) {
+                if (offset == 0 && len == 8 && i++ == 1) {
+                    return -1;
+                }
+                return Files.read(fd, buf, len, offset);
+            }
+
+        };
+        assertMemoryLeak(ff,
+                () -> {
+                    createXSplit(Timestamps.DAY_MICROS / 300, 290);
+                    assertSql("count\n308\n", "select count() from x where timestamp in '2018-01-01'");
+
+                    try {
+                        execute("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
+                        Assert.fail();
+                    } catch (CairoException ex) {
+                        TestUtils.assertContains(ex.getFlyweightMessage(), "could not read long");
+                    }
+
+                    // no split partition deleted
+                    assertSql("count\n308\n", "select count() from x where timestamp in '2018-01-01'");
+
+                    // Retry should work
                     execute("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
                     assertSql("count\n0\n", "select count() from x where timestamp in '2018-01-01'");
                 }
@@ -900,35 +940,37 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         });
     }
 
-    private void createXSplit(long increment) throws SqlException {
+    private void createXSplit(long increment, int splitAfter) throws SqlException {
         Overrides overrides = node1.getConfigurationOverrides();
-        overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 200 / 2);
+        overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
         createX("DAY", increment);
 
-        try {
-            long nextTimestamp = IntervalUtils.parseFloorPartialTimestamp("2018-01-01") + increment * 200 + 1;
-            String nextTsStr = Timestamps.toUSecString(nextTimestamp);
-            execute("insert into x " +
-                    "select" +
-                    " cast(x as int) i," +
-                    " rnd_symbol('msft','ibm', 'googl') sym," +
-                    " round(rnd_double(0)*100, 3) amt," +
-                    " cast('" + nextTsStr + "' as timestamp) + x * " + increment + " ts," +
-                    " rnd_boolean() b," +
-                    " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                    " rnd_double(2) d," +
-                    " rnd_float(2) e," +
-                    " rnd_short(10,1024) f," +
-                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                    " rnd_symbol(4,4,4,2) ik," +
-                    " rnd_long() j," +
-                    " timestamp_sequence(0, 1000000000) k," +
-                    " rnd_byte(2,50) l," +
-                    " rnd_bin(10, 20, 2) m," +
-                    " rnd_str(5,16,2) n" +
-                    " from long_sequence(100)");
-        } catch (NumericException e) {
-            throw new RuntimeException(e);
+        try (TableReader ignore = engine.getReader(engine.verifyTableName("x"))) {
+            try {
+                long nextTimestamp = IntervalUtils.parseFloorPartialTimestamp("2018-01-01") + increment * splitAfter + 1;
+                String nextTsStr = Timestamps.toUSecString(nextTimestamp);
+                execute("insert into x " +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " cast('" + nextTsStr + "' as timestamp) + x * " + increment + " ts," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(0, 1000000000) k," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n" +
+                        " from long_sequence(100)");
+            } catch (NumericException e) {
+                throw new RuntimeException(e);
+            }
         }
     }
 
