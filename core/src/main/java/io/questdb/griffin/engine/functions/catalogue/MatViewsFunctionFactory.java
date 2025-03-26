@@ -35,7 +35,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.mv.MatViewDefinition;
-import io.questdb.cairo.mv.MatViewRefreshState;
+import io.questdb.cairo.mv.MatViewRefreshStateReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -137,23 +137,22 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     final int n = viewTokens.size();
                     while (viewIndex < n) {
                         final TableToken viewToken = viewTokens.get(viewIndex);
-                        final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(viewToken);
-                        assert matViewDefinition != null : "materialized view definition not found: " + viewToken;
+                        if (engine.getTableTokenIfExists(viewToken.getTableName()) != null) {
+                            final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(viewToken);
+                            assert matViewDefinition != null : "materialized view definition not found: " + viewToken;
 
-                        final MatViewRefreshState viewState;
-                        final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, viewToken.getDirName());
-                        path.trimTo(pathLen).concat(viewToken.getDirName()).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
-                        if (isMatViewStateExists) {
-                            reader.of(path.$());
-                            // todo: create a read-only view of MatViewRefreshState
-                            viewState = new MatViewRefreshState(matViewDefinition, false, null);
-                            MatViewRefreshState.readFrom(reader, viewState);
-                        } else {
-                            throw new CairoException().put("materialized view state not found [").put(viewToken).put("]");
-                        }
+                            final MatViewRefreshStateReader viewState;
+                            final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, viewToken.getDirName());
+                            path.trimTo(pathLen).concat(viewToken.getDirName()).concat(MatViewRefreshStateReader.MAT_VIEW_STATE_FILE_NAME);
+                            if (isMatViewStateExists) {
+                                reader.of(path.$());
+                                viewState = new MatViewRefreshStateReader();
+                                MatViewRefreshStateReader.readFrom(reader, viewState, viewToken);
+                            } else {
+                                throw new CairoException().put("materialized view state not found [").put(viewToken).put("]");
+                            }
 
-                        if (!viewState.isDropped()) {
-                            TableToken baseTableToken = engine.getTableTokenIfExists(viewState.getViewDefinition().getBaseTableName());
+                            TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());
                             final long lastRefreshedBaseTxn = viewState.getLastRefreshBaseTxn();
                             // todo: add lastRefreshTimestamp to the state file
                             //  currently this is always empty
@@ -164,7 +163,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                                     ? engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn() : -1;
 
                             record.of(
-                                    viewState.getViewDefinition(),
+                                    matViewDefinition,
                                     lastRefreshTimestamp,
                                     lastRefreshedBaseTxn,
                                     lastAppliedBaseTxn,

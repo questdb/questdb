@@ -75,7 +75,6 @@ public class MatViewGraphImpl implements MatViewGraph {
         final TableToken matViewToken = viewDefinition.getMatViewToken();
         final MatViewRefreshState state = new MatViewRefreshState(
                 viewDefinition,
-                false,
                 matViewTelemetryFacade
         );
 
