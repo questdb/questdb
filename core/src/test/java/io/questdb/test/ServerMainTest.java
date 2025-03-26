@@ -509,6 +509,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "line.tcp.min.idle.ms.before.writer.release\tQDB_LINE_TCP_MIN_IDLE_MS_BEFORE_WRITER_RELEASE\t500\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.msg.buffer.size\tQDB_LINE_TCP_MSG_BUFFER_SIZE\t131072\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.recv.buffer.size\tQDB_LINE_TCP_RECV_BUFFER_SIZE\t131072\tdefault\tfalse\tfalse\n" +
+                                    "line.tcp.max.recv.buffer.size\tQDB_LINE_TCP_MAX_RECV_BUFFER_SIZE\t1073741824\tdefault\tfalse\false\n" +
                                     "line.tcp.net.recv.buf.size\tQDB_LINE_TCP_NET_RECV_BUF_SIZE\t-1\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.net.connection.rcvbuf\tQDB_LINE_TCP_NET_CONNECTION_RCVBUF\t-1\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.net.active.connection.limit\tQDB_LINE_TCP_NET_ACTIVE_CONNECTION_LIMIT\t256\tdefault\tfalse\tfalse\n" +

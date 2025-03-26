@@ -37,6 +37,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -153,6 +154,11 @@ public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConf
     @Override
     public int getMaxMeasurementSize() {
         return 512;
+    }
+
+    @Override
+    public long getMaxRecvBufferSize() {
+        return Numbers.SIZE_1GB;
     }
 
     @Override

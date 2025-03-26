@@ -558,6 +558,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long lineTcpIOWorkerYieldThreshold;
     private long lineTcpMaintenanceInterval;
     private int lineTcpMaxMeasurementSize;
+    private long lineTcpMaxRecvBufferSize;
     private int lineTcpNetBindIPv4Address;
     private int lineTcpNetBindPort;
     private long lineTcpNetConnectionHeartbeatInterval;
@@ -1544,6 +1545,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpMaxMeasurementSize = getIntSize(properties, env, PropertyKey.LINE_TCP_MAX_MEASUREMENT_SIZE, 32768);
                 if (lineTcpMaxMeasurementSize > lineTcpRecvBufferSize) {
                     lineTcpRecvBufferSize = lineTcpMaxMeasurementSize;
+                }
+                this.lineTcpMaxRecvBufferSize = getLongSize(properties, env, PropertyKey.LINE_TCP_MAX_RECV_BUFFER_SIZE, Numbers.SIZE_1GB);
+                if (lineTcpRecvBufferSize > lineTcpMaxRecvBufferSize) {
+                    lineTcpMaxRecvBufferSize = lineTcpRecvBufferSize;
                 }
 
                 this.lineTcpWriterQueueCapacity = getQueueCapacity(properties, env, PropertyKey.LINE_TCP_WRITER_QUEUE_CAPACITY, 128);
@@ -4576,6 +4581,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMaxMeasurementSize() {
             return lineTcpMaxMeasurementSize;
+        }
+
+        @Override
+        public long getMaxRecvBufferSize() {
+            return lineTcpMaxRecvBufferSize;
         }
 
         @Override

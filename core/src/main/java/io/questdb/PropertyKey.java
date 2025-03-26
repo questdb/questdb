@@ -346,6 +346,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     LINE_TCP_TIMESTAMP("line.tcp.timestamp"),
     LINE_TCP_MSG_BUFFER_SIZE("line.tcp.msg.buffer.size"), // deprecated
     LINE_TCP_RECV_BUFFER_SIZE("line.tcp.recv.buffer.size"),
+    LINE_TCP_MAX_RECV_BUFFER_SIZE("line.tcp.max.recv.buffer.size"),
     LINE_TCP_MAX_MEASUREMENT_SIZE("line.tcp.max.measurement.size"),
     LINE_TCP_WRITER_QUEUE_CAPACITY("line.tcp.writer.queue.capacity"),
     LINE_TCP_WRITER_WORKER_COUNT("line.tcp.writer.worker.count"),

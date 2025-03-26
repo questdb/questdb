@@ -216,6 +216,11 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     }
 
     @Override
+    public long getMaxRecvBufferSize() {
+        return getDelegate().getMaxRecvBufferSize();
+    }
+
+    @Override
     public Metrics getMetrics() {
         return metrics;
     }
