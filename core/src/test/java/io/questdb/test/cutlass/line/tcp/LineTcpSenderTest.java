@@ -24,7 +24,6 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
-import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
@@ -46,7 +45,6 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -68,13 +66,6 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     private static final Consumer<Sender> SET_TABLE_NAME_ACTION = s -> s.table("mytable");
     private final static String TOKEN = "UvuVb1USHGRRT08gEnwN2zGZrvM4MsLQ5brgF6SVkAw=";
     private final static PrivateKey AUTH_PRIVATE_KEY1 = AuthUtils.toPrivateKey(TOKEN);
-
-    @Before
-    @Override
-    public void setUp() {
-        super.setUp();
-        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, true);
-    }
 
     @Test
     public void testArrayDouble() throws Exception {
@@ -380,7 +371,6 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testInsertLargeArray() throws Exception {
         String tableName = "arr_large_test";
-        // wal = true, arr_large_test is wal table
         runInContext(r -> {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
