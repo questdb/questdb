@@ -68,7 +68,6 @@ public class MatViewRefreshState implements QuietCloseable {
     ) {
         this.viewDefinition = viewDefinition;
         this.telemetryFacade = telemetryFacade;
-        this.invalid = false;
     }
 
     // refreshState can be null, in this case "default" record will be written
@@ -82,18 +81,20 @@ public class MatViewRefreshState implements QuietCloseable {
     public static void append(@Nullable MatViewRefreshState refreshState, @NotNull AppendableBlock block) {
         if (refreshState == null) {
             block.putBool(false);
-            block.putLong(-1);
+            block.putLong(-1L);
+            block.putLong(Numbers.LONG_NULL);
             block.putStr(null);
             return;
         }
         block.putBool(refreshState.isInvalid());
         block.putLong(refreshState.lastRefreshBaseTxn);
+        block.putLong(refreshState.lastRefreshTimestamp);
         block.putStr(refreshState.getInvalidationReason());
     }
 
     public static void readFrom(@NotNull BlockFileReader reader, @NotNull MatViewRefreshState refreshState) {
         final BlockFileReader.BlockCursor cursor = reader.getCursor();
-        // Iterate through the block until we find the one we recognize.
+        // Iterate through the blocks until we find the one we recognize.
         while (cursor.hasNext()) {
             final ReadableBlock block = cursor.next();
             if (block.type() != MAT_VIEW_STATE_FORMAT_MSG_TYPE) {
@@ -102,9 +103,8 @@ public class MatViewRefreshState implements QuietCloseable {
             }
             refreshState.invalid = block.getBool(0);
             refreshState.lastRefreshBaseTxn = block.getLong(Byte.BYTES);
-            // todo: add lastRefreshTimestamp to the state file
-            refreshState.lastRefreshTimestamp = Numbers.LONG_NULL;
-            refreshState.invalidationReason = Chars.toString(block.getStr(Long.BYTES + Byte.BYTES));
+            refreshState.lastRefreshTimestamp = block.getLong(Long.BYTES + Byte.BYTES);
+            refreshState.invalidationReason = Chars.toString(block.getStr(Long.BYTES + Long.BYTES + Byte.BYTES));
             return;
         }
         final TableToken matViewToken = refreshState.getViewDefinition().getMatViewToken();
@@ -204,8 +204,8 @@ public class MatViewRefreshState implements QuietCloseable {
 
     public void refreshFail(@NotNull BlockFileWriter blockFileWriter, @NotNull Path dbRoot, long refreshTimestamp, String errorMessage) {
         assert latch.get();
-        markAsInvalid(blockFileWriter, dbRoot, errorMessage);
         this.lastRefreshTimestamp = refreshTimestamp;
+        markAsInvalid(blockFileWriter, dbRoot, errorMessage);
         telemetryFacade.store(MAT_VIEW_REFRESH_FAIL, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, errorMessage, 0);
     }
 

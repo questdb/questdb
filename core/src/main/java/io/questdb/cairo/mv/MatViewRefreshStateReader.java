@@ -70,9 +70,8 @@ public class MatViewRefreshStateReader {
             }
             invalid = block.getBool(0);
             lastRefreshBaseTxn = block.getLong(Byte.BYTES);
-            // todo: add lastRefreshTimestamp to the state file
-            lastRefreshTimestamp = Numbers.LONG_NULL;
-            invalidationReason = Chars.toString(block.getStr(Long.BYTES + Byte.BYTES));
+            lastRefreshTimestamp = block.getLong(Long.BYTES + Byte.BYTES);
+            invalidationReason = Chars.toString(block.getStr(Long.BYTES + Long.BYTES + Byte.BYTES));
             return this;
         }
         throw CairoException.critical(0).put("cannot read materialized view state, block not found [view=")
