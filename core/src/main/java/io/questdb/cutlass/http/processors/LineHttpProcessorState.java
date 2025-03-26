@@ -43,7 +43,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 import io.questdb.std.WeakClosableObjectPool;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sink;
@@ -179,10 +178,10 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
             // Last line did not have \n as a last character
             // this is allowed by the protocol, no error in Influx
             // NEEDS_REED status means that there is still a buffer space to read to.
-            long recvBufPos = recvBuffer.getRecvBufPos();
-            assert recvBufPos < recvBuffer.getRecvBufEnd();
+            long recvBufPos = recvBuffer.getBufPos();
+            assert recvBufPos < recvBuffer.getBufEnd();
             Unsafe.getUnsafe().putByte(recvBufPos, (byte) '\n');
-            recvBuffer.setRecvBufPos(recvBufPos++);
+            recvBuffer.setBufPos(recvBufPos + 1);
             currentStatus = processLocalBuffer();
             if (currentStatus == Status.NEEDS_READ) {
                 // added \n and parse result is still NEEDS_READ, means there was nothing in this line, e.g.
@@ -200,7 +199,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
 
         long pos = lo;
         while (pos < hi) {
-            pos = copyToLocalBuffer(pos, hi);
+            pos = recvBuffer.copyToLocalBuffer(pos, hi);
             currentStatus = processLocalBuffer();
             if (stopParse()) {
                 return;
@@ -256,17 +255,8 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         }
     }
 
-    private long copyToLocalBuffer(long lo, long hi) {
-        long recvBufPos = recvBuffer.getRecvBufPos();
-        long copyLen = Math.min(hi - lo, recvBuffer.getRecvBufEnd() - recvBufPos);
-        assert copyLen > 0;
-        Vect.memcpy(recvBufPos, lo, copyLen);
-        recvBuffer.setRecvBufPos(recvBufPos + copyLen);
-        return lo + copyLen;
-    }
-
     private long getErrorLogLineHi(LineTcpParser parser) {
-        return Math.min(parser.getBufferAddress() + 1, recvBuffer.getRecvBufPos());
+        return Math.min(parser.getBufferAddress() + 1, recvBuffer.getBufPos());
     }
 
     private Status handleCommitError(Throwable ex) {
@@ -359,7 +349,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 .$(", errorId=").$(ERROR_ID).$('-').$(errorId)
                 .$(", errno=").$(ex.getErrno());
         if (logMessageOnError) {
-            errorRec.$(", mangledLine=`").$utf8(recvBuffer.getRecvBufStartOfMeasurement(), getErrorLogLineHi(parser)).$('`');
+            errorRec.$(", mangledLine=`").$utf8(recvBuffer.getBufStartOfMeasurement(), getErrorLogLineHi(parser)).$('`');
         }
         errorRec.$(", ex=").$(ex.getFlyweightMessage()).I$();
 
@@ -376,7 +366,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 .$('[').$(fd).$("] could not process line data [table=").$(parser.getMeasurementName())
                 .$(", errorId=").$(ERROR_ID).$('-').$(errorId);
         if (logMessageOnError) {
-            errorRec.$(", mangledLine=`").$utf8(recvBuffer.getRecvBufStartOfMeasurement(), getErrorLogLineHi(parser)).$('`');
+            errorRec.$(", mangledLine=`").$utf8(recvBuffer.getBufStartOfMeasurement(), getErrorLogLineHi(parser)).$('`');
         }
         errorRec.$(", ex=").$(ex.getMessage()).I$();
 
@@ -399,7 +389,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 .$(", error=").$(error.subSequence(errorPos, error.length()))
                 .$(", fd=").$(fd);
         if (logMessageOnError) {
-            errorRec.$(", mangledLine=`").$utf8(recvBuffer.getRecvBufStartOfMeasurement(), parser.getBufferAddress()).$('`');
+            errorRec.$(", mangledLine=`").$utf8(recvBuffer.getBufStartOfMeasurement(), parser.getBufferAddress()).$('`');
         }
         errorRec.I$();
     }
@@ -414,9 +404,9 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
 
     private Status processLocalBuffer() {
         Status status = Status.OK;
-        while (recvBuffer.getRecvBufPos() > recvBuffer.getRecvBufStart()) {
+        while (recvBuffer.getBufPos() > recvBuffer.getBufStart()) {
             try {
-                LineTcpParser.ParseResult rc = parser.parseMeasurement(recvBuffer.getRecvBufPos());
+                LineTcpParser.ParseResult rc = parser.parseMeasurement(recvBuffer.getBufPos());
                 switch (rc) {
                     case MEASUREMENT_COMPLETE: {
                         if ((status = appendMeasurement()) != Status.OK) {
@@ -432,7 +422,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                     }
 
                     case BUFFER_UNDERFLOW: {
-                        if (!recvBuffer.compactOrGrowBuffer()) {
+                        if (!recvBuffer.tryCompactOrGrowBuffer()) {
                             errorLine = ++line;
                             int errorPos = error.length();
                             error.put("unable to read data: ILP line does not fit QuestDB ILP buffer size");

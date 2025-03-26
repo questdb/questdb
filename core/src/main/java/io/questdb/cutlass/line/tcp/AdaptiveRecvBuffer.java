@@ -30,136 +30,141 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
+/**
+ * Implements adaptive memory buffer for ingestion.
+ * Designed for high-throughput TCP ingestion with variable payload sizes,
+ * and automatic compaction/growth based on measurement patterns.
+ */
 public class AdaptiveRecvBuffer implements QuietCloseable {
+    private static final Log LOG = LogFactory.getLog(AdaptiveRecvBuffer.class);
     private static final byte RECV_BUFFER_GROW_FACTOR = 4;
     private static final byte RECV_BUFFER_SHRINK_FACTOR = 2;
-    private static Log LOG = LogFactory.getLog(AdaptiveRecvBuffer.class);
+    private final int memoryTag;
     private final LineTcpParser parser;
-    private final int tag;
+    private long bufEnd;
+    private long bufPos;
+    private long bufStart;
+    private long bufStartOfMeasurement;
     private long currentBufSize;
     private boolean decrease = false;
     private long initialBufSize;
-    private long maxBufferSize;
-    private long maxMeasureSize;
-    private long recvBufEnd;
-    private long recvBufPos;
-    private long recvBufStart;
-    private long recvBufStartOfMeasurement;
+    private long maxBufSize;
+    private long maxRecordMeasureSize;
 
     public AdaptiveRecvBuffer(LineTcpParser parser, int tag) {
         this.parser = parser;
-        this.tag = tag;
-    }
-
-    public void adjustRecvBuffer(long newBufSize, boolean needShift) {
-        LOG.info().$("adjust ILP receive buffer size [currentSize=").$(currentBufSize)
-                .$(", newBufferSize=").$(newBufSize)
-                .I$();
-        long newBufLo = Unsafe.realloc(recvBufStart, currentBufSize, newBufSize, tag);
-        long offset = recvBufStart - newBufLo;
-        if (needShift) {
-            parser.shl(offset);
-        }
-        recvBufStart = newBufLo;
-        recvBufPos -= offset;
-        recvBufStartOfMeasurement = recvBufStart;
-        recvBufEnd = recvBufStart + newBufSize;
-        currentBufSize = newBufSize;
+        this.memoryTag = tag;
     }
 
     public void clear() {
-        parser.of(recvBufStart);
-        recvBufPos = recvBufStart;
-        recvBufStartOfMeasurement = recvBufStart;
+        parser.of(bufStart);
+        bufPos = bufStart;
+        bufStartOfMeasurement = bufStart;
     }
 
     @Override
     public void close() {
-        Unsafe.free(recvBufStart, currentBufSize, tag);
-        recvBufStartOfMeasurement = recvBufEnd = recvBufPos = recvBufStart = 0;
-        parser.of(recvBufStart);
+        decrease = false;
+        Unsafe.free(bufStart, currentBufSize, memoryTag);
+        bufStartOfMeasurement = bufEnd = bufPos = bufStart = 0;
+        parser.of(bufStart);
     }
 
-    public boolean compactOrGrowBuffer() {
-        if (recvBufPos != recvBufEnd) {
+    public long copyToLocalBuffer(long lo, long hi) {
+        long copyLen = Math.min(hi - lo, bufEnd - bufPos);
+        assert copyLen > 0;
+        Vect.memcpy(bufPos, lo, copyLen);
+        bufPos += copyLen;
+        return lo + copyLen;
+    }
+
+    public long getBufEnd() {
+        return bufEnd;
+    }
+
+    public long getBufPos() {
+        return bufPos;
+    }
+
+    public long getBufStart() {
+        return bufStart;
+    }
+
+    public long getBufStartOfMeasurement() {
+        return bufStartOfMeasurement;
+    }
+
+    public AdaptiveRecvBuffer of(long initialBufSize, long maxBufferSize) {
+        assert bufStart == 0;
+        this.initialBufSize = initialBufSize;
+        this.maxBufSize = maxBufferSize;
+        this.bufStart = Unsafe.malloc(initialBufSize, memoryTag);
+        this.bufPos = this.bufStart;
+        this.bufStartOfMeasurement = this.bufStart;
+        this.bufEnd = this.bufPos + initialBufSize;
+        this.currentBufSize = initialBufSize;
+        parser.of(bufStart);
+        return this;
+    }
+
+    public void recordMaxMeasureSize(long maxBufferSize) {
+        if (this.maxRecordMeasureSize < maxBufferSize || maxBufferSize == 0) {
+            this.maxRecordMeasureSize = maxBufferSize;
+        }
+    }
+
+    public void setBufPos(long bufPos) {
+        this.bufPos = bufPos;
+    }
+
+    public void setBufStartOfMeasurement(long bufStartOfMeasurement) {
+        this.bufStartOfMeasurement = bufStartOfMeasurement;
+    }
+
+    public void startNewMeasurement() {
+        recordMaxMeasureSize(parser.getBufferAddress() - bufStartOfMeasurement);
+        parser.startNextMeasurement();
+        bufStartOfMeasurement = parser.getBufferAddress();
+        // we ran out of buffer, move to start and start parsing new data from socket
+        if (bufStartOfMeasurement == bufPos) {
+            tryToShrinkRecvBuffer(false);
+            bufPos = bufStart;
+            parser.of(bufStart);
+            bufStartOfMeasurement = bufStart;
+        }
+    }
+
+    /**
+     * Try to compact or expand memory.
+     * First attempts to compact by shifting incomplete measurements to buffer start.
+     * If compaction insufficient, grows buffer exponentially up to maxBufSize.
+     *
+     * @return true if operation succeeded, false if buffer exceeded max size
+     */
+    public boolean tryCompactOrGrowBuffer() {
+        if (bufPos != bufEnd) {
             return true;
         }
         // try to compact first
-        if (recvBufStartOfMeasurement > recvBufStart) {
-            long size = recvBufPos - recvBufStartOfMeasurement;
-            long shl = recvBufStartOfMeasurement - recvBufStart;
-            Vect.memmove(recvBufStart, recvBufStart + shl, size);
+        if (bufStartOfMeasurement > bufStart) {
+            long size = bufPos - bufStartOfMeasurement;
+            long shl = bufStartOfMeasurement - bufStart;
+            Vect.memmove(bufStart, bufStart + shl, size);
             parser.shl(shl);
-            recvBufPos -= shl;
-            this.recvBufStartOfMeasurement -= shl;
+            bufPos -= shl;
+            this.bufStartOfMeasurement -= shl;
             recordMaxMeasureSize(size);
             tryToShrinkRecvBuffer(true);
             return true;
         }
         // if the size of a single measurement exceeds maxBufferSize, raise an error
-        if (currentBufSize == maxBufferSize) {
+        if (currentBufSize == maxBufSize) {
             return false;
         }
         // otherwise, grow the current recvBuffer to currentBufSize * RECV_BUFFER_GROW_FACTOR
-        adjustRecvBuffer(Math.min(currentBufSize * RECV_BUFFER_GROW_FACTOR, maxBufferSize), true);
+        adjustBuffer(Math.min(currentBufSize * RECV_BUFFER_GROW_FACTOR, maxBufSize), true);
         decrease = false;
         return true;
-    }
-
-    public long getRecvBufEnd() {
-        return recvBufEnd;
-    }
-
-    public long getRecvBufPos() {
-        return recvBufPos;
-    }
-
-    public long getRecvBufStart() {
-        return recvBufStart;
-    }
-
-    public long getRecvBufStartOfMeasurement() {
-        return recvBufStartOfMeasurement;
-    }
-
-    public AdaptiveRecvBuffer of(long initialBufSize, long maxBufferSize) {
-        assert recvBufStart == 0;
-        this.initialBufSize = initialBufSize;
-        this.maxBufferSize = maxBufferSize;
-        this.recvBufStart = Unsafe.malloc(initialBufSize, tag);
-        this.recvBufPos = this.recvBufStart;
-        this.recvBufStartOfMeasurement = this.recvBufStart;
-        this.recvBufEnd = this.recvBufPos + initialBufSize;
-        this.currentBufSize = initialBufSize;
-        parser.of(recvBufStart);
-        return this;
-    }
-
-    public void recordMaxMeasureSize(long maxBufferSize) {
-        if (this.maxMeasureSize < maxBufferSize || maxBufferSize == 0) {
-            this.maxMeasureSize = maxBufferSize;
-        }
-    }
-
-    public void setRecvBufPos(long recvBufPos) {
-        this.recvBufPos = recvBufPos;
-    }
-
-    public void setRecvBufStartOfMeasurement(long recvBufStartOfMeasurement) {
-        this.recvBufStartOfMeasurement = recvBufStartOfMeasurement;
-    }
-
-    public void startNewMeasurement() {
-        recordMaxMeasureSize(parser.getBufferAddress() - recvBufStartOfMeasurement);
-        parser.startNextMeasurement();
-        recvBufStartOfMeasurement = parser.getBufferAddress();
-        // we ran out of buffer, move to start and start parsing new data from socket
-        if (recvBufStartOfMeasurement == recvBufPos) {
-            tryToShrinkRecvBuffer(false);
-            recvBufPos = recvBufStart;
-            parser.of(recvBufStart);
-            recvBufStartOfMeasurement = recvBufStart;
-        }
     }
 
     /*
@@ -168,12 +173,12 @@ public class AdaptiveRecvBuffer implements QuietCloseable {
      * no measurement exceeds (currentBufSize / RECV_BUFFER_SHRINK_FACTOR).
      */
     public void tryToShrinkRecvBuffer(boolean shiftParser) {
-        if (maxMeasureSize == 0) {
+        if (maxRecordMeasureSize == 0) {
             return;
         }
-        if (currentBufSize != initialBufSize && maxMeasureSize < currentBufSize / RECV_BUFFER_SHRINK_FACTOR) {
+        if (currentBufSize != initialBufSize && maxRecordMeasureSize < currentBufSize / RECV_BUFFER_SHRINK_FACTOR) {
             if (decrease) {
-                adjustRecvBuffer(Math.max(initialBufSize, currentBufSize / RECV_BUFFER_SHRINK_FACTOR), shiftParser);
+                adjustBuffer(Math.max(initialBufSize, currentBufSize / RECV_BUFFER_SHRINK_FACTOR), shiftParser);
                 decrease = false;
             } else {
                 decrease = true;
@@ -182,5 +187,21 @@ public class AdaptiveRecvBuffer implements QuietCloseable {
             decrease = false;
         }
         recordMaxMeasureSize(0);
+    }
+
+    private void adjustBuffer(long newBufSize, boolean needShift) {
+        LOG.info().$("adjust ILP receive buffer size [currentSize=").$(currentBufSize)
+                .$(", newBufferSize=").$(newBufSize)
+                .I$();
+        long newBufLo = Unsafe.realloc(bufStart, currentBufSize, newBufSize, memoryTag);
+        long offset = bufStart - newBufLo;
+        if (needShift) {
+            parser.shl(offset);
+        }
+        bufStart = newBufLo;
+        bufPos -= offset;
+        bufStartOfMeasurement = bufStart;
+        bufEnd = bufStart + newBufSize;
+        currentBufSize = newBufSize;
     }
 }

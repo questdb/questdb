@@ -217,11 +217,11 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     @Override
     public LineTcpConnectionContext of(long fd, @NotNull IODispatcher<LineTcpConnectionContext> dispatcher) {
         super.of(fd, dispatcher);
-        if (recvBuffer.getRecvBufStart() == 0) {
+        if (recvBuffer.getBufStart() == 0) {
             recvBuffer.of(configuration.getRecvBufferSize(), configuration.getMaxRecvBufferSize());
             goodMeasurement = true;
         }
-        authenticator.init(socket, recvBuffer.getRecvBufStart(), recvBuffer.getRecvBufEnd(), 0, 0);
+        authenticator.init(socket, recvBuffer.getBufStart(), recvBuffer.getBufEnd(), 0, 0);
         if (authenticator.isAuthenticated() && securityContext == DenyAllSecurityContext.INSTANCE) {
             // when security context has not been set by anything else (subclass) we assume
             // this is an authenticated, anonymous user
@@ -245,17 +245,17 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     }
 
     private void doHandleDisconnectEvent() {
-        if (parser.getBufferAddress() == recvBuffer.getRecvBufEnd()) {
+        if (parser.getBufferAddress() == recvBuffer.getBufEnd()) {
             LOG.error().$('[').$(getFd()).$("] buffer overflow [line.tcp.max.recv.buffer.size=")
-                    .$(recvBuffer.getRecvBufEnd() - recvBuffer.getRecvBufStart()).$(']').$();
+                    .$(recvBuffer.getBufEnd() - recvBuffer.getBufStart()).$(']').$();
             return;
         }
 
         if (peerDisconnected) {
             // Peer disconnected, we have now finished disconnect our end
-            if (recvBuffer.getRecvBufPos() != recvBuffer.getRecvBufStart()) {
+            if (recvBuffer.getBufPos() != recvBuffer.getBufStart()) {
                 LOG.info().$('[').$(getFd()).$("] peer disconnected with partial measurement, ")
-                        .$(recvBuffer.getRecvBufPos() - recvBuffer.getRecvBufStart())
+                        .$(recvBuffer.getBufPos() - recvBuffer.getBufStart())
                         .$(" unprocessed bytes").$();
             } else {
                 LOG.info().$('[').$(getFd()).$("] peer disconnected").$();
@@ -284,7 +284,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                         return IOContextResult.NEEDS_DISCONNECT;
                     }
 
-                    recvBuffer.setRecvBufPos(authenticator.getRecvBufPos());
+                    recvBuffer.setBufPos(authenticator.getRecvBufPos());
                     resetParser(authenticator.getRecvBufPseudoStart());
                     return parseMeasurements(netIoJob);
                 case SocketAuthenticator.NEEDS_READ:
@@ -303,7 +303,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     }
 
     private void logParseError() {
-        int position = (int) (parser.getBufferAddress() - recvBuffer.getRecvBufStartOfMeasurement());
+        int position = (int) (parser.getBufferAddress() - recvBuffer.getBufStartOfMeasurement());
         assert position >= 0;
         final LogRecord errorRec = LOG.error()
                 .$('[').$(getFd())
@@ -311,9 +311,15 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 .$(" at ").$(position);
         if (logMessageOnError) {
             errorRec.$(", line (may be mangled due to partial parsing): '")
-                    .$(byteCharSequence.of(recvBuffer.getRecvBufStartOfMeasurement(), parser.getBufferAddress(), false)).$("'");
+                    .$(byteCharSequence.of(recvBuffer.getBufStartOfMeasurement(), parser.getBufferAddress(), false)).$("'");
         }
         errorRec.$();
+    }
+
+    private void resetParser(long pos) {
+        parser.of(pos);
+        goodMeasurement = true;
+        recvBuffer.setBufStartOfMeasurement(pos);
     }
 
     void addTableUpdateDetails(Utf8String tableNameUtf8, TableUpdateDetails tableUpdateDetails) {
@@ -327,7 +333,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     protected final IOContextResult parseMeasurements(NetworkIOJob netIoJob) {
         while (true) {
             try {
-                ParseResult rc = goodMeasurement ? parser.parseMeasurement(recvBuffer.getRecvBufPos()) : parser.skipMeasurement(recvBuffer.getRecvBufPos());
+                ParseResult rc = goodMeasurement ? parser.parseMeasurement(recvBuffer.getBufPos()) : parser.skipMeasurement(recvBuffer.getBufPos());
                 switch (rc) {
                     case MEASUREMENT_COMPLETE: {
                         if (goodMeasurement) {
@@ -357,7 +363,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                     }
 
                     case BUFFER_UNDERFLOW: {
-                        if (!recvBuffer.compactOrGrowBuffer()) {
+                        if (!recvBuffer.tryCompactOrGrowBuffer()) {
                             doHandleDisconnectEvent();
                             return IOContextResult.NEEDS_DISCONNECT;
                         }
@@ -395,14 +401,14 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     }
 
     protected boolean read() {
-        long recvBufPos = recvBuffer.getRecvBufPos();
-        int bufferRemaining = (int) (recvBuffer.getRecvBufEnd() - recvBufPos);
+        long recvBufPos = recvBuffer.getBufPos();
+        int bufferRemaining = (int) (recvBuffer.getBufEnd() - recvBufPos);
         final int orig = bufferRemaining;
         if (bufferRemaining > 0 && !peerDisconnected) {
             int bytesRead = socket.recv(recvBufPos, bufferRemaining);
             metrics.lineMetrics().totalIlpTcpBytesGauge().add(bytesRead);
             if (bytesRead > 0) {
-                recvBuffer.setRecvBufPos(recvBufPos + bytesRead);
+                recvBuffer.setBufPos(recvBufPos + bytesRead);
                 bufferRemaining -= bytesRead;
             } else {
                 peerDisconnected = bytesRead < 0;
@@ -420,12 +426,6 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             return tud;
         }
         return null;
-    }
-
-    protected void resetParser(long pos) {
-        parser.of(pos);
-        goodMeasurement = true;
-        recvBuffer.setRecvBufStartOfMeasurement(pos);
     }
 
     public enum IOContextResult {
