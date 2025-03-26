@@ -124,6 +124,11 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBaseTableInvalidateOnDropTable() throws Exception {
+        testBaseTableInvalidateOnOperation("drop table base_price;", "base table is dropped or renamed");
+    }
+
+    @Test
     public void testBaseTableInvalidateOnRenameColumn() throws Exception {
         testBaseTableInvalidateOnOperation("alter table base_price rename column amount to amount2;", "rename column operation");
     }
@@ -1226,9 +1231,9 @@ public class MatViewTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\n" +
                             "v1_base\tincremental\tbase\tinvalid\ttruncate operation\n" +
-                            "v2_v1\tincremental\tv1_base\tinvalid\ttruncate operation\n" +
-                            "v3_v1\tincremental\tv1_base\tinvalid\ttruncate operation\n" +
-                            "v4_v3\tincremental\tv3_v1\tinvalid\ttruncate operation\n",
+                            "v2_v1\tincremental\tv1_base\tinvalid\tbase materialized view is invalidated\n" +
+                            "v3_v1\tincremental\tv1_base\tinvalid\tbase materialized view is invalidated\n" +
+                            "v4_v3\tincremental\tv3_v1\tinvalid\tbase materialized view is invalidated\n",
                     "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name",
                     null,
                     true
@@ -1240,9 +1245,9 @@ public class MatViewTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\n" +
                             "v1_base\tincremental\tbase\tvalid\t\n" +
-                            "v2_v1\tincremental\tv1_base\tinvalid\ttruncate operation\n" +
-                            "v3_v1\tincremental\tv1_base\tinvalid\ttruncate operation\n" +
-                            "v4_v3\tincremental\tv3_v1\tinvalid\ttruncate operation\n",
+                            "v2_v1\tincremental\tv1_base\tinvalid\tbase materialized view is invalidated\n" +
+                            "v3_v1\tincremental\tv1_base\tinvalid\tbase materialized view is invalidated\n" +
+                            "v4_v3\tincremental\tv3_v1\tinvalid\tbase materialized view is invalidated\n",
                     "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name",
                     null,
                     true
@@ -1262,6 +1267,66 @@ public class MatViewTest extends AbstractCairoTest {
                             "v2_v1\tincremental\tv1_base\tvalid\t\n" +
                             "v3_v1\tincremental\tv1_base\tvalid\t\n" +
                             "v4_v3\tincremental\tv3_v1\tvalid\t\n",
+                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name",
+                    null,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testRecursiveInvalidationOnDropMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            long startTs = TimestampFormatUtils.parseUTCTimestamp("2025-02-18T00:00:00.000000Z");
+            long step = 100000000L;
+            final int N = 100;
+
+            String tableName = "base";
+            String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s, ";
+            execute(createTableSql(tableName, columns, null, startTs, step, N));
+            drainQueues();
+
+            String view1Name = "v1_base";
+            String view1Query = "select k, s, first(lat) lat, last(lon) lon from " + tableName + " sample by 1h";
+            createMatView(view1Name, view1Query);
+            drainQueues();
+
+            String view2Name = "v2_v1";
+            String view2Query = "select k, s, first(lat) lat, last(lon) lon from " + view1Name + " sample by 2h";
+            createMatView(view2Name, view2Query);
+            drainQueues();
+
+            String view3Name = "v3_v1";
+            String view3Query = "select k, s, first(lat) lat, last(lon) lon from " + view1Name + " sample by 2h";
+            createMatView(view3Name, view3Query);
+            drainQueues();
+
+            String view4Name = "v4_v3";
+            String view4Query = "select k, s, first(lat) lat, last(lon) lon from " + view3Name + " sample by 4h";
+            createMatView(view4Name, view4Query);
+
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\n" +
+                            "v1_base\tincremental\tbase\tvalid\t\n" +
+                            "v2_v1\tincremental\tv1_base\tvalid\t\n" +
+                            "v3_v1\tincremental\tv1_base\tvalid\t\n" +
+                            "v4_v3\tincremental\tv3_v1\tvalid\t\n",
+                    "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name",
+                    null,
+                    true
+            );
+
+            execute("drop materialized view v1_base");
+
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\n" +
+                            "v2_v1\tincremental\tv1_base\tinvalid\tbase table is dropped or renamed\n" +
+                            "v3_v1\tincremental\tv1_base\tinvalid\tbase table is dropped or renamed\n" +
+                            "v4_v3\tincremental\tv3_v1\tinvalid\tbase materialized view is invalidated\n",
                     "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name",
                     null,
                     true
@@ -1293,10 +1358,10 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\n" +
-                            "price_1d\tincremental\tprice_1h\tinvalid\t[-1] unexpected filter error\n" +
-                            "price_1d_2\tincremental\tprice_1h\tinvalid\t[-1] unexpected filter error\n" +
+                            "price_1d\tincremental\tprice_1h\tinvalid\tbase materialized view refresh failed\n" +
+                            "price_1d_2\tincremental\tprice_1h\tinvalid\tbase materialized view refresh failed\n" +
                             "price_1h\tincremental\tbase_price\tinvalid\t[-1] unexpected filter error\n" +
-                            "price_1w\tincremental\tprice_1d\tinvalid\t[-1] unexpected filter error\n",
+                            "price_1w\tincremental\tprice_1d\tinvalid\tbase materialized view is invalidated\n",
                     "select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name",
                     null,
                     true
