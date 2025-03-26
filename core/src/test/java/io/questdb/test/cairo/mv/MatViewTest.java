@@ -448,8 +448,8 @@ public class MatViewTest extends AbstractCairoTest {
                     true
             );
 
-            Assert.assertNull(engine.getMatViewGraph().getViewRefreshState(matViewToken1));
-            Assert.assertNotNull(engine.getMatViewGraph().getViewRefreshState(matViewToken2));
+            Assert.assertNull(engine.getMatViewStateStore().getViewState(matViewToken1));
+            Assert.assertNotNull(engine.getMatViewStateStore().getViewState(matViewToken2));
         });
     }
 
@@ -532,7 +532,7 @@ public class MatViewTest extends AbstractCairoTest {
                     true
             );
 
-            Assert.assertNull(engine.getMatViewGraph().getViewRefreshState(matViewToken));
+            Assert.assertNull(engine.getMatViewStateStore().getViewState(matViewToken));
         });
     }
 

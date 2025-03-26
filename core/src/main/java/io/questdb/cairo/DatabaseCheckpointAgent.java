@@ -234,12 +234,11 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                 // in the table copy (otherwise, such situation may lead to lost view refresh data).
                                 if (tableToken.isMatView()) {
                                     final MatViewGraph graph = engine.getMatViewGraph();
-                                    final MatViewRefreshState state = graph.getViewRefreshState(tableToken);
-                                    final MatViewDefinition matViewDefinition = (state != null)
-                                            ? state.getViewDefinition() : graph.getViewDefinition(tableToken);
+                                    final MatViewDefinition matViewDefinition = graph.getViewDefinition(tableToken);
                                     if (matViewDefinition != null) {
                                         writer.of(path.trimTo(rootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                                        MatViewRefreshState.append(state, writer);
+                                        // TODO(puzpuzpuz): need to read state from FS
+                                        //MatViewRefreshState.append(state, writer);
                                         writer.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                                         MatViewDefinition.append(matViewDefinition, writer);
 

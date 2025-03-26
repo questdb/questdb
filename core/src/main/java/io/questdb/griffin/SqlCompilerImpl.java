@@ -61,6 +61,7 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewRefreshState;
+import io.questdb.cairo.mv.MatViewRefreshStateStore;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -2027,7 +2028,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to refresh materialized view");
         }
 
-        final MatViewGraph matViewGraph = engine.getMatViewGraph();
+        final MatViewRefreshStateStore matViewGraph = engine.getMatViewStateStore();
         executionContext.getSecurityContext().authorizeMatViewRefresh(matViewToken);
         if (incremental) {
             matViewGraph.enqueueIncrementalRefresh(matViewToken);
@@ -2712,7 +2713,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         Misc.free(newFactory);
                     }
 
-                    engine.getMatViewGraph().createView(matViewDefinition);
                     createMatViewOp.updateOperationFutureTableToken(matViewToken);
                 } else {
                     throw SqlException.$(createTableOp.getTableNamePosition(), "materialized view requires a SELECT statement");
@@ -3966,11 +3966,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         if (tableToken.isMatView()) {
                             try (BlockFileWriter writer = new BlockFileWriter(ff, configuration.getCommitMode())) {
                                 MatViewGraph graph = engine.getMatViewGraph();
-                                MatViewRefreshState state = graph.getViewRefreshState(tableToken);
                                 writer.of(auxPath.trimTo(tableRootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                                MatViewRefreshState.append(state, writer);
-                                MatViewDefinition matViewDefinition = (state != null)
-                                        ? state.getViewDefinition() : graph.getViewDefinition(tableToken);
+                                // TODO(puzpuzpuz): need to read state from FS
+                                //MatViewRefreshState.append(state, writer);
+                                final MatViewDefinition matViewDefinition = graph.getViewDefinition(tableToken);
                                 if (matViewDefinition != null) {
                                     writer.of(auxPath.trimTo(tableRootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                                     MatViewDefinition.append(matViewDefinition, writer);

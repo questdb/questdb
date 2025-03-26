@@ -1009,7 +1009,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 final TableToken matViewToken = engine.getTableTokenIfExists("test");
                 final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
                 assertNotNull(matViewDefinition);
-                final MatViewRefreshState matViewRefreshState = engine.getMatViewGraph().getViewRefreshState(matViewToken);
+                final MatViewRefreshState matViewRefreshState = engine.getMatViewStateStore().getViewState(matViewToken);
                 assertNotNull(matViewRefreshState);
 
                 try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
@@ -1263,7 +1263,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 final TableToken matViewToken = engine.getTableTokenIfExists("test");
                 final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
                 assertNotNull(matViewDefinition);
-                final MatViewRefreshState matViewRefreshState = engine.getMatViewGraph().getViewRefreshState(matViewToken);
+                final MatViewRefreshState matViewRefreshState = engine.getMatViewStateStore().getViewState(matViewToken);
                 assertNotNull(matViewRefreshState);
 
                 try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
