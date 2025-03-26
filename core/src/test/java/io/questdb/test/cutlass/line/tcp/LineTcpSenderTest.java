@@ -414,7 +414,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .build()
             ) {
                 CountDownLatch released = createTableCommitNotifier(tableName);
-                double[] arr = createDoubleArray(1000_000_00);
+                double[] arr = createDoubleArray(100_000_000);
                 sender.table(tableName)
                         .doubleArray("arr", arr)
                         .at(100000000000L, ChronoUnit.MICROS);
