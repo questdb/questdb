@@ -4,10 +4,9 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.file.BlockFileReader;
-import io.questdb.cairo.file.ReadableBlock;
 import io.questdb.cairo.mv.MatViewRefreshState;
+import io.questdb.cairo.mv.MatViewRefreshStateReader;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
@@ -110,28 +109,15 @@ public class MatViewStateTest extends AbstractCairoTest {
         );
     }
 
-    private static void checkState(TableToken tableToken, long lastRefreshBaseTxn, long lastRefreshTimestamp, boolean invalid, String invalidationReason) {
+    private static void checkState(TableToken viewToken, long lastRefreshBaseTxn, long lastRefreshTimestamp, boolean invalid, String invalidationReason) {
         drainWalQueue();
         try (Path path = new Path(); BlockFileReader reader = new BlockFileReader(configuration)) {
-            reader.of(path.of(configuration.getDbRoot()).concat(tableToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-            final BlockFileReader.BlockCursor cursor = reader.getCursor();
-            // Iterate through the block until we find the one we recognize.
-            while (cursor.hasNext()) {
-                final ReadableBlock block = cursor.next();
-                if (block.type() != MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_TYPE) {
-                    // Unknown block, skip.
-                    continue;
-                }
-                boolean invalid0 = block.getBool(0);
-                long lastRefreshBaseTxn0 = block.getLong(Byte.BYTES);
-                //TODO: update state format
-//                long lastRefreshTimestamp0 = block.getLong(Byte.BYTES + Long.BYTES);
-                String invalidationReason0 = Chars.toString(block.getStr(Byte.BYTES + Long.BYTES));
-                assertEquals(invalid, invalid0);
-                assertEquals(lastRefreshBaseTxn, lastRefreshBaseTxn0);
-//                assertEquals(lastRefreshTimestamp, lastRefreshTimestamp0);
-                assertEquals(invalidationReason, invalidationReason0);
-            }
+            reader.of(path.of(configuration.getDbRoot()).concat(viewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+            final MatViewRefreshStateReader viewState = new MatViewRefreshStateReader().of(reader, viewToken);
+            assertEquals(invalid, viewState.isInvalid());
+            assertEquals(lastRefreshBaseTxn, viewState.getLastRefreshBaseTxn());
+            assertEquals(lastRefreshTimestamp, viewState.getLastRefreshTimestamp());
+            assertEquals(invalidationReason, viewState.getInvalidationReason());
         }
     }
 }

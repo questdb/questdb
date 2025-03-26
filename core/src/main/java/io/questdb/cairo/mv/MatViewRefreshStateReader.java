@@ -29,15 +29,24 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.ReadableBlock;
 import io.questdb.std.Chars;
+import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class MatViewRefreshStateReader {
+public class MatViewRefreshStateReader implements Mutable {
     private boolean invalid;
     private String invalidationReason;
     private long lastRefreshBaseTxn = -1;
     private long lastRefreshTimestamp = Numbers.LONG_NULL;
+
+    @Override
+    public void clear() {
+        invalid = false;
+        invalidationReason = null;
+        lastRefreshBaseTxn = -1;
+        lastRefreshTimestamp = Numbers.LONG_NULL;
+    }
 
     @Nullable
     public String getInvalidationReason() {
@@ -60,22 +69,31 @@ public class MatViewRefreshStateReader {
             @NotNull BlockFileReader reader,
             @NotNull TableToken matViewToken
     ) {
+        boolean matViewStateBlockFound = false;
         final BlockFileReader.BlockCursor cursor = reader.getCursor();
-        // Iterate through the blocks until we find the one we recognize.
         while (cursor.hasNext()) {
             final ReadableBlock block = cursor.next();
-            if (block.type() != MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_TYPE) {
-                // Unknown block, skip.
+            if (block.type() == MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_TYPE) {
+                matViewStateBlockFound = true;
+                invalid = block.getBool(0);
+                lastRefreshBaseTxn = block.getLong(Byte.BYTES);
+                invalidationReason = Chars.toString(block.getStr(Long.BYTES + Byte.BYTES));
+                // keep going, because V2 block might follow
                 continue;
             }
-            invalid = block.getBool(0);
-            lastRefreshBaseTxn = block.getLong(Byte.BYTES);
-            lastRefreshTimestamp = block.getLong(Long.BYTES + Byte.BYTES);
-            invalidationReason = Chars.toString(block.getStr(Long.BYTES + Long.BYTES + Byte.BYTES));
-            return this;
+            if (block.type() == MatViewRefreshState.MAT_VIEW_STATE_FORMAT_V2_MSG_TYPE) {
+                invalid = block.getBool(0);
+                lastRefreshBaseTxn = block.getLong(Byte.BYTES);
+                lastRefreshTimestamp = block.getLong(Long.BYTES + Byte.BYTES);
+                invalidationReason = Chars.toString(block.getStr(Long.BYTES + Long.BYTES + Byte.BYTES));
+                return this;
+            }
         }
-        throw CairoException.critical(0).put("cannot read materialized view state, block not found [view=")
-                .put(matViewToken.getTableName())
-                .put(']');
+        if (!matViewStateBlockFound) {
+            throw CairoException.critical(0).put("cannot read materialized view state, block not found [view=")
+                    .put(matViewToken.getTableName())
+                    .put(']');
+        }
+        return this;
     }
 }

@@ -733,7 +733,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             block.putLong(lastRefreshBaseTxn);
             block.putLong(lastRefreshTimestamp);
             block.putStr(invalidationReason);
-            block.commit(MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_TYPE);
+            block.commit(MatViewRefreshState.MAT_VIEW_STATE_FORMAT_V2_MSG_TYPE);
             stateWriter.commit();
         }
     }

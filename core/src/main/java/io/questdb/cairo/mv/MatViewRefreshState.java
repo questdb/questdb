@@ -47,6 +47,7 @@ import static io.questdb.TelemetrySystemEvent.*;
 public class MatViewRefreshState implements QuietCloseable {
     public static final String MAT_VIEW_STATE_FILE_NAME = "_mv.s";
     public static final int MAT_VIEW_STATE_FORMAT_MSG_TYPE = 0;
+    public static final int MAT_VIEW_STATE_FORMAT_V2_MSG_TYPE = 1;
 
     // used to avoid concurrent refresh runs
     private final AtomicBoolean latch = new AtomicBoolean(false);
@@ -74,7 +75,7 @@ public class MatViewRefreshState implements QuietCloseable {
     public static void append(@Nullable MatViewRefreshState refreshState, @NotNull BlockFileWriter writer) {
         final AppendableBlock block = writer.append();
         append(refreshState, block);
-        block.commit(MAT_VIEW_STATE_FORMAT_MSG_TYPE);
+        block.commit(MAT_VIEW_STATE_FORMAT_V2_MSG_TYPE);
         writer.commit();
     }
 
@@ -86,31 +87,39 @@ public class MatViewRefreshState implements QuietCloseable {
             block.putStr(null);
             return;
         }
-        block.putBool(refreshState.isInvalid());
+        block.putBool(refreshState.invalid);
         block.putLong(refreshState.lastRefreshBaseTxn);
         block.putLong(refreshState.lastRefreshTimestamp);
-        block.putStr(refreshState.getInvalidationReason());
+        block.putStr(refreshState.invalidationReason);
     }
 
     public static void readFrom(@NotNull BlockFileReader reader, @NotNull MatViewRefreshState refreshState) {
+        boolean matViewStateBlockFound = false;
         final BlockFileReader.BlockCursor cursor = reader.getCursor();
-        // Iterate through the blocks until we find the one we recognize.
         while (cursor.hasNext()) {
             final ReadableBlock block = cursor.next();
-            if (block.type() != MAT_VIEW_STATE_FORMAT_MSG_TYPE) {
-                // Unknown block, skip.
+            if (block.type() == MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_TYPE) {
+                matViewStateBlockFound = true;
+                refreshState.invalid = block.getBool(0);
+                refreshState.lastRefreshBaseTxn = block.getLong(Byte.BYTES);
+                refreshState.invalidationReason = Chars.toString(block.getStr(Long.BYTES + Byte.BYTES));
+                // keep going, because V2 block might follow
                 continue;
             }
-            refreshState.invalid = block.getBool(0);
-            refreshState.lastRefreshBaseTxn = block.getLong(Byte.BYTES);
-            refreshState.lastRefreshTimestamp = block.getLong(Long.BYTES + Byte.BYTES);
-            refreshState.invalidationReason = Chars.toString(block.getStr(Long.BYTES + Long.BYTES + Byte.BYTES));
-            return;
+            if (block.type() == MatViewRefreshState.MAT_VIEW_STATE_FORMAT_V2_MSG_TYPE) {
+                refreshState.invalid = block.getBool(0);
+                refreshState.lastRefreshBaseTxn = block.getLong(Byte.BYTES);
+                refreshState.lastRefreshTimestamp = block.getLong(Long.BYTES + Byte.BYTES);
+                refreshState.invalidationReason = Chars.toString(block.getStr(Long.BYTES + Long.BYTES + Byte.BYTES));
+                return;
+            }
         }
-        final TableToken matViewToken = refreshState.getViewDefinition().getMatViewToken();
-        throw CairoException.critical(0).put("cannot read materialized view state, block not found [view=")
-                .put(matViewToken.getTableName())
-                .put(']');
+        if (!matViewStateBlockFound) {
+            final TableToken matViewToken = refreshState.getViewDefinition().getMatViewToken();
+            throw CairoException.critical(0).put("cannot read materialized view state, block not found [view=")
+                    .put(matViewToken.getTableName())
+                    .put(']');
+        }
     }
 
     public RecordCursorFactory acquireRecordFactory() {
