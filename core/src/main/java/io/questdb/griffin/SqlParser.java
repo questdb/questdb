@@ -158,9 +158,9 @@ public class SqlParser {
     public static void collectTables(QueryModel model, CharSequenceHashSet tableNames) {
         QueryModel m = model;
         do {
-            final CharSequence t = m.getTableName();
-            if (t != null) {
-                tableNames.add(t);
+            final ExpressionNode tableNameExpr = m.getTableNameExpr();
+            if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
+                tableNames.add(tableNameExpr.token);
             }
 
             final ObjList<QueryModel> joinModels = m.getJoinModels();

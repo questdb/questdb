@@ -389,7 +389,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 // SAMPLE BY/GROUP BY key, add as dedup key.
                 final CreateTableColumnModel model = createColumnModelMap.get(column.getName());
                 if (model == null) {
-                    throw SqlException.$(0, "missing column [name=" + column.getName() + "]");
+                    throw SqlException.$(0, "missing column [name=").put(column.getName()).put(']');
                 }
                 model.setIsDedupKey();
                 // Copy column names into builder to be validated later.
