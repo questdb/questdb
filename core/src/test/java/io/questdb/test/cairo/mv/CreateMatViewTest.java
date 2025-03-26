@@ -1028,8 +1028,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 // Reader should ignore unknown block.
                 try (BlockFileReader reader = new BlockFileReader(configuration)) {
                     reader.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                    MatViewRefreshStateReader actualState = new MatViewRefreshStateReader();
-                    MatViewRefreshStateReader.readFrom(reader, actualState, matViewToken);
+                    MatViewRefreshStateReader actualState = new MatViewRefreshStateReader().of(reader, matViewToken);
 
                     assertEquals(matViewRefreshState.isInvalid(), actualState.isInvalid());
                     assertEquals(matViewRefreshState.getLastRefreshBaseTxn(), actualState.getLastRefreshBaseTxn());
@@ -1278,8 +1277,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 // Reader should fail to load unknown state file.
                 try (BlockFileReader reader = new BlockFileReader(configuration)) {
                     reader.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                    MatViewRefreshStateReader actualState = new MatViewRefreshStateReader();
-                    MatViewRefreshState.readFrom(reader, actualState, matViewToken);
+                    new MatViewRefreshStateReader().of(reader, matViewToken);
                     Assert.fail("exception expected");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "cannot read materialized view state, block not found");

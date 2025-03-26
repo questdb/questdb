@@ -34,38 +34,10 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class MatViewRefreshStateReader {
-    public static final String MAT_VIEW_STATE_FILE_NAME = "_mv.s";
-    public static final int MAT_VIEW_STATE_FORMAT_MSG_TYPE = 0;
-
-    protected volatile boolean invalid;
-    protected volatile String invalidationReason;
-    protected volatile long lastRefreshBaseTxn = -1;
-    protected volatile long lastRefreshTimestamp = Numbers.LONG_NULL;
-
-    public static void readFrom(
-            @NotNull BlockFileReader reader,
-            @NotNull MatViewRefreshStateReader refreshState,
-            @NotNull TableToken matViewToken
-    ) {
-        final BlockFileReader.BlockCursor cursor = reader.getCursor();
-        // Iterate through the block until we find the one we recognize.
-        while (cursor.hasNext()) {
-            final ReadableBlock block = cursor.next();
-            if (block.type() != MAT_VIEW_STATE_FORMAT_MSG_TYPE) {
-                // Unknown block, skip.
-                continue;
-            }
-            refreshState.invalid = block.getBool(0);
-            refreshState.lastRefreshBaseTxn = block.getLong(Byte.BYTES);
-            // todo: add lastRefreshTimestamp to the state file
-            refreshState.lastRefreshTimestamp = Numbers.LONG_NULL;
-            refreshState.invalidationReason = Chars.toString(block.getStr(Long.BYTES + Byte.BYTES));
-            return;
-        }
-        throw CairoException.critical(0).put("cannot read materialized view state, block not found [view=")
-                .put(matViewToken.getTableName())
-                .put(']');
-    }
+    private boolean invalid;
+    private String invalidationReason;
+    private long lastRefreshBaseTxn = -1;
+    private long lastRefreshTimestamp = Numbers.LONG_NULL;
 
     @Nullable
     public String getInvalidationReason() {
@@ -82,5 +54,29 @@ public class MatViewRefreshStateReader {
 
     public boolean isInvalid() {
         return invalid;
+    }
+
+    public MatViewRefreshStateReader of(
+            @NotNull BlockFileReader reader,
+            @NotNull TableToken matViewToken
+    ) {
+        final BlockFileReader.BlockCursor cursor = reader.getCursor();
+        // Iterate through the blocks until we find the one we recognize.
+        while (cursor.hasNext()) {
+            final ReadableBlock block = cursor.next();
+            if (block.type() != MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_TYPE) {
+                // Unknown block, skip.
+                continue;
+            }
+            invalid = block.getBool(0);
+            lastRefreshBaseTxn = block.getLong(Byte.BYTES);
+            // todo: add lastRefreshTimestamp to the state file
+            lastRefreshTimestamp = Numbers.LONG_NULL;
+            invalidationReason = Chars.toString(block.getStr(Long.BYTES + Byte.BYTES));
+            return this;
+        }
+        throw CairoException.critical(0).put("cannot read materialized view state, block not found [view=")
+                .put(matViewToken.getTableName())
+                .put(']');
     }
 }
