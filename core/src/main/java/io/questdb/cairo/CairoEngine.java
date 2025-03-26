@@ -451,8 +451,8 @@ public class CairoEngine implements Closeable, WriterSource {
         if (tableToken.isWal()) {
             if (notifyDropped(tableToken)) {
                 tableSequencerAPI.dropTable(tableToken, false);
-                matViewStateStore.removeViewStateIfExists(tableToken);
-                matViewGraph.removeViewIfExists(tableToken);
+                matViewStateStore.removeViewState(tableToken);
+                matViewGraph.removeView(tableToken);
             } else {
                 LOG.info().$("table is already dropped [table=").$(tableToken)
                         .$(", dirName=").utf8(tableToken.getDirName())

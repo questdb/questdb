@@ -34,7 +34,7 @@ import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class MatViewRefreshStateReader implements Mutable {
+public class MatViewRefreshStateReader implements ReadableMatViewRefreshState, Mutable {
     private boolean invalid;
     private String invalidationReason;
     private long lastRefreshBaseTxn = -1;
@@ -48,19 +48,23 @@ public class MatViewRefreshStateReader implements Mutable {
         lastRefreshTimestamp = Numbers.LONG_NULL;
     }
 
+    @Override
     @Nullable
     public String getInvalidationReason() {
         return invalidationReason;
     }
 
+    @Override
     public long getLastRefreshBaseTxn() {
         return lastRefreshBaseTxn;
     }
 
+    @Override
     public long getLastRefreshTimestamp() {
         return lastRefreshTimestamp;
     }
 
+    @Override
     public boolean isInvalid() {
         return invalid;
     }

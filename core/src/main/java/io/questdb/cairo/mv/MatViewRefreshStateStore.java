@@ -69,7 +69,7 @@ public interface MatViewRefreshStateStore extends QuietCloseable, Mutable {
     // and wants to send refresh job an incremental refresh message.
     void notifyTxnApplied(MatViewRefreshTask task, long seqTxn);
 
-    void removeViewStateIfExists(TableToken matViewToken);
+    void removeViewState(TableToken matViewToken);
 
     boolean tryDequeueRefreshTask(MatViewRefreshTask task);
 }

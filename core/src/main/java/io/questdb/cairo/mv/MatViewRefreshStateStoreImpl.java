@@ -199,7 +199,7 @@ public class MatViewRefreshStateStoreImpl implements MatViewRefreshStateStore {
     }
 
     @Override
-    public void removeViewStateIfExists(TableToken matViewToken) {
+    public void removeViewState(TableToken matViewToken) {
         final MatViewRefreshState state = stateByTableDirName.remove(matViewToken.getDirName());
         if (state != null) {
             state.markAsDropped();

@@ -118,7 +118,7 @@ public class MatViewGraph implements Mutable {
         }
     }
 
-    public void removeViewIfExists(TableToken matViewToken) {
+    public void removeView(TableToken matViewToken) {
         final MatViewDefinition viewDefinition = definitionByTableDirName.remove(matViewToken.getDirName());
         if (viewDefinition != null) {
             final CharSequence baseTableName = viewDefinition.getBaseTableName();

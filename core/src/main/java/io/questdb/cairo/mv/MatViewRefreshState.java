@@ -44,7 +44,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.TelemetrySystemEvent.*;
 
-public class MatViewRefreshState implements QuietCloseable {
+public class MatViewRefreshState implements ReadableMatViewRefreshState, QuietCloseable {
     public static final String MAT_VIEW_STATE_FILE_NAME = "_mv.s";
     public static final int MAT_VIEW_STATE_FORMAT_MSG_TYPE = 0;
     public static final int MAT_VIEW_STATE_FORMAT_V2_MSG_TYPE = 1;
@@ -72,14 +72,14 @@ public class MatViewRefreshState implements QuietCloseable {
     }
 
     // refreshState can be null, in this case "default" record will be written
-    public static void append(@Nullable MatViewRefreshState refreshState, @NotNull BlockFileWriter writer) {
+    public static void append(@Nullable ReadableMatViewRefreshState refreshState, @NotNull BlockFileWriter writer) {
         final AppendableBlock block = writer.append();
         append(refreshState, block);
         block.commit(MAT_VIEW_STATE_FORMAT_V2_MSG_TYPE);
         writer.commit();
     }
 
-    public static void append(@Nullable MatViewRefreshState refreshState, @NotNull AppendableBlock block) {
+    public static void append(@Nullable ReadableMatViewRefreshState refreshState, @NotNull AppendableBlock block) {
         if (refreshState == null) {
             block.putBool(false);
             block.putLong(-1L);
@@ -87,10 +87,10 @@ public class MatViewRefreshState implements QuietCloseable {
             block.putStr(null);
             return;
         }
-        block.putBool(refreshState.invalid);
-        block.putLong(refreshState.lastRefreshBaseTxn);
-        block.putLong(refreshState.lastRefreshTimestamp);
-        block.putStr(refreshState.invalidationReason);
+        block.putBool(refreshState.isInvalid());
+        block.putLong(refreshState.getLastRefreshBaseTxn());
+        block.putLong(refreshState.getLastRefreshTimestamp());
+        block.putStr(refreshState.getInvalidationReason());
     }
 
     public static void readFrom(@NotNull BlockFileReader reader, @NotNull MatViewRefreshState refreshState) {
@@ -135,14 +135,17 @@ public class MatViewRefreshState implements QuietCloseable {
     }
 
     @Nullable
+    @Override
     public String getInvalidationReason() {
         return invalidationReason;
     }
 
+    @Override
     public long getLastRefreshBaseTxn() {
         return lastRefreshBaseTxn;
     }
 
+    @Override
     public long getLastRefreshTimestamp() {
         return lastRefreshTimestamp;
     }
@@ -167,6 +170,7 @@ public class MatViewRefreshState implements QuietCloseable {
         return dropped;
     }
 
+    @Override
     public boolean isInvalid() {
         return invalid;
     }

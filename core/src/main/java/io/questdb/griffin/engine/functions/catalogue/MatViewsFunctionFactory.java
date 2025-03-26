@@ -142,19 +142,18 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                             final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(viewToken);
                             assert matViewDefinition != null : "materialized view definition not found: " + viewToken;
 
-                            final MatViewRefreshStateReader viewState;
+                            final MatViewRefreshStateReader viewStateReader;
                             final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, viewToken.getDirName());
-                            path.trimTo(pathLen).concat(viewToken.getDirName()).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
                             if (isMatViewStateExists) {
-                                reader.of(path.$());
-                                viewState = new MatViewRefreshStateReader().of(reader, viewToken);
+                                reader.of(path.trimTo(pathLen).concat(viewToken.getDirName()).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                                viewStateReader = new MatViewRefreshStateReader().of(reader, viewToken);
                             } else {
                                 throw new CairoException().put("materialized view state not found [").put(viewToken).put("]");
                             }
 
                             TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());
-                            final long lastRefreshedBaseTxn = viewState.getLastRefreshBaseTxn();
-                            final long lastRefreshTimestamp = viewState.getLastRefreshTimestamp();
+                            final long lastRefreshedBaseTxn = viewStateReader.getLastRefreshBaseTxn();
+                            final long lastRefreshTimestamp = viewStateReader.getLastRefreshTimestamp();
                             // Read base table txn after mat view's last refreshed txn to avoid
                             // showing obsolete base table txn.
                             final long lastAppliedBaseTxn = baseTableToken != null
@@ -165,8 +164,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                                     lastRefreshTimestamp,
                                     lastRefreshedBaseTxn,
                                     lastAppliedBaseTxn,
-                                    viewState.getInvalidationReason(),
-                                    viewState.isInvalid()
+                                    viewStateReader.getInvalidationReason(),
+                                    viewStateReader.isInvalid()
                             );
                             viewIndex++;
                             return true;

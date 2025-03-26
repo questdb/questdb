@@ -78,7 +78,7 @@ public class NoOpMatViewRefreshStateStore implements MatViewRefreshStateStore {
     }
 
     @Override
-    public void removeViewStateIfExists(TableToken matViewToken) {
+    public void removeViewState(TableToken matViewToken) {
     }
 
     @Override
