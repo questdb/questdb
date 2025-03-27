@@ -5220,7 +5220,7 @@ public class SqlOptimiser implements Mutable {
                 }
 
                 // Normalize ORDER BY by replacing column names with their aliases.
-                // That's because we may have to move explicit ORDER BY to an upper level, after to_utc() conversion.
+                // That's because we may have to move explicit ORDER BY to an upper level, e.g. after to_utc() conversion.
                 if (nested.getOrderBy().size() > 0) {
                     final ObjList<ExpressionNode> orderBy = nested.getOrderBy();
                     for (int i = 0, n = orderBy.size(); i < n; i++) {
