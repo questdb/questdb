@@ -247,6 +247,10 @@ public class SqlOptimiser implements Mutable {
         constNameToToken.clear();
     }
 
+    public FunctionFactoryCache getFunctionFactoryCache() {
+        return functionParser.getFunctionFactoryCache();
+    }
+
     public boolean hasAggregates(ExpressionNode node) {
         sqlNodeStack.clear();
 
@@ -4082,12 +4086,13 @@ public class SqlOptimiser implements Mutable {
         }
 
         ExpressionNode op = agg.rhs;
-
-        if (op != null &&
-                agg.type == FUNCTION &&
-                functionParser.getFunctionFactoryCache().isGroupBy(agg.token) &&
-                Chars.equalsIgnoreCase("sum", agg.token) &&
-                op.type == OPERATION) {
+        if (
+                op != null
+                        && agg.type == FUNCTION
+                        && functionParser.getFunctionFactoryCache().isGroupBy(agg.token)
+                        && Chars.equalsIgnoreCase("sum", agg.token)
+                        && op.type == OPERATION
+        ) {
             if (Chars.equals(op.token, '*')) { // sum(x*10) == sum(x)*10
                 if (isIntegerConstant(op.rhs) && isSimpleIntegerColumn(op.lhs, model)) {
                     agg.rhs = op.lhs;
@@ -4259,7 +4264,6 @@ public class SqlOptimiser implements Mutable {
             }
 
             if (!abandonRewrite) {
-
                 // remove the distinct flag, model is no longer that
                 model.setDistinct(false);
 
