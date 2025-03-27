@@ -62,9 +62,12 @@ public class ServerMainQueryTimeoutTest extends AbstractBootstrapTest {
                 PropertyKey.PG_WORKER_COUNT + "=4",
                 PropertyKey.WAL_APPLY_WORKER_COUNT + "=1",
                 PropertyKey.PG_SELECT_CACHE_ENABLED + "=" + useQueryCache,
+                // we want more reduce tasks, hence smaller page frames
                 PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS + "=1000",
                 PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS + "=10000",
+                // with 10ms timeout queries have a small chance to execute successfully
                 PropertyKey.QUERY_TIMEOUT + "=10ms",
+                // the scoreboard has to be small to simplify detecting table reader leak
                 PropertyKey.CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT + "16"
         ));
         dbPath.parent().$();
