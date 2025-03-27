@@ -762,18 +762,44 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "cannot change type of designated timestamp column");
         }
         if (newColumnType == existingColumnType) {
-            if (newColumnType == ColumnType.SYMBOL) {
-                alterOperationBuilder.convertToChangeSymbolCapacity();
-            } else {
-                throw SqlException.$(lexer.lastTokenPosition(), "column '").put(columnName)
-                        .put("' type is already '").put(ColumnType.nameOf(existingColumnType)).put('\'');
-            }
+            throw SqlException.$(lexer.lastTokenPosition(), "column '").put(columnName)
+                    .put("' type is already '").put(ColumnType.nameOf(existingColumnType)).put('\'');
         } else {
             if (!isCompatibleColumnTypeChange(existingColumnType, newColumnType)) {
                 throw SqlException.$(lexer.lastTokenPosition(), "incompatible column type change [existing=")
                         .put(ColumnType.nameOf(existingColumnType)).put(", new=").put(ColumnType.nameOf(newColumnType)).put(']');
             }
         }
+        securityContext.authorizeAlterTableAlterColumnType(tableToken, alterOperationBuilder.getExtraStrInfo());
+        compiledQuery.ofAlter(alterOperationBuilder.build());
+    }
+
+    private void alterTableChangeSymbolCapacity(
+            SecurityContext securityContext,
+            int tableNamePosition,
+            TableToken tableToken,
+            int columnNamePosition,
+            CharSequence columnName,
+            TableRecordMetadata tableMetadata,
+            int columnIndex
+    ) throws SqlException {
+        AlterOperationBuilder changeColumn = alterOperationBuilder.ofSymbolCapacityChange(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId()
+        );
+        int existingColumnType = tableMetadata.getColumnType(columnIndex);
+        if (!ColumnType.isSymbol(existingColumnType)) {
+            throw SqlException.$(columnNamePosition, "column '").put(columnName).put("' is not of symbol type");
+        }
+        lexer.unparseLast();
+        addColumnWithType(changeColumn, columnName, columnNamePosition, false);
+
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isSemicolon(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to change column type");
+        }
+
         securityContext.authorizeAlterTableAlterColumnType(tableToken, alterOperationBuilder.getExtraStrInfo());
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
@@ -1522,6 +1548,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         );
                     } else if (isTypeKeyword(tok)) {
                         alterTableChangeColumnType(
+                                securityContext,
+                                tableNamePosition,
+                                tableToken,
+                                columnNamePosition,
+                                columnName,
+                                tableMetadata,
+                                columnIndex
+                        );
+                    } else if (isSymbolKeyword(tok)) {
+                        alterTableChangeSymbolCapacity(
                                 securityContext,
                                 tableNamePosition,
                                 tableToken,

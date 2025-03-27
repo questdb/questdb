@@ -56,11 +56,9 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
     private final boolean indexFlag;
     private final int indexValueBlockCapacity;
     private final int newColumnType;
-    private final int oldColumnType;
     private final int symbolCapacity;
 
     public FuzzChangeColumnTypeOperation(Rnd rnd, String columName, int oldColumnType, int newColumnType, int symbolCapacity, boolean indexFlag, int indexValueBlockCapacity, boolean cacheSymbolMap) {
-        this.oldColumnType = oldColumnType;
         this.columName = TestUtils.randomiseCase(rnd, columName);
         this.newColumnType = newColumnType;
         this.indexFlag = indexFlag;
@@ -193,9 +191,6 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
         );
         builder.addColumnToList(columName, 0, newColumnType, symbolCapacity, cacheSymbolMap,
                 indexFlag, indexValueBlockCapacity, false);
-        if (oldColumnType == newColumnType && ColumnType.isSymbol(newColumnType)) {
-            builder.convertToChangeSymbolCapacity();
-        }
         AlterOperation alterOp = builder.build();
         try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1)
         ) {

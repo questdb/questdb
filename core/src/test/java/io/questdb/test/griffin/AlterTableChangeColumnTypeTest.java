@@ -323,7 +323,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             drainWalQueue();
 
             execute("create table y as (select ik from x)", sqlExecutionContext);
-            execute("alter table x alter column ik type symbol capacity 512", sqlExecutionContext);
+            execute("alter table x alter column ik symbol capacity 512", sqlExecutionContext);
             drainWalQueue();
 
             assertSqlCursorsConvertedStrings(
@@ -335,7 +335,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     "ik\tSYMBOL\ttrue\t256\tfalse\t512\tfalse\tfalse\n", "(SHOW COLUMNS FROM x) WHERE column = 'ik'");
 
 
-            execute("alter table x alter column ik type symbol capacity 1000", sqlExecutionContext);
+            execute("alter table x alter column ik symbol capacity 1000", sqlExecutionContext);
 
             drainWalQueue();
 

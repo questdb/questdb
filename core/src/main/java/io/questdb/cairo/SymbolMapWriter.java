@@ -187,64 +187,6 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         nullValue = false;
     }
 
-    public void copySymbols(SymbolMapWriter another) {
-//        copy(another.charMem, charMem);
-//        copy(another.offsetMem, offsetMem);
-
-//        final int symbolCount = another.getSymbolCount();
-//        for (int i = 0; i < symbolCount; i++) {
-//            put(another.valueOf(i));
-//        }
-//        updateNullFlag(another.getNullFlag());
-
-        final int symbolCount = another.getSymbolCount();
-        for (int i = 0; i < symbolCount; i++) {
-            CharSequence symbol = another.valueOf(i);
-            int hash = Hash.boundedHash(symbol, maxHash);
-//            put0(symbol, hash, SymbolValueCountCollector.NOOP, true);
-            indexWriter.add(hash, SymbolMapWriter.keyToOffset(i));
-//            System.out.println("offset: " + SymbolMapWriter.keyToOffset(i) + ", hash: " + hash);
-        }
-        if (another.cache != null && cachedFlag) {
-            this.cache = another.cache;
-        }
-
-        // Copy .c, .o files, there are no changes in them.
-//        assert assertEquals(another.offsetMem, offsetMem);
-//        assert assertEquals(another.charMem, charMem);
-
-        copy(another.offsetMem, offsetMem);
-        copy(another.charMem, charMem);
-        offsetMem.putInt(HEADER_CAPACITY, symbolCapacity);
-
-//        long cSize = another.charMem.getAppendOffset();
-//        assert charMem.isMapped(0, cSize);
-//        charMem.jumpTo(0);
-//        charMem.putBlockOfBytes(another.charMem.addressOf(0), cSize);
-//        charMem.jumpTo(cSize);
-//
-//        long oSize = another.offsetMem.getAppendOffset();
-//        assert offsetMem.isMapped(0, oSize);
-//        offsetMem.jumpTo(0);
-//        offsetMem.putBlockOfBytes(another.offsetMem.addressOf(0), oSize);
-//        offsetMem.jumpTo(oSize);
-
-        updateNullFlag(another.getNullFlag());
-    }
-
-    private static boolean assertEquals(MemoryMARW mem1, MemoryMARW mem2) {
-        if (mem1.size() != mem2.size()) {
-            return false;
-        }
-
-        for (long i = 0; i < mem1.size(); i++) {
-            if (mem1.getByte(i) != mem2.getByte(i)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     @Override
     public boolean getNullFlag() {
         return offsetMem.getBool(HEADER_NULL_FLAG);
@@ -449,13 +391,6 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     public void updateNullFlag(boolean flag) {
         offsetMem.putBool(HEADER_NULL_FLAG, flag);
         nullValue = flag;
-    }
-
-    private static void copy(MemoryMARW src, MemoryMARW dst) {
-        long size = src.size();
-        dst.jumpTo(0);
-        dst.putBlockOfBytes(src.addressOf(0), size);
-        dst.jumpTo(src.getAppendOffset());
     }
 
     private void jumpCharMemToSymbolCount(int symbolCount) {

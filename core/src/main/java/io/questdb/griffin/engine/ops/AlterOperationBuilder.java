@@ -78,10 +78,6 @@ public class AlterOperationBuilder implements Mutable {
         tableNamePosition = -1;
     }
 
-    public void convertToChangeSymbolCapacity() {
-        this.command = CHANGE_SYMBOL_CAPACITY;
-    }
-
     public ObjList<CharSequence> getExtraStrInfo() {
         return extraStrInfo;
     }
@@ -132,6 +128,14 @@ public class AlterOperationBuilder implements Mutable {
 
     public AlterOperationBuilder ofColumnChangeType(int tableNamePosition, TableToken tableToken, int tableId) {
         this.command = CHANGE_COLUMN_TYPE;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableId;
+        return this;
+    }
+
+    public AlterOperationBuilder ofSymbolCapacityChange(int tableNamePosition, TableToken tableToken, int tableId) {
+        this.command = CHANGE_SYMBOL_CAPACITY;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableId;

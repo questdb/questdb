@@ -1052,25 +1052,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         int columnIndex = metadata.getColumnIndexQuiet(colName);
         if (columnIndex < 0) {
-            throw CairoException.nonCritical()
-                    .put("cannot change column type, column does not exist [table=").put(tableToken.getTableName())
-                    .put(", column=").put(colName).put(']');
+            // Log it as non-critical because it's not a structural change.
+            // It is possible in concurrent schema modification that SQl compiler allowed
+            // this alter but by the time it is applied the colum type has changed.
+            LOG.error().$("cannot change column type, column does not exist [table=").$(tableToken)
+                    .$(", column=").$(colName).I$();
+            return;
         }
-        String columnName = metadata.getColumnName(columnIndex);
 
+        String columnName = metadata.getColumnName(columnIndex);
         int existingType = metadata.getColumnType(columnIndex);
         assert existingType > 0;
 
         if (!ColumnType.isSymbol(existingType)) {
-            throw CairoException.nonCritical()
-                    .put("cannot symbol capacity, column is not symbol [table=").put(tableToken.getTableName())
-                    .put(", column=").put(columnName).put(']');
+            // Log it as non-critical because it's not a structural change.
+            // It is possible in concurrent schema modification that SQl compiler allowed
+            // this alter but by the time it is applied the colum type has changed.
+            LOG.error().$("cannot symbol capacity, column is not symbol [table=").$(tableToken)
+                    .$(", column=").$(columnName).$(", columnType=").$(ColumnType.nameOf(existingType)).I$();
+            return;
         }
 
 
         var oldSymbolWriter = (SymbolMapWriter) symbolMapWriters.getQuick(columnIndex);
         int oldCapacity = oldSymbolWriter.getSymbolCapacity();
-        int symbolDenseIndex = oldSymbolWriter.getSymbolDenseIndex();
         boolean symbolCacheFlag = metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag();
 
         newSymbolCapacity = Numbers.ceilPow2(newSymbolCapacity);
@@ -1104,20 +1109,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 // remove _todo
                 clearTodoLog();
-//                var newSymbolWriter = createSymbolMapWriterObj(
-//                        columnName,
-//                        columnNameTxn,
-//                        newSymbolCapacity,
-//                        symbolCacheFlag,
-//                        symbolDenseIndex
-//                );
-//
-//                newSymbolWriter.copySymbols(oldSymbolWriter);
-//                symbolMapWriters.set(columnIndex, newSymbolWriter);
-//                denseSymbolMapWriters.set(symbolDenseIndex, newSymbolWriter);
-//                Misc.free(oldSymbolWriter);
 
-                // swap of the files has to be done after _todo is removed
+                // linking of the files has to be done after _todo is removed
                 hardLinkAndPurgeColumnFiles(
                         columnName,
                         columnIndex,
@@ -5597,7 +5590,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ff.remove(offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
                     ff.remove(charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
                     ff.remove(keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                    // remove all but the last, if last fails - it wasn't created in the first place
+                    ff.remove(valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
                     throw e;
                 }
                 purgingOperator.add(columnIndex, columnName, columnType, isIndexed, defaultColumnNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1L);
