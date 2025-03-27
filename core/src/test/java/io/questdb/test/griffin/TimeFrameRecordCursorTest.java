@@ -327,11 +327,6 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
                         "filtered_t where i > 0"
                 ),
                 new TestCase(
-                        "time_filtered_t",
-                        "create table time_filtered_t (ts timestamp) timestamp(ts) partition by day",
-                        "time_filtered_t where ts in '1970-01-13'"
-                ),
-                new TestCase(
                         "desc_ordered_t",
                         "create table desc_ordered_t (ts timestamp) timestamp(ts) partition by day",
                         "desc_ordered_t order by ts desc"

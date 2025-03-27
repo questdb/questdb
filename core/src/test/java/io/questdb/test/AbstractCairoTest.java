@@ -1484,7 +1484,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static void printSql(CharSequence sql, boolean fullFatJoins) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.setFullFatJoins(fullFatJoins);
-            TestUtils.printSql(compiler, sqlExecutionContext, sql, sink);
+            try {
+                TestUtils.printSql(compiler, sqlExecutionContext, sql, sink);
+            } finally {
+                compiler.setFullFatJoins(false);
+            }
         }
     }
 

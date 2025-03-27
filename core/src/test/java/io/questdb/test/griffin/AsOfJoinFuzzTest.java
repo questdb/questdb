@@ -40,17 +40,22 @@ import java.util.Collection;
 @RunWith(Parameterized.class)
 public class AsOfJoinFuzzTest extends AbstractCairoTest {
     private final JoinType joinType;
+    private boolean exerciseIntervals;
 
-    public AsOfJoinFuzzTest(JoinType joinType) {
+    public AsOfJoinFuzzTest(JoinType joinType, boolean exerciseIntervals) {
         this.joinType = joinType;
+        this.exerciseIntervals = exerciseIntervals;
     }
 
-    @Parameterized.Parameters(name = "{0}")
+    @Parameterized.Parameters(name = "join type: {0}, intervals: {1}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {JoinType.ASOF},
-                {JoinType.LT_NONKEYD},
-                {JoinType.ASOF_NONKEYD}
+                {JoinType.ASOF, true},
+                {JoinType.ASOF, false},
+                {JoinType.LT_NONKEYD, true},
+                {JoinType.LT_NONKEYD, false},
+                {JoinType.ASOF_NONKEYD, true},
+                {JoinType.ASOF_NONKEYD, false}
         });
     }
 
@@ -84,7 +89,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         testFuzz(10);
     }
 
-    private void assertResultSetsMatch() throws Exception {
+    private void assertResultSetsMatch(Rnd rnd) throws Exception {
         String join;
         String onSuffix = "";
         switch (joinType) {
@@ -102,13 +107,32 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 throw new IllegalArgumentException("Unexpected join type: " + joinType);
         }
 
+        StringSink timeFilter = new StringSink();
+        if (exerciseIntervals) {
+            int n = rnd.nextInt(5) + 1;
+            long baseTs = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
+            for (int i = 0; i < n; i++) {
+                if (i == 0) {
+                    timeFilter.put("where ts != '");
+                } else {
+                    timeFilter.put(" and ts != '");
+                }
+                int offsetDays = rnd.nextInt(100);
+                long ts = baseTs + Timestamps.DAY_MICROS * offsetDays;
+                TimestampFormatUtils.appendDateTimeUSec(timeFilter, ts);
+                timeFilter.put("'");
+            }
+        }
 
         final StringSink expectedSink = new StringSink();
-        // equivalent of the below query, but uses slow factory
-        printSql("select * from " + "t1" + join + " JOIN (" + "t2" + " where i >= 0)" + onSuffix, expectedSink);
+        sink.clear();
+        printSql("select * from " + "t1" + join + " JOIN " + "(t2 " + timeFilter + ")" + onSuffix, true);
+        expectedSink.put(sink);
 
         final StringSink actualSink = new StringSink();
-        printSql("select * from " + "t1" + join + " JOIN " + "t2" + onSuffix, actualSink);
+        sink.clear();
+        printSql("select * from " + "t1" + join + " JOIN " + "(t2 " + timeFilter + ")" + onSuffix, false);
+        actualSink.put(sink);
 
         TestUtils.assertEquals(expectedSink, actualSink);
     }
@@ -141,7 +165,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 execute("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "');");
             }
 
-            assertResultSetsMatch();
+            assertResultSetsMatch(rnd);
         });
     }
 
@@ -173,7 +197,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 execute("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "');");
             }
 
-            assertResultSetsMatch();
+            assertResultSetsMatch(rnd);
         });
     }
 
