@@ -112,11 +112,6 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
             double rt = t; // reduced target
             double pp; // partial price
 
-            // expect (size, value) pairs
-            // equation is
-            // ((size[0] * price[0]) + (size[n] * price[n]) + ((target - size[0] - size[n]) * price[n+1])) / target
-            // ((ra)             + (rt * price[n+1])) / t
-            // get final price by partially filling against the last bin
             for (int i = 0; i < len; i++) {
                 final double size = sizesArr.getDouble(i);
                 final double price = pricesArr.getDouble(i);
