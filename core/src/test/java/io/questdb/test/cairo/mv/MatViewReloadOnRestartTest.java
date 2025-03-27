@@ -40,6 +40,7 @@ import io.questdb.test.TestServerMain;
 import io.questdb.test.cutlass.http.SendAndReceiveRequestBuilder;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -61,7 +62,10 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain main1 = startWithEnvVariables0(
                     PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
-                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
+                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
+                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
+                    PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
+                    PropertyKey.PG_ENABLED.getEnvVarName(), "false"
             )) {
                 execute(
                         main1,
@@ -150,10 +154,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     @Test
     public void testMatViewsReloadOnServerStart() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain main1 = startWithEnvVariables0(
-                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
-                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
-            )) {
+            try (final TestServerMain main1 = startMainPortsDisabled()) {
                 execute(
                         main1,
                         "create table base_price (" +
@@ -204,10 +205,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 assertSql(main1, expected, "price_1h order by ts, sym");
             }
 
-            try (final TestServerMain main2 = startWithEnvVariables0(
-                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
-                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
-            )) {
+            try (final TestServerMain main2 = startMainPortsDisabled()) {
                 String expected = "sym\tprice\tts\n" +
                         "gbpusd\t1.319\t2024-09-10T12:00:00.000000Z\n" +
                         "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
@@ -244,10 +242,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     public void testMatViewsReloadOnServerStartCorruptedDefinitionFile() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             String viewDirName;
-            try (final TestServerMain main1 = startWithEnvVariables0(
-                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
-                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
-            )) {
+            try (final TestServerMain main1 = startMainPortsDisabled()) {
                 execute(
                         main1,
                         "create table base_price (" +
@@ -288,10 +283,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
             TestFilesFacadeImpl.INSTANCE.remove(dbPath.trimTo(dbPathLen).concat(viewDirName).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
 
             // The mat view should be skipped on server start.
-            try (final TestServerMain main2 = startWithEnvVariables0(
-                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
-                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
-            )) {
+            try (final TestServerMain main2 = startMainPortsDisabled()) {
                 try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine())) {
                     refreshJob.run(0);
                 }
@@ -309,10 +301,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     @Test
     public void testMatViewsReloadOnServerStartInvalidState() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain main1 = startWithEnvVariables0(
-                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
-                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
-            )) {
+            try (final TestServerMain main1 = startMainPortsDisabled()) {
                 execute(
                         main1,
                         "create table base_price (" +
@@ -374,10 +363,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 }
             }
 
-            try (final TestServerMain main2 = startWithEnvVariables0(
-                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
-                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
-            )) {
+            try (final TestServerMain main2 = startMainPortsDisabled()) {
                 assertSql(
                         main2,
                         "view_name\tview_status\tinvalidation_reason\n" +
@@ -400,10 +386,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                 );
             }
 
-            try (final TestServerMain main3 = startWithEnvVariables0(
-                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
-                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
-            )) {
+            try (final TestServerMain main3 = startMainPortsDisabled()) {
                 assertSql(
                         main3,
                         "view_name\tview_status\tinvalidation_reason\n" +
@@ -417,10 +400,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     @Test
     public void testMatViewsReloadOnServerStartMissingBaseTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain main1 = startWithEnvVariables0(
-                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
-                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
-            )) {
+            try (final TestServerMain main1 = startMainPortsDisabled()) {
                 execute(
                         main1,
                         "create table base_price (" +
@@ -458,10 +438,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
             }
 
             // The mat view should be skipped on server start.
-            try (final TestServerMain main2 = startWithEnvVariables0(
-                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
-                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
-            )) {
+            try (final TestServerMain main2 = startMainPortsDisabled()) {
                 try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine())) {
                     refreshJob.run(0);
                 }
@@ -480,10 +457,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     @Test
     public void testMatViewsReloadOnServerStartNonWalBaseTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain main1 = startWithEnvVariables0(
-                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
-                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
-            )) {
+            try (final TestServerMain main1 = startMainPortsDisabled()) {
                 execute(
                         main1,
                         "create table base_price (" +
@@ -521,10 +495,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
             }
 
             // The mat view should be skipped on server start.
-            try (final TestServerMain main2 = startWithEnvVariables0(
-                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
-                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true"
-            )) {
+            try (final TestServerMain main2 = startMainPortsDisabled()) {
                 try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine())) {
                     refreshJob.run(0);
                 }
@@ -550,6 +521,20 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
 
     private static void execute(TestServerMain serverMain, final String sql) {
         serverMain.ddl(sql);
+    }
+
+    @NotNull
+    private static TestServerMain startMainPortsDisabled() {
+        return startWithEnvVariables0(
+                PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
+                PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
+                PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
+                PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
+                PropertyKey.LINE_UDP_ENABLED.getEnvVarName(), "false",
+                PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
+                PropertyKey.HTTP_ENABLED.getEnvVarName(), "false",
+                PropertyKey.PG_ENABLED.getEnvVarName(), "false"
+        );
     }
 
     private static TestServerMain startWithEnvVariables0(String... envs) {

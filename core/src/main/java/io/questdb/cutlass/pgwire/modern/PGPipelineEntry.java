@@ -1180,55 +1180,63 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         .put(", valueSize=").put(valueSize).put(']');
             }
 
-            // read the pgwire protocol types
-            if (msgBindParameterFormatCodes.get(i)) {
-                // beware, pgwire type is encoded as big endian
-                // that's why we use X_PG_INT4 and not just PG_INT4
-                int pgWireType = Numbers.decodeHighInt(encodedType);
-                switch (pgWireType) {
-                    case X_PG_INT4:
-                        setBindVariableAsInt(i, lo, valueSize, bindVariableService);
-                        break;
-                    case X_PG_INT8:
-                        setBindVariableAsLong(i, lo, valueSize, bindVariableService);
-                        break;
-                    case X_PG_TIMESTAMP:
-                    case X_PG_TIMESTAMP_TZ:
-                        setBindVariableAsTimestamp(i, lo, valueSize, bindVariableService);
-                        break;
-                    case X_PG_INT2:
-                        setBindVariableAsShort(i, lo, valueSize, bindVariableService);
-                        break;
-                    case X_PG_FLOAT8:
-                        setBindVariableAsDouble(i, lo, valueSize, bindVariableService);
-                        break;
-                    case X_PG_FLOAT4:
-                        setBindVariableAsFloat(i, lo, valueSize, bindVariableService);
-                        break;
-                    case X_PG_CHAR:
-                        setBindVariableAsChar(i, lo, valueSize, bindVariableService, characterStore);
-                        break;
-                    case X_PG_DATE:
-                        setBindVariableAsDate(i, lo, valueSize, bindVariableService);
-                        break;
-                    case X_PG_BOOL:
-                        setBindVariableAsBoolean(i, lo, valueSize, bindVariableService);
-                        break;
-                    case X_PG_BYTEA:
-                        setBindVariableAsBin(i, lo, valueSize, bindVariableService, binarySequenceParamsPool);
-                        break;
-                    case X_PG_UUID:
-                        setUuidBindVariable(i, lo, valueSize, bindVariableService);
-                        break;
-                    default:
-                        // before we bind a string, we need to define the type of the variable
-                        // so the binding process can cast the string as required
-                        setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, utf8String);
-                        break;
+            // when type is unspecified, we are assuming that bind variable has not been used in the SQL
+            // e.g. something like this "select * from tab where a = $1 and b = $5". E.g.  there is a gap
+            // in the bind variable sequence. Because of the gap, our compiler could not define types - there is
+            // no usage in SQL, bing variables are left out to be NULL.
+            // Now the client is sending values in those bind variables - we can ignore them, provided variables
+            // are unused.
+            if (encodedType != PG_UNSPECIFIED) {
+                // read the pgwire protocol types
+                if (msgBindParameterFormatCodes.get(i)) {
+                    // beware, pgwire type is encoded as big endian
+                    // that's why we use X_PG_INT4 and not just PG_INT4
+                    int pgWireType = Numbers.decodeHighInt(encodedType);
+                    switch (pgWireType) {
+                        case X_PG_INT4:
+                            setBindVariableAsInt(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_INT8:
+                            setBindVariableAsLong(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_TIMESTAMP:
+                        case X_PG_TIMESTAMP_TZ:
+                            setBindVariableAsTimestamp(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_INT2:
+                            setBindVariableAsShort(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_FLOAT8:
+                            setBindVariableAsDouble(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_FLOAT4:
+                            setBindVariableAsFloat(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_CHAR:
+                            setBindVariableAsChar(i, lo, valueSize, bindVariableService, characterStore);
+                            break;
+                        case X_PG_DATE:
+                            setBindVariableAsDate(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_BOOL:
+                            setBindVariableAsBoolean(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_BYTEA:
+                            setBindVariableAsBin(i, lo, valueSize, bindVariableService, binarySequenceParamsPool);
+                            break;
+                        case X_PG_UUID:
+                            setUuidBindVariable(i, lo, valueSize, bindVariableService);
+                            break;
+                        default:
+                            // before we bind a string, we need to define the type of the variable
+                            // so the binding process can cast the string as required
+                            setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, utf8String);
+                            break;
+                    }
+                } else {
+                    // read as a string
+                    setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, utf8String);
                 }
-            } else {
-                // read as a string
-                setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, utf8String);
             }
             lo += valueSize;
         }
@@ -1634,14 +1642,17 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 //    if the client include types in a PARSE message and a subsequent DESCRIBE sends back different types
                 //    the client will error out. e.g. PG JDBC is very strict about this.
                 final Function f = bindVariableService.getFunction(i);
-                int nativeType = f.getType();
-                assert nativeType != ColumnType.UNDEFINED : "function type is undefined";
-                if (oid == PG_UNSPECIFIED || oid == X_PG_VOID) {
-                    // oid is stored as Big Endian
-                    // since that's what clients expects - pgwire is big endian
-                    oid = Numbers.bswap(PGOids.getTypeOid(nativeType));
+                int nativeType;
+                if (f != null) {
+                    nativeType = f.getType();
+                    if (oid == PG_UNSPECIFIED || oid == X_PG_VOID) {
+                        // oid is stored as Big Endian
+                        // since that's what clients expects - pgwire is big endian
+                        oid = Numbers.bswap(PGOids.getTypeOid(nativeType));
+                    }
+                } else {
+                    nativeType = ColumnType.UNDEFINED;
                 }
-
                 outParameterTypeDescriptionTypes.setQuick(i, Numbers.encodeLowHighInts(nativeType, oid));
             }
         }
@@ -2530,6 +2541,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     throw kaput().put("invalid UTF8 encoding for string value [variableIndex=").put(variableIndex).put(']');
                 }
             }
+        } catch (BadProtocolException ex) {
+            throw ex;
         } catch (Throwable ex) {
             throw kaput().put(ex);
         }
