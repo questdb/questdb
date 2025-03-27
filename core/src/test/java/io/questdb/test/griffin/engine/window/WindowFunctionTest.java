@@ -37,9 +37,11 @@ import io.questdb.griffin.engine.functions.window.DenseRankFunctionFactory;
 import io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LagDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LagLongFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LagTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LastValueDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LeadDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LeadLongFunctionFactory;
+import io.questdb.griffin.engine.functions.window.LeadTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.window.MaxDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.MinDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.RankFunctionFactory;
@@ -5479,6 +5481,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     LeadDoubleFunctionFactory.class,
                     LagLongFunctionFactory.class,
                     LeadLongFunctionFactory.class,
+                    LagTimestampFunctionFactory.class,
+                    LeadTimestampFunctionFactory.class,
             };
 
             int position = -1;

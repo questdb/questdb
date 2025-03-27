@@ -80,7 +80,6 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
             super(arg, defaultValueFunc, offset, memory, ignoreNulls);
         }
 
-
         @Override
         protected boolean doPass1(Record record, long recordOffset, WindowSPI spi) {
             long leadValue;
@@ -110,7 +109,6 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
                                          long offset) {
             super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
         }
-
 
         @Override
         protected boolean doPass1(long count,

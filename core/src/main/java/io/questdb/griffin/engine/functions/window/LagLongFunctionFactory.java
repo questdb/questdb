@@ -102,7 +102,6 @@ public class LagLongFunctionFactory extends AbstractWindowFunctionFactory {
             return lagValue;
         }
 
-
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
@@ -170,7 +169,6 @@ public class LagLongFunctionFactory extends AbstractWindowFunctionFactory {
         public long getLong(Record rec) {
             return value;
         }
-
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {

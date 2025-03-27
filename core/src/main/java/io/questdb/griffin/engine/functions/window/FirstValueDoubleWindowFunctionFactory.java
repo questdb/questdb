@@ -940,7 +940,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
 
     // Handles:
     // - first_value(a) ignore nulls over (partition by x rows between unbounded preceding and [current row | x preceding ])
-    // - first__value(a) ignore nulls over (partition by x order by ts range between unbounded preceding and [current row | x preceding])
+    // - first_value(a) ignore nulls over (partition by x order by ts range between unbounded preceding and [current row | x preceding])
     static class FirstNotNullValueOverUnboundedPartitionRowsFrameFunction extends FirstValueOverUnboundedPartitionRowsFrameFunction {
         public FirstNotNullValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
             super(map, partitionByRecord, partitionBySink, arg);
