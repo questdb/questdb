@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -126,6 +127,11 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public TimeFrameRecordCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
+        return base.getTimeFrameCursor(executionContext);
+    }
+
+    @Override
     public void halfClose() {
         base.halfClose();
     }
@@ -143,6 +149,11 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean supportsPageFrameCursor() {
         return base.supportsPageFrameCursor();
+    }
+
+    @Override
+    public boolean supportsTimeFrameCursor() {
+        return base.supportsTimeFrameCursor();
     }
 
     @Override
