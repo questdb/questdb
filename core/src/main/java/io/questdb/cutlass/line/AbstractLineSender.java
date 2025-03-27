@@ -24,25 +24,14 @@
 
 package io.questdb.cutlass.line;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.auth.AuthUtils;
-import io.questdb.cutlass.line.array.ArrayDataAppender;
-import io.questdb.cutlass.line.array.ArrayShapeAppender;
-import io.questdb.cutlass.line.array.DoubleArray;
-import io.questdb.cutlass.line.array.FlattenArrayUtils;
-import io.questdb.cutlass.line.array.LongArray;
-import io.questdb.cutlass.line.tcp.LineTcpParser;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Long256;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
-import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8s;
@@ -58,20 +47,20 @@ import java.security.SignatureException;
 import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 
-public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender, MemoryA {
+public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender {
     protected final int capacity;
     private final long bufA;
     private final long bufB;
+    protected long hi;
     protected LineChannel lineChannel;
+    protected long ptr;
     private boolean closed;
     private boolean enableValidation;
     private boolean hasColumns;
     private boolean hasSymbols;
     private boolean hasTable;
-    private long hi;
     private long lineStart;
     private long lo;
-    private long ptr;
     private boolean quoted = false;
 
     public AbstractLineSender(LineChannel lineChannel, int capacity) {
@@ -152,58 +141,13 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender,
         enableValidation = false;
     }
 
-    @Override
-    public Sender doubleArray(@NotNull CharSequence name, double[] values) {
-        return arrayColumn(name, ColumnType.DOUBLE, (byte) 1, values,
-                FlattenArrayUtils::putShapeToBuf,
-                FlattenArrayUtils::putDataToBuf);
-    }
-
-    @Override
-    public Sender doubleArray(@NotNull CharSequence name, double[][] values) {
-        return arrayColumn(name, ColumnType.DOUBLE, (byte) 2, values,
-                FlattenArrayUtils::putShapeToBuf,
-                FlattenArrayUtils::putDataToBuf);
-    }
-
-    @Override
-    public Sender doubleArray(@NotNull CharSequence name, double[][][] values) {
-        return arrayColumn(name, ColumnType.DOUBLE, (byte) 3, values,
-                FlattenArrayUtils::putShapeToBuf,
-                FlattenArrayUtils::putDataToBuf);
-    }
-
-    @Override
-    public Sender doubleArray(CharSequence name, DoubleArray values) {
-        if (processNullArray(name, values)) {
-            return this;
-        }
-        writeFieldName(name, true)
-                .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ARRAY binary format
-                .put((byte) ColumnType.DOUBLE); // element type
-        values.appendToBufPtr(this);
-        return this;
-    }
-
-    @Override
-    public final AbstractLineSender doubleColumn(CharSequence name, double value) {
-        writeFieldName(name, true)
-                .put(LineTcpParser.ENTITY_TYPE_DOUBLE);
-        if (ptr + Double.BYTES >= hi) {
-            send00();
-        }
-        Unsafe.getUnsafe().putDouble(ptr, value);
-        ptr += Double.BYTES;
-        return this;
-    }
-
     public AbstractLineSender field(CharSequence name, long value) {
-        writeFieldName(name, false).put(value).put('i');
+        writeFieldName(name).put(value).put('i');
         return this;
     }
 
     public AbstractLineSender field(CharSequence name, CharSequence value) {
-        writeFieldName(name, false).put('"');
+        writeFieldName(name).put('"');
         quoted = true;
         put(value);
         quoted = false;
@@ -212,12 +156,12 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender,
     }
 
     public AbstractLineSender field(CharSequence name, double value) {
-        writeFieldName(name, false).put(value);
+        writeFieldName(name).put(value);
         return this;
     }
 
     public AbstractLineSender field(CharSequence name, boolean value) {
-        writeFieldName(name, false).putAsciiInternal(value ? 't' : 'f');
+        writeFieldName(name).putAsciiInternal(value ? 't' : 'f');
         return this;
     }
 
@@ -226,54 +170,6 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender,
         validateNotClosed();
         sendLine();
         ptr = lineStart = lo;
-    }
-
-    @Override
-    public long getAppendOffset() {
-        return ptr;
-    }
-
-    @Override
-    public long getExtendSegmentSize() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void jumpTo(long offset) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public Sender longArray(@NotNull CharSequence name, long[] values) {
-        return arrayColumn(name, ColumnType.LONG, (byte) 1, values,
-                FlattenArrayUtils::putShapeToBuf,
-                FlattenArrayUtils::putDataToBuf);
-    }
-
-    @Override
-    public Sender longArray(@NotNull CharSequence name, long[][] values) {
-        return arrayColumn(name, ColumnType.LONG, (byte) 2, values,
-                FlattenArrayUtils::putShapeToBuf,
-                FlattenArrayUtils::putDataToBuf);
-    }
-
-    @Override
-    public Sender longArray(@NotNull CharSequence name, long[][][] values) {
-        return arrayColumn(name, ColumnType.LONG, (byte) 3, values,
-                FlattenArrayUtils::putShapeToBuf,
-                FlattenArrayUtils::putDataToBuf);
-    }
-
-    @Override
-    public Sender longArray(@NotNull CharSequence name, LongArray values) {
-        if (processNullArray(name, values)) {
-            return this;
-        }
-        writeFieldName(name, true)
-                .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ARRAY binary format
-                .put((byte) ColumnType.LONG); // element type
-        values.appendToBufPtr(this);
-        return this;
     }
 
     @Override
@@ -414,153 +310,7 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender,
     }
 
     @Override
-    public long putBin(BinarySequence value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long putBin(long from, long len) {
-        putBlockOfBytes(from, len);
-        return ptr;
-    }
-
-    @Override
-    public void putBlockOfBytes(long from, long len) {
-        while (len > 0) {
-            if (ptr >= hi) {
-                send00();
-            }
-            long copy = Math.min(len, hi - ptr);
-            Vect.memcpy(ptr, from, copy);
-            len -= copy;
-            ptr += copy;
-        }
-    }
-
-    @Override
-    public void putBool(boolean value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putByte(byte value) {
-        put(value);
-    }
-
-    @Override
-    public void putChar(char value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putDouble(double value) {
-        if (ptr + Double.BYTES >= hi) {
-            send00();
-        }
-        Unsafe.getUnsafe().putDouble(ptr, value);
-        ptr += Double.BYTES;
-    }
-
-    @Override
-    public void putFloat(float value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putInt(int value) {
-        if (ptr + Integer.BYTES >= hi) {
-            send00();
-        }
-        Unsafe.getUnsafe().putInt(ptr, value);
-        ptr += Integer.BYTES;
-    }
-
-    @Override
-    public void putLong(long value) {
-        if (ptr + Long.BYTES >= hi) {
-            send00();
-        }
-        Unsafe.getUnsafe().putLong(ptr, value);
-        ptr += Long.BYTES;
-    }
-
-    @Override
-    public void putLong128(long lo, long hi) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putLong256(long l0, long l1, long l2, long l3) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putLong256(Long256 value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putLong256(@Nullable CharSequence hexString) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putLong256(@NotNull CharSequence hexString, int start, int end) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putLong256Utf8(@Nullable Utf8Sequence hexString) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public AbstractLineSender putNonAscii(long lo, long hi) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long putNullBin() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long putNullStr() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void putShort(short value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long putStr(CharSequence value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long putStr(char value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long putStr(CharSequence value, int pos, int len) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long putStrUtf8(DirectUtf8Sequence value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public long putVarchar(@NotNull Utf8Sequence value, int lo, int hi) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void skip(long bytes) {
         throw new UnsupportedOperationException();
     }
 
@@ -593,16 +343,6 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender,
         return this;
     }
 
-    @Override
-    public void truncate() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void zeroMem(int length) {
-        throw new UnsupportedOperationException();
-    }
-
     private static int findEOL(long ptr, int len) {
         for (int i = 0; i < len; i++) {
             byte b = Unsafe.getUnsafe().getByte(ptr + i);
@@ -613,36 +353,7 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender,
         return -1;
     }
 
-    private <T> Sender arrayColumn(
-            CharSequence name,
-            short columnType,
-            byte nDims,
-            T array,
-            ArrayShapeAppender<T> shapeAppender,
-            ArrayDataAppender<T> dataAppender
-    ) {
-        if (processNullArray(name, array)) {
-            return this;
-        }
 
-        writeFieldName(name, true)
-                .put(LineTcpParser.ENTITY_TYPE_ARRAY)
-                .put((byte) columnType)
-                .put(nDims);
-        shapeAppender.append(this, array);
-        dataAppender.append(this, array);
-        return this;
-    }
-
-    private boolean processNullArray(CharSequence name, Object value) {
-        if (value == null) {
-            writeFieldName(name, true)
-                    .put(LineTcpParser.ENTITY_TYPE_ARRAY) // ARRAY binary format
-                    .put((byte) ColumnType.NULL); // element type
-            return true;
-        }
-        return false;
-    }
 
     private byte[] receiveChallengeBytes() {
         int n = 0;
@@ -768,7 +479,7 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender,
         }
     }
 
-    protected AbstractLineSender writeFieldName(CharSequence name, boolean binaryFormat) {
+    protected AbstractLineSender writeFieldName(CharSequence name) {
         validateNotClosed();
         validateColumnName(name);
         if (hasTable) {
@@ -778,12 +489,7 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender,
             } else {
                 putAsciiInternal(',');
             }
-            put(name);
-            putAsciiInternal('=');
-            if (binaryFormat) {
-                putAsciiInternal('=');
-            }
-            return this;
+            return put(name).putAsciiInternal('=');
         }
         throw new LineSenderException("table expected");
     }
