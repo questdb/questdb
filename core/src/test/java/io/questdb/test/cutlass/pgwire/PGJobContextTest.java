@@ -135,10 +135,10 @@ import java.util.stream.Stream;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
-import static io.questdb.test.tools.TestUtils.*;
 import static io.questdb.test.tools.TestUtils.assertEquals;
-import static org.junit.Assert.*;
+import static io.questdb.test.tools.TestUtils.*;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.*;
 
 /**
  * This class contains tests which replay PGWIRE traffic.
@@ -7796,6 +7796,7 @@ nodejs code:
     @Test
     public void testPreparedStatementInsertSelectNullDesignatedColumn() throws Exception {
         skipOnWalRun();
+        final AtomicInteger count = new AtomicInteger();
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             {
                 try (
@@ -7808,10 +7809,13 @@ nodejs code:
                     insert.setNull(2, Types.NULL);
                     try {
                         insert.executeUpdate();
-                        assertExceptionNoLeakCheck("inserting NULL for designated timestamp should fail");
+                        fail("inserting NULL for designated timestamp should fail");
                     } catch (PSQLException expected) {
+                        // we get the proper error position only on the first run,
+                        // after that PG client only executes the already compiled prepared statement,
+                        // and the error comes from execution, not from SQL parsing
                         Assert.assertEquals("ERROR: designated timestamp column cannot be NULL\n" +
-                                "  Position: 1", expected.getMessage());
+                                "  Position: " + (count.getAndIncrement() == 0 ? "36" : "1"), expected.getMessage());
                     }
                     // Insert a dud
                     insert.setString(1, "1970-01-01 00:11:22.334455");
