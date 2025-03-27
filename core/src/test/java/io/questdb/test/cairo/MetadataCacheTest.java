@@ -166,7 +166,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     }
                 } catch (SqlException | CairoException ignore) {
                 } catch (Throwable e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     exception.set(e);
                 } finally {
                     Path.clearThreadLocals();
@@ -181,7 +181,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     }
                 } catch (SqlException | CairoException ignore) {
                 } catch (Throwable e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     exception.set(e);
                 } finally {
                     Path.clearThreadLocals();
@@ -271,7 +271,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     }
                 } catch (InterruptedException | SqlException | CairoException ignore) {
                 } catch (Throwable e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     exception.set(e);
                 } finally {
                     Path.clearThreadLocals();
@@ -287,7 +287,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     }
                 } catch (InterruptedException | SqlException | CairoException ignore) {
                 } catch (Throwable e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     exception.set(e);
                 } finally {
                     Path.clearThreadLocals();
@@ -302,7 +302,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     }
                 } catch (SqlException | CairoException ignored) {
                 } catch (Throwable e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     exception.set(e);
                 } finally {
                     Path.clearThreadLocals();
