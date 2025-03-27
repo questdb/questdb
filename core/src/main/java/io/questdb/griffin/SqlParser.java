@@ -47,7 +47,7 @@ import io.questdb.griffin.model.RenameTableModel;
 import io.questdb.griffin.model.WindowColumn;
 import io.questdb.griffin.model.WithClauseModel;
 import io.questdb.std.BufferWindowCharSequence;
-import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
@@ -155,13 +155,13 @@ public class SqlParser {
         this.column = "column";
     }
 
-    public static void collectTables(QueryModel model, CharSequenceObjHashMap<ExpressionNode> tableNames) {
+    public static void collectTables(QueryModel model, CharSequenceHashSet outTableNames, IntList outTableNamePositions) {
         QueryModel m = model;
         do {
             final ExpressionNode tableNameExpr = m.getTableNameExpr();
             if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
-                if (!tableNames.contains(tableNameExpr.token)) {
-                    tableNames.put(tableNameExpr.token, tableNameExpr);
+                if (outTableNames.add(tableNameExpr.token)) {
+                    outTableNamePositions.add(tableNameExpr.position);
                 }
             }
 
@@ -171,12 +171,12 @@ public class SqlParser {
                 if (joinModel == m) {
                     continue;
                 }
-                collectTables(joinModel, tableNames);
+                collectTables(joinModel, outTableNames, outTableNamePositions);
             }
 
             final QueryModel unionModel = m.getUnionModel();
             if (unionModel != null) {
-                collectTables(unionModel, tableNames);
+                collectTables(unionModel, outTableNames, outTableNamePositions);
             }
 
             m = m.getNestedModel();
@@ -832,7 +832,7 @@ public class SqlParser {
 
             // Basic validation - check all nested models for window functions, FROM-TO or FILL.
             QueryModel m = queryModel;
-            while (m != null) {
+            do {
                 if (m.getSampleByFrom() != null || m.getSampleByTo() != null) {
                     final int position = m.getSampleByFrom() != null ? m.getSampleByFrom().position : m.getSampleByTo().position;
                     throw SqlException.position(position).put("FROM-TO is not supported for materialized views");
@@ -852,7 +852,7 @@ public class SqlParser {
                 }
 
                 m = m.getNestedModel();
-            }
+            } while (m != null);
 
             final QueryModel nestedModel = queryModel.getNestedModel();
             if (nestedModel != null) {

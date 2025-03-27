@@ -45,9 +45,9 @@ import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.CharSequenceHashSet;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
+import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -83,7 +83,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private CreateTableOperationImpl createTableOperation;
     private long samplingInterval;
     private char samplingIntervalUnit;
-    private CharSequenceObjHashMap<ExpressionNode> tableNames;
+    private CharSequenceHashSet tableNames;
+    private IntList tableNamePositions;
 
     public CreateMatViewOperationImpl(
             @NotNull String sqlText,
@@ -319,19 +320,20 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         // Find base table name if not set explicitly.
         if (baseTableName == null) {
             if (tableNames == null) {
-                tableNames = new CharSequenceObjHashMap<>();
+                tableNames = new CharSequenceHashSet();
+                tableNamePositions = new IntList();
             }
             tableNames.clear();
-            SqlParser.collectTables(queryModel, tableNames);
+            tableNamePositions.clear();
+            SqlParser.collectTables(queryModel, tableNames, tableNamePositions);
             if (tableNames.size() < 1) {
                 throw SqlException.$(selectTextPosition, "missing base table, materialized views have to be based on a table");
             }
             if (tableNames.size() > 1) {
                 throw SqlException.$(selectTextPosition, "more than one table used in query, base table has to be set using 'WITH BASE'");
             }
-            final ExpressionNode baseTableExpr = tableNames.valueQuick(0);
-            baseTableName = Chars.toString(baseTableExpr.token);
-            baseTableNamePosition = baseTableExpr.position + selectTextPosition;
+            baseTableName = Chars.toString(tableNames.get(0));
+            baseTableNamePosition = tableNamePositions.getQuick(0) + selectTextPosition;
         }
 
         final TableToken baseTableToken = sqlExecutionContext.getTableTokenIfExists(baseTableName);
