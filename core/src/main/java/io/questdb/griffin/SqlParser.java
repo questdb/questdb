@@ -158,9 +158,9 @@ public class SqlParser {
     public static void collectTables(QueryModel model, CharSequenceHashSet tableNames) {
         QueryModel m = model;
         do {
-            final CharSequence t = m.getTableName();
-            if (t != null) {
-                tableNames.add(t);
+            final ExpressionNode tableNameExpr = m.getTableNameExpr();
+            if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
+                tableNames.add(tableNameExpr.token);
             }
 
             final ObjList<QueryModel> joinModels = m.getJoinModels();
@@ -829,21 +829,31 @@ public class SqlParser {
             final QueryModel queryModel = parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback, null);
             final int endOfQuery = lexer.getPosition() - 1;
 
-            // Basic validation - check all nested models for FROM-TO or FILL.
-            final QueryModel nestedModel = queryModel.getNestedModel();
-            QueryModel m = nestedModel;
+            // Basic validation - check all nested models for window functions, FROM-TO or FILL.
+            QueryModel m = queryModel;
             while (m != null) {
                 if (m.getSampleByFrom() != null || m.getSampleByTo() != null) {
                     final int position = m.getSampleByFrom() != null ? m.getSampleByFrom().position : m.getSampleByTo().position;
                     throw SqlException.position(position).put("FROM-TO is not supported for materialized views");
                 }
+
                 final ObjList<ExpressionNode> sampleByFill = m.getSampleByFill();
                 if (sampleByFill != null && sampleByFill.size() > 0) {
                     throw SqlException.position(sampleByFill.get(0).position).put("FILL is not supported for materialized views");
                 }
+
+                ObjList<QueryColumn> columns = m.getColumns();
+                for (int i = 0, n = columns.size(); i < n; i++) {
+                    QueryColumn column = columns.getQuick(i);
+                    if (column.isWindowColumn()) {
+                        throw SqlException.position(column.getAst().position).put("window function is not supported for materialized views");
+                    }
+                }
+
                 m = m.getNestedModel();
             }
 
+            final QueryModel nestedModel = queryModel.getNestedModel();
             if (nestedModel != null) {
                 if (nestedModel.getSampleByTimezoneName() != null) {
                     mvOpBuilder.setTimeZone(unquote(nestedModel.getSampleByTimezoneName().token).toString());
