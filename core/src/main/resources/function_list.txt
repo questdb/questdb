@@ -854,6 +854,8 @@ io.questdb.griffin.engine.functions.window.MinDoubleWindowFunctionFactory
 io.questdb.griffin.engine.functions.window.LastValueDoubleWindowFunctionFactory
 io.questdb.griffin.engine.functions.window.LagDoubleFunctionFactory
 io.questdb.griffin.engine.functions.window.LeadDoubleFunctionFactory
+io.questdb.griffin.engine.functions.window.LagLongFunctionFactory
+io.questdb.griffin.engine.functions.window.LeadLongFunctionFactory
 
 # Bitwise operators
 io.questdb.griffin.engine.functions.math.BitwiseAndLongFunctionFactory

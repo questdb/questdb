@@ -24,32 +24,25 @@
 
 package io.questdb.griffin.engine.functions.window;
 
-import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 
-public abstract class BaseLongWindowFunction extends LongFunction implements WindowFunction, ScalarFunction {
+public abstract class BaseWindowFunction implements WindowFunction {
     protected final Function arg;
     protected int columnIndex;
 
-    public BaseLongWindowFunction(Function arg) {
+    public BaseWindowFunction(Function arg) {
         this.arg = arg;
     }
 
     @Override
     public void close() {
-        if (arg != null) {
-            arg.close();
-        }
+        Misc.free(arg);
     }
 
     @Override
@@ -60,17 +53,10 @@ public abstract class BaseLongWindowFunction extends LongFunction implements Win
     }
 
     @Override
-    public long getLong(Record rec) {
-        //unused
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public abstract String getName();
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        super.init(symbolTableSource, executionContext);
         if (arg != null) {
             arg.init(symbolTableSource, executionContext);
         }
@@ -92,6 +78,9 @@ public abstract class BaseLongWindowFunction extends LongFunction implements Win
             sink.val('(').val(arg).val(')');
         } else {
             sink.val("(*)");
+        }
+        if (isIgnoreNulls()) {
+            sink.val(" ignore nulls");
         }
         sink.val(" over ()");
     }
