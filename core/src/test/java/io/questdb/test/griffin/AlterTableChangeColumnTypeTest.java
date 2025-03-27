@@ -307,7 +307,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createX();
             try {
-                execute("alter table x alter column ik type symbol capacity 512 index", sqlExecutionContext);
+                execute("alter table x alter column ik symbol capacity 512 index", sqlExecutionContext);
                 Assert.fail("index syntax not supported when changing SYMBOL capacity");
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "INDEX is not supported when changing SYMBOL capacity");
