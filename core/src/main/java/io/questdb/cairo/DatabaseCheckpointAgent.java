@@ -28,8 +28,8 @@ import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
-import io.questdb.cairo.mv.MatViewRefreshState;
-import io.questdb.cairo.mv.MatViewRefreshStateReader;
+import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
@@ -205,7 +205,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                             BlockFileReader matViewFileReader = new BlockFileReader(configuration);
                             BlockFileWriter matViewFileWriter = new BlockFileWriter(ff, configuration.getCommitMode())
                     ) {
-                        MatViewRefreshStateReader matViewStateReader = null;
+                        MatViewStateReader matViewStateReader = null;
 
                         // Copy metadata files for all tables.
                         for (int t = 0, n = ordered.size(); t < n; t++) {
@@ -244,14 +244,14 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         // the following call overwrites the path
                                         final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, tableToken.getDirName());
                                         if (isMatViewStateExists) {
-                                            matViewFileReader.of(path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                                            matViewFileReader.of(path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
                                             if (matViewStateReader == null) {
-                                                matViewStateReader = new MatViewRefreshStateReader();
+                                                matViewStateReader = new MatViewStateReader();
                                             }
                                             matViewStateReader.of(matViewFileReader, tableToken);
                                             path.trimTo(checkpointDbLen).concat(tableToken); // restore the path
-                                            matViewFileWriter.of(path.trimTo(rootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                                            MatViewRefreshState.append(matViewStateReader, matViewFileWriter);
+                                            matViewFileWriter.of(path.trimTo(rootLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                                            MatViewState.append(matViewStateReader, matViewFileWriter);
                                             matViewFileWriter.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                                             MatViewDefinition.append(matViewDefinition, matViewFileWriter);
 

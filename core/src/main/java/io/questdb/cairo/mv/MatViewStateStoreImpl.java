@@ -42,8 +42,8 @@ import org.jetbrains.annotations.TestOnly;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Function;
 
-public class MatViewRefreshStateStoreImpl implements MatViewRefreshStateStore {
-    private static final Log LOG = LogFactory.getLog(MatViewRefreshStateStoreImpl.class);
+public class MatViewStateStoreImpl implements MatViewStateStore {
+    private static final Log LOG = LogFactory.getLog(MatViewStateStoreImpl.class);
     private final Function<CharSequence, AtomicLong> createLastNotifiedTxn;
     // Table name to last notified base table txn.
     // Flips to negative value once a refresh message is processed. Long.MIN_VALUE stands for "just invalidated" state.
@@ -51,13 +51,13 @@ public class MatViewRefreshStateStoreImpl implements MatViewRefreshStateStore {
     // Note: this map is grow-only, i.e. keys are never removed.
     private final ConcurrentHashMap<AtomicLong> lastNotifiedTxnByTableName = new ConcurrentHashMap<>();
     private final MicrosecondClock microsecondClock;
-    private final ConcurrentHashMap<MatViewRefreshState> stateByTableDirName = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<MatViewState> stateByTableDirName = new ConcurrentHashMap<>();
     private final ThreadLocal<MatViewRefreshTask> taskHolder = new ThreadLocal<>(MatViewRefreshTask::new);
     private final Queue<MatViewRefreshTask> taskQueue = new ConcurrentQueue<>(MatViewRefreshTask::new);
     private final Telemetry<TelemetryMatViewTask> telemetry;
     private final MatViewTelemetryFacade telemetryFacade;
 
-    public MatViewRefreshStateStoreImpl(CairoEngine engine) {
+    public MatViewStateStoreImpl(CairoEngine engine) {
         this.telemetry = engine.getTelemetryMatView();
         this.telemetryFacade = telemetry.isEnabled() ? this::storeMatViewTelemetry : this::storeMatViewTelemetryNoOp;
         this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
@@ -86,11 +86,11 @@ public class MatViewRefreshStateStoreImpl implements MatViewRefreshStateStore {
     }
 
     @Override
-    public MatViewRefreshState addViewState(MatViewDefinition viewDefinition) {
+    public MatViewState addViewState(MatViewDefinition viewDefinition) {
         final TableToken matViewToken = viewDefinition.getMatViewToken();
-        final MatViewRefreshState state = new MatViewRefreshState(viewDefinition, telemetryFacade);
+        final MatViewState state = new MatViewState(viewDefinition, telemetryFacade);
 
-        final MatViewRefreshState prevState = stateByTableDirName.putIfAbsent(matViewToken.getDirName(), state);
+        final MatViewState prevState = stateByTableDirName.putIfAbsent(matViewToken.getDirName(), state);
         // WAL table directories are unique, so we don't expect previous value
         if (prevState != null) {
             Misc.free(state);
@@ -108,7 +108,7 @@ public class MatViewRefreshStateStoreImpl implements MatViewRefreshStateStore {
 
     @Override
     public void close() {
-        for (MatViewRefreshState state : stateByTableDirName.values()) {
+        for (MatViewState state : stateByTableDirName.values()) {
             Misc.free(state);
         }
         stateByTableDirName.clear();
@@ -137,15 +137,15 @@ public class MatViewRefreshStateStoreImpl implements MatViewRefreshStateStore {
     }
 
     public void enqueueRefreshTaskIfStateExists(TableToken matViewToken, int operation, String invalidationReason) {
-        final MatViewRefreshState state = stateByTableDirName.get(matViewToken.getDirName());
+        final MatViewState state = stateByTableDirName.get(matViewToken.getDirName());
         if (state != null && !state.isDropped()) {
             enqueueMatViewTask(matViewToken, operation, invalidationReason);
         }
     }
 
     @Override
-    public MatViewRefreshState getViewState(TableToken matViewToken) {
-        final MatViewRefreshState state = stateByTableDirName.get(matViewToken.getDirName());
+    public MatViewState getViewState(TableToken matViewToken) {
+        final MatViewState state = stateByTableDirName.get(matViewToken.getDirName());
         if (state != null) {
             if (state.isDropped()) {
                 // Housekeeping
@@ -200,7 +200,7 @@ public class MatViewRefreshStateStoreImpl implements MatViewRefreshStateStore {
 
     @Override
     public void removeViewState(TableToken matViewToken) {
-        final MatViewRefreshState state = stateByTableDirName.remove(matViewToken.getDirName());
+        final MatViewState state = stateByTableDirName.remove(matViewToken.getDirName());
         if (state != null) {
             state.markAsDropped();
             state.tryCloseIfDropped();

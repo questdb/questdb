@@ -71,7 +71,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final MicrosecondClock microsecondClock;
     private final MatViewRefreshExecutionContext refreshExecutionContext;
     private final MatViewRefreshTask refreshTask = new MatViewRefreshTask();
-    private final MatViewRefreshStateStore stateStore;
+    private final MatViewStateStore stateStore;
     private final WalTxnRangeLoader txnRangeLoader;
     private final int workerId;
 
@@ -188,7 +188,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     private boolean insertAsSelect(
-            MatViewRefreshState state,
+            MatViewState state,
             MatViewDefinition viewDef,
             TableWriterAPI tableWriter,
             long baseTableTxn,
@@ -279,7 +279,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return rowCount > 0;
     }
 
-    private void invalidateDependentViews(TableToken baseTableToken, MatViewRefreshStateStore stateStore, String invalidationReason) {
+    private void invalidateDependentViews(TableToken baseTableToken, MatViewStateStore stateStore, String invalidationReason) {
         childViewSink.clear();
         graph.getDependentViews(baseTableToken, childViewSink);
         for (int v = 0, n = childViewSink.size(); v < n; v++) {
@@ -289,8 +289,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         stateStore.notifyBaseInvalidated(baseTableToken);
     }
 
-    private void invalidateView(TableToken viewToken, MatViewRefreshStateStore stateStore, String invalidationReason, boolean force) {
-        final MatViewRefreshState state = stateStore.getViewState(viewToken);
+    private void invalidateView(TableToken viewToken, MatViewStateStore stateStore, String invalidationReason, boolean force) {
+        final MatViewState state = stateStore.getViewState(viewToken);
         if (state != null && !state.isDropped()) {
             if (!state.tryLock()) {
                 LOG.debug().$("skipping materialized view invalidation, locked by another refresh run [view=").$(viewToken).I$();
@@ -365,7 +365,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private boolean refreshDependentViewsIncremental(
             TableToken baseTableToken,
             MatViewGraph graph,
-            MatViewRefreshStateStore stateStore,
+            MatViewStateStore stateStore,
             long refreshTriggeredTimestamp
     ) {
         assert baseTableToken.isWal();
@@ -378,7 +378,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         graph.getDependentViews(baseTableToken, childViewSink);
         for (int v = 0, n = childViewSink.size(); v < n; v++) {
             final TableToken viewToken = childViewSink.get(v);
-            final MatViewRefreshState state = stateStore.getViewState(viewToken);
+            final MatViewState state = stateStore.getViewState(viewToken);
             if (state != null && !state.isPendingInvalidation() && !state.isInvalid() && !state.isDropped()) {
                 if (!state.tryLock()) {
                     LOG.debug().$("skipping materialized view refresh, locked by another refresh run [view=").$(viewToken).I$();
@@ -407,14 +407,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return refreshed;
     }
 
-    private void refreshFailState(MatViewRefreshState state, long refreshTimestamp, String errorMessage) {
+    private void refreshFailState(MatViewState state, long refreshTimestamp, String errorMessage) {
         state.refreshFail(blockFileWriter, dbRoot.trimTo(dbRootLen), refreshTimestamp, errorMessage);
         // Invalidate dependent views recursively.
         enqueueInvalidateDependentViews(state.getViewDefinition().getMatViewToken(), "base materialized view refresh failed");
     }
 
-    private boolean refreshFull(@NotNull TableToken viewToken, MatViewRefreshStateStore stateStore, long refreshTriggeredTimestamp) {
-        final MatViewRefreshState state = stateStore.getViewState(viewToken);
+    private boolean refreshFull(@NotNull TableToken viewToken, MatViewStateStore stateStore, long refreshTriggeredTimestamp) {
+        final MatViewState state = stateStore.getViewState(viewToken);
         if (state == null || state.isDropped()) {
             return false;
         }
@@ -460,7 +460,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     private void refreshFull0(
-            @NotNull MatViewRefreshState state,
+            @NotNull MatViewState state,
             @NotNull TableToken baseTableToken,
             @NotNull TableToken viewToken,
             long refreshTriggeredTimestamp
@@ -498,8 +498,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
-    private boolean refreshIncremental(@NotNull TableToken viewToken, MatViewRefreshStateStore stateStore, long refreshTriggeredTimestamp) {
-        final MatViewRefreshState state = stateStore.getViewState(viewToken);
+    private boolean refreshIncremental(@NotNull TableToken viewToken, MatViewStateStore stateStore, long refreshTriggeredTimestamp) {
+        final MatViewState state = stateStore.getViewState(viewToken);
         if (state == null || state.isPendingInvalidation() || state.isInvalid() || state.isDropped()) {
             return false;
         }
@@ -538,7 +538,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     private boolean refreshIncremental0(
-            @NotNull MatViewRefreshState state,
+            @NotNull MatViewState state,
             @NotNull TableToken baseTableToken,
             @NotNull TableToken viewToken,
             long refreshTriggeredTimestamp
@@ -587,15 +587,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return false;
     }
 
-    private void resetInvalidState(MatViewRefreshState state) {
+    private void resetInvalidState(MatViewState state) {
         state.markAsValid(blockFileWriter, dbRoot.trimTo(dbRootLen));
     }
 
-    private void setInvalidState(MatViewRefreshState state, String invalidationReason) {
+    private void setInvalidState(MatViewState state, String invalidationReason) {
         state.markAsInvalid(blockFileWriter, dbRoot.trimTo(dbRootLen), invalidationReason);
     }
 
-    private void writeLastRefreshBaseTableTxn(MatViewRefreshState state, long txn) {
+    private void writeLastRefreshBaseTableTxn(MatViewState state, long txn) {
         state.writeLastRefreshBaseTableTxn(blockFileWriter, dbRoot.trimTo(dbRootLen), txn);
     }
 }

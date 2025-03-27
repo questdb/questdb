@@ -36,12 +36,12 @@ import org.jetbrains.annotations.TestOnly;
  * <p>
  * The actual implementation may be no-op in case of disabled mat views or read-only replica.
  * Due to this, outside the refresh job the state should be accessed by reading the _mv.s file
- * instead of accessing the store - see {@link MatViewRefreshStateReader}.
+ * instead of accessing the store - see {@link MatViewStateReader}.
  */
-public interface MatViewRefreshStateStore extends QuietCloseable, Mutable {
+public interface MatViewStateStore extends QuietCloseable, Mutable {
 
     // Only creates the view state, no refresh initiated, no telemetry event logged.
-    MatViewRefreshState addViewState(MatViewDefinition viewDefinition);
+    MatViewState addViewState(MatViewDefinition viewDefinition);
 
     @TestOnly
     @Override
@@ -57,7 +57,7 @@ public interface MatViewRefreshStateStore extends QuietCloseable, Mutable {
     void enqueueInvalidate(TableToken matViewToken, String invalidationReason);
 
     @Nullable
-    MatViewRefreshState getViewState(TableToken matViewToken);
+    MatViewState getViewState(TableToken matViewToken);
 
     // Called by refresh job once it invalidated dependent mat views.
     void notifyBaseInvalidated(TableToken baseTableToken);

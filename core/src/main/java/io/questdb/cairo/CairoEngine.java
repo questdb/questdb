@@ -34,11 +34,11 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
-import io.questdb.cairo.mv.MatViewRefreshState;
-import io.questdb.cairo.mv.MatViewRefreshStateStore;
-import io.questdb.cairo.mv.MatViewRefreshStateStoreImpl;
 import io.questdb.cairo.mv.MatViewRefreshTask;
-import io.questdb.cairo.mv.NoOpMatViewRefreshStateStore;
+import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateStore;
+import io.questdb.cairo.mv.MatViewStateStoreImpl;
+import io.questdb.cairo.mv.NoOpMatViewStateStore;
 import io.questdb.cairo.pool.AbstractMultiTenantPool;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
@@ -162,7 +162,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final WriterPool writerPool;
     private @NotNull ConfigReloader configReloader = () -> false; // no-op
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
-    private @NotNull MatViewRefreshStateStore matViewStateStore = NoOpMatViewRefreshStateStore.INSTANCE;
+    private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
 
@@ -579,7 +579,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return matViewGraph;
     }
 
-    public @NotNull MatViewRefreshStateStore getMatViewStateStore() {
+    public @NotNull MatViewStateStore getMatViewStateStore() {
         return matViewStateStore;
     }
 
@@ -933,7 +933,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // Convert tables to WAL/non-WAL, if necessary.
         final ObjList<TableToken> convertedTables = TableConverter.convertTables(this, tableSequencerAPI, tableFlagResolver, tableNameRegistry);
         tableNameRegistry.reload(convertedTables);
-        matViewStateStore = configuration.isMatViewEnabled() ? createMatViewStateStore() : NoOpMatViewRefreshStateStore.INSTANCE;
+        matViewStateStore = configuration.isMatViewEnabled() ? createMatViewStateStore() : NoOpMatViewStateStore.INSTANCE;
         buildMatViewGraph();
     }
 
@@ -1440,19 +1440,19 @@ public class CairoEngine implements Closeable, WriterSource {
                         }
 
                         matViewGraph.addView(matViewDefinition);
-                        final MatViewRefreshState state = matViewStateStore.addViewState(matViewDefinition);
+                        final MatViewState state = matViewStateStore.addViewState(matViewDefinition);
                         // Can be null if the store implementation is no-op.
                         // The no-op store does nothing on view creation and other operations
                         // and is used when mat views are disabled.
                         if (state != null) {
                             final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, tableToken.getDirName());
-                            path.trimTo(pathLen).concat(tableToken.getDirName()).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
+                            path.trimTo(pathLen).concat(tableToken.getDirName()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
                             if (isMatViewStateExists) {
                                 reader.of(path.$());
-                                MatViewRefreshState.readFrom(reader, state);
+                                MatViewState.readFrom(reader, state);
                             } else {
                                 blockFileWriter.of(path.$());
-                                MatViewRefreshState.append(state, blockFileWriter);
+                                MatViewState.append(state, blockFileWriter);
                             }
 
                             if (!state.isInvalid()) {
@@ -1708,8 +1708,8 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     // used in ent
-    protected MatViewRefreshStateStore createMatViewStateStore() {
-        return new MatViewRefreshStateStoreImpl(this);
+    protected MatViewStateStore createMatViewStateStore() {
+        return new MatViewStateStoreImpl(this);
     }
 
     protected SqlExecutionContext createRootExecutionContext() {

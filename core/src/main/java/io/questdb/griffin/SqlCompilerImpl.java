@@ -61,9 +61,9 @@ import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
-import io.questdb.cairo.mv.MatViewRefreshState;
-import io.questdb.cairo.mv.MatViewRefreshStateReader;
-import io.questdb.cairo.mv.MatViewRefreshStateStore;
+import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateReader;
+import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -2030,7 +2030,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to refresh materialized view");
         }
 
-        final MatViewRefreshStateStore matViewGraph = engine.getMatViewStateStore();
+        final MatViewStateStore matViewGraph = engine.getMatViewStateStore();
         executionContext.getSecurityContext().authorizeMatViewRefresh(matViewToken);
         if (incremental) {
             matViewGraph.enqueueIncrementalRefresh(matViewToken);
@@ -3976,10 +3976,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     // srcPath is unused at this point, so we can overwrite it
                                     final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, srcPath, tableToken.getDirName());
                                     if (isMatViewStateExists) {
-                                        matViewFileReader.of(srcPath.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                                        MatViewRefreshStateReader matViewStateReader = new MatViewRefreshStateReader().of(matViewFileReader, tableToken);
-                                        matViewFileWriter.of(auxPath.trimTo(tableRootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                                        MatViewRefreshState.append(matViewStateReader, matViewFileWriter);
+                                        matViewFileReader.of(srcPath.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                                        MatViewStateReader matViewStateReader = new MatViewStateReader().of(matViewFileReader, tableToken);
+                                        matViewFileWriter.of(auxPath.trimTo(tableRootLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                                        MatViewState.append(matViewStateReader, matViewFileWriter);
                                         matViewFileWriter.of(auxPath.trimTo(tableRootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                                         MatViewDefinition.append(matViewDefinition, matViewFileWriter);
                                     } else {

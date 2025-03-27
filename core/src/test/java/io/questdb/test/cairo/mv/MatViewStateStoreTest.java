@@ -28,8 +28,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
-import io.questdb.cairo.mv.MatViewRefreshState;
-import io.questdb.cairo.mv.MatViewRefreshStateStoreImpl;
+import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateStoreImpl;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
@@ -38,10 +38,10 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-public class MatViewRefreshStateStoreTest extends AbstractCairoTest {
+public class MatViewStateStoreTest extends AbstractCairoTest {
     private final MatViewGraph graph = new MatViewGraph();
     private final ObjList<TableToken> ordered = new ObjList<>();
-    private final MatViewRefreshStateStoreImpl stateStore = new MatViewRefreshStateStoreImpl(engine);
+    private final MatViewStateStoreImpl stateStore = new MatViewStateStoreImpl(engine);
     private final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
 
     @Before
@@ -81,7 +81,7 @@ public class MatViewRefreshStateStoreTest extends AbstractCairoTest {
         TableToken view1 = newViewToken("view1");
         MatViewDefinition viewDefinition = createDefinition(view1, table1);
         graph.addView(viewDefinition);
-        MatViewRefreshState state = stateStore.addViewState(viewDefinition);
+        MatViewState state = stateStore.addViewState(viewDefinition);
         Assert.assertNotNull(state);
         state.markAsDropped();
         state = stateStore.getViewState(view1);

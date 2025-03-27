@@ -27,11 +27,11 @@ package io.questdb.cairo.mv;
 import io.questdb.cairo.TableToken;
 import org.jetbrains.annotations.TestOnly;
 
-public class NoOpMatViewRefreshStateStore implements MatViewRefreshStateStore {
-    public static final NoOpMatViewRefreshStateStore INSTANCE = new NoOpMatViewRefreshStateStore();
+public class NoOpMatViewStateStore implements MatViewStateStore {
+    public static final NoOpMatViewStateStore INSTANCE = new NoOpMatViewStateStore();
 
     @Override
-    public MatViewRefreshState addViewState(MatViewDefinition viewDefinition) {
+    public MatViewState addViewState(MatViewDefinition viewDefinition) {
         return null;
     }
 
@@ -61,7 +61,7 @@ public class NoOpMatViewRefreshStateStore implements MatViewRefreshStateStore {
     }
 
     @Override
-    public MatViewRefreshState getViewState(TableToken matViewToken) {
+    public MatViewState getViewState(TableToken matViewToken) {
         return null;
     }
 

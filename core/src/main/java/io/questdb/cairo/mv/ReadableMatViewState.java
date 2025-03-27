@@ -26,7 +26,10 @@ package io.questdb.cairo.mv;
 
 import org.jetbrains.annotations.Nullable;
 
-public interface ReadableMatViewRefreshState {
+/**
+ * Defines refresh state fields.
+ */
+public interface ReadableMatViewState {
 
     @Nullable String getInvalidationReason();
 

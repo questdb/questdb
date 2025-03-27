@@ -34,7 +34,7 @@ import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class MatViewRefreshStateReader implements ReadableMatViewRefreshState, Mutable {
+public class MatViewStateReader implements ReadableMatViewState, Mutable {
     private boolean invalid;
     private String invalidationReason;
     private long lastRefreshBaseTxn = -1;
@@ -69,7 +69,7 @@ public class MatViewRefreshStateReader implements ReadableMatViewRefreshState, M
         return invalid;
     }
 
-    public MatViewRefreshStateReader of(
+    public MatViewStateReader of(
             @NotNull BlockFileReader reader,
             @NotNull TableToken matViewToken
     ) {
@@ -77,7 +77,7 @@ public class MatViewRefreshStateReader implements ReadableMatViewRefreshState, M
         final BlockFileReader.BlockCursor cursor = reader.getCursor();
         while (cursor.hasNext()) {
             final ReadableBlock block = cursor.next();
-            if (block.type() == MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_TYPE) {
+            if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_MSG_TYPE) {
                 matViewStateBlockFound = true;
                 invalid = block.getBool(0);
                 lastRefreshBaseTxn = block.getLong(Byte.BYTES);
@@ -85,7 +85,7 @@ public class MatViewRefreshStateReader implements ReadableMatViewRefreshState, M
                 // keep going, because V2 block might follow
                 continue;
             }
-            if (block.type() == MatViewRefreshState.MAT_VIEW_STATE_FORMAT_V2_MSG_TYPE) {
+            if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_V2_MSG_TYPE) {
                 invalid = block.getBool(0);
                 lastRefreshBaseTxn = block.getLong(Byte.BYTES);
                 lastRefreshTimestamp = block.getLong(Long.BYTES + Byte.BYTES);

@@ -38,8 +38,8 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileWriter;
-import io.questdb.cairo.mv.MatViewRefreshState;
 import io.questdb.cairo.mv.MatViewRefreshTask;
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
@@ -725,7 +725,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             boolean invalid,
             @Nullable CharSequence invalidationReason
     ) {
-        tablePath.concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
+        tablePath.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
         try (BlockFileWriter stateWriter = mvStateWriter) {
             stateWriter.of(tablePath.$());
             final AppendableBlock block = stateWriter.append();
@@ -733,7 +733,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             block.putLong(lastRefreshBaseTxn);
             block.putLong(lastRefreshTimestamp);
             block.putStr(invalidationReason);
-            block.commit(MatViewRefreshState.MAT_VIEW_STATE_FORMAT_V2_MSG_TYPE);
+            block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_V2_MSG_TYPE);
             stateWriter.commit();
         }
     }

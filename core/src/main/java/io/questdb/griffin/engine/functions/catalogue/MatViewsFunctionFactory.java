@@ -35,8 +35,8 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.mv.MatViewDefinition;
-import io.questdb.cairo.mv.MatViewRefreshState;
-import io.questdb.cairo.mv.MatViewRefreshStateReader;
+import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -142,11 +142,11 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                             final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(viewToken);
                             assert matViewDefinition != null : "materialized view definition not found: " + viewToken;
 
-                            final MatViewRefreshStateReader viewStateReader;
+                            final MatViewStateReader viewStateReader;
                             final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, viewToken.getDirName());
                             if (isMatViewStateExists) {
-                                reader.of(path.trimTo(pathLen).concat(viewToken.getDirName()).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                                viewStateReader = new MatViewRefreshStateReader().of(reader, viewToken);
+                                reader.of(path.trimTo(pathLen).concat(viewToken.getDirName()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                                viewStateReader = new MatViewStateReader().of(reader, viewToken);
                             } else {
                                 throw new CairoException().put("materialized view state not found [").put(viewToken).put("]");
                             }

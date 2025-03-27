@@ -4,8 +4,8 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.file.BlockFileReader;
-import io.questdb.cairo.mv.MatViewRefreshState;
-import io.questdb.cairo.mv.MatViewRefreshStateReader;
+import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Rnd;
@@ -112,8 +112,8 @@ public class MatViewStateTest extends AbstractCairoTest {
     private static void checkState(TableToken viewToken, long lastRefreshBaseTxn, long lastRefreshTimestamp, boolean invalid, String invalidationReason) {
         drainWalQueue();
         try (Path path = new Path(); BlockFileReader reader = new BlockFileReader(configuration)) {
-            reader.of(path.of(configuration.getDbRoot()).concat(viewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-            final MatViewRefreshStateReader viewState = new MatViewRefreshStateReader().of(reader, viewToken);
+            reader.of(path.of(configuration.getDbRoot()).concat(viewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+            final MatViewStateReader viewState = new MatViewStateReader().of(reader, viewToken);
             assertEquals(invalid, viewState.isInvalid());
             assertEquals(lastRefreshBaseTxn, viewState.getLastRefreshBaseTxn());
             assertEquals(lastRefreshTimestamp, viewState.getLastRefreshTimestamp());
