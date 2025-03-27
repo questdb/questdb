@@ -4324,14 +4324,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void createSymbolMapWriter(CharSequence name, long columnNameTxn, int symbolCapacity, boolean symbolCacheFlag) {
-        SymbolMapWriter w = createSymbolMapWriterObj(name, columnNameTxn, symbolCapacity, symbolCacheFlag, denseSymbolMapWriters.size());
-
-        denseSymbolMapWriters.add(w);
-        symbolMapWriters.extendAndSet(columnCount, w);
-    }
-
-    @NotNull
-    private SymbolMapWriter createSymbolMapWriterObj(CharSequence name, long columnNameTxn, int symbolCapacity, boolean symbolCacheFlag, int symbolDenseIndex) {
         MapWriter.createSymbolMapFiles(ff, ddlMem, path, name, columnNameTxn, symbolCapacity, symbolCacheFlag);
         SymbolMapWriter w = new SymbolMapWriter(
                 configuration,
@@ -4339,7 +4331,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 name,
                 columnNameTxn,
                 0,
-                symbolDenseIndex,
+                denseSymbolMapWriters.size(),
                 txWriter
         );
 
@@ -4353,7 +4345,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             w.close();
             throw t;
         }
-        return w;
+
+        denseSymbolMapWriters.add(w);
+        symbolMapWriters.extendAndSet(columnCount, w);
     }
 
     private boolean createWalSymbolMapping(SymbolMapDiff symbolMapDiff, int columnIndex, IntList symbolMap) {
@@ -8366,7 +8360,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Shift all subsequent symbol indexes by 1 back
             while (symColIndex < denseSymbolMapWriters.size()) {
                 MapWriter w = denseSymbolMapWriters.getQuick(symColIndex);
-                w.setSymbolDenseIndex(symColIndex);
+                w.setSymbolIndexInTxWriter(symColIndex);
                 symColIndex++;
             }
             Misc.freeIfCloseable(writer);

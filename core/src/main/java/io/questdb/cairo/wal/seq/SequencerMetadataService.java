@@ -84,10 +84,6 @@ public class SequencerMetadataService implements MetadataServiceStub {
     }
 
     @Override
-    public void changeSymbolCapacity(CharSequence columnName, int symbolCapacity, SecurityContext securityContext) {
-    }
-
-    @Override
     public boolean convertPartitionNativeToParquet(long partitionTimestamp) {
         return false;
     }

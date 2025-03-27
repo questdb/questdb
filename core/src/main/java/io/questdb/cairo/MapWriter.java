@@ -86,7 +86,7 @@ public interface MapWriter extends SymbolCountProvider {
 
     void rollback(int symbolCount);
 
-    void setSymbolDenseIndex(int symbolDenseIndex);
+    void setSymbolIndexInTxWriter(int symbolIndexInTxWriter);
 
     void sync(boolean async);
 

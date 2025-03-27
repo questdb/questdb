@@ -753,7 +753,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 tableMetadata.getTableId()
         );
         int existingColumnType = tableMetadata.getColumnType(columnIndex);
-        int newColumnType = addColumnWithType(changeColumn, columnName, columnNamePosition, existingColumnType != ColumnType.SYMBOL);
+        int newColumnType = addColumnWithType(changeColumn, columnName, columnNamePosition, true);
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok != null && !isSemicolon(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to change column type");
@@ -790,7 +790,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         );
         int existingColumnType = tableMetadata.getColumnType(columnIndex);
         if (!ColumnType.isSymbol(existingColumnType)) {
-            throw SqlException.$(columnNamePosition, "column '").put(columnName).put("' is not of symbol type");
+            throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName).put("' is not of symbol type");
         }
         lexer.unparseLast();
         addColumnWithType(changeColumn, columnName, columnNamePosition, false);

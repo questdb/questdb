@@ -57,7 +57,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     private boolean nullValue = false;
     private MemoryMARW offsetMem;
     private int symbolCapacity;
-    private int symbolDenseIndex;
+    private int symbolIndexInTxWriter;
 
     public SymbolMapWriter(
             CairoConfiguration configuration,
@@ -65,7 +65,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             CharSequence name,
             long columnNameTxn,
             int symbolCount,
-            int symbolDenseIndex,
+            int symbolIndexInTxWriter,
             @NotNull SymbolValueCountCollector valueCountCollector
     ) {
         final int plen = path.size();
@@ -133,7 +133,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
                 cachedFlag = false;
             }
 
-            this.symbolDenseIndex = symbolDenseIndex;
+            this.symbolIndexInTxWriter = symbolIndexInTxWriter;
             this.valueCountCollector = valueCountCollector;
             LOG.debug()
                     .$("open [name=").$(path.trimTo(plen).concat(name).$())
@@ -199,10 +199,6 @@ public class SymbolMapWriter implements Closeable, MapWriter {
 
     public int getSymbolCount() {
         return offsetToKey(offsetMem.getAppendOffset() - Long.BYTES);
-    }
-
-    public int getSymbolDenseIndex() {
-        return symbolDenseIndex;
     }
 
     @Override
@@ -337,9 +333,11 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         // Re-index the existing symbols, reading values from .c, .o files
         // and re-writing .k, .v files
         for (int i = 0; i < symbolCount; i++) {
-            CharSequence symbol = valueOf(i);
+            long offset = SymbolMapWriter.keyToOffset(i);
+            long strOffset = offsetMem.getLong(offset);
+            CharSequence symbol = charMem.getStrA(strOffset);
             int hash = Hash.boundedHash(symbol, maxHash);
-            indexWriter.add(hash, SymbolMapWriter.keyToOffset(i));
+            indexWriter.add(hash, offset);
         }
     }
 
@@ -348,15 +346,15 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         indexWriter.rollbackValues(keyToOffset(symbolCount - 1));
         offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
         jumpCharMemToSymbolCount(symbolCount);
-        valueCountCollector.collectValueCount(symbolDenseIndex, symbolCount);
+        valueCountCollector.collectValueCount(symbolIndexInTxWriter, symbolCount);
         if (cache != null) {
             cache.clear();
         }
     }
 
     @Override
-    public void setSymbolDenseIndex(int symbolDenseIndex) {
-        this.symbolDenseIndex = symbolDenseIndex;
+    public void setSymbolIndexInTxWriter(int symbolIndexInTxWriter) {
+        this.symbolIndexInTxWriter = symbolIndexInTxWriter;
     }
 
     @Override
@@ -410,7 +408,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
                 return offsetToKey(offsetOffset);
             }
         }
-        return put0(symbol, hash, countCollector, false);
+        return put0(symbol, hash, countCollector);
     }
 
     private int lookupPutAndCache(int index, CharSequence symbol, SymbolValueCountCollector countCollector) {
@@ -419,7 +417,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         return result;
     }
 
-    private int put0(CharSequence symbol, int hash, SymbolValueCountCollector countCollector, boolean cap) {
+    private int put0(CharSequence symbol, int hash, SymbolValueCountCollector countCollector) {
         // offsetMem has N+1 entries, where N is the number of symbols
         // Last entry is the length of the symbol (.c) file after N symbols are already written
         final long nOffsetOffset = offsetMem.getAppendOffset() - 8L;
@@ -427,20 +425,13 @@ public class SymbolMapWriter implements Closeable, MapWriter {
 
         // Here we're adding the offset of in the offset file where the symbol started
         indexWriter.add(hash, nOffsetOffset);
-        if (cap) {
-            System.out.println("offset: " + nOffsetOffset + ", hash: " + hash);
-        }
 
         // Here we are adding a new symbol and writing offset file the offset AFTER the new symbol
         offsetMem.putLong(nPlusOneValue);
 
         final int symIndex = offsetToKey(nOffsetOffset);
-        countCollector.collectValueCount(symbolDenseIndex, symIndex + 1);
+        countCollector.collectValueCount(symbolIndexInTxWriter, symIndex + 1);
         return symIndex;
-    }
-
-    private CharSequence valueOf(int key) {
-        return charMem.getStrA(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
     }
 
     static int offsetToKey(long offset) {
