@@ -51,7 +51,7 @@ public interface CreateMatViewOperation extends TableStructure, Operation {
 
     void updateOperationFutureTableToken(TableToken tableToken);
 
-    void validateAndUpdateMetadataFromModel(SqlExecutionContext sqlExecutionContext, SqlOptimiser optimiser, QueryModel queryModel, int selectTextPosition) throws SqlException;
+    void validateAndUpdateMetadataFromModel(SqlExecutionContext sqlExecutionContext, SqlOptimiser optimiser, QueryModel queryModel) throws SqlException;
 
     void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, TableReaderMetadata baseTableMetadata) throws SqlException;
 }

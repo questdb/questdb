@@ -86,9 +86,9 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             return new CreateTableOperationImpl(
                     Chars.toString(sqlText),
                     Chars.toString(tableNameExpr.token),
+                    tableNameExpr.position,
                     Chars.toString(selectText),
                     selectTextPosition,
-                    tableNameExpr.position,
                     ignoreIfExists,
                     getPartitionByFromExpr(),
                     timestampExpr != null ? Chars.toString(timestampExpr.token) : null,
@@ -154,6 +154,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         tableNameExpr = null;
         timestampExpr = null;
         selectText = null;
+        selectTextPosition = 0;
         selectModel = null;
         volumeAlias = null;
         ttlHoursOrMonths = 0;

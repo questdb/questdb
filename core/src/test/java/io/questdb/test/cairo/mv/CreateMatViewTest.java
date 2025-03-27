@@ -391,6 +391,32 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewNoDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table stocks_d1_ohlcv (" +
+                    "ts timestamp, ticker symbol, close double" +
+                    ") timestamp(ts) partition by day WAL");
+
+            try {
+                final String query =
+                        "  WITH t1 AS (\n" +
+                                "    SELECT ts, ticker, greatest(close, close + 1) as close\n" +
+                                "    FROM stocks_d1_ohlcv\n" +
+                                "  )\n" +
+                                "  SELECT ts, ticker, avg(close)\n" +
+                                "  FROM t1\n" +
+                                "  SAMPLE BY 1d\n" +
+                                "  ORDER BY ticker, ts\n";
+                execute("create materialized view test_view as (" + query + ") partition by month");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getMessage(), "[39] materialized view query is required to have designated timestamp");
+            }
+            assertNull(getMatViewDefinition("testView"));
+        });
+    }
+
+    @Test
     public void testCreateMatViewNoPartitionBy() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);

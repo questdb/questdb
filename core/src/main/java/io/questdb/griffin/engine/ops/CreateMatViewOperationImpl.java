@@ -275,8 +275,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     public void validateAndUpdateMetadataFromModel(
             SqlExecutionContext sqlExecutionContext,
             SqlOptimiser optimiser,
-            QueryModel queryModel,
-            int selectTextPosition
+            QueryModel queryModel
     ) throws SqlException {
         // Create view columns based on query.
         final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
@@ -315,6 +314,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             timestampModel.setIsDedupKey(); // set dedup for timestamp column
         }
 
+        final int selectTextPosition = createTableOperation.getSelectTextPosition();
+
         // Find base table name if not set explicitly.
         if (baseTableName == null) {
             if (tableNames == null) {
@@ -330,7 +331,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             }
             final ExpressionNode baseTableExpr = tableNames.valueQuick(0);
             baseTableName = Chars.toString(baseTableExpr.token);
-            baseTableNamePosition = baseTableExpr.position + createTableOperation.getSelectTextPosition();
+            baseTableNamePosition = baseTableExpr.position + selectTextPosition;
         }
 
         final TableToken baseTableToken = sqlExecutionContext.getTableTokenIfExists(baseTableName);
@@ -408,6 +409,12 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     @Override
     public void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, TableReaderMetadata baseTableMetadata) throws SqlException {
         // SELECT validation
+        if (createTableOperation.getTimestampColumnName() == null) {
+            if (selectMetadata.getTimestampIndex() == -1) {
+                throw SqlException.position(createTableOperation.getSelectTextPosition())
+                        .put("materialized view query is required to have designated timestamp");
+            }
+        }
         createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata);
         // Key column validation ( best effort):
         // Option 1. Base table has no dedup.
