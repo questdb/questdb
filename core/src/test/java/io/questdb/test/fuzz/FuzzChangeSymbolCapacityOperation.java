@@ -54,15 +54,10 @@ public class FuzzChangeSymbolCapacityOperation implements FuzzTransactionOperati
         FuzzTransaction transaction = new FuzzTransaction();
         int startColumnIndex = rnd.nextInt(tableMetadata.getColumnCount());
 
-        // guard against converting designated timestamp
-        while (startColumnIndex == tableMetadata.getTimestampIndex()) {
-            startColumnIndex = rnd.nextInt(tableMetadata.getColumnCount());
-        }
-
         for (int i = 0; i < tableMetadata.getColumnCount(); i++) {
             int columnIndex = (startColumnIndex + i) % tableMetadata.getColumnCount();
-            if (tableMetadata.getColumnType(columnIndex) == ColumnType.SYMBOL) {
 
+            if (tableMetadata.getColumnType(columnIndex) == ColumnType.SYMBOL) {
                 String columnName = tableMetadata.getColumnName(columnIndex);
                 int capacity = 1 << (1 + rnd.nextInt(9));
                 FuzzChangeSymbolCapacityOperation operation =
