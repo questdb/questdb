@@ -45,6 +45,7 @@ import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
@@ -71,7 +72,6 @@ import org.jetbrains.annotations.Nullable;
  */
 public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final CharSequenceHashSet baseKeyColumnNames = new CharSequenceHashSet();
-    private final int baseTableNamePosition;
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();
     private final MatViewDefinition matViewDefinition = new MatViewDefinition();
     private final int refreshType;
@@ -79,10 +79,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final String timeZone;
     private final String timeZoneOffset;
     private String baseTableName;
+    private int baseTableNamePosition;
     private CreateTableOperationImpl createTableOperation;
     private long samplingInterval;
     private char samplingIntervalUnit;
-    private CharSequenceHashSet tableNames;
+    private CharSequenceObjHashMap<ExpressionNode> tableNames;
 
     public CreateMatViewOperationImpl(
             @NotNull String sqlText,
@@ -317,7 +318,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         // Find base table name if not set explicitly.
         if (baseTableName == null) {
             if (tableNames == null) {
-                tableNames = new CharSequenceHashSet();
+                tableNames = new CharSequenceObjHashMap<>();
             }
             tableNames.clear();
             SqlParser.collectTables(queryModel, tableNames);
@@ -327,7 +328,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             if (tableNames.size() > 1) {
                 throw SqlException.$(selectTextPosition, "more than one table used in query, base table has to be set using 'WITH BASE'");
             }
-            baseTableName = Chars.toString(tableNames.get(0));
+            final ExpressionNode baseTableExpr = tableNames.valueQuick(0);
+            baseTableName = Chars.toString(baseTableExpr.token);
+            baseTableNamePosition = baseTableExpr.position + createTableOperation.getSelectTextPosition();
         }
 
         final TableToken baseTableToken = sqlExecutionContext.getTableTokenIfExists(baseTableName);

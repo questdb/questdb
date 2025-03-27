@@ -47,7 +47,7 @@ import io.questdb.griffin.model.RenameTableModel;
 import io.questdb.griffin.model.WindowColumn;
 import io.questdb.griffin.model.WithClauseModel;
 import io.questdb.std.BufferWindowCharSequence;
-import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
@@ -155,12 +155,14 @@ public class SqlParser {
         this.column = "column";
     }
 
-    public static void collectTables(QueryModel model, CharSequenceHashSet tableNames) {
+    public static void collectTables(QueryModel model, CharSequenceObjHashMap<ExpressionNode> tableNames) {
         QueryModel m = model;
         do {
             final ExpressionNode tableNameExpr = m.getTableNameExpr();
             if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
-                tableNames.add(tableNameExpr.token);
+                if (!tableNames.contains(tableNameExpr.token)) {
+                    tableNames.put(tableNameExpr.token, tableNameExpr);
+                }
             }
 
             final ObjList<QueryModel> joinModels = m.getJoinModels();
@@ -753,7 +755,7 @@ public class SqlParser {
         final CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch' or 'materialized'");
         if (isMaterializedKeyword(tok)) {
             if (!configuration.isMatViewEnabled()) {
-                throw SqlException.$(lexer.lastTokenPosition(), "materialized views are disabled");
+                throw SqlException.$(0, "materialized views are disabled");
             }
             return parseCreateMatView(lexer, executionContext, sqlParserCallback);
         }
@@ -787,11 +789,10 @@ public class SqlParser {
         ));
 
         tok = tok(lexer, "'as' or 'with' or 'refresh'");
-        CharSequence baseTableName = null;
         if (isWithKeyword(tok)) {
             expectTok(lexer, "base");
             tok = tok(lexer, "base table expected");
-            baseTableName = sansPublicSchema(tok, lexer);
+            CharSequence baseTableName = sansPublicSchema(tok, lexer);
             assertTableNameIsQuotedOrNotAKeyword(baseTableName, lexer.lastTokenPosition());
             mvOpBuilder.setBaseTableNamePosition(lexer.lastTokenPosition());
             mvOpBuilder.setBaseTableName(Chars.toString(unquote(baseTableName)));
@@ -896,7 +897,7 @@ public class SqlParser {
             throw SqlException.$(partitionByExpr.position, "'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
         }
         if (!PartitionBy.isPartitioned(partitionBy)) {
-            throw SqlException.position(0).put("materialized view has to be partitioned");
+            throw SqlException.position(partitionByExpr.position).put("materialized view has to be partitioned");
         }
         tableOpBuilder.setPartitionByExpr(partitionByExpr);
         tok = optTok(lexer);
