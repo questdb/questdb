@@ -75,15 +75,15 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
 
     private static class LevelTwoPriceArrayFunction extends DoubleFunction {
 
-        private final int pricesArgPos;
+        private final int sizesArgPos;
         private Function pricesArg;
         private Function sizesArg;
         private Function targetArg;
 
-        public LevelTwoPriceArrayFunction(Function targetArg, Function pricesArg, int pricesArgPos, Function sizesArg) {
+        public LevelTwoPriceArrayFunction(Function targetArg, Function sizesArg, int sizesArgPos, Function pricesArg) {
             this.targetArg = targetArg;
             this.pricesArg = pricesArg;
-            this.pricesArgPos = pricesArgPos;
+            this.sizesArgPos = sizesArgPos;
             this.sizesArg = sizesArg;
         }
 
@@ -104,8 +104,8 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
             }
             final int len = pricesArr.getDimLen(0);
             if (sizesArr.getDimLen(0) != len) {
-                throw CairoException.nonCritical().position(pricesArgPos)
-                        .put("sizes array length doesn't match prices array length");
+                throw CairoException.nonCritical().position(sizesArgPos)
+                        .put("prices array length doesn't match sizes array length");
             }
             double ta = 0; // target accumulator
             double pa = 0; // price accumulator

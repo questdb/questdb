@@ -837,8 +837,8 @@ public class ArrayTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ask_price DOUBLE[], ask_size DOUBLE[])");
             execute("INSERT INTO tango VALUES (ARRAY[1.0, 2], ARRAY[1.0, 1])");
-            assertSql("l2\n1.0\n", "SELECT l2price(1.0, ask_price, ask_size) l2 FROM tango");
-            assertSql("l2\n1.5\n", "SELECT l2price(2.0, ask_price, ask_size) l2 FROM tango");
+            assertSql("l2\n1.0\n", "SELECT l2price(1.0, ask_size, ask_price) l2 FROM tango");
+            assertSql("l2\n1.5\n", "SELECT l2price(2.0, ask_size, ask_price) l2 FROM tango");
         });
     }
 
@@ -846,7 +846,7 @@ public class ArrayTest extends AbstractCairoTest {
     public void testLevelTwoPrice2D() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ask DOUBLE[][])");
-            execute("INSERT INTO tango VALUES (ARRAY[[1.0, 2], [1.0, 1]])");
+            execute("INSERT INTO tango VALUES (ARRAY[[1.0, 1], [1.0, 2]])");
             assertSql("l2\n1.0\n", "SELECT l2price(1.0, ask[1], ask[2]) l2 FROM tango");
             assertSql("l2\n1.5\n", "SELECT l2price(2.0, ask[1], ask[2]) l2 FROM tango");
         });
