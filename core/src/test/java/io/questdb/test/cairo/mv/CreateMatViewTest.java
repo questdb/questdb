@@ -230,7 +230,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateMatViewGroupByTimestamp() throws Exception {
+    public void testCreateMatViewGroupByTimestamp1() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
@@ -240,6 +240,36 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertQuery("ts\tavg\n", "test", "ts", true, true);
             assertMatViewDefinition("test", query, TABLE1, 1, 'm');
             assertMatViewMetadata("test", query, TABLE1, 1, 'm');
+        });
+    }
+
+    @Test
+    public void testCreateMatViewGroupByTimestamp2() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query = "select timestamp_floor('1m', ts, 0::timestamp) as ts, avg(v) from " + TABLE1;
+            execute("create materialized view test as (" + query + ") partition by day");
+
+            assertQuery("ts\tavg\n", "test", "ts", true, true);
+            assertMatViewDefinition("test", query, TABLE1, 1, 'm');
+            assertMatViewMetadata("test", query, TABLE1, 1, 'm');
+        });
+    }
+
+    @Test
+    public void testCreateMatViewGroupByTimestamp3() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            try {
+                final String query = "select ts as ts2, avg from (select timestamp_floor('1m', ts) as ts, avg(v) avg from " + TABLE1 + ")";
+                execute("create materialized view test as (" + query + ") partition by day");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "TIMESTAMP column does not exist [name=ts]");
+            }
+            assertNull(getMatViewDefinition("testView"));
         });
     }
 
@@ -414,6 +444,19 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getMessage(), "[34] materialized view query requires a sampling interval");
+            }
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
+    public void testCreateMatViewNoTables() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("create materialized view test as (select 1 from long_sequence(1)) partition by day");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "missing base table, materialized views have to be based on a table");
             }
             assertNull(getMatViewDefinition("test"));
         });
@@ -672,6 +715,42 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertQuery("ts\tavg\n", "test", "ts", true, true);
             assertMatViewDefinition("test", query, TABLE1, 1, 'd', null, offset);
             assertMatViewMetadata("test", query, TABLE1, 1, 'd', null, offset);
+        });
+    }
+
+    @Test
+    public void testCreateMatViewTsAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String query = "select ts, ts as ts1, max(v) as v_max from " + TABLE1 + " sample by 30s";
+            execute("create materialized view test as (" + query + ") partition by week");
+            assertMatViewDefinition("test", query, TABLE1, 30, 's');
+            assertMatViewMetadata("test", query, TABLE1, 30, 's');
+        });
+    }
+
+    @Test
+    public void testCreateMatViewTsCast() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String query = "select ts, last(ts) as last_ts, cast(ts as long) as tm, concat(k, '10') as k, max(v) as v_max from " + TABLE1 + " sample by 30s";
+            execute("create materialized view test as (" + query + ") partition by week");
+            assertMatViewDefinition("test", query, TABLE1, 30, 's');
+            assertMatViewMetadata("test", query, TABLE1, 30, 's');
+        });
+    }
+
+    @Test
+    public void testCreateMatViewWindowFunctions() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            try {
+                final String query = "select ts, max(v) over (order by ts) as v_max from " + TABLE1 + " sample by 30s";
+                execute("create materialized view test as (" + query + ") partition by week");
+                fail("Expected SqlException missing for " + query);
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "window function is not supported for materialized views");
+            }
         });
     }
 
