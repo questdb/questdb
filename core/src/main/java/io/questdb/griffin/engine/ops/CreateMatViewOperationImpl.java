@@ -386,6 +386,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         baseKeyColumnNames.clear();
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn column = columns.getQuick(i);
+            // TODO(puzpuzpuz): this logic is broken - we have to check nested models
             if (!optimiser.hasAggregates(column.getAst())) {
                 // SAMPLE BY/GROUP BY key, add as dedup key.
                 final CreateTableColumnModel model = createColumnModelMap.get(column.getName());

@@ -1587,7 +1587,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "1970-01-02T20:42:00.000000Z\t24\n" +
                     "1970-01-02T22:42:00.000000Z\t23\n";
 
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, false);
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, true, true);
             assertQueryNoLeakCheck(expected, outSelect(out, viewName), null, true, true);
         });
     }
