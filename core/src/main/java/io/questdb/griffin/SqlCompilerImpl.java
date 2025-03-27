@@ -1476,7 +1476,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     final CharSequence columnName = GenericLexer.immutableOf(tok);
                     final int columnIndex = tableMetadata.getColumnIndexQuiet(columnName);
                     if (columnIndex == -1) {
-                        throw SqlException.$(columnNamePosition, "column '").put(columnName)
+                        throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName)
                                 .put("' does not exists in table '").put(tableToken.getTableName()).put('\'');
                     }
 
