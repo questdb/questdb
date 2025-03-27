@@ -72,6 +72,7 @@ public final class Timestamps {
     public static final int STATE_UTC = 1;
     public static final int WEEK_DAYS = 7;
     public static final long WEEK_MICROS = 604800000000L; // DAY_MICROS * 7
+    public static final long YEAR_10000 = 253_402_300_800_000_000L;
     private static final char AFTER_NINE = '9' + 1;
     private static final char BEFORE_ZERO = '0' - 1;
     private static final int DAYS_0000_TO_1970 = 719527;

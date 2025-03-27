@@ -296,7 +296,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                             final long spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
                             TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
                             bufferedTxnSize = txReader.getLagTxnCount();
-                            SeqTxnTracker txnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
                             return true;
                         } finally {
                             if (txnFd > -1) {
