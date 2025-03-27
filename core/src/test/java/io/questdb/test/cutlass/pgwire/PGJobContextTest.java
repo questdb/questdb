@@ -95,6 +95,7 @@ import org.postgresql.jdbc.PgConnection;
 import org.postgresql.jdbc.PgResultSet;
 import org.postgresql.util.PGTimestamp;
 import org.postgresql.util.PSQLException;
+import org.postgresql.util.ServerErrorMessage;
 
 import java.io.InputStream;
 import java.lang.reflect.Field;
@@ -7810,8 +7811,16 @@ nodejs code:
                         insert.executeUpdate();
                         assertExceptionNoLeakCheck("inserting NULL for designated timestamp should fail");
                     } catch (PSQLException expected) {
-                        Assert.assertEquals("ERROR: designated timestamp column cannot be NULL\n" +
-                                "  Position: 1", expected.getMessage());
+                        TestUtils.assertContains(expected.getMessage(), "ERROR: designated timestamp column cannot be NULL");
+                        final ServerErrorMessage serverErrorMessage = expected.getServerErrorMessage();
+                        Assert.assertNotNull(serverErrorMessage);
+                        if (mode == Mode.SIMPLE) {
+                            // in simple mode variables are substituted with "values ((NULL))", note the extra bracket
+                            // the error position shifts by 1
+                            Assert.assertEquals(36, serverErrorMessage.getPosition());
+                        } else {
+                            Assert.assertEquals(35, serverErrorMessage.getPosition());
+                        }
                     }
                     // Insert a dud
                     insert.setString(1, "1970-01-01 00:11:22.334455");
