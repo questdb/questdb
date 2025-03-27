@@ -43,7 +43,9 @@ public class WalEventCursor {
     public static final long END_OF_EVENTS = -1L;
 
     private final DataInfo dataInfo = new DataInfo();
+    private final DataInfoExt dataInfoExt = new DataInfoExt();
     private final MemoryCMR eventMem;
+    private final InvalidationInfo invalidationInfo = new InvalidationInfo();
     private final SqlInfo sqlInfo = new SqlInfo();
     private long memSize;
     private long nextOffset = Integer.BYTES;
@@ -77,10 +79,24 @@ public class WalEventCursor {
     }
 
     public DataInfo getDataInfo() {
-        if (type != DATA) {
+        if (!WalTxnType.isDataType(type)) {
             throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not DATA, type=").put(type);
         }
-        return dataInfo;
+        return (type == DATA) ? dataInfo : dataInfoExt;
+    }
+
+    public DataInfoExt getDataInfoExt() {
+        if (type != MAT_VIEW_DATA) {
+            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not MAT_VIEW_DATA, type=").put(type);
+        }
+        return dataInfoExt;
+    }
+
+    public InvalidationInfo getInvalidationInfo() {
+        if (type != MAT_VIEW_INVALIDATE) {
+            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not MAT_VIEW_INVALIDATION, type=").put(type);
+        }
+        return invalidationInfo;
     }
 
     public SqlInfo getSqlInfo() {
@@ -198,10 +214,16 @@ public class WalEventCursor {
             case DATA:
                 dataInfo.read();
                 break;
+            case MAT_VIEW_DATA:
+                dataInfoExt.read();
+                break;
             case SQL:
                 sqlInfo.read();
                 break;
             case TRUNCATE:
+                break;
+            case MAT_VIEW_INVALIDATE:
+                invalidationInfo.read();
                 break;
             default:
                 throw CairoException.critical(CairoException.METADATA_VALIDATION).put("Unsupported WAL event type: ").put(type);
@@ -317,12 +339,53 @@ public class WalEventCursor {
             return readNextSymbolMapDiff(symbolMapDiff);
         }
 
-        private void read() {
+        protected void read() {
             startRowID = readLong();
             endRowID = readLong();
             minTimestamp = readLong();
             maxTimestamp = readLong();
             outOfOrder = readBool();
+        }
+    }
+
+    public class DataInfoExt extends DataInfo {
+        private long lastRefreshBaseTableTxn;
+        private long lastRefreshTimestamp;
+
+        public long getLastRefreshBaseTableTxn() {
+            return lastRefreshBaseTableTxn;
+        }
+
+        public long getLastRefreshTimestamp() {
+            return lastRefreshTimestamp;
+        }
+
+        @Override
+        protected void read() {
+            super.read();
+            // read the extra fields in the fixed part
+            // symbol map will start after this
+            lastRefreshBaseTableTxn = readLong();
+            lastRefreshTimestamp = readLong();
+        }
+    }
+
+    public class InvalidationInfo {
+        private final StringSink error = new StringSink();
+        private boolean invalid;
+
+        public CharSequence getInvalidationReason() {
+            return error;
+        }
+
+        public boolean isInvalid() {
+            return invalid;
+        }
+
+        private void read() {
+            invalid = readBool();
+            error.clear();
+            error.put(readStr());
         }
     }
 
