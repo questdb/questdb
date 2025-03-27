@@ -48,15 +48,15 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     public static final int HEADER_NULL_FLAG = 8;
     public static final int HEADER_SIZE = 64;
     private static final Log LOG = LogFactory.getLog(SymbolMapWriter.class);
-    private final CharSequenceIntHashMap cache;
     private final MemoryMARW charMem;
     private final BitmapIndexWriter indexWriter;
-    private final int maxHash;
-    private final int symbolCapacity;
     private final SymbolValueCountCollector valueCountCollector;
+    private CharSequenceIntHashMap cache;
     private boolean cachedFlag;
+    private int maxHash;
     private boolean nullValue = false;
     private MemoryMARW offsetMem;
+    private int symbolCapacity;
     private int symbolDenseIndex;
 
     public SymbolMapWriter(
@@ -188,11 +188,61 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     }
 
     public void copySymbols(SymbolMapWriter another) {
+//        copy(another.charMem, charMem);
+//        copy(another.offsetMem, offsetMem);
+
+//        final int symbolCount = another.getSymbolCount();
+//        for (int i = 0; i < symbolCount; i++) {
+//            put(another.valueOf(i));
+//        }
+//        updateNullFlag(another.getNullFlag());
+
         final int symbolCount = another.getSymbolCount();
         for (int i = 0; i < symbolCount; i++) {
-            put(another.valueOf(i));
+            CharSequence symbol = another.valueOf(i);
+            int hash = Hash.boundedHash(symbol, maxHash);
+//            put0(symbol, hash, SymbolValueCountCollector.NOOP, true);
+            indexWriter.add(hash, SymbolMapWriter.keyToOffset(i));
+//            System.out.println("offset: " + SymbolMapWriter.keyToOffset(i) + ", hash: " + hash);
         }
+        if (another.cache != null && cachedFlag) {
+            this.cache = another.cache;
+        }
+
+        // Copy .c, .o files, there are no changes in them.
+//        assert assertEquals(another.offsetMem, offsetMem);
+//        assert assertEquals(another.charMem, charMem);
+
+        copy(another.offsetMem, offsetMem);
+        copy(another.charMem, charMem);
+        offsetMem.putInt(HEADER_CAPACITY, symbolCapacity);
+
+//        long cSize = another.charMem.getAppendOffset();
+//        assert charMem.isMapped(0, cSize);
+//        charMem.jumpTo(0);
+//        charMem.putBlockOfBytes(another.charMem.addressOf(0), cSize);
+//        charMem.jumpTo(cSize);
+//
+//        long oSize = another.offsetMem.getAppendOffset();
+//        assert offsetMem.isMapped(0, oSize);
+//        offsetMem.jumpTo(0);
+//        offsetMem.putBlockOfBytes(another.offsetMem.addressOf(0), oSize);
+//        offsetMem.jumpTo(oSize);
+
         updateNullFlag(another.getNullFlag());
+    }
+
+    private static boolean assertEquals(MemoryMARW mem1, MemoryMARW mem2) {
+        if (mem1.size() != mem2.size()) {
+            return false;
+        }
+
+        for (long i = 0; i < mem1.size(); i++) {
+            if (mem1.getByte(i) != mem2.getByte(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override
@@ -253,6 +303,104 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         return lookupAndPut(symbol, valueCountCollector);
     }
 
+    public void rebuildCapacity(
+            CharSequence name,
+            long columnNameTxn,
+            CairoConfiguration configuration,
+            Path path,
+            int newCapacity,
+            boolean newCacheFlag
+    ) {
+        // Re-open files and re-build indexes keeping .c, .o files.
+        // This is very similar to the constructor, but we need to keep .c, .o files and re-nitialize k,v files.
+        // Also cache is conditionally re-used.
+
+        final int plen = path.size();
+        int symbolCount = getSymbolCount();
+        final FilesFacade ff = configuration.getFilesFacade();
+        final long mapPageSize = configuration.getMiscAppendPageSize();
+
+        // formula for calculating symbol capacity needs to be in agreement with symbol reader
+        this.symbolCapacity = newCapacity;
+        assert symbolCapacity > 0;
+
+        // init key files, use offsetMem for that
+        this.offsetMem.smallFile(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), name, columnNameTxn), MemoryTag.MMAP_INDEX_WRITER);
+        BitmapIndexWriter.initKeyMemory(this.offsetMem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
+        ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), name, columnNameTxn));
+        this.indexWriter.of(path.trimTo(plen), name, columnNameTxn);
+
+        // open .o, .c files, they should exist
+        if (!ff.exists(offsetFileName(path.trimTo(plen), name, columnNameTxn))) {
+            LOG.error().$(path).$(" is not found").$();
+            throw CairoException.critical(0).put("SymbolMap does not exist: ").put(path);
+        }
+
+        // is there enough length in "offset" file for "header"?
+        LPSZ lpsz = path.$();
+        long len = ff.length(lpsz);
+        if (len < HEADER_SIZE) {
+            LOG.error().$(path).$(" is too short [len=").$(len).$(']').$();
+            throw CairoException.critical(0).put("SymbolMap is too short: ").put(path);
+        }
+
+        // open "offset" memory and make sure we start appending from where
+        // we left off. Where we left off is stored externally to symbol map
+        this.offsetMem.of(
+                ff,
+                lpsz,
+                mapPageSize,
+                MemoryTag.MMAP_INDEX_WRITER,
+                configuration.getWriterFileOpenOpts()
+        );
+
+        offsetMem.putInt(HEADER_CAPACITY, symbolCapacity);
+        offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
+
+        // this is the place where symbol values are stored
+        this.charMem.of(
+                ff,
+                charFileName(path.trimTo(plen), name, columnNameTxn),
+                mapPageSize,
+                MemoryTag.MMAP_INDEX_WRITER,
+                configuration.getWriterFileOpenOpts()
+        );
+
+        // move append pointer for symbol values in the correct place
+        jumpCharMemToSymbolCount(symbolCount);
+
+        // we use index hash maximum equals to half of symbol capacity, which
+        // theoretically should require 2 value cells in index per hash
+        // we use 4 cells to compensate for occasionally unlucky hash distribution
+        this.maxHash = Math.max(Numbers.ceilPow2(symbolCapacity / 2) - 1, 1);
+
+        if (newCacheFlag != cachedFlag) {
+            if (!newCacheFlag) {
+                this.cache = null;
+                cachedFlag = false;
+            } else {
+                this.cache = new CharSequenceIntHashMap(symbolCapacity, 0.3, CharSequenceIntHashMap.NO_ENTRY_VALUE);
+                cachedFlag = true;
+            }
+        }
+
+        LOG.debug()
+                .$("open [name=").$(path.trimTo(plen).concat(name).$())
+                .$(", fd=").$(offsetMem.getFd())
+                .$(", cache=").$(cache != null)
+                .$(", capacity=").$(symbolCapacity)
+                .I$();
+
+
+        // Re-index the existing symbols, reading values from .c, .o files
+        // and re-writing .k, .v files
+        for (int i = 0; i < symbolCount; i++) {
+            CharSequence symbol = valueOf(i);
+            int hash = Hash.boundedHash(symbol, maxHash);
+            indexWriter.add(hash, SymbolMapWriter.keyToOffset(i));
+        }
+    }
+
     @Override
     public void rollback(int symbolCount) {
         indexWriter.rollbackValues(keyToOffset(symbolCount - 1));
@@ -303,6 +451,13 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         nullValue = flag;
     }
 
+    private static void copy(MemoryMARW src, MemoryMARW dst) {
+        long size = src.size();
+        dst.jumpTo(0);
+        dst.putBlockOfBytes(src.addressOf(0), size);
+        dst.jumpTo(src.getAppendOffset());
+    }
+
     private void jumpCharMemToSymbolCount(int symbolCount) {
         if (symbolCount > 0) {
             charMem.jumpTo(offsetMem.getLong(keyToOffset(symbolCount)));
@@ -320,7 +475,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
                 return offsetToKey(offsetOffset);
             }
         }
-        return put0(symbol, hash, countCollector);
+        return put0(symbol, hash, countCollector, false);
     }
 
     private int lookupPutAndCache(int index, CharSequence symbol, SymbolValueCountCollector countCollector) {
@@ -329,7 +484,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         return result;
     }
 
-    private int put0(CharSequence symbol, int hash, SymbolValueCountCollector countCollector) {
+    private int put0(CharSequence symbol, int hash, SymbolValueCountCollector countCollector, boolean cap) {
         // offsetMem has N+1 entries, where N is the number of symbols
         // Last entry is the length of the symbol (.c) file after N symbols are already written
         final long nOffsetOffset = offsetMem.getAppendOffset() - 8L;
@@ -337,6 +492,9 @@ public class SymbolMapWriter implements Closeable, MapWriter {
 
         // Here we're adding the offset of in the offset file where the symbol started
         indexWriter.add(hash, nOffsetOffset);
+        if (cap) {
+            System.out.println("offset: " + nOffsetOffset + ", hash: " + hash);
+        }
 
         // Here we are adding a new symbol and writing offset file the offset AFTER the new symbol
         offsetMem.putLong(nPlusOneValue);

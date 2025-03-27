@@ -1104,18 +1104,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 // remove _todo
                 clearTodoLog();
-                var newSymbolWriter = createSymbolMapWriterObj(
-                        columnName,
-                        columnNameTxn,
-                        newSymbolCapacity,
-                        symbolCacheFlag,
-                        symbolDenseIndex
-                );
-
-                newSymbolWriter.copySymbols(oldSymbolWriter);
-                symbolMapWriters.set(columnIndex, newSymbolWriter);
-                denseSymbolMapWriters.set(symbolDenseIndex, newSymbolWriter);
-                Misc.free(oldSymbolWriter);
+//                var newSymbolWriter = createSymbolMapWriterObj(
+//                        columnName,
+//                        columnNameTxn,
+//                        newSymbolCapacity,
+//                        symbolCacheFlag,
+//                        symbolDenseIndex
+//                );
+//
+//                newSymbolWriter.copySymbols(oldSymbolWriter);
+//                symbolMapWriters.set(columnIndex, newSymbolWriter);
+//                denseSymbolMapWriters.set(symbolDenseIndex, newSymbolWriter);
+//                Misc.free(oldSymbolWriter);
 
                 // swap of the files has to be done after _todo is removed
                 hardLinkAndPurgeColumnFiles(
@@ -1125,6 +1125,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         columnName,
                         ColumnType.SYMBOL,
                         false
+                );
+                oldSymbolWriter.rebuildCapacity(
+                        columnName,
+                        columnNameTxn,
+                        configuration,
+                        path,
+                        newSymbolCapacity,
+                        symbolCacheFlag
                 );
             } catch (CairoException e) {
                 throwDistressException(e);
@@ -5576,20 +5584,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             if (ColumnType.isSymbol(columnType)) {
-                if (copySymbolRoot) {
-                    // Link .o, .c, .k, .v symbol files in the table root folder
-                    try {
-                        linkFile(ff, offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                        linkFile(ff, charFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                // Link .o, .c, .k, .v symbol files in the table root folder
+                try {
+                    linkFile(ff, offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    linkFile(ff, charFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+
+                    if (copySymbolRoot) {
                         linkFile(ff, keyFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
                         linkFile(ff, valueFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                    } catch (Throwable e) {
-                        ff.remove(offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                        ff.remove(charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                        ff.remove(keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                        // remove all but the last, if last fails - it wasn't created in the first place
-                        throw e;
                     }
+                } catch (Throwable e) {
+                    ff.remove(offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    ff.remove(charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    ff.remove(keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    // remove all but the last, if last fails - it wasn't created in the first place
+                    throw e;
                 }
                 purgingOperator.add(columnIndex, columnName, columnType, isIndexed, defaultColumnNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1L);
             }
