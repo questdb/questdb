@@ -106,7 +106,7 @@ public class ServerMainQueryTimeoutTest extends AbstractBootstrapTest {
 
                         try (Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
                             for (int i = 0; i < nIterations; i++) {
-                                final String query = "SELECT * FROM tab WHERE key = 'k0' or key = 'k3' LIMIT 1999990, 2000000;";
+                                final String query = "SELECT * FROM tab WHERE key = 'k0' or key = 'k3' LIMIT 1999990, 2000000";
                                 final StringBuilder sb = new StringBuilder(query);
                                 if (!useQueryCache) {
                                     // append a random trailing comment, so that the query cache doesn't kick in
