@@ -47,12 +47,13 @@ import static io.questdb.test.cutlass.pgwire.BasePGTest.assertResultSet;
 import static io.questdb.test.tools.TestUtils.unchecked;
 
 public class ServerMainQueryTimeoutTest extends AbstractBootstrapTest {
+    private Rnd rnd;
     private boolean useQueryCache;
 
     @Before
     public void setUp() {
         super.setUp();
-        final Rnd rnd = TestUtils.generateRandom(LOG);
+        rnd = TestUtils.generateRandom(LOG);
         useQueryCache = rnd.nextBoolean();
         LOG.info().$("query cache: ").$(useQueryCache).$();
         unchecked(() -> createDummyConfiguration(
@@ -95,14 +96,23 @@ public class ServerMainQueryTimeoutTest extends AbstractBootstrapTest {
             final AtomicInteger timeouts = new AtomicInteger();
             for (int t = 0; t < nThreads; t++) {
                 new Thread(() -> {
+                    final Rnd threadRnd = new Rnd(rnd.getSeed0(), rnd.getSeed1());
                     final StringSink sink = new StringSink();
                     try {
                         startBarrier.await();
 
                         try (Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
                             for (int i = 0; i < nIterations; i++) {
+                                final String query = "SELECT * FROM tab WHERE key = 'k0' or key = 'k3' LIMIT 1999990, 2000000;";
+                                final StringBuilder sb = new StringBuilder(query);
+                                if (!useQueryCache) {
+                                    // append a random trailing comment, so that the query cache doesn't kick in
+                                    sb.append(" -- ");
+                                    sb.append(threadRnd.nextPositiveLong());
+                                }
+
                                 try (
-                                        PreparedStatement stmt = conn.prepareStatement("SELECT * FROM tab WHERE key = 'k0' or key = 'k3' LIMIT 1999990, 2000000");
+                                        PreparedStatement stmt = conn.prepareStatement(sb.toString());
                                         ResultSet rs = stmt.executeQuery()
                                 ) {
                                     sink.clear();
