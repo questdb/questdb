@@ -1024,9 +1024,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         } catch (Throwable e) {
             if (e instanceof FlyweightMessageContainer) {
                 TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), contains);
-                if (errorPos > -1) {
-                    Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
-                }
+                Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
             } else {
                 throw e;
             }

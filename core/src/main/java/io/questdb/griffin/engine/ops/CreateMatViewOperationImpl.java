@@ -409,7 +409,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     public void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, TableReaderMetadata baseTableMetadata) throws SqlException {
         // SELECT validation
         createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata);
-        // Key column validation (best effort):
+        // Key column validation ( best effort):
         // Option 1. Base table has no dedup.
         //           Any key columns are fine in this case.
         // Option 2. Base table has dedup columns.
