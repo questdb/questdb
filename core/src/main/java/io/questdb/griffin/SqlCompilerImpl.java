@@ -3240,6 +3240,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final int metadataTimestampIndex = metadata.getTimestampIndex();
             final ObjList<CharSequence> columnNameList = insertModel.getColumnNameList();
             final int columnSetSize = columnNameList.size();
+            int designatedTimestampPosition = 0;
             for (int tupleIndex = 0, n = insertModel.getRowTupleCount(); tupleIndex < n; tupleIndex++) {
                 Function timestampFunction = null;
                 listColumnFilter.clear();
@@ -3270,6 +3271,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                             if (metadataTimestampIndex == metadataColumnIndex) {
                                 timestampFunction = function;
+                                designatedTimestampPosition = node.position;
                             }
 
                         } else {
@@ -3308,6 +3310,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                         if (metadataTimestampIndex == i) {
                             timestampFunction = function;
+                            designatedTimestampPosition = node.position;
                         }
                     }
                 }
@@ -3317,7 +3320,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     if (timestampFunction == null) {
                         throw SqlException.$(0, "insert statement must populate timestamp");
                     } else if (ColumnType.isNull(timestampFunction.getType()) || timestampFunction.isNullConstant()) {
-                        throw SqlException.$(0, "designated timestamp column cannot be NULL");
+                        throw SqlException.$(designatedTimestampPosition, "designated timestamp column cannot be NULL");
                     }
                 }
 

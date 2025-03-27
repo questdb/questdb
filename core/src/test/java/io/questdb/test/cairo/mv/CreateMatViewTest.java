@@ -377,13 +377,11 @@ public class CreateMatViewTest extends AbstractCairoTest {
     public void testCreateMatViewNoPartitionBy() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
-
-            try {
-                execute("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s)");
-                fail("Expected SqlException missing");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "'partition by' expected");
-            }
+            assertException(
+                    "create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s)",
+                    78,
+                    "'partition by' expected"
+            );
             assertNull(getMatViewDefinition("test"));
 
             try {
