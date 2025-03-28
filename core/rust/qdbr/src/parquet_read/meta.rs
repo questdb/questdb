@@ -1,5 +1,4 @@
 use crate::allocator::{AcVec, QdbAllocator};
-use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
 use crate::parquet::error::ParquetResult;
 use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
 use crate::parquet_read::{ColumnMeta, ParquetDecoder};
@@ -9,6 +8,7 @@ use parquet2::schema::types::PrimitiveLogicalType::{Timestamp, Uuid};
 use parquet2::schema::types::{
     IntegerType, PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
 };
+use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use std::io::{Read, Seek};
 
 /// Extract the questdb-specific metadata from the parquet file metadata.
@@ -186,13 +186,13 @@ mod tests {
     use std::ptr::null;
 
     use crate::allocator::TestAllocatorState;
-    use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
     use crate::parquet_read::meta::ParquetDecoder;
     use crate::parquet_write::file::ParquetWriter;
     use crate::parquet_write::schema::{Column, Partition};
     use arrow::datatypes::ToByteSlice;
     use bytes::Bytes;
     use parquet::file::reader::Length;
+    use qdb_core::col_type::{ColumnType, ColumnTypeTag};
     use tempfile::NamedTempFile;
 
     #[test]
