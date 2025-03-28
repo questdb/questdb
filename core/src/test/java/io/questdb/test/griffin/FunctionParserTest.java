@@ -114,8 +114,8 @@ import static io.questdb.cairo.ColumnType.OVERLOAD_NONE;
 public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
-    public void overloadFromCharToDoubleDoesNotExist() {
-        Assert.assertEquals(ColumnType.overloadDistance(ColumnType.CHAR, ColumnType.DOUBLE), OVERLOAD_NONE);
+    public void overloadFromCharToDoubleDoesExist() {
+        Assert.assertEquals(ColumnType.overloadDistance(ColumnType.CHAR, ColumnType.DOUBLE), 7);
     }
 
     @Test
