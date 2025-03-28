@@ -2667,23 +2667,23 @@ public class WalWriterTest extends AbstractCairoTest {
             TableToken tableToken = engine.verifyTableName("rg");
 
             execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
-                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(100)");
+                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(50)");
 
             drainWalQueue();
 
-            long ts = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T14:30");
             assertSql("min\tmax\tcount\n" +
-                    "2022-02-24T12:30:00.000000Z\t2022-02-25T13:15:00.000000Z\t100\n", "select min(ts), max(ts), count(*) from rg");
+                    "2022-02-24T12:30:00.000000Z\t2022-02-25T00:45:00.000000Z\t50\n", "select min(ts), max(ts), count(*) from rg");
 
             Utf8StringSink sink = new Utf8StringSink();
 
             try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                long ts = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T14:30");
                 TableWriter.Row row = ww.newRow(ts);
                 row.putInt(0, 100);
                 row.putLong(2, 1000);
                 row.putStr(3, "hello");
                 sink.clear();
-                sink.put("world");
+                sink.put("w");
                 row.putVarchar(4, sink);
                 row.putSym(5, "a");
                 row.append();
@@ -2695,7 +2695,18 @@ public class WalWriterTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql("min\tmax\tcount\n" +
-                    "2022-02-24T14:30:00.000000Z\t2022-02-25T13:15:00.000000Z\t51\n", "select min(ts), max(ts), count(*) from rg");
+                    "2022-02-24T14:30:00.000000Z\t2022-02-25T00:45:00.000000Z\t9\n", "select min(ts), max(ts), count(*) from rg");
+
+            assertSql("id\tts\ty\ts\tv\tm\n" +
+                    "100\t2022-02-24T14:30:00.000000Z\t1000\thello\tw\ta\n" +
+                    "43\t2022-02-24T23:00:00.000000Z\t21\t43\t9y_G3\tc\n" +
+                    "44\t2022-02-24T23:15:00.000000Z\t22\t44\t\uDAB1\uDC25J\uD969\uDF86gǢ\uDA97\uDEDC\t\n" +
+                    "45\t2022-02-24T23:30:00.000000Z\t22\t45\tHEZqUhE\ta\n" +
+                    "46\t2022-02-24T23:45:00.000000Z\t23\t46\tL^bE);P\tc\n" +
+                    "47\t2022-02-25T00:00:00.000000Z\t23\t47\t阇1(rոҊG\uD9A6\uDD42\uDB48\uDC78\tb\n" +
+                    "48\t2022-02-25T00:15:00.000000Z\t24\t48\tџ\uDA47\uDE9AخF\uD9DC\uDE05\ta\n" +
+                    "49\t2022-02-25T00:30:00.000000Z\t24\t49\t礤͐̍\tb\n" +
+                    "50\t2022-02-25T00:45:00.000000Z\t25\t50\tb\uDBB1\uDEA3ȃ*H\ta\n", "select * from rg");
         });
     }
 

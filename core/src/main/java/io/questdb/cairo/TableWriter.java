@@ -1146,7 +1146,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         final long rowsAdded = txWriter.getRowCount() - initialCommittedRowCount;
-        walTxnDetails.setIncrementRowsCommitted(txWriter.getRowCount() + txWriter.getLagRowCount() - initialCommittedRowCountWithLag);
+//        walTxnDetails.setIncrementRowsCommitted(txWriter.getRowCount() + txWriter.getLagRowCount() - initialCommittedRowCountWithLag);
         if (committed) {
             assert txWriter.getLagRowCount() == 0;
 
@@ -2264,6 +2264,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter != null && (txWriter.inTransaction() || hasO3() || (columnVersionWriter != null && columnVersionWriter.hasChanges()));
     }
 
+    public boolean isCommitDedupMode() {
+        if (!isDeduplicationEnabled()) {
+            return false;
+        }
+        return dedupMode == WalUtils.WAL_DEDUP_MODE_DEFAULT || dedupMode == WalUtils.WAL_DEDUP_MODE_UPSERT_NEW;
+    }
+
+    public boolean isCommitPlainInsert() {
+        return (dedupMode == WalUtils.WAL_DEDUP_MODE_NO_DEDUP || !isDeduplicationEnabled()) && dedupMode != WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
+    }
+
+    public boolean isCommitReplaceMode() {
+        return dedupMode == WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
+    }
+
     public boolean isDeduplicationEnabled() {
         int tsIndex = metadata.timestampIndex;
         return tsIndex > -1 && metadata.isDedupKey(tsIndex);
@@ -2731,6 +2746,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int timestampIndex = metadata.getTimestampIndex();
         int walRootPathLen = walPath.size();
         boolean success = true;
+        lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
+
         try {
             segmentFileCache.mmapSegments(metadata, walPath, walIdSegmentId, rowLo, rowHi);
             o3Columns = segmentFileCache.getWalMappedColumns();
@@ -2744,12 +2761,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
 
                 // Re-valuate WAL lag min/max with impact of the current transaction.
-                boolean needsOrdering = !ordered;
 
                 MemoryCR walTimestampColumn = segmentFileCache.getWalMappedColumns().getQuick(getPrimaryColumnIndex(timestampIndex));
                 o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
 
-//                if (needsOrdering) {
                 LOG.debug().$("sorting WAL [table=").$(tableToken)
                         .$(", ordered=").$(ordered)
                         .$(", walRowLo=").$(rowLo)
@@ -2775,25 +2790,39 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 Unsafe.getUnsafe().putLong(timestampAddr + rangeHiOffset, replaceRangeTsHi - 1);
                 Unsafe.getUnsafe().putLong(timestampAddr + rangeHiOffset + Long.BYTES, -2);
 
-                if (needsOrdering) {
-                    Vect.radixSortLongIndexAscInPlaceBounded(
-                            timestampAddr + 2 * Long.BYTES,
-                            commitRowCount,
-                            o3TimestampMemCpy.addressOf(0),
-                            o3TimestampMin,
-                            o3TimestampMax
-                    );
-                    // Keep other column mapped and unshuffled
-                }
+//                if (rowLo > 0) {
+//                    memColumnShifted = true;
+//                    for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+//                        var column = o3Columns.get(getPrimaryColumnIndex(i));
+//                        if (column instanceof MemoryCMORImpl) {
+//                            var col = (MemoryCMORImpl) column;
+//                            col.shiftAddressRight(col.getOffset());
+//                        }
+//                        column = o3Columns.get(getSecondaryColumnIndex(i));
+//                        if (column instanceof MemoryCMORImpl) {
+//                            var col = (MemoryCMORImpl) column;
+//                            col.shiftAddressRight(-col.getOffset());
+//                        }
+//                    }
+//                }
+
+                // Mv refresh should insert ordered data
+                assert ordered;
+//                if (needsOrdering) {
+//                    Vect.radixSortLongIndexAscInPlaceBounded(
+//                            timestampAddr + 2 * Long.BYTES,
+//                            commitRowCount,
+//                            o3TimestampMemCpy.addressOf(0),
+//                            o3TimestampMin,
+//                            o3TimestampMax
+//                    );
+//                    // Keep other column mapped and unshuffled
+//                }
 //                    dispatchColumnTasks(timestampAddr + 2, commitRowCount, 0, rowLo, rowHi, cthMergeWalColumnWithLag);
 //                    swapO3ColumnsExcept(timestampIndex);
 //                }
 
-                // total rows to process is commitRowCount + 2 virtual index records
-                // Sorted data is now sorted in memory copy of the data from mmap files
-                // Row indexes start from 0, not rowLo
-                o3Hi = commitRowCount + 2;
-                o3Lo = 0L;
+
                 if (o3Columns != o3ColumnOverrides) {
                     o3ColumnOverrides.clear();
                     o3ColumnOverrides.addAll(o3Columns);
@@ -2806,6 +2835,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.setLagMaxTimestamp(replaceRangeTsHi);
                 this.dedupMode = WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
+                // total rows to process is commitRowCount + 2 virtual index records
+                // Sorted data is now sorted in memory copy of the data from mmap files
+                // Row indexes start from 0, not rowLo
+                o3Hi = rowHi + 2;
+                o3Lo = rowLo;
+                timestampAddr -= rowLo * 2 * Long.BYTES;
                 processWalCommitFinishApply(0, timestampAddr, o3Lo, o3Hi, pressureControl, false, initialPartitionTimestampHi);
             } finally {
                 finishO3Append(0);
@@ -6160,7 +6195,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
 
-                LOG.debug().$("o3 partition update [timestampMin=").$ts(timestampMin)
+                LOG.info().$("o3 partition update [timestampMin=").$ts(timestampMin)
                         .$(", last=").$(partitionTimestamp == lastPartitionTimestamp)
                         .$(", partitionTimestamp=").$ts(partitionTimestamp)
                         .$(", partitionMutates=").$(partitionMutates)

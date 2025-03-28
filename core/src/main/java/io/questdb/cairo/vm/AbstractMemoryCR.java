@@ -52,7 +52,7 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     protected long lim;
     protected long pageAddress = 0;
     protected long size = 0;
-    private long shiftAddressRight = 0;
+    protected long shiftAddressRight = 0;
 
     public long addressOf(long offset) {
         offset -= shiftAddressRight;

@@ -879,6 +879,19 @@ public final class TestUtils {
         }
     }
 
+    // Useful for debugging
+    @SuppressWarnings("unused")
+    public static long beHexToLong(String hex) {
+        return Long.parseLong(reverseBeHex(hex), 16);
+    }
+
+    // Useful for debugging
+    @SuppressWarnings("unused")
+    public static String beHexToTs(String hex) {
+        long l = beHexToLong(hex);
+        return Timestamps.toUSecString(l);
+    }
+
     public static int connect(long fd, long sockAddr) {
         Assert.assertTrue(fd > -1);
         return Net.connect(fd, sockAddr);
@@ -1662,6 +1675,17 @@ public final class TestUtils {
             sink.put(line).put('\n');
         }
         return sink.toString();
+    }
+
+    // Useful for debugging
+    @SuppressWarnings("unused")
+    public static String reverseBeHex(String hex) {
+        var sb = new char[hex.length()];
+        for (int i = 0; i < hex.length(); i += 2) {
+            sb[hex.length() - i - 1] = hex.charAt(i + 1);
+            sb[hex.length() - i - 2] = hex.charAt(i);
+        }
+        return new String(sb);
     }
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
