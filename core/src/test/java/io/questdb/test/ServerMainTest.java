@@ -316,6 +316,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.page.frame.min.rows\tQDB_CAIRO_SQL_PAGE_FRAME_MIN_ROWS\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.filter.enabled\tQDB_CAIRO_SQL_PARALLEL_FILTER_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.filter.pretouch.enabled\tQDB_CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.parallel.filter.pretouch.threshold\tQDB_CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_THRESHOLD\t0.05\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.enabled\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.merge.shard.queue.capacity\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_MERGE_SHARD_QUEUE_CAPACITY\t4\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.sharding.threshold\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD\t100000\tdefault\tfalse\tfalse\n" +
@@ -360,7 +361,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.vector.aggregate.queue.capacity\tQDB_CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY\t128\tdefault\tfalse\tfalse\n" +
                                     "cairo.volumes\tQDB_CAIRO_VOLUMES\t\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.enabled\tQDB_CAIRO_WAL_APPLY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
-                                    "cairo.wal.apply.look.ahead.txn.count\tQDB_CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT\t20\tdefault\tfalse\tfalse\n" +
+                                    "cairo.wal.apply.look.ahead.txn.count\tQDB_CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT\t200\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.table.time.quota\tQDB_CAIRO_WAL_APPLY_TABLE_TIME_QUOTA\t1000\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.apply.parallel.sql.enabled\tQDB_CAIRO_WAL_APPLY_PARALLEL_SQL_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.enabled.default\tQDB_CAIRO_WAL_ENABLED_DEFAULT\tfalse\tconf\tfalse\tfalse\n" +
@@ -658,8 +659,10 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.context.ilp.ping\tQDB_HTTP_CONTEXT_ILP_PING\t\tdefault\tfalse\tfalse\n" +
                                     "http.context.settings\tQDB_HTTP_CONTEXT_SETTINGS\t\tdefault\tfalse\tfalse\n" +
                                     "http.context.warnings\tQDB_HTTP_CONTEXT_WARNINGS\t\tdefault\tfalse\tfalse\n" +
-                                    "telemetry.db.size.estimate.timeout\tQDB_TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT\t1000\tdefault\tfalse\tfalse\n"
-                    ).split("\n");
+                                    "telemetry.db.size.estimate.timeout\tQDB_TELEMETRY_DB_SIZE_ESTIMATE_TIMEOUT\t1000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.write.back.off.timeout.on.mem.pressure\tQDB_CAIRO_WRITE_BACK_OFF_TIMEOUT_ON_MEM_PRESSURE\t4000\tdefault\tfalse\tfalse\n"
+                    )
+                            .split("\n");
 
                     final Set<String> missingProps = new HashSet<>();
                     for (String property : expectedProps) {

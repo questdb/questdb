@@ -38,6 +38,7 @@ public class WalUtils {
     public static final String EVENT_INDEX_FILE_NAME = "_event.i";
     public static final CharSequence INITIAL_META_FILE_NAME = "_meta.0";
     public static final int METADATA_WALID = -1;
+    public static final int MIN_WAL_ID = DROP_TABLE_WAL_ID;
     public static final int SEG_MIN_ID = 0;
     public static final int SEG_NONE_ID = Integer.MAX_VALUE >> 2;
     public static final int SEG_MAX_ID = SEG_NONE_ID - 1;
@@ -60,6 +61,8 @@ public class WalUtils {
     public static final long WALE_MAX_TXN_OFFSET_32 = 0L;
     public static final int WAL_FORMAT_OFFSET_32 = Integer.BYTES;
     public static final int WAL_FORMAT_VERSION = 0;
+    public static final int WALE_FORMAT_VERSION = WAL_FORMAT_VERSION;
+    public static final int WALE_MAT_VIEW_FORMAT_VERSION = WALE_FORMAT_VERSION + 1;
     public static final String WAL_INDEX_FILE_NAME = "_wal_index.d";
     public static final String WAL_NAME_BASE = "wal";
     public static final String WAL_PENDING_FS_MARKER = ".pending";

@@ -891,6 +891,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public double getSqlParallelFilterPreTouchThreshold() {
+        return 0.05;
+    }
+
+    @Override
     public int getSqlParallelWorkStealingThreshold() {
         return 16;
     }
@@ -1307,5 +1312,10 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean useFastAsOfJoin() {
         return true;
+    }
+
+    @Override
+    public long getWriteBackOffTimeoutOnMemPressureMs() {
+        return 4000;
     }
 }

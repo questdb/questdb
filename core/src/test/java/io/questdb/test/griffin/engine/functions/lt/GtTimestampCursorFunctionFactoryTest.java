@@ -202,7 +202,7 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             "  filter: ts [thread-safe] > cursor \n" +
                             "    VirtualRecord\n" +
                             "      functions: [null]\n" +
-                            "        long_sequence count: 1\n" +
+                            "        long_sequence count: 1 [pre-touch]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n",
@@ -215,7 +215,7 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             "  filter: ts [thread-safe] <= cursor \n" +
                             "    VirtualRecord\n" +
                             "      functions: [null]\n" +
-                            "        long_sequence count: 1\n" +
+                            "        long_sequence count: 1 [pre-touch]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n",
@@ -228,7 +228,7 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             "  filter: ts [thread-safe] > cursor \n" +
                             "    VirtualRecord\n" +
                             "      functions: [1773100800000000]\n" +
-                            "        long_sequence count: 1\n" +
+                            "        long_sequence count: 1 [pre-touch]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n",
@@ -241,7 +241,7 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             "  filter: ts [thread-safe] <= cursor \n" +
                             "    VirtualRecord\n" +
                             "      functions: ['2014-09-03']\n" +
-                            "        long_sequence count: 1\n" +
+                            "        long_sequence count: 1 [pre-touch]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n",
@@ -254,7 +254,7 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             "  filter: ts [thread-safe] > cursor \n" +
                             "    VirtualRecord\n" +
                             "      functions: ['2020-02-21']\n" +
-                            "        long_sequence count: 1\n" +
+                            "        long_sequence count: 1 [pre-touch]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n",
@@ -267,7 +267,7 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             "  filter: ts [thread-safe] <= cursor \n" +
                             "    VirtualRecord\n" +
                             "      functions: ['2020-02-21']\n" +
-                            "        long_sequence count: 1\n" +
+                            "        long_sequence count: 1 [pre-touch]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n",
@@ -281,19 +281,20 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             "  filter: ts::varchar::timestamp > cursor \n" +
                             "    VirtualRecord\n" +
                             "      functions: [null]\n" +
-                            "        long_sequence count: 1 [state-shared]\n" +
+                            "        long_sequence count: 1 [state-shared] [pre-touch]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n",
                     "explain select * from x where ts::varchar::timestamp > (select null)"
             );
+
             assertSql(
                     "QUERY PLAN\n" +
                             "Async Filter workers: 1\n" +
                             "  filter: ts::varchar::timestamp > cursor \n" +
                             "    VirtualRecord\n" +
                             "      functions: [1773100800000000]\n" +
-                            "        long_sequence count: 1 [state-shared]\n" +
+                            "        long_sequence count: 1 [state-shared] [pre-touch]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n",
@@ -306,7 +307,7 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             "  filter: ts::varchar::timestamp > cursor \n" +
                             "    VirtualRecord\n" +
                             "      functions: ['2014-09-03']\n" +
-                            "        long_sequence count: 1 [state-shared]\n" +
+                            "        long_sequence count: 1 [state-shared] [pre-touch]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n",
@@ -319,7 +320,7 @@ public class GtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             "  filter: ts::varchar::timestamp > cursor \n" +
                             "    VirtualRecord\n" +
                             "      functions: ['2020-02-21']\n" +
-                            "        long_sequence count: 1 [state-shared]\n" +
+                            "        long_sequence count: 1 [state-shared] [pre-touch]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n",

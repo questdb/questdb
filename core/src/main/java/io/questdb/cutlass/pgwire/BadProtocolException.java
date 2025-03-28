@@ -33,7 +33,7 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class BadProtocolException extends Exception {
+public class BadProtocolException extends Exception implements FlyweightMessageContainer {
     public static final BadProtocolException INSTANCE = new BadProtocolException();
 
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
@@ -48,6 +48,11 @@ public class BadProtocolException extends Exception {
         ex.message = pe.getErrorMessageSink();
         ex.pe = pe;
         return ex;
+    }
+
+    @Override
+    public CharSequence getFlyweightMessage() {
+        return message;
     }
 
     @Override

@@ -2191,7 +2191,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         final boolean enableParallelFilter = executionContext.isParallelFilterEnabled();
-        final boolean preTouchColumns = configuration.isSqlParallelFilterPreTouchEnabled();
         if (enableParallelFilter && factory.supportsPageFrameCursor()) {
             final boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED
                     && (!model.isUpdate() || executionContext.isWalApplication());
@@ -2234,7 +2233,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ),
                             limitLoFunction,
                             limitLoPos,
-                            preTouchColumns,
                             executionContext.getSharedWorkerCount()
                     );
                 } catch (SqlException | LimitOverflowException ex) {
@@ -2269,7 +2267,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         ),
                         limitLoFunction,
                         limitLoPos,
-                        preTouchColumns,
                         executionContext.getSharedWorkerCount()
                 );
             } catch (Throwable e) {
@@ -2665,7 +2662,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 ),
                                 null,
                                 0,
-                                false,
                                 executionContext.getSharedWorkerCount()
                         );
                     } else {
@@ -2716,7 +2712,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 ),
                                 null,
                                 0,
-                                false,
                                 executionContext.getSharedWorkerCount()
                         );
                     } else {

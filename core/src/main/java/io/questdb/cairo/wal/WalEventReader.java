@@ -26,8 +26,9 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
@@ -38,13 +39,12 @@ import io.questdb.std.str.Path;
 import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.openRO;
-import static io.questdb.cairo.TableUtils.validateMetaVersion;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalEventReader implements Closeable {
     private final Log LOG = LogFactory.getLog(WalEventReader.class);
     private final WalEventCursor eventCursor;
-    private final MemoryMR eventMem;
+    private final MemoryCMR eventMem;
     private final FilesFacade ff;
 
     public WalEventReader(FilesFacade ff) {
@@ -59,7 +59,7 @@ public class WalEventReader implements Closeable {
         Misc.free(eventMem);
     }
 
-    public WalEventCursor of(Path path, int expectedVersion, long segmentTxn) {
+    public WalEventCursor of(Path path, long segmentTxn) {
         int trimTo = path.size();
         try {
             final int pathLen = path.size();
@@ -112,7 +112,14 @@ public class WalEventReader implements Closeable {
                 eventCursor.openOffset(-1);
             }
 
-            validateMetaVersion(eventMem, WAL_FORMAT_OFFSET_32, expectedVersion);
+            final int formatVersion = eventMem.getInt(WAL_FORMAT_OFFSET_32);
+            if (WALE_FORMAT_VERSION != formatVersion && WALE_MAT_VIEW_FORMAT_VERSION != formatVersion) {
+                throw TableUtils.validationException(eventMem)
+                        .put("Wal events file version does not match runtime version [expected=")
+                        .put(WALE_FORMAT_VERSION).put(" or ").put(WALE_MAT_VIEW_FORMAT_VERSION)
+                        .put(", actual=").put(formatVersion)
+                        .put(']');
+            }
             return eventCursor;
         } catch (Throwable e) {
             close();

@@ -2938,7 +2938,7 @@ public class SqlOptimiser implements Mutable {
         }
 
         if (lo == hi) {
-            throw SqlException.$(tableNamePosition, "come on, where is table name?");
+            throw SqlException.$(tableNamePosition, "come on, where is the table name?");
         }
 
         final TableToken tableToken = executionContext.getTableTokenIfExists(tableName, lo, hi);
@@ -4028,7 +4028,6 @@ public class SqlOptimiser implements Mutable {
     // Rewrites the following:
     // select count(constant) ... -> select count() ...
     private void rewriteCount(QueryModel model) {
-
         if (model == null) {
             return;
         }

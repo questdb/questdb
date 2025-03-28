@@ -296,6 +296,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().ownThread());
 
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelFilterPreTouchEnabled());
+        Assert.assertEquals(0.05, configuration.getCairoConfiguration().getSqlParallelFilterPreTouchThreshold(), 0.000001);
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelGroupByEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelReadParquetEnabled());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getSqlParallelWorkStealingThreshold());
@@ -476,7 +477,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(7_000, configuration.getWalApplyPoolConfiguration().getNapThreshold());
         Assert.assertEquals(10_000, configuration.getWalApplyPoolConfiguration().getSleepThreshold());
         Assert.assertEquals(1000, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
-        Assert.assertEquals(20, configuration.getCairoConfiguration().getWalApplyLookAheadTransactionCount());
+        Assert.assertEquals(200, configuration.getCairoConfiguration().getWalApplyLookAheadTransactionCount());
         Assert.assertEquals(4, configuration.getCairoConfiguration().getO3LagCalculationWindowsSize());
         Assert.assertEquals(200_000, configuration.getCairoConfiguration().getWalSegmentRolloverRowCount());
         Assert.assertEquals(20.0d, configuration.getCairoConfiguration().getWalLagRowsMultiplier(), 0.00001);
@@ -1817,6 +1818,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertFalse(configuration.isSqlParallelFilterEnabled());
         Assert.assertFalse(configuration.isSqlParallelFilterPreTouchEnabled());
+        Assert.assertEquals(0.1, configuration.getSqlParallelFilterPreTouchThreshold(), 0.000001);
         Assert.assertFalse(configuration.isSqlParallelGroupByEnabled());
         Assert.assertFalse(configuration.isSqlParallelReadParquetEnabled());
         Assert.assertFalse(configuration.isSqlOrderBySortEnabled());
