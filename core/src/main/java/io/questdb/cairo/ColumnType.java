@@ -465,9 +465,9 @@ public final class ColumnType {
                 /* 3  SHORT     */, {SHORT, INT, LONG, FLOAT, DOUBLE, CHAR}
                 /* 4  CHAR      */, {CHAR, STRING, VARCHAR, SHORT, INT, LONG, FLOAT, DOUBLE}
                 /* 5  INT       */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE}
-                /* 6  LONG      */, {LONG, FLOAT, DOUBLE, TIMESTAMP, DATE}
-                /* 7  DATE      */, {DATE, TIMESTAMP, LONG, FLOAT, DOUBLE}
-                /* 8  TIMESTAMP */, {TIMESTAMP, LONG, DATE, FLOAT, DOUBLE}
+                /* 6  LONG      */, {LONG, DOUBLE, TIMESTAMP, DATE}
+                /* 7  DATE      */, {DATE, TIMESTAMP, LONG, DOUBLE}
+                /* 8  TIMESTAMP */, {TIMESTAMP, LONG, DATE, DOUBLE}
                 /* 9  FLOAT     */, {FLOAT, DOUBLE}
                 /* 10 DOUBLE    */, {DOUBLE}
                 /* 11 STRING    */, {STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
