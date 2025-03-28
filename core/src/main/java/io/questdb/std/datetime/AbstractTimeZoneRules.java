@@ -164,15 +164,14 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
         final Transition[] transitions = new Transition[ruleCount];
         final boolean leap = isLeapYear(year);
 
-        int offsetBefore;
         for (int i = 0; i < ruleCount; i++) {
-            TransitionRule zr = rules[i];
-            offsetBefore = zr.offsetBefore;
+            final TransitionRule zr = rules[i];
+            final int offsetBefore = zr.offsetBefore;
 
-            int dom = zr.dom;
-            int month = zr.month;
+            final int dom = zr.dom;
+            final int month = zr.month;
 
-            int dow = zr.dow;
+            final int dow = zr.dow;
             long timestamp;
             if (dom < 0) {
                 timestamp = toEpoch(
@@ -246,7 +245,7 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
 
     private long getDSTFromRule(int year, int i) {
         final Transition[] transitions = getTransitions(year);
-        return transitions[i].dstTimestamp;
+        return transitions[i].epoch;
     }
 
     private Transition[] getTransitions(int year) {
@@ -270,33 +269,29 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     }
 
     private long offsetFromRules(long epoch, int year) {
-        int offsetBefore;
-        int offsetAfter = 0;
-
         final Transition[] transitions = getTransitions(year);
+        long offsetAfter = 0;
         for (int i = 0, n = transitions.length; i < n; i++) {
-            Transition tr = transitions[i];
-            offsetBefore = tr.offsetBefore;
-            offsetAfter = tr.offsetAfter;
-            if (epoch < tr.dstTimestamp) {
-                return offsetBefore * multiplier;
+            final Transition tr = transitions[i];
+            if (epoch < tr.epoch) {
+                return tr.offsetBefore * multiplier;
             }
+            offsetAfter = tr.offsetAfter;
         }
-
         return offsetAfter * multiplier;
     }
 
-    abstract protected long addDays(long epoch, int days);
+    protected abstract long addDays(long epoch, int days);
 
-    abstract protected int getDaysPerMonth(int month, boolean leapYear);
+    protected abstract int getDaysPerMonth(int month, boolean leapYear);
 
-    abstract protected int getYear(long epoch);
+    protected abstract int getYear(long epoch);
 
-    abstract protected boolean isLeapYear(int year);
+    protected abstract boolean isLeapYear(int year);
 
-    abstract protected long nextOrSameDayOfWeek(long epoch, int dow);
+    protected abstract long nextOrSameDayOfWeek(long epoch, int dow);
 
-    abstract protected long previousOrSameDayOfWeek(long epoch, int dow);
+    protected abstract long previousOrSameDayOfWeek(long epoch, int dow);
 
-    abstract protected long toEpoch(int year, boolean leapYear, int month, int day, int hour, int min);
+    protected abstract long toEpoch(int year, boolean leapYear, int month, int day, int hour, int min);
 }
