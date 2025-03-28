@@ -451,10 +451,13 @@ public final class ColumnType {
         //
         // All types must be mentioned at all times.
         //
-        /// Please note that the overload rule here must align with the corresponding function implementation.
-        /// For instance, in {@link io.questdb.griffin.engine.functions.SymbolFunction}, apart from getChar(), getStr(), getTimestamp(), getVarchar(), and getInt(),
-        /// all other getxxx methods throw an UnSupportException. Therefore, the Symbol datatype only supports overloading by STRING, VARCHAR, CHAR, INT, and TIMESTAMP.
-        /// Any other datatype should be assigned as {@link #OVERLOAD_NONE}.
+        /// Note that the overload rule here must align with the corresponding function implementation, or specific
+        /// rules specified by {@link io.questdb.griffin.FunctionParser}, which add explicit cast function(like uuid -> string).
+        /// For instance, in {@link io.questdb.griffin.engine.functions.SymbolFunction},
+        /// apart from getChar(), getStr(), getTimestamp(), getVarchar(), and getInt(),
+        /// all other getxxx methods throw an UnSupportException. Therefore, the Symbol datatype only supports
+        /// overloading by STRING, VARCHAR, CHAR, INT, and TIMESTAMP.
+
         OVERLOAD_PRIORITY = new short[][]{
                 /* 0 UNDEFINED  */  {DOUBLE, FLOAT, STRING, VARCHAR, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
                 /* 1  BOOLEAN   */, {BOOLEAN}
@@ -475,7 +478,7 @@ public final class ColumnType {
                 /* 16 GEOINT    */, {GEOINT, GEOLONG, GEOHASH}
                 /* 17 GEOLONG   */, {GEOLONG, GEOHASH}
                 /* 18 BINARY    */, {BINARY}
-                /* 19 UUID      */, {UUID}
+                /* 19 UUID      */, {UUID, STRING}
                 /* 20 CURSOR    */, {CURSOR}
                 /* 21 unused    */, {}
                 /* 22 unused    */, {}
@@ -487,7 +490,7 @@ public final class ColumnType {
                 /* 28 unused    */, {}
                 /* 29 unused    */, {}
                 /* 30 unused    */, {}
-                /* 31 INTERVAL  */, {INTERVAL}
+                /* 31 INTERVAL  */, {INTERVAL, STRING}
                 /* 32 NULL      */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
         };
         for (short fromTag = UNDEFINED; fromTag < NULL; fromTag++) {
