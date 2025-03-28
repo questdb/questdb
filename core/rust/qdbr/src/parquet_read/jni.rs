@@ -2,7 +2,6 @@ use std::io::Cursor;
 use std::slice;
 
 use crate::allocator::QdbAllocator;
-use crate::parquet::col_type::ColumnType;
 use crate::parquet::error::{ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::ParquetFieldId;
 use crate::parquet_read::decode::ParquetColumnIndex;
@@ -12,6 +11,7 @@ use crate::parquet_read::{
 };
 use jni::objects::JClass;
 use jni::JNIEnv;
+use qdb_core::col_type::ColumnType;
 use std::mem::{offset_of, size_of};
 
 #[no_mangle]
@@ -53,8 +53,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 fn validate_jni_column_types(columns: &[(ParquetFieldId, ColumnType)]) -> ParquetResult<()> {
     for &(_, java_column_type) in columns {
         let code = java_column_type.code();
-        let res: ParquetResult<ColumnType> = code.try_into();
-        res.context("invalid column type passed across JNI layer")?;
+        let _col_type: ColumnType = code
+            .try_into()
+            .context("invalid column type passed across JNI layer")?;
     }
     Ok(())
 }
