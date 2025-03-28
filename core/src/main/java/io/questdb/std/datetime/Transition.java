@@ -30,13 +30,12 @@ package io.questdb.std.datetime;
 public class Transition {
     // transition timestamp (UTC)
     public final long epoch;
-    // long is used for offsets to avoid int to long conversions
-    public final long offsetAfter;
-    public final long offsetBefore;
+    public final long offsetAfterMicros;
+    public final long offsetBeforeMicros;
 
-    public Transition(long offsetBefore, long offsetAfter, long epoch) {
-        this.offsetBefore = offsetBefore;
-        this.offsetAfter = offsetAfter;
+    public Transition(long offsetBeforeMicros, long offsetAfterMicros, long epoch) {
+        this.offsetBeforeMicros = offsetBeforeMicros;
+        this.offsetAfterMicros = offsetAfterMicros;
         this.epoch = epoch;
     }
 }

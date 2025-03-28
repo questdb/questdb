@@ -211,7 +211,7 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
             // go back to epoch
             timestamp -= offsetBefore * multiplier;
 
-            transitions[i] = new Transition(zr.offsetBefore, zr.offsetAfter, timestamp);
+            transitions[i] = new Transition(zr.offsetBefore * multiplier, zr.offsetAfter * multiplier, timestamp);
         }
         return transitions;
     }
@@ -270,15 +270,15 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
 
     private long offsetFromRules(long epoch, int year) {
         final Transition[] transitions = getTransitions(year);
-        long offsetAfter = 0;
+        long offsetAfterUs = 0;
         for (int i = 0, n = transitions.length; i < n; i++) {
             final Transition tr = transitions[i];
             if (epoch < tr.epoch) {
-                return tr.offsetBefore * multiplier;
+                return tr.offsetBeforeMicros;
             }
-            offsetAfter = tr.offsetAfter;
+            offsetAfterUs = tr.offsetAfterMicros;
         }
-        return offsetAfter * multiplier;
+        return offsetAfterUs;
     }
 
     protected abstract long addDays(long epoch, int days);
