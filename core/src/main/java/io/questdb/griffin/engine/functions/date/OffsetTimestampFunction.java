@@ -30,11 +30,11 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 
-class OffsetTimestampFunctionFromOffset extends TimestampFunction implements UnaryFunction {
+class OffsetTimestampFunction extends TimestampFunction implements UnaryFunction {
     private final long offset;
     private final Function timestamp;
 
-    public OffsetTimestampFunctionFromOffset(Function timestamp, long offset) {
+    public OffsetTimestampFunction(Function timestamp, long offset) {
         this.timestamp = timestamp;
         this.offset = offset;
     }

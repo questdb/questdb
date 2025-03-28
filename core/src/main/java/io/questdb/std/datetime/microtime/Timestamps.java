@@ -1253,12 +1253,12 @@ public final class Timestamps {
         return sink.toString();
     }
 
-    public static long toUTC(long timestampWithTimezone, DateLocale locale, CharSequence timezone) throws NumericException {
-        return toUTC(timestampWithTimezone, locale, timezone, 0, timezone.length());
+    public static long toUTC(long localTimestamp, DateLocale locale, CharSequence timezone) throws NumericException {
+        return toUTC(localTimestamp, locale, timezone, 0, timezone.length());
     }
 
     public static long toUTC(
-            long timestampWithTimezone,
+            long localTimestamp,
             DateLocale locale,
             CharSequence timezone,
             int lo,
@@ -1271,13 +1271,13 @@ public final class Timestamps {
                     Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)),
                     RESOLUTION_MICROS
             );
-            offset = zoneRules.getOffset(timestampWithTimezone);
+            offset = zoneRules.getOffset(localTimestamp);
             // getOffset really needs UTC date, not local
-            offset = zoneRules.getOffset(timestampWithTimezone - offset);
-            return timestampWithTimezone - offset;
+            offset = zoneRules.getOffset(localTimestamp - offset);
+            return localTimestamp - offset;
         }
         offset = Numbers.decodeLowInt(l) * MINUTE_MICROS;
-        return timestampWithTimezone - offset;
+        return localTimestamp - offset;
     }
 
     public static long toUTC(long timestampWithTimezone, TimeZoneRules zoneRules) {
