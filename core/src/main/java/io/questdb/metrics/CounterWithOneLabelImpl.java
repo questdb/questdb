@@ -24,7 +24,10 @@
 
 package io.questdb.metrics;
 
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory;
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor.PrometheusMetricsRecord;
 import io.questdb.std.str.BorrowableUtf8Sink;
+import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.LongAdder;
@@ -46,8 +49,29 @@ public class CounterWithOneLabelImpl implements CounterWithOneLabel {
     }
 
     @Override
+    public CharSequence getName() {
+        return name;
+    }
+
+    @Override
     public void inc(short label0) {
         counters[label0].increment();
+    }
+
+    @Override
+    public int scrapeIntoRecord(PrometheusMetricsRecord record) {
+        scrapeIntoRecord(record, 0);
+        return counters.length;
+    }
+
+    @Override
+    public void scrapeIntoRecord(PrometheusMetricsRecord record, int label) {
+        record
+                .setCounterName(getName())
+                .setType("counter")
+                .setValue(counters[label].longValue())
+                .setKind("LONG")
+                .setLabels(labelName0, labelValues0[label]);
     }
 
     @Override

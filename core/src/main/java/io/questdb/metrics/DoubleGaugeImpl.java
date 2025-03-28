@@ -24,8 +24,12 @@
 
 package io.questdb.metrics;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory;
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor.PrometheusMetricsRecord;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 
 public class DoubleGaugeImpl implements Target, DoubleGauge {
@@ -34,6 +38,21 @@ public class DoubleGaugeImpl implements Target, DoubleGauge {
 
     public DoubleGaugeImpl(CharSequence name) {
         this.name = name;
+    }
+
+    @Override
+    public CharSequence getName() {
+        return name;
+    }
+
+    @Override
+    public int scrapeIntoRecord(PrometheusMetricsRecord record) {
+        record
+                .setGaugeName(getName())
+                .setType("gauge")
+                .setValue(value)
+                .setKind("DOUBLE");
+        return 1;
     }
 
     @Override

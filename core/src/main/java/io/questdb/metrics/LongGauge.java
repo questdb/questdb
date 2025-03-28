@@ -24,6 +24,11 @@
 
 package io.questdb.metrics;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor.PrometheusMetricsRecord;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.Utf8Sink;
+
 public interface LongGauge extends Target {
 
     void add(long value);
@@ -35,6 +40,16 @@ public interface LongGauge extends Target {
     long getValue();
 
     void inc();
+
+    @Override
+    default int scrapeIntoRecord(PrometheusMetricsRecord record) {
+        record
+                .setGaugeName(getName())
+                .setType("gauge")
+                .setValue(getValue())
+                .setKind("LONG");
+        return 1;
+    }
 
     void setValue(long value);
 }
