@@ -71,7 +71,9 @@ import org.jetbrains.annotations.Nullable;
  * queries.
  */
 public class CreateMatViewOperationImpl implements CreateMatViewOperation {
-    private final CharSequenceHashSet baseKeyColumnNames = new CharSequenceHashSet();
+    private final IntList baseKeyColumnNamePositions = new IntList();
+    private final ObjList<CharSequence> baseKeyColumnNames = new ObjList<>();
+    private final CharSequenceHashSet baseTableDedupKeys = new CharSequenceHashSet();
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();
     private final MatViewDefinition matViewDefinition = new MatViewDefinition();
     private final int refreshType;
@@ -83,8 +85,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private CreateTableOperationImpl createTableOperation;
     private long samplingInterval;
     private char samplingIntervalUnit;
-    private CharSequenceHashSet tableNames;
     private IntList tableNamePositions;
+    private CharSequenceHashSet tableNames;
 
     public CreateMatViewOperationImpl(
             @NotNull String sqlText,
@@ -390,6 +392,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
         // Mark key columns as dedup keys.
         baseKeyColumnNames.clear();
+        baseKeyColumnNamePositions.clear();
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn column = columns.getQuick(i);
             if (!optimiser.hasAggregates(column.getAst())) {
@@ -400,7 +403,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 }
                 model.setIsDedupKey();
                 // Copy column names into builder to be validated later.
-                copyBaseTableColumnNames(column.getAst(), queryModel, baseTableName, baseKeyColumnNames);
+                copyBaseTableColumnNames(column.getAst(), queryModel, baseTableName, baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition);
             }
         }
 
@@ -410,10 +413,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
     @Override
     public void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, TableReaderMetadata baseTableMetadata) throws SqlException {
+        final int selectTextPosition = createTableOperation.getSelectTextPosition();
         // SELECT validation
         if (createTableOperation.getTimestampColumnName() == null) {
             if (selectMetadata.getTimestampIndex() == -1) {
-                throw SqlException.position(createTableOperation.getSelectTextPosition())
+                throw SqlException.position(selectTextPosition)
                         .put("materialized view query is required to have designated timestamp");
             }
         }
@@ -425,20 +429,22 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         //           Key columns in mat view query must be a subset of the base table's dedup columns.
         //           That's to avoid situation when dedup upsert rewrites key column values leading to
         //           inconsistent mat view data.
-        boolean baseDedupEnabled = false;
+        baseTableDedupKeys.clear();
         for (int i = 0, n = baseTableMetadata.getColumnCount(); i < n; i++) {
             if (baseTableMetadata.isDedupKey(i)) {
-                baseDedupEnabled = true;
-                break;
+                baseTableDedupKeys.add(baseTableMetadata.getColumnName(i));
             }
         }
-        if (baseDedupEnabled) {
+        if (baseTableDedupKeys.size() > 0) {
             for (int i = 0, n = baseKeyColumnNames.size(); i < n; i++) {
                 final CharSequence baseKeyColumnName = baseKeyColumnNames.get(i);
                 final int baseKeyColumnIndex = baseTableMetadata.getColumnIndexQuiet(baseKeyColumnName);
                 if (baseKeyColumnIndex > -1 && !baseTableMetadata.isDedupKey(baseKeyColumnIndex)) {
-                    throw SqlException.position(0)
-                            .put("key column must be one of base table's dedup keys [name=").put(baseKeyColumnName).put(']');
+                    throw SqlException.position(baseKeyColumnNamePositions.get(i) + selectTextPosition)
+                            .put("key column must be one of the base table's dedup keys [columnName=").put(baseKeyColumnName)
+                            .put(", baseTableName=").put(baseTableName)
+                            .put(", baseTableDedupKeys=").put(baseTableDedupKeys)
+                            .put(']');
                 }
             }
         }
@@ -455,7 +461,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             ExpressionNode node,
             QueryModel model,
             CharSequence baseTableName,
-            CharSequenceHashSet target
+            ObjList<CharSequence> baseKeyColumnNames,
+            IntList baseKeyColumnNamePositions,
+            int selectTextPosition
     ) throws SqlException {
         if (node != null && model != null) {
             if (node.type == ExpressionNode.LITERAL) {
@@ -465,39 +473,49 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                     if (dotIndex > -1) {
                         if (Chars.equalsIgnoreCase(model.getName(), node.token, 0, dotIndex)) {
                             if (!Chars.equalsIgnoreCase(model.getTableName(), baseTableName)) {
-                                throw SqlException.$(node.position, "only base table columns can be used as keys: ").put(node.token);
+                                throw SqlException.position(node.position + selectTextPosition)
+                                        .put("only base table columns can be used as materialized view keys [invalid key=")
+                                        .put(node.token)
+                                        .put(']');
                             }
-                            target.add(Chars.toString(node.token, dotIndex + 1, node.token.length()));
+                            baseKeyColumnNames.add(Chars.toString(node.token, dotIndex + 1, node.token.length()));
+                            baseKeyColumnNamePositions.add(node.position);
                             return;
                         }
                     } else {
                         if (!Chars.equalsIgnoreCase(model.getTableName(), baseTableName)) {
-                            throw SqlException.$(node.position, "only base table columns can be used as keys: ").put(node.token);
+                            throw SqlException.position(node.position + selectTextPosition)
+                                    .put("only base table columns can be used as materialized view keys [invalid key=")
+                                    .put(node.token)
+                                    .put(']');
                         }
-                        target.add(node.token);
+                        baseKeyColumnNames.add(Chars.toString(node.token));
+                        baseKeyColumnNamePositions.add(node.position);
                         return;
                     }
                 } else {
                     // Check nested model.
                     final QueryColumn column = model.getAliasToColumnMap().get(node.token);
-                    copyBaseTableColumnNames(column != null ? column.getAst() : node, model.getNestedModel(), baseTableName, target);
+                    copyBaseTableColumnNames(column != null ? column.getAst() : node,
+                            model.getNestedModel(), baseTableName, baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition
+                    );
                 }
             }
 
             // Check node children for functions/operators.
             for (int i = 0, n = node.args.size(); i < n; i++) {
-                copyBaseTableColumnNames(node.args.getQuick(i), model, baseTableName, target);
+                copyBaseTableColumnNames(node.args.getQuick(i), model, baseTableName, baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition);
             }
             if (node.lhs != null) {
-                copyBaseTableColumnNames(node.lhs, model, baseTableName, target);
+                copyBaseTableColumnNames(node.lhs, model, baseTableName, baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition);
             }
             if (node.rhs != null) {
-                copyBaseTableColumnNames(node.rhs, model, baseTableName, target);
+                copyBaseTableColumnNames(node.rhs, model, baseTableName, baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition);
             }
 
             // Check join models.
             for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
-                copyBaseTableColumnNames(node, model.getJoinModels().getQuick(i), baseTableName, target);
+                copyBaseTableColumnNames(node, model.getJoinModels().getQuick(i), baseTableName, baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition);
             }
         }
     }

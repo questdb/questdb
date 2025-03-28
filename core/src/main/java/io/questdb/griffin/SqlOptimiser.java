@@ -1508,7 +1508,7 @@ public class SqlOptimiser implements Mutable {
                     validatingModel
             );
 
-            final QueryColumn translatedColumn = nextColumn(alias);
+            final QueryColumn translatedColumn = nextColumn(alias, columnAst.position);
 
             // create column that references inner alias we just created
             innerModel.addBottomUpColumn(translatedColumn);
@@ -2852,12 +2852,20 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // todo: remove this method, and use the one below with the position parameter
+    //  write tests to assert for error position of invalid column for all calling sites
     private QueryColumn nextColumn(CharSequence name) {
-        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, name, name);
+        return nextColumn(name, 0);
     }
 
+    private QueryColumn nextColumn(CharSequence name, int position) {
+        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, name, name, position);
+    }
+
+    // todo: add a position parameter to this method
+    //  write tests to assert for error position of invalid column for all calling sites
     private QueryColumn nextColumn(CharSequence alias, CharSequence column) {
-        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, alias, column);
+        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, alias, column, 0);
     }
 
     private ExpressionNode nextLiteral(CharSequence token, int position) {
@@ -4731,8 +4739,10 @@ public class SqlOptimiser implements Mutable {
                         if (baseParent.getAliasToColumnMap().get(column) != null) {
                             continue;
                         } else {
-                            throw SqlException.$(orderBy.position,
-                                            "order column position is out of range [max=")
+                            throw SqlException.$(
+                                            orderBy.position,
+                                            "order column position is out of range [max="
+                                    )
                                     .put(columnCount)
                                     .put(']');
                         }
@@ -5003,7 +5013,7 @@ public class SqlOptimiser implements Mutable {
                     // need to avoid alias conflicts1
 
                     timestampAlias = createColumnAlias(timestampColumn, model);
-                    model.addBottomUpColumnIfNotExists(nextColumn(timestampAlias));
+                    model.addBottomUpColumnIfNotExists(nextColumn(timestampAlias, timestamp.position));
 
                     timestampOnly = false;
                     needRemoveColumns++;
@@ -5030,7 +5040,7 @@ public class SqlOptimiser implements Mutable {
 
                 final ExpressionNode param2 = expressionNodePool.next();
                 param2.token = timestampColumn;
-                param2.position = timestamp.position;
+                param2.position = model.getBottomUpColumns().getQuick(timestampPos).getAst().position;
                 param2.paramCount = 0;
                 param2.type = LITERAL;
 
@@ -6279,8 +6289,10 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void validateWindowFunctions(QueryModel model, SqlExecutionContext sqlExecutionContext,
-                                         int recursionLevel) throws SqlException {
+    private void validateWindowFunctions(
+            QueryModel model, SqlExecutionContext sqlExecutionContext,
+            int recursionLevel
+    ) throws SqlException {
         if (model == null) {
             return;
         }
@@ -6455,8 +6467,10 @@ public class SqlOptimiser implements Mutable {
         validateUpdateColumns(updateQueryModel, metadata, sqlExecutionContext);
     }
 
-    void validateUpdateColumns(QueryModel updateQueryModel, TableRecordMetadata metadata, SqlExecutionContext
-            sqlExecutionContext) throws SqlException {
+    void validateUpdateColumns(
+            QueryModel updateQueryModel, TableRecordMetadata metadata, SqlExecutionContext
+            sqlExecutionContext
+    ) throws SqlException {
         try {
             literalCollectorANames.clear();
             tempList.clear(metadata.getColumnCount());
