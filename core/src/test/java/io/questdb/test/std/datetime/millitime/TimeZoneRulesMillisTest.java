@@ -59,7 +59,6 @@ public class TimeZoneRulesMillisTest {
 
         while (epoch < epochDeadline) {
             int y = Dates.getYear(epoch);
-            boolean leap = Dates.isLeapYear(y);
             Instant dt = Instant.ofEpochMilli(epoch);
 
             for (int i = 0, n = zones.size(); i < n; i++) {
@@ -70,7 +69,7 @@ public class TimeZoneRulesMillisTest {
 
                 long expected = zdt.getOffset().getTotalSeconds();
                 // find out how much algo added to datetime itself
-                long offset = rules.getOffset(epoch, y, leap);
+                long offset = rules.getOffset(epoch, y);
 
                 try {
                     Assert.assertEquals(expected, offset / Dates.SECOND_MILLIS);
@@ -135,7 +134,7 @@ public class TimeZoneRulesMillisTest {
         long changed = Dates.toMillis(zdt.getYear(), zdt.getMonthValue(), zdt.getDayOfMonth(), zdt.getHour(), zdt.getMinute()) + zdt.getSecond() * 1000L;
         // add any extra time
         expected += (changed - millis) / 1000;
-        long offset = rules.getOffset(millis, y, Dates.isLeapYear(y));
+        long offset = rules.getOffset(millis, y);
 
         try {
             Assert.assertEquals(expected, offset / 1000);

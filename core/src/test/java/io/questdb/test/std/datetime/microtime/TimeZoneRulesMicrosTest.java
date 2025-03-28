@@ -59,7 +59,6 @@ public class TimeZoneRulesMicrosTest {
 
         while (micros < deadline) {
             final int y = Timestamps.getYear(micros);
-            final boolean leap = Timestamps.isLeapYear(y);
 
             Instant dt = Instant.ofEpochMilli(micros / 1000);
 
@@ -71,7 +70,7 @@ public class TimeZoneRulesMicrosTest {
 
                 long expected = zdt.getOffset().getTotalSeconds();
                 // find out how much algo added to datetime itself
-                long offset = rules.getOffset(micros, y, leap);
+                long offset = rules.getOffset(micros, y);
 
                 try {
                     Assert.assertEquals(expected, offset / Timestamps.SECOND_MICROS);
@@ -131,7 +130,7 @@ public class TimeZoneRulesMicrosTest {
         long changed = Timestamps.toMicros(zdt.getYear(), zdt.getMonthValue(), zdt.getDayOfMonth(), zdt.getHour(), zdt.getMinute()) + zdt.getSecond() * 1000L;
         // add any extra time
         expected += (changed - millis) / 1000;
-        long offset = rules.getOffset(millis, y, Timestamps.isLeapYear(y));
+        long offset = rules.getOffset(millis, y);
 
         try {
             Assert.assertEquals(expected, offset / 1000);

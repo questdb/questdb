@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -165,11 +164,6 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
         public String getName() {
             return "least[DOUBLE]";
         }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            MultiArgFunction.super.init(symbolTableSource, executionContext);
-        }
     }
 
     private static class LeastLongRecordFunction extends LongFunction implements MultiArgFunction {
@@ -200,11 +194,6 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
         @Override
         public String getName() {
             return "least[LONG]";
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            MultiArgFunction.super.init(symbolTableSource, executionContext);
         }
     }
 }
