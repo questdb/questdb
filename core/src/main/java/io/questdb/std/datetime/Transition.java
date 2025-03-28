@@ -24,30 +24,17 @@
 
 package io.questdb.std.datetime;
 
-public class FixedTimeZoneRule implements TimeZoneRules {
-    private final long offset;
+/**
+ * Pre-calculated DST transition that belong to a given year.
+ */
+public class Transition {
+    public final long dstTimestamp;
+    public final int offsetAfter;
+    public final int offsetBefore;
 
-    public FixedTimeZoneRule(long offset) {
-        this.offset = offset;
-    }
-
-    @Override
-    public long getNextDST(long utcEpoch, int year) {
-        return Long.MAX_VALUE;
-    }
-
-    @Override
-    public long getNextDST(long utcEpoch) {
-        return Long.MAX_VALUE;
-    }
-
-    @Override
-    public long getOffset(long utcEpoch, int year) {
-        return offset;
-    }
-
-    @Override
-    public long getOffset(long utcEpoch) {
-        return offset;
+    public Transition(int offsetBefore, int offsetAfter, long dstTimestamp) {
+        this.offsetBefore = offsetBefore;
+        this.offsetAfter = offsetAfter;
+        this.dstTimestamp = dstTimestamp;
     }
 }

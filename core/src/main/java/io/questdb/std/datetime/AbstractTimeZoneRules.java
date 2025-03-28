@@ -24,32 +24,37 @@
 
 package io.questdb.std.datetime;
 
+import io.questdb.std.ConcurrentIntHashMap;
 import io.questdb.std.LongList;
-import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 import java.time.ZoneOffset;
 import java.time.zone.ZoneOffsetTransitionRule;
 import java.time.zone.ZoneRules;
+import java.util.function.IntFunction;
 
 public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     public static final long LAST_RULES = Unsafe.getFieldOffset(ZoneRules.class, "lastRules");
     public static final long SAVING_INSTANT_TRANSITION = Unsafe.getFieldOffset(ZoneRules.class, "savingsInstantTransitions");
     public static final long STANDARD_OFFSETS = Unsafe.getFieldOffset(ZoneRules.class, "standardOffsets");
     public static final long WALL_OFFSETS = Unsafe.getFieldOffset(ZoneRules.class, "wallOffsets");
+    private final IntFunction<Transition[]> computeTransitionsRef;
     private final long cutoffTransition;
     private final long firstWall;
     private final LongList historicTransitions = new LongList();
     private final long lastWall;
     private final long multiplier;
     private final int ruleCount;
-    private final ObjList<TransitionRule> rules;
+    private final TransitionRule[] rules;
     private final long standardOffset;
+    // year to transition list cache
+    private final ConcurrentIntHashMap<Transition[]> transitionsCache = new ConcurrentIntHashMap<>();
     private final int[] wallOffsets;
 
     public AbstractTimeZoneRules(ZoneRules rules, long multiplier) {
         this.multiplier = multiplier;
+        this.computeTransitionsRef = this::computeTransitions;
         final long[] savingsInstantTransition = (long[]) Unsafe.getUnsafe().getObject(rules, SAVING_INSTANT_TRANSITION);
 
         if (savingsInstantTransition.length == 0) {
@@ -64,33 +69,36 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
 
         cutoffTransition = historicTransitions.getLast();
 
-        ZoneOffsetTransitionRule[] lastRules = (ZoneOffsetTransitionRule[]) Unsafe.getUnsafe().getObject(rules, LAST_RULES);
-        this.rules = new ObjList<>(lastRules.length);
+        final ZoneOffsetTransitionRule[] lastRules = (ZoneOffsetTransitionRule[]) Unsafe.getUnsafe().getObject(rules, LAST_RULES);
+        this.rules = new TransitionRule[lastRules.length];
         for (int i = 0, n = lastRules.length; i < n; i++) {
-            ZoneOffsetTransitionRule zr = lastRules[i];
-            TransitionRule tr = new TransitionRule();
-            tr.offsetBefore = zr.getOffsetBefore().getTotalSeconds();
-            tr.offsetAfter = zr.getOffsetAfter().getTotalSeconds();
-            tr.standardOffset = zr.getStandardOffset().getTotalSeconds();
-            tr.dow = zr.getDayOfWeek() == null ? -1 : zr.getDayOfWeek().getValue();
-            tr.dom = zr.getDayOfMonthIndicator();
-            tr.month = zr.getMonth().getValue();
-            tr.midnightEOD = zr.isMidnightEndOfDay();
-            tr.hour = zr.getLocalTime().getHour();
-            tr.minute = zr.getLocalTime().getMinute();
-            tr.second = zr.getLocalTime().getSecond();
+            final ZoneOffsetTransitionRule zr = lastRules[i];
+            final int timeDef;
             switch (zr.getTimeDefinition()) {
                 case UTC:
-                    tr.timeDef = TransitionRule.UTC;
+                    timeDef = TransitionRule.UTC;
                     break;
                 case STANDARD:
-                    tr.timeDef = TransitionRule.STANDARD;
+                    timeDef = TransitionRule.STANDARD;
                     break;
                 default:
-                    tr.timeDef = TransitionRule.WALL;
+                    timeDef = TransitionRule.WALL;
                     break;
             }
-            this.rules.add(tr);
+            TransitionRule tr = new TransitionRule(
+                    zr.getOffsetBefore().getTotalSeconds(),
+                    zr.getOffsetAfter().getTotalSeconds(),
+                    zr.getStandardOffset().getTotalSeconds(),
+                    zr.getDayOfWeek() == null ? -1 : zr.getDayOfWeek().getValue(),
+                    zr.getDayOfMonthIndicator(),
+                    zr.getMonth().getValue(),
+                    zr.isMidnightEndOfDay(),
+                    zr.getLocalTime().getHour(),
+                    zr.getLocalTime().getMinute(),
+                    zr.getLocalTime().getSecond(),
+                    timeDef
+            );
+            this.rules[i] = tr;
         }
 
         this.ruleCount = lastRules.length;
@@ -105,7 +113,7 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     }
 
     @Override
-    public long getNextDST(long utcEpoch, int year, boolean leap) {
+    public long getNextDST(long utcEpoch, int year) {
         if (standardOffset != Long.MIN_VALUE) {
             // when we have standard offset the next DST does not exist
             // since we are trying to avoid unnecessary offset lookup the max long
@@ -114,7 +122,7 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
         }
 
         if (ruleCount > 0 && utcEpoch >= cutoffTransition) {
-            return dstFromRules(utcEpoch, year, leap);
+            return dstFromRules(utcEpoch, year);
         }
 
         if (utcEpoch < cutoffTransition) {
@@ -127,17 +135,17 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     @Override
     public long getNextDST(long utcEpoch) {
         final int y = getYear(utcEpoch);
-        return getNextDST(utcEpoch, y, isLeapYear(y));
+        return getNextDST(utcEpoch, y);
     }
 
     @Override
-    public long getOffset(long utcEpoch, int year, boolean leap) {
+    public long getOffset(long utcEpoch, int year) {
         if (standardOffset != Long.MIN_VALUE) {
             return standardOffset;
         }
 
         if (ruleCount > 0 && utcEpoch > cutoffTransition) {
-            return offsetFromRules(utcEpoch, year, leap);
+            return offsetFromRules(utcEpoch, year);
         }
 
         if (utcEpoch > cutoffTransition) {
@@ -149,7 +157,64 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     @Override
     public long getOffset(long utcEpoch) {
         final int y = getYear(utcEpoch);
-        return getOffset(utcEpoch, y, isLeapYear(y));
+        return getOffset(utcEpoch, y);
+    }
+
+    private Transition[] computeTransitions(int year) {
+        final Transition[] transitions = new Transition[ruleCount];
+        final boolean leap = isLeapYear(year);
+
+        int offsetBefore;
+        for (int i = 0; i < ruleCount; i++) {
+            TransitionRule zr = rules[i];
+            offsetBefore = zr.offsetBefore;
+
+            int dom = zr.dom;
+            int month = zr.month;
+
+            int dow = zr.dow;
+            long timestamp;
+            if (dom < 0) {
+                timestamp = toEpoch(
+                        year,
+                        leap,
+                        month,
+                        getDaysPerMonth(month, leap) + 1 + dom,
+                        zr.hour,
+                        zr.minute
+                ) + zr.second * multiplier;
+                if (dow > -1) {
+                    timestamp = previousOrSameDayOfWeek(timestamp, dow);
+                }
+            } else {
+                assert month > 0;
+                timestamp = toEpoch(year, leap, month, dom, zr.hour, zr.minute) + zr.second * multiplier;
+                if (dow > -1) {
+                    timestamp = nextOrSameDayOfWeek(timestamp, dow);
+                }
+            }
+
+            if (zr.midnightEOD) {
+                timestamp = addDays(timestamp, 1);
+            }
+
+            switch (zr.timeDef) {
+                case TransitionRule.UTC:
+                    timestamp += (offsetBefore - ZoneOffset.UTC.getTotalSeconds()) * multiplier;
+                    break;
+                case TransitionRule.STANDARD:
+                    timestamp += (offsetBefore - zr.standardOffset) * multiplier;
+                    break;
+                default: // WALL
+                    break;
+            }
+
+            // go back to epoch
+            timestamp -= offsetBefore * multiplier;
+
+            transitions[i] = new Transition(zr.offsetBefore, zr.offsetAfter, timestamp);
+        }
+        return transitions;
     }
 
     private long dstFromHistory(long epoch) {
@@ -164,70 +229,32 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
         return historicTransitions.getQuick(index + 1);
     }
 
-    private long dstFromRules(long epoch, int year, boolean leap) {
-
+    private long dstFromRules(long epoch, int year) {
         for (int i = 0; i < ruleCount; i++) {
-            long date = getDSTFromRule(year, leap, i);
+            long date = getDSTFromRule(year, i);
             if (epoch < date) {
                 return date;
             }
         }
 
         if (ruleCount > 0) {
-            return getDSTFromRule(year + 1, isLeapYear(year + 1), 0);
+            return getDSTFromRule(year + 1, 0);
         }
 
         return Long.MAX_VALUE;
     }
 
-    private long getDSTFromRule(int year, boolean leap, int i) {
-        int offsetBefore;
-        TransitionRule zr = rules.getQuick(i);
-        offsetBefore = zr.offsetBefore;
+    private long getDSTFromRule(int year, int i) {
+        final Transition[] transitions = getTransitions(year);
+        return transitions[i].dstTimestamp;
+    }
 
-        int dom = zr.dom;
-        int month = zr.month;
-
-        int dow = zr.dow;
-        long date;
-        if (dom < 0) {
-            date = toEpoch(
-                    year,
-                    leap,
-                    month,
-                    getDaysPerMonth(month, leap) + 1 + dom,
-                    zr.hour,
-                    zr.minute
-            ) + zr.second * multiplier;
-            if (dow > -1) {
-                date = previousOrSameDayOfWeek(date, dow);
-            }
-        } else {
-            assert month > 0;
-            date = toEpoch(year, leap, month, dom, zr.hour, zr.minute) + zr.second * multiplier;
-            if (dow > -1) {
-                date = nextOrSameDayOfWeek(date, dow);
-            }
+    private Transition[] getTransitions(int year) {
+        Transition[] transitions = transitionsCache.get(year);
+        if (transitions != null) {
+            return transitions;
         }
-
-        if (zr.midnightEOD) {
-            date = addDays(date, 1);
-        }
-
-        switch (zr.timeDef) {
-            case TransitionRule.UTC:
-                date += (offsetBefore - ZoneOffset.UTC.getTotalSeconds()) * multiplier;
-                break;
-            case TransitionRule.STANDARD:
-                date += (offsetBefore - zr.standardOffset) * multiplier;
-                break;
-            default:  // WALL
-                break;
-        }
-
-        // go back to epoch epoch
-        date -= offsetBefore * multiplier;
-        return date;
+        return transitionsCache.computeIfAbsent(year, computeTransitionsRef);
     }
 
     private long offsetFromHistory(long epoch) {
@@ -242,60 +269,16 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
         return wallOffsets[index + 1] * multiplier;
     }
 
-    private long offsetFromRules(long epoch, int year, boolean leap) {
-
+    private long offsetFromRules(long epoch, int year) {
         int offsetBefore;
         int offsetAfter = 0;
 
-        for (int i = 0; i < ruleCount; i++) {
-            TransitionRule zr = rules.getQuick(i);
-            offsetBefore = zr.offsetBefore;
-            offsetAfter = zr.offsetAfter;
-
-            int dom = zr.dom;
-            int month = zr.month;
-
-            int dow = zr.dow;
-            long date;
-            if (dom < 0) {
-                date = toEpoch(
-                        year,
-                        leap,
-                        month,
-                        getDaysPerMonth(month, leap) + 1 + dom,
-                        zr.hour,
-                        zr.minute
-                ) + zr.second * multiplier;
-                if (dow > -1) {
-                    date = previousOrSameDayOfWeek(date, dow);
-                }
-            } else {
-                assert month > 0;
-                date = toEpoch(year, leap, month, dom, zr.hour, zr.minute) + zr.second * multiplier;
-                if (dow > -1) {
-                    date = nextOrSameDayOfWeek(date, dow);
-                }
-            }
-
-            if (zr.midnightEOD) {
-                date = addDays(date, 1);
-            }
-
-            switch (zr.timeDef) {
-                case TransitionRule.UTC:
-                    date += (offsetBefore - ZoneOffset.UTC.getTotalSeconds()) * multiplier;
-                    break;
-                case TransitionRule.STANDARD:
-                    date += (offsetBefore - zr.standardOffset) * multiplier;
-                    break;
-                default:  // WALL
-                    break;
-            }
-
-            // go back to epoch epoch
-            date -= offsetBefore * multiplier;
-
-            if (epoch < date) {
+        final Transition[] transitions = getTransitions(year);
+        for (int i = 0, n = transitions.length; i < n; i++) {
+            Transition tr = transitions[i];
+            offsetBefore = tr.offsetBefore;
+            offsetAfter = tr.offsetAfter;
+            if (epoch < tr.dstTimestamp) {
                 return offsetBefore * multiplier;
             }
         }

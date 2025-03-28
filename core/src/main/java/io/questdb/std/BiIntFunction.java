@@ -22,32 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.datetime;
+package io.questdb.std;
 
-public class FixedTimeZoneRule implements TimeZoneRules {
-    private final long offset;
-
-    public FixedTimeZoneRule(long offset) {
-        this.offset = offset;
-    }
-
-    @Override
-    public long getNextDST(long utcEpoch, int year) {
-        return Long.MAX_VALUE;
-    }
-
-    @Override
-    public long getNextDST(long utcEpoch) {
-        return Long.MAX_VALUE;
-    }
-
-    @Override
-    public long getOffset(long utcEpoch, int year) {
-        return offset;
-    }
-
-    @Override
-    public long getOffset(long utcEpoch) {
-        return offset;
-    }
+@FunctionalInterface
+public interface BiIntFunction<U, R> {
+    R apply(int val1, U val2);
 }

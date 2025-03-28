@@ -126,8 +126,8 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public long getTimestamp(Record rec) {
-            final long utc = timestampFunc.getTimestamp(rec);
-            return utc + tzRules.getOffset(utc);
+            final long timestamp = timestampFunc.getTimestamp(rec);
+            return timestamp + tzRules.getOffset(timestamp);
         }
     }
 
