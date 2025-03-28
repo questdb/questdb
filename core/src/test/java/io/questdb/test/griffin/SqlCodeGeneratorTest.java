@@ -7878,6 +7878,42 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnsupportedImplicitCast() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1(c0 INT, c1 SYMBOL, c2 STRING, c3 VARCHAR, c4 LONG);");
+            execute("INSERT INTO t1(c0) VALUES (1);");
+
+            assertSql(
+                    "c0\tc1\n",
+                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 > t1.c0);"
+            );
+            assertSql(
+                    "c0\tc1\n",
+                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 > t1.c2);"
+            );
+            assertSql(
+                    "c0\tc1\n",
+                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 > t1.c3);"
+            );
+            assertSql(
+                    "c0\tc1\n",
+                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 > t1.c4);"
+            );
+        });
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE uuid_str (c1 uuid, c2 string);");
+            execute("INSERT INTO uuid_str VALUES('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')");
+
+            assertException(
+                    "SELECT * FROM uuid_str where c1 > c2",
+                    32,
+                    "there is no matching operator `>` with the argument types: UUID > STRING"
+            );
+        });
+    }
+
+    @Test
     public void testUtf8TableName() throws Exception {
         assertMemoryLeak(
                 () -> {

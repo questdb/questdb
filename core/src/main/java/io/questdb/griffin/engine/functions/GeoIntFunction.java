@@ -39,7 +39,7 @@ public abstract class GeoIntFunction extends AbstractGeoHashFunction {
 
     @Override
     public final long getGeoLong(Record rec) {
-        throw new UnsupportedOperationException();
+        return getGeoInt(rec);
     }
 
     @Override
