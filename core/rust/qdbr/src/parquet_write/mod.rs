@@ -118,7 +118,7 @@ impl AsPrimitive<i32> for IPv4 {
 
 #[cfg(test)]
 mod tests {
-    use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
+    use crate::parquet::tests::ColumnTypeTagExt;
     use crate::parquet_write::file::ParquetWriter;
     use crate::parquet_write::schema::{Column, Partition};
     use arrow::array::Array;
@@ -130,6 +130,7 @@ mod tests {
     use parquet2::encoding::{hybrid_rle, uleb128};
     use parquet2::page::CompressedPage;
     use parquet2::types;
+    use qdb_core::col_type::{ColumnType, ColumnTypeTag};
     use std::env;
     use std::fs::File;
     use std::io::{Cursor, Write};
