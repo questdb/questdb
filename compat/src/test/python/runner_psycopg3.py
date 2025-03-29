@@ -140,6 +140,10 @@ def main(yaml_file):
     port = int(os.getenv('PGPORT', 8812))
     for test in tests:
         iterations = test.get('iterations', 50)
+        exclusions = test.get('exclude', [])
+        if 'psycopg3' in exclusions:
+            print(f"Skipping test '{test['name']}' because it is excluded for psycopg3.")
+            continue
         for i in range(iterations):
             print(f"Running test '{test['name']}' (iteration {i + 1})")
             connection = psycopg.connect(

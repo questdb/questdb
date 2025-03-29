@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -45,11 +46,12 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
-public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
+public final class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private final RecordCursorFactory base;
     private final IntList columnCrossIndex;
     private final SelectedRecordCursor cursor;
+    private boolean crossedIndex = false;
     private SelectedPageFrameCursor pageFrameCursor;
 
     public SelectedRecordCursorFactory(RecordMetadata metadata, IntList columnCrossIndex, RecordCursorFactory base) {
@@ -57,6 +59,12 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         this.base = base;
         this.columnCrossIndex = columnCrossIndex;
         this.cursor = new SelectedRecordCursor(columnCrossIndex, base.recordCursorSupportsRandomAccess());
+        for (int i = 0, n = columnCrossIndex.size(); i < n; i++) {
+            if (columnCrossIndex.get(i) != i) {
+                crossedIndex = true;
+                break;
+            }
+        }
     }
 
     @Override
@@ -94,6 +102,9 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
+        if (!crossedIndex) {
+            return baseCursor;
+        }
         try {
             cursor.of(baseCursor);
             return cursor;
@@ -111,8 +122,8 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         PageFrameCursor baseCursor = base.getPageFrameCursor(executionContext, order);
-        if (baseCursor == null) {
-            return null;
+        if (baseCursor == null || !crossedIndex) {
+            return baseCursor;
         }
         if (pageFrameCursor == null) {
             pageFrameCursor = new SelectedPageFrameCursor(columnCrossIndex);

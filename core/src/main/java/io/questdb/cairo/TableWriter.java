@@ -49,10 +49,10 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.vm.api.NullMemory;
 import io.questdb.cairo.wal.MetadataService;
-import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.SymbolMapDiff;
 import io.questdb.cairo.wal.SymbolMapDiffCursor;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
+import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WriterRowUtils;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
@@ -133,9 +133,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.tasks.TableWriterTask.*;
@@ -483,8 +483,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return getPrimaryColumnIndex(index) + 1;
     }
 
-    public static long getTimestampIndexValue(long timestampIndex, long indexRow) {
-        return Unsafe.getUnsafe().getLong(timestampIndex + indexRow * 16);
+    public static long getTimestampIndexValue(long timestampIndexAddr, long indexRow) {
+        return Unsafe.getUnsafe().getLong(timestampIndexAddr + indexRow * 16);
+    }
+
+    public static void validateDesignatedTimestampBounds(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
+        }
+        if (timestamp < Timestamps.O3_MIN_TS) {
+            throw CairoException.nonCritical().put("designated timestamp before 1970-01-01 is not allowed");
+        }
+        if (timestamp >= Timestamps.YEAR_10000) {
+            throw CairoException.nonCritical().put(
+                    "designated timestamp beyond 9999-12-31 is not allowed");
+        }
     }
 
     @Override
@@ -1148,27 +1161,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (committed) {
             assert txWriter.getLagRowCount() == 0;
 
-            updateIndexes();
-            columnVersionWriter.commit();
             txWriter.setSeqTxn(seqTxn);
             txWriter.setLagTxnCount(0);
             txWriter.setLagOrdered(true);
 
-            syncColumns();
-            txWriter.setColumnVersion(columnVersionWriter.getVersion());
-            txWriter.commit(denseSymbolMapWriters);
+            commit00();
             lastWalCommitTimestampMicros = configuration.getMicrosecondClock().getTicks();
-
-            squashSplitPartitions(minSplitPartitionTimestamp, txWriter.maxTimestamp, configuration.getO3LastPartitionMaxSplits());
-
-            // Bookmark masterRef to track how many rows is in uncommitted state
-            committedMasterRef = masterRef;
-            processPartitionRemoveCandidates();
-
-            metrics.tableWriterMetrics().incrementCommits();
-
+            housekeep();
             shrinkO3Mem();
-            enforceTtl();
         }
 
         // Nothing was committed to the table, only copied to LAG.
@@ -1914,6 +1914,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public void enforceTtl() {
+        partitionRemoveCandidates.clear();
         int ttl = metadata.getTtlHoursOrMonths();
         if (ttl == 0) {
             return;
@@ -1929,12 +1930,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         long maxTimestamp = getMaxTimestamp();
         long evictedPartitionTimestamp = -1;
+        boolean dropped = false;
         do {
             long partitionTimestamp = getPartitionTimestamp(0);
             long floorTimestamp = floorFn.floor(partitionTimestamp);
             if (evictedPartitionTimestamp != -1 && floorTimestamp == evictedPartitionTimestamp) {
                 assert partitionTimestamp != floorTimestamp : "Expected a higher part of a split partition";
-                dropPartitionByExactTimestamp(partitionTimestamp);
+                dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
                 continue;
             }
             assert partitionTimestamp == floorTimestamp :
@@ -1952,13 +1954,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .$("Partition's TTL expired, evicting. table=").$(metadata.getTableName())
                         .$(" partitionTs=").microTime(partitionTimestamp)
                         .$();
-                dropPartitionByExactTimestamp(partitionTimestamp);
+                dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
                 evictedPartitionTimestamp = partitionTimestamp;
             } else {
                 // Partitions are sorted by timestamp, no need to check the rest
                 break;
             }
         } while (getPartitionCount() > 1);
+
+        if (dropped) {
+            commitRemovePartitionOperation();
+        }
     }
 
     @Override
@@ -2299,17 +2305,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public Row newRow(long timestamp) {
+        if (rowAction != ROW_ACTION_NO_TIMESTAMP) {
+            validateDesignatedTimestampBounds(timestamp);
+        }
         switch (rowAction) {
             case ROW_ACTION_NO_PARTITION:
-
-                if (timestamp < Timestamps.O3_MIN_TS) {
-                    throw CairoException.nonCritical().put("timestamp before 1970-01-01 is not allowed");
-                }
-
                 if (timestamp < txWriter.getMaxTimestamp()) {
-                    throw CairoException.nonCritical().put("cannot insert rows out of order to non-partitioned table. Table=").put(path);
+                    throw CairoException.nonCritical()
+                            .put("cannot insert rows out of order to non-partitioned table. Table=").put(path);
                 }
-
                 bumpMasterRef();
                 updateMaxTimestamp(timestamp);
                 break;
@@ -2321,24 +2325,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 o3TimestampSetter(timestamp);
                 return row;
             case ROW_ACTION_OPEN_PARTITION:
-
-                if (timestamp == Numbers.LONG_NULL) {
-                    throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
-                }
-
-                if (timestamp < Timestamps.O3_MIN_TS) {
-                    throw CairoException.nonCritical().put("timestamp before 1970-01-01 is not allowed");
-                }
-
                 if (txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
                     txWriter.setMinTimestamp(timestamp);
                     initLastPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
                 }
-                // fall thru
-
                 rowAction = ROW_ACTION_SWITCH_PARTITION;
-
-            default: // switch partition
+                // fall thru
+            case ROW_ACTION_SWITCH_PARTITION:
                 bumpMasterRef();
                 if (timestamp > partitionTimestampHi || timestamp < txWriter.getMaxTimestamp()) {
                     if (timestamp < txWriter.getMaxTimestamp()) {
@@ -2356,6 +2349,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 updateMaxTimestamp(timestamp);
                 break;
+            default:
+                throw new AssertionError("Invalid row action constant");
         }
         txWriter.append();
         return row;
@@ -2809,6 +2804,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public boolean removePartition(long timestamp) {
+        partitionRemoveCandidates.clear();
         if (!PartitionBy.isPartitioned(partitionBy)) {
             return false;
         }
@@ -2830,6 +2826,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ) == logicalPartitionTimestampToDelete) {
                 dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
             }
+        }
+
+        if (dropped) {
+            commitRemovePartitionOperation();
         }
         return dropped;
     }
@@ -3921,20 +3921,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long committedRowCount = txWriter.unsafeCommittedFixedRowCount() + txWriter.unsafeCommittedTransientRowCount();
             final long rowsAdded = txWriter.getRowCount() - committedRowCount;
 
-            updateIndexes();
-            syncColumns();
-            columnVersionWriter.commit();
-            txWriter.setColumnVersion(columnVersionWriter.getVersion());
-            txWriter.commit(denseSymbolMapWriters);
-
-            // Check if partitions are split into too many pieces and merge few of them back.
-            squashSplitPartitions(minSplitPartitionTimestamp, txWriter.getMaxTimestamp(), configuration.getO3LastPartitionMaxSplits());
-
-            // Bookmark masterRef to track how many rows is in uncommitted state
-            this.committedMasterRef = masterRef;
-            processPartitionRemoveCandidates();
-
-            metrics.tableWriterMetrics().incrementCommits();
+            commit00();
+            housekeep();
             metrics.tableWriterMetrics().addCommittedRows(rowsAdded);
             if (!o3) {
                 // If `o3`, the metric is tracked inside `o3Commit`, possibly async.
@@ -3942,8 +3930,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             noOpRowCount = 0L;
-            enforceTtl();
         }
+    }
+
+    private void commit00() {
+        updateIndexes();
+        syncColumns();
+        columnVersionWriter.commit();
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        txWriter.commit(denseSymbolMapWriters);
+        // Bookmark masterRef to track how many rows is in uncommitted state
+        this.committedMasterRef = masterRef;
+    }
+
+    private void commitRemovePartitionOperation() {
+        columnVersionWriter.commit();
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        txWriter.commit(denseSymbolMapWriters);
+        processPartitionRemoveCandidates();
     }
 
     private void configureAppendPosition() {
@@ -5127,16 +5131,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
 
+            // NOTE: this method should not commit to _txn file
+            // In case multiple partition parts are deleted, they should be deleted atomically
             txWriter.beginPartitionSizeUpdate();
             txWriter.removeAttachedPartitions(timestamp);
             txWriter.finishPartitionSizeUpdate(index == 0 ? Long.MAX_VALUE : txWriter.getMinTimestamp(), nextMaxTimestamp);
             txWriter.bumpTruncateVersion();
             columnVersionWriter.removePartition(timestamp);
             columnVersionWriter.replaceInitialPartitionRecords(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount());
-
-            columnVersionWriter.commit();
-            txWriter.setColumnVersion(columnVersionWriter.getVersion());
-            txWriter.commit(denseSymbolMapWriters);
 
             // No need to truncate before, files to be deleted.
             closeActivePartition(false);
@@ -5161,20 +5163,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 nextMinTimestamp = readMinTimestamp();
             }
 
+            // NOTE: this method should not commit to _txn file
+            // In case multiple partition parts are deleted, they should be deleted atomically
             txWriter.beginPartitionSizeUpdate();
             txWriter.removeAttachedPartitions(timestamp);
             txWriter.setMinTimestamp(nextMinTimestamp);
             txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
             txWriter.bumpTruncateVersion();
             columnVersionWriter.removePartition(timestamp);
-
-            columnVersionWriter.commit();
-            txWriter.setColumnVersion(columnVersionWriter.getVersion());
-            txWriter.commit(denseSymbolMapWriters);
         }
 
-        // Call O3 methods to remove check TxnScoreboard and remove partition directly
-        safeDeletePartitionDir(timestamp, partitionNameTxn);
+        partitionRemoveCandidates.add(timestamp, partitionNameTxn);
         return true;
     }
 
@@ -5477,6 +5476,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         purgingOperator.add(columnIndex, columnName, columnType, isIndexed, columnNameTxn, partitionTimestamp, partitionNameTxn);
     }
 
+    /**
+     * House keeps table after commit. The tricky bit is to run this housekeeping on each commit. Commit() itself
+     * has a contract that if exception is thrown, the data is not committed. However, if this housekeeping fails,
+     * the data IS committed.
+     * <p>
+     * What we need to achieve, is to report that data has been committed, but table writes should be discarded. It is
+     * necessary when housekeeping runs into an error. To indicate the situation where data is committed.
+     */
+    private void housekeep() {
+        try {
+            squashSplitPartitions(minSplitPartitionTimestamp, txWriter.getMaxTimestamp(), configuration.getO3LastPartitionMaxSplits());
+            processPartitionRemoveCandidates();
+            metrics.tableWriterMetrics().incrementCommits();
+            enforceTtl();
+        } catch (Throwable e) {
+            // Log the exception stack.
+            LOG.error().$("data has been persisted, but we could not perform housekeeping [table=").$(tableToken)
+                    .$(", error=").$(e)
+                    .I$();
+            if (e instanceof Sinkable) {
+                CairoException ex = CairoException.nonCritical().put("Data has been persisted, but we could not perform housekeeping [ex=").put((Sinkable) e).put(']');
+                ex.setHousekeeping(true);
+                throw ex;
+            } else {
+                CairoException ex = CairoException.nonCritical().put("Data has been persisted, but we could not perform housekeeping [ex=").put(e.getMessage()).put(']');
+                ex.setHousekeeping(true);
+                throw ex;
+            }
+        }
+    }
+
     private void indexHistoricPartitions(SymbolColumnIndexer indexer, CharSequence columnName, int indexValueBlockSize, int columnIndex) {
         long ts = txWriter.getMaxTimestamp();
         if (ts > Numbers.LONG_NULL) {
@@ -5746,13 +5776,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long o3TimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
             if (o3TimestampMin < Timestamps.O3_MIN_TS) {
                 o3InError = true;
-                throw CairoException.nonCritical().put("timestamps before 1970-01-01 are not allowed for O3");
+                throw CairoException.nonCritical().put("O3 commit encountered timestamp before 1970-01-01");
             }
 
             long o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, o3RowCount - 1);
             if (o3TimestampMax < Timestamps.O3_MIN_TS) {
                 o3InError = true;
-                throw CairoException.nonCritical().put("timestamps before 1970-01-01 are not allowed for O3");
+                throw CairoException.nonCritical().put("O3 commit encountered timestamp before 1970-01-01");
             }
 
             // Safe check of the sort. No known way to reproduce
