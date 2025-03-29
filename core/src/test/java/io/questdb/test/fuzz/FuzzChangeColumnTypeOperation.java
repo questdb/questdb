@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.std.ObjList;
@@ -57,7 +58,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
     private final int newColumnType;
     private final int symbolCapacity;
 
-    public FuzzChangeColumnTypeOperation(Rnd rnd, String columName, int newColumnType, int symbolCapacity, boolean indexFlag, int indexValueBlockCapacity, boolean cacheSymbolMap) {
+    public FuzzChangeColumnTypeOperation(Rnd rnd, String columName, int oldColumnType, int newColumnType, int symbolCapacity, boolean indexFlag, int indexValueBlockCapacity, boolean cacheSymbolMap) {
         this.columName = TestUtils.randomiseCase(rnd, columName);
         this.newColumnType = newColumnType;
         this.indexFlag = indexFlag;
@@ -120,7 +121,15 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
         }
     }
 
-    public static RecordMetadata generateColumnTypeChange(ObjList<FuzzTransaction> transactionList, long estimatedTotalRowCount, int metadataVersion, int waitBarrierVersion, Rnd rnd, RecordMetadata tableMetadata) {
+
+    public static RecordMetadata generateColumnTypeChange(
+            ObjList<FuzzTransaction> transactionList,
+            long estimatedTotalRowCount,
+            int metadataVersion,
+            int waitBarrierVersion,
+            Rnd rnd,
+            RecordMetadata tableMetadata
+    ) {
         FuzzTransaction transaction = new FuzzTransaction();
         int startColumnIndex = rnd.nextInt(tableMetadata.getColumnCount());
 
@@ -140,7 +149,8 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
                 boolean indexFlag = ColumnType.isSymbol(newColType) && (columnType == ColumnType.BOOLEAN || columnType == ColumnType.BYTE);
                 int indexValueBlockCapacity = (columnType == ColumnType.BOOLEAN) ? 4 : 128;
                 boolean cacheSymbolMap = ColumnType.isSymbol(newColType) && rnd.nextBoolean();
-                transaction.operationList.add(new FuzzChangeColumnTypeOperation(rnd, columnName, newColType, capacity, indexFlag, indexValueBlockCapacity, cacheSymbolMap));
+                FuzzChangeColumnTypeOperation operation = new FuzzChangeColumnTypeOperation(rnd, columnName, columnType, newColType, capacity, indexFlag, indexValueBlockCapacity, cacheSymbolMap);
+                transaction.operationList.add(operation);
                 transaction.structureVersion = metadataVersion;
                 transaction.waitBarrierVersion = waitBarrierVersion;
                 transactionList.add(transaction);
@@ -182,7 +192,11 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
         builder.addColumnToList(columName, 0, newColumnType, symbolCapacity, cacheSymbolMap,
                 indexFlag, indexValueBlockCapacity, false);
         AlterOperation alterOp = builder.build();
-        wApi.apply(alterOp, true);
+        try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1)
+        ) {
+            alterOp.withContext(context);
+            wApi.apply(alterOp, true);
+        }
         return true;
     }
 

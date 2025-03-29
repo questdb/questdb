@@ -163,7 +163,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             // and we use "offset" file to store "header"
             if (!ff.exists(offsetFileName(path.trimTo(plen), columnName, columnNameTxn))) {
                 LOG.error().$(path).$(" is not found").$();
-                throw CairoException.critical(0).put("SymbolMap does not exist: ").put(path);
+                throw CairoException.fileNotFound().put("SymbolMap does not exist: ").put(path);
             }
 
             // is there enough length in "offset" file for "header"?

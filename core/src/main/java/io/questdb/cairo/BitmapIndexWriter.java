@@ -30,7 +30,12 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.TestOnly;
@@ -281,7 +286,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
                 boolean exists = ff.exists(keyFile);
                 if (!exists) {
                     LOG.error().$(path).$(" not found").$();
-                    throw CairoException.critical(0).put("Index does not exist: ").put(path);
+                    throw CairoException.fileNotFound().put("index does not exist [path=").put(path).put(']');
                 }
                 this.keyMem.of(ff, keyFile, configuration.getDataIndexKeyAppendPageSize(), ff.length(keyFile), MemoryTag.MMAP_INDEX_WRITER);
             }
@@ -289,7 +294,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
             long keyMemSize = this.keyMem.getAppendOffset();
             // check if key file header is present
             if (keyMemSize < BitmapIndexUtils.KEY_FILE_RESERVED) {
-                LOG.error().$("file too short [corrupt] ").$(path).$();
+                LOG.error().$("file too short [corrupt] [path=").$(path).I$();
                 throw CairoException.critical(0).put("Index file too short (w): ").put(path);
             }
 

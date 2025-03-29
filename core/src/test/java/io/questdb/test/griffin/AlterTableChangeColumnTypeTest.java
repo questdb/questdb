@@ -303,6 +303,53 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChangeSymbolCannotChangeIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            try {
+                execute("alter table x alter column ik symbol capacity 512 index", sqlExecutionContext);
+                Assert.fail("index syntax not supported when changing SYMBOL capacity");
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "INDEX is not supported when changing SYMBOL capacity");
+            }
+            drainWalQueue();
+        });
+    }
+
+    @Test
+    public void testChangeSymbolCapacity() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            drainWalQueue();
+
+            execute("create table y as (select ik from x)", sqlExecutionContext);
+            execute("alter table x alter column ik symbol capacity 512", sqlExecutionContext);
+            drainWalQueue();
+
+            assertSqlCursorsConvertedStrings(
+                    "select ik from y",
+                    "select ik from x"
+            );
+
+            assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                    "ik\tSYMBOL\ttrue\t256\tfalse\t512\tfalse\tfalse\n", "(SHOW COLUMNS FROM x) WHERE column = 'ik'");
+
+
+            execute("alter table x alter column ik symbol capacity 1000", sqlExecutionContext);
+
+            drainWalQueue();
+
+            assertSqlCursorsConvertedStrings(
+                    "select ik from y",
+                    "select ik from x"
+            );
+
+            assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                    "ik\tSYMBOL\ttrue\t256\tfalse\t1024\tfalse\tfalse\n", "(SHOW COLUMNS FROM x) WHERE column = 'ik'");
+        });
+    }
+
+    @Test
     public void testChangeSymbolToVarcharReleaseWriters() throws Exception {
         assertMemoryLeak(() -> {
             createX();

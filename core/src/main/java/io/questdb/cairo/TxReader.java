@@ -43,7 +43,6 @@ import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
-import static io.questdb.cairo.CairoException.ERRNO_FILE_DOES_NOT_EXIST;
 import static io.questdb.cairo.TableUtils.*;
 
 public class TxReader implements Closeable, Mutable {
@@ -651,7 +650,7 @@ public class TxReader implements Closeable, Mutable {
             }
             return;
         }
-        throw CairoException.critical(ERRNO_FILE_DOES_NOT_EXIST).put("Cannot open. File does not exist: ").put(path);
+        throw CairoException.fileNotFound().put("Cannot open. File does not exist: ").put(path);
     }
 
     private void unsafeLoadPartitions(long prevPartitionTableVersion, long prevColumnVersion, int partitionTableSize) {

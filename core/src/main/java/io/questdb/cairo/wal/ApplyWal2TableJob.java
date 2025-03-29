@@ -607,6 +607,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             throw new UnsupportedOperationException("Unsupported command type: " + cmdType);
                     }
                 } catch (SqlException ex) {
+                    if (ex.isWalRecoverable()) {
+                        LOG.info().$("recoverable error applying SQL to wal table [table=").$(tableWriter.getTableToken())
+                                .$(", sql=").$(sql)
+                                .$(", position=").$(ex.getPosition())
+                                .$(", error=").$(ex.getFlyweightMessage())
+                                .I$();
+
+                        return;
+                    }
                     if (!ex.isTableDoesNotExist()) {
                         throw ex;
                     }

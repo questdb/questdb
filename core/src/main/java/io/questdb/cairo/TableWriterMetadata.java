@@ -250,6 +250,26 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         oldColumnMetadata.rename(newNameStr);
     }
 
+    void updateColumnSymbolCapacity(int columnIndex, int newSymbolCapacity) {
+        TableColumnMetadata oldMeta = columnMetadata.getQuick(columnIndex);
+        assert oldMeta.getColumnType() == ColumnType.SYMBOL;
+
+        var newColumnMetadata = new WriterTableColumnMetadata(
+                oldMeta.getColumnName(),
+                ColumnType.SYMBOL,
+                oldMeta.isSymbolIndexFlag(),
+                oldMeta.getIndexValueBlockCapacity(),
+                oldMeta.isSymbolTableStatic(),
+                null,
+                columnIndex,
+                newSymbolCapacity,
+                oldMeta.isDedupKeyFlag(),
+                oldMeta.getReplacingIndex(),
+                oldMeta.isSymbolCacheFlag()
+        );
+        columnMetadata.set(columnIndex, newColumnMetadata);
+    }
+
     protected static class WriterTableColumnMetadata extends TableColumnMetadata {
 
         public WriterTableColumnMetadata(

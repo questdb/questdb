@@ -134,6 +134,14 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
+    public AlterOperationBuilder ofSymbolCapacityChange(int tableNamePosition, TableToken tableToken, int tableId) {
+        this.command = CHANGE_SYMBOL_CAPACITY;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableId;
+        return this;
+    }
+
     public AlterOperationBuilder ofConvertPartition(int tableNamePosition, TableToken tableToken, int tableId, boolean toParquet) {
         this.command = toParquet ? CONVERT_PARTITION_TO_PARQUET : CONVERT_PARTITION_TO_NATIVE;
         this.tableNamePosition = tableNamePosition;
