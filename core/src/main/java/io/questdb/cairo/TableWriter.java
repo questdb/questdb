@@ -1120,10 +1120,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         false
                 );
                 oldSymbolWriter.rebuildCapacity(
-                        columnName,
-                        columnNameTxn,
                         configuration,
                         path,
+                        columnName,
+                        columnNameTxn,
                         newSymbolCapacity,
                         symbolCacheFlag
                 );
@@ -1403,7 +1403,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn);
                             if (!ff.exists(path.$())) {
                                 LOG.error().$(path).$(" is not found").$();
-                                throw CairoException.critical(0).put("offset file does not exist: ").put(path);
+                                throw CairoException.fileNotFound().put("offset file does not exist: ").put(path);
                             }
 
                             final long fileLength = ff.length(path.$());
@@ -3682,14 +3682,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (metadata.isColumnIndexed(columnIndex)) {
                 valueFileName(partitionPath.trimTo(pathLen), columnName, columnNameTxn);
                 if (!ff.exists(partitionPath.$())) {
-                    throw CairoException.critical(0)
+                    throw CairoException.fileNotFound()
                             .put("Symbol index value file does not exist [file=")
                             .put(partitionPath)
                             .put(']');
                 }
                 keyFileName(partitionPath.trimTo(pathLen), columnName, columnNameTxn);
                 if (!ff.exists(partitionPath.$())) {
-                    throw CairoException.critical(0)
+                    throw CairoException.fileNotFound()
                             .put("Symbol index key file does not exist [file=")
                             .put(partitionPath)
                             .put(']');
@@ -8048,7 +8048,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // If table is removed / renamed this should fail with table does not exist.
             todoCount = openTodoMem();
         } catch (CairoException ex) {
-            if (ex.errnoReadPathDoesNotExist()) {
+            if (ex.errnoFileCannotRead()) {
                 throw CairoException.tableDoesNotExist(tableToken.getTableName());
             }
             throw ex;
