@@ -46,9 +46,9 @@ import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cairo.wal.WalTxnType.DATA;
 import static io.questdb.cairo.wal.WalTxnType.NONE;
-import static io.questdb.cairo.wal.WalUtils.*;
+import static io.questdb.cairo.wal.WalUtils.MIN_WAL_ID;
+import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 
 public class WalTxnDetails implements QuietCloseable {
     public static final long FORCE_FULL_COMMIT = Long.MAX_VALUE;
@@ -519,7 +519,7 @@ public class WalTxnDetails implements QuietCloseable {
     private static WalEventCursor openWalEFile(Path tempPath, WalEventReader eventReader, int segmentTxn, long seqTxn) {
         WalEventCursor walEventCursor;
         try {
-            walEventCursor = eventReader.of(tempPath, WAL_FORMAT_VERSION, segmentTxn);
+            walEventCursor = eventReader.of(tempPath, segmentTxn);
         } catch (CairoException ex) {
             throw CairoException.critical(ex.getErrno()).put("cannot read WAL even file for seqTxn=").put(seqTxn)
                     .put(", ").put(ex.getFlyweightMessage()).put(']');
@@ -648,7 +648,7 @@ public class WalTxnDetails implements QuietCloseable {
                         }
 
                         walTxnType = walEventCursor.getType();
-                        if (walTxnType == DATA) {
+                        if (WalTxnType.isDataType(walTxnType)) {
                             WalEventCursor.DataInfo commitInfo = walEventCursor.getDataInfo();
                             transactionMeta.set(txnMetaOffset + SEQ_TXN_OFFSET, seqTxn);
                             transactionMeta.set(txnMetaOffset + COMMIT_TO_TIMESTAMP_OFFSET, -1); // commit to timestamp

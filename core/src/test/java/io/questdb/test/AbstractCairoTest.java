@@ -482,6 +482,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         configuration = node1.getConfiguration();
         securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getRootContext();
         engine = node1.getEngine();
+        engine.load();
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.clearCache();
         }
@@ -626,7 +627,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 }
             }
         }
-        Assert.fail();
+        Assert.fail("SQL statement should have failed");
     }
 
     private static void assertSymbolColumnThreadSafety(int numberOfIterations, int symbolColumnCount, ObjList<SymbolTable> symbolTables, int[] symbolTableKeySnapshot, String[][] symbolTableValueSnapshot) {
