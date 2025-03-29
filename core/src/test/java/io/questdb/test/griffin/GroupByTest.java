@@ -33,6 +33,31 @@ import java.util.Arrays;
 public class GroupByTest extends AbstractCairoTest {
 
     @Test
+    public void testGroupByWithTimestampKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (\n" +
+                    "  timestamp TIMESTAMP,\n" +
+                    "  bar INT\n" +
+                    ") TIMESTAMP (timestamp)\n" +
+                    "PARTITION BY DAY;");
+            execute("INSERT INTO foo VALUES ('2020', 0);");
+            String query = "SELECT\n" +
+                    "  timestamp AS time,\n" +
+                    "  TO_STR(timestamp, 'yyyy-MM-dd'),\n" +
+                    "  SUM(1) \n" +
+                    "FROM foo;";
+            assertQueryNoLeakCheck(
+                    "time\tTO_STR\tSUM\n" +
+                            "2020-01-01T00:00:00.000000Z\t2020-01-01\t1\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void test1GroupByWithoutAggregateFunctionsReturnsUniqueKeys() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t as (" +

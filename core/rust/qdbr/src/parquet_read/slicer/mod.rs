@@ -2,7 +2,7 @@ pub mod dict_decoder;
 pub mod dict_slicer;
 pub mod rle;
 
-use crate::parquet::error::{fmt_err, ParquetError, ParquetResult};
+use crate::parquet::error::{fmt_err, ParquetResult};
 use parquet2::encoding::delta_bitpacked;
 use parquet2::encoding::hybrid_rle::BitmapIter;
 use std::mem::size_of;
