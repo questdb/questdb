@@ -69,6 +69,7 @@ import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.engine.AnalyzeFactory;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.ExplainPlanFactory;
 import io.questdb.griffin.engine.LimitOverflowException;
@@ -542,12 +543,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             factory = new RecordCursorFactoryStub(innerModel, null);
         }
 
-        return new ExplainPlanFactory(factory, model.getFormat());
+        if (model.isAnalyze()) {
+            factory = wrapFactoriesWithAnalyze(factory);
+        }
+
+        return new ExplainPlanFactory(factory, model.getFormat(), model.isAnalyze());
     }
 
-    public RecordCursorFactory generateExplain(QueryModel model, RecordCursorFactory factory, int format) {
+    public RecordCursorFactory generateExplain(QueryModel model, RecordCursorFactory factory, int format, boolean isAnalyze) {
         RecordCursorFactory recordCursorFactory = new RecordCursorFactoryStub(model, factory);
-        return new ExplainPlanFactory(recordCursorFactory, format);
+        return new ExplainPlanFactory(recordCursorFactory, format, isAnalyze);
     }
 
     public BytecodeAssembler getAsm() {
@@ -6284,7 +6289,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return limitFunc;
     }
 
-
     private void validateBothTimestampOrders(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory, int position) throws SqlException {
         if (masterFactory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
             throw SqlException.$(position, "left side of time series join doesn't have ASC timestamp order");
@@ -6338,6 +6342,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     void setFullFatJoins(boolean fullFatJoins) {
         this.fullFatJoins = fullFatJoins;
+    }
+
+    RecordCursorFactory wrapFactoriesWithAnalyze(RecordCursorFactory factory) {
+        if (factory == null) {
+            return factory;
+        } else {
+            RecordCursorFactory nested = wrapFactoriesWithAnalyze(factory.getBaseFactory());
+            if (nested != null) {
+                factory.setBaseFactory(nested);
+                return new AnalyzeFactory(factory);
+            } else {
+                return new AnalyzeFactory(factory);
+            }
+        }
     }
 
     @FunctionalInterface

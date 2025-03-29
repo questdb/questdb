@@ -220,6 +220,10 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     default void revertFromSampleByIndexPageFrameCursorFactory() {
     }
 
+    default void setBaseFactory(RecordCursorFactory base) {
+        throw new UnsupportedOperationException();
+    }
+
     /**
      * Returns true if the factory stands for nothing more but a filter, so that
      * the above factory (e.g. a parallel GROUP BY one) can steal the filter.

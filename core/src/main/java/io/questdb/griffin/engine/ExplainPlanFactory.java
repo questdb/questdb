@@ -44,15 +44,16 @@ import io.questdb.griffin.model.ExplainModel;
 public class ExplainPlanFactory extends AbstractRecordCursorFactory {
 
     private final static GenericRecordMetadata METADATA;
+    private final boolean analyze;
     private final RecordCursorFactory base;
     private final ExplainPlanRecordCursor cursor;
-
     private boolean isBaseClosed;
 
-    public ExplainPlanFactory(RecordCursorFactory base, int format) {
+    public ExplainPlanFactory(RecordCursorFactory base, int format, boolean analyze) {
         super(METADATA);
         this.base = base;
         this.cursor = new ExplainPlanRecordCursor(format);
+        this.analyze = analyze;
     }
 
     @Override
@@ -138,10 +139,17 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
 
         public void of(RecordCursorFactory base, SqlExecutionContext executionContext) throws SqlException {
             // open the cursor to ensure bind variable types are initialized
-            try (RecordCursor ignored = base.getCursor(executionContext)) {
-                planSink.of(base, executionContext);
+            RecordCursor baseCursor = base.getCursor(executionContext);
+            if (analyze) {
+                // we need to execute the cursor fully
+                //noinspection StatementWithEmptyBody
+                while (baseCursor.hasNext()) ;
             }
+
+            planSink.of(base, executionContext);
+
             rowCount = planSink.getLineCount();
+            baseCursor.close();
             toTop();
         }
 

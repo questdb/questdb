@@ -787,7 +787,7 @@ public class SqlParser {
         ));
 
         tok = tok(lexer, "'as' or 'with' or 'refresh'");
-        CharSequence baseTableName = null;
+        CharSequence baseTableName;
         if (isWithKeyword(tok)) {
             expectTok(lexer, "base");
             tok = tok(lexer, "base table expected");
@@ -853,6 +853,7 @@ public class SqlParser {
                 m = m.getNestedModel();
             }
 
+            assert queryModel != null;
             final QueryModel nestedModel = queryModel.getNestedModel();
             if (nestedModel != null) {
                 if (nestedModel.getSampleByTimezoneName() != null) {
@@ -3584,14 +3585,22 @@ public class SqlParser {
     }
 
     ExecutionModel parse(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
-        final CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
+        CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
 
         if (isExplainKeyword(tok)) {
+            boolean analyze = false;
+            tok = tok(lexer, "'analyze' or '('");
+            if (isAnalyzeKeyword(tok)) {
+                analyze = true;
+            } else {
+                lexer.unparseLast();
+            }
             int format = parseExplainOptions(lexer, tok);
             ExecutionModel model = parseExplain(lexer, executionContext, sqlParserCallback);
             ExplainModel explainModel = explainModelPool.next();
             explainModel.setFormat(format);
             explainModel.setModel(model);
+            explainModel.setAnalyze(analyze);
             return explainModel;
         }
 

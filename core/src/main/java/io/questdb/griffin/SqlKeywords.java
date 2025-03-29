@@ -68,6 +68,17 @@ public class SqlKeywords {
                 && (tok.charAt(4) | 32) == 'r';
     }
 
+    public static boolean isAnalyzeKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'a'
+                && (tok.charAt(1) | 32) == 'n'
+                && (tok.charAt(2) | 32) == 'a'
+                && (tok.charAt(3) | 32) == 'l'
+                && (tok.charAt(4) | 32) == 'y'
+                && (tok.charAt(5) | 32) == 'z'
+                && (tok.charAt(6) | 32) == 'e';
+    }
+
     public static boolean isAndKeyword(CharSequence tok) {
         return tok.length() == 3
                 && (tok.charAt(0) | 32) == 'a'
@@ -937,6 +948,7 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 'p';
     }
 
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     public static boolean isKeysKeyword(CharSequence tok) {
         return tok.length() == 4
                 && (tok.charAt(0) | 32) == 'k'
@@ -1982,6 +1994,7 @@ public class SqlKeywords {
                 && (tok.charAt(5) | 32) == 'e';
     }
 
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     public static boolean isUpsertKeyword(CharSequence tok) {
         return tok.length() == 6
                 && (tok.charAt(0) | 32) == 'u'
