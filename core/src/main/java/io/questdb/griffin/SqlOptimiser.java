@@ -6468,8 +6468,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     void validateUpdateColumns(
-            QueryModel updateQueryModel, TableRecordMetadata metadata, SqlExecutionContext
-            sqlExecutionContext
+            QueryModel updateQueryModel, TableRecordMetadata metadata, SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         try {
             literalCollectorANames.clear();
