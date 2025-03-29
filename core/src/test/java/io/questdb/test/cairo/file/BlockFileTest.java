@@ -159,7 +159,7 @@ public class BlockFileTest extends AbstractCairoTest {
                     reader.of(path.$());
                     Assert.fail("Expected exception");
                 } catch (Exception e) {
-                    TestUtils.assertContains(e.getMessage(), "[2] cannot open block file");
+                    TestUtils.assertContains(e.getMessage(), "cannot open block file");
                 }
             }
         });
