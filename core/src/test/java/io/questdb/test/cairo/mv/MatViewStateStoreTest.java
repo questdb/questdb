@@ -27,8 +27,9 @@ package io.questdb.test.cairo.mv;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewDefinition;
-import io.questdb.cairo.mv.MatViewGraphImpl;
-import io.questdb.cairo.mv.MatViewRefreshState;
+import io.questdb.cairo.mv.MatViewGraph;
+import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateStoreImpl;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
@@ -37,15 +38,17 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-public class MatViewGraphImplTest extends AbstractCairoTest {
-    private final MatViewGraphImpl graph = new MatViewGraphImpl(engine);
+public class MatViewStateStoreTest extends AbstractCairoTest {
+    private final MatViewGraph graph = new MatViewGraph();
     private final ObjList<TableToken> ordered = new ObjList<>();
+    private final MatViewStateStoreImpl stateStore = new MatViewStateStoreImpl(engine);
     private final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
 
     @Before
     public void setUp() {
         tableTokens.clear();
         ordered.clear();
+        stateStore.clear();
         graph.clear();
     }
 
@@ -56,11 +59,19 @@ public class MatViewGraphImplTest extends AbstractCairoTest {
 
         MatViewDefinition viewDefinition = createDefinition(view1, table1);
         try {
-            graph.addView(viewDefinition);
-            graph.addView(viewDefinition);
-            Assert.fail("exception expected");
+            stateStore.addViewState(viewDefinition);
+            stateStore.addViewState(viewDefinition);
+            Assert.fail("store exception expected");
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "materialized view state already exists");
+        }
+
+        try {
+            graph.addView(viewDefinition);
+            graph.addView(viewDefinition);
+            Assert.fail("graph exception expected");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "materialized view definition already exists");
         }
     }
 
@@ -69,17 +80,16 @@ public class MatViewGraphImplTest extends AbstractCairoTest {
         TableToken table1 = newTableToken("table1");
         TableToken view1 = newViewToken("view1");
         MatViewDefinition viewDefinition = createDefinition(view1, table1);
-        MatViewRefreshState state = graph.addView(viewDefinition);
+        graph.addView(viewDefinition);
+        MatViewState state = stateStore.addViewState(viewDefinition);
         Assert.assertNotNull(state);
         state.markAsDropped();
-        state = graph.getViewRefreshState(view1);
+        state = stateStore.getViewState(view1);
         Assert.assertNotNull(state);
         MatViewDefinition def = graph.getViewDefinition(view1);
-        Assert.assertNull(def);
-        state = graph.getViewRefreshState(view1);
+        Assert.assertNotNull(def);
+        state = stateStore.getViewState(view1);
         Assert.assertNull(state);
-        def = graph.getViewDefinition(view1);
-        Assert.assertNull(def);
     }
 
     @Test
@@ -136,6 +146,7 @@ public class MatViewGraphImplTest extends AbstractCairoTest {
 
     private void addDefinition(TableToken viewToken, TableToken baseTableToken) {
         MatViewDefinition viewDefinition = createDefinition(viewToken, baseTableToken);
+        stateStore.addViewState(viewDefinition);
         graph.addView(viewDefinition);
     }
 
