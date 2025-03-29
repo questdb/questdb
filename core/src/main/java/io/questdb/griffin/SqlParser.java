@@ -155,12 +155,14 @@ public class SqlParser {
         this.column = "column";
     }
 
-    public static void collectTables(QueryModel model, CharSequenceHashSet tableNames) {
+    public static void collectTables(QueryModel model, CharSequenceHashSet outTableNames, IntList outTableNamePositions) {
         QueryModel m = model;
         do {
             final ExpressionNode tableNameExpr = m.getTableNameExpr();
             if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
-                tableNames.add(tableNameExpr.token);
+                if (outTableNames.add(tableNameExpr.token)) {
+                    outTableNamePositions.add(tableNameExpr.position);
+                }
             }
 
             final ObjList<QueryModel> joinModels = m.getJoinModels();
@@ -169,12 +171,12 @@ public class SqlParser {
                 if (joinModel == m) {
                     continue;
                 }
-                collectTables(joinModel, tableNames);
+                collectTables(joinModel, outTableNames, outTableNamePositions);
             }
 
             final QueryModel unionModel = m.getUnionModel();
             if (unionModel != null) {
-                collectTables(unionModel, tableNames);
+                collectTables(unionModel, outTableNames, outTableNamePositions);
             }
 
             m = m.getNestedModel();
@@ -753,7 +755,7 @@ public class SqlParser {
         final CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch' or 'materialized'");
         if (isMaterializedKeyword(tok)) {
             if (!configuration.isMatViewEnabled()) {
-                throw SqlException.$(lexer.lastTokenPosition(), "materialized views are disabled");
+                throw SqlException.$(0, "materialized views are disabled");
             }
             return parseCreateMatView(lexer, executionContext, sqlParserCallback);
         }
@@ -787,11 +789,10 @@ public class SqlParser {
         ));
 
         tok = tok(lexer, "'as' or 'with' or 'refresh'");
-        CharSequence baseTableName = null;
         if (isWithKeyword(tok)) {
             expectTok(lexer, "base");
             tok = tok(lexer, "base table expected");
-            baseTableName = sansPublicSchema(tok, lexer);
+            CharSequence baseTableName = sansPublicSchema(tok, lexer);
             assertTableNameIsQuotedOrNotAKeyword(baseTableName, lexer.lastTokenPosition());
             mvOpBuilder.setBaseTableNamePosition(lexer.lastTokenPosition());
             mvOpBuilder.setBaseTableName(Chars.toString(unquote(baseTableName)));
@@ -831,7 +832,7 @@ public class SqlParser {
 
             // Basic validation - check all nested models for window functions, FROM-TO or FILL.
             QueryModel m = queryModel;
-            while (m != null) {
+            do {
                 if (m.getSampleByFrom() != null || m.getSampleByTo() != null) {
                     final int position = m.getSampleByFrom() != null ? m.getSampleByFrom().position : m.getSampleByTo().position;
                     throw SqlException.position(position).put("FROM-TO is not supported for materialized views");
@@ -851,7 +852,7 @@ public class SqlParser {
                 }
 
                 m = m.getNestedModel();
-            }
+            } while (m != null);
 
             final QueryModel nestedModel = queryModel.getNestedModel();
             if (nestedModel != null) {
@@ -864,7 +865,7 @@ public class SqlParser {
             }
 
             final String matViewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);
-            tableOpBuilder.setSelectText(matViewSql);
+            tableOpBuilder.setSelectText(matViewSql, startOfQuery);
             tableOpBuilder.setSelectModel(queryModel); // transient model, for toSink() purposes only
 
             expectTok(lexer, ')');
@@ -896,7 +897,7 @@ public class SqlParser {
             throw SqlException.$(partitionByExpr.position, "'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
         }
         if (!PartitionBy.isPartitioned(partitionBy)) {
-            throw SqlException.position(0).put("materialized view has to be partitioned");
+            throw SqlException.position(partitionByExpr.position).put("materialized view has to be partitioned");
         }
         tableOpBuilder.setPartitionByExpr(partitionByExpr);
         tok = optTok(lexer);
@@ -1218,7 +1219,8 @@ public class SqlParser {
         // It'll be compiled and optimized later, at the execution phase.
         final QueryModel selectModel = parseDml(lexer, null, startOfSelect, true, sqlParserCallback, null);
         final int endOfSelect = lexer.getPosition() - 1;
-        createTableOperationBuilder.setSelectText(lexer.getContent().subSequence(startOfSelect, endOfSelect));
+        final String selectText = Chars.toString(lexer.getContent(), startOfSelect, endOfSelect);
+        createTableOperationBuilder.setSelectText(selectText, startOfSelect);
         createTableOperationBuilder.setSelectModel(selectModel); // transient model, for toSink() purposes only
         expectTok(lexer, ')');
     }

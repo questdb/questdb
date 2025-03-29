@@ -72,7 +72,8 @@ public class ShowTablesTest extends AbstractCairoTest {
                     try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
                         assertCursor("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\n" +
                                         "1\tx\tts\tDAY\t1000\t300000000\tfalse\tx~\tfalse\t0\tHOUR\tfalse\n",
-                                false, true, true, cursor, recordCursorFactory.getMetadata(), false);
+                                false, true, true, cursor, recordCursorFactory.getMetadata(), false
+                        );
                     }
 
                     // recreate the same table again
@@ -84,7 +85,8 @@ public class ShowTablesTest extends AbstractCairoTest {
                         // note the ID is 2 now!
                         assertCursor("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\n" +
                                         "2\tx\tts\tDAY\t1000\t300000000\tfalse\tx~\tfalse\t0\tHOUR\tfalse\n",
-                                false, true, true, cursor, recordCursorFactory.getMetadata(), false);
+                                false, true, true, cursor, recordCursorFactory.getMetadata(), false
+                        );
                     }
                 }
             }
@@ -114,7 +116,7 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
             assertException(
                     "select * from table_columns('balances2')",
-                    14,
+                    28,
                     "table does not exist"
             );
         });

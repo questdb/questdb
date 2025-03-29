@@ -95,6 +95,7 @@ import org.postgresql.jdbc.PgConnection;
 import org.postgresql.jdbc.PgResultSet;
 import org.postgresql.util.PGTimestamp;
 import org.postgresql.util.PSQLException;
+import org.postgresql.util.ServerErrorMessage;
 
 import java.io.InputStream;
 import java.lang.reflect.Field;
@@ -135,10 +136,10 @@ import java.util.stream.Stream;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
-import static io.questdb.test.tools.TestUtils.*;
 import static io.questdb.test.tools.TestUtils.assertEquals;
-import static org.junit.Assert.*;
+import static io.questdb.test.tools.TestUtils.*;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.*;
 
 /**
  * This class contains tests which replay PGWIRE traffic.
@@ -3064,7 +3065,8 @@ if __name__ == "__main__":
                 try (ResultSet rs = stmt.executeQuery("tables();")) {
                     assertResultSet("id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],matView[BIT]\n" +
                                     "2,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false\n",
-                            sink, rs);
+                            sink, rs
+                    );
                 }
 
                 stmt.execute("drop table x");
@@ -3074,7 +3076,8 @@ if __name__ == "__main__":
                 try (ResultSet rs = stmt.executeQuery("tables();")) {
                     assertResultSet("id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT],walEnabled[BIT],directoryName[VARCHAR],dedup[BIT],ttlValue[INTEGER],ttlUnit[VARCHAR],matView[BIT]\n" +
                                     "3,x,ts,NONE,1000,300000000,false,x~,false,0,HOUR,false\n",
-                            sink, rs);
+                            sink, rs
+                    );
                 }
             }
         });
@@ -3182,17 +3185,20 @@ if __name__ == "__main__":
     @Test
     public void testCreateTableDuplicateColumnName() throws Exception {
         skipOnWalRun(); // non-partitioned table
+
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try {
-                connection.prepareStatement("create table tab as (\n" +
-                        "            select\n" +
-                        "                rnd_byte() b,\n" +
-                        "                rnd_boolean() B\n" +
-                        "            from long_sequence(1)\n" +
-                        "        )").execute();
+                connection.prepareStatement(
+                        "create table tab as (\n" +
+                                "            select\n" +
+                                "                rnd_byte() b,\n" +
+                                "                rnd_boolean() B\n" +
+                                "            from long_sequence(1)\n" +
+                                "        )").execute();
                 Assert.fail();
             } catch (PSQLException e) {
-                assertContains(e.getMessage(), "Duplicate column [name=B]");
+                assertContains(e.getMessage(), "ERROR: Duplicate column [name=B]\n" +
+                        "  Position: 102");
             }
         });
     }
@@ -7791,6 +7797,7 @@ nodejs code:
     @Test
     public void testPreparedStatementInsertSelectNullDesignatedColumn() throws Exception {
         skipOnWalRun();
+        final AtomicInteger count = new AtomicInteger();
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             {
                 try (
@@ -7803,10 +7810,18 @@ nodejs code:
                     insert.setNull(2, Types.NULL);
                     try {
                         insert.executeUpdate();
-                        assertExceptionNoLeakCheck("inserting NULL for designated timestamp should fail");
+                        fail("inserting NULL for designated timestamp should fail");
                     } catch (PSQLException expected) {
-                        Assert.assertEquals("ERROR: designated timestamp column cannot be NULL\n" +
-                                "  Position: 1", expected.getMessage());
+                        TestUtils.assertContains(expected.getMessage(), "ERROR: designated timestamp column cannot be NULL");
+                        final ServerErrorMessage serverErrorMessage = expected.getServerErrorMessage();
+                        Assert.assertNotNull(serverErrorMessage);
+                        if (mode == Mode.SIMPLE) {
+                            // in simple mode variables are substituted with "values ((NULL))", note the extra bracket
+                            // the error position shifts by 1
+                            Assert.assertEquals(36, serverErrorMessage.getPosition());
+                        } else {
+                            Assert.assertEquals(35, serverErrorMessage.getPosition());
+                        }
                     }
                     // Insert a dud
                     insert.setString(1, "1970-01-01 00:11:22.334455");
