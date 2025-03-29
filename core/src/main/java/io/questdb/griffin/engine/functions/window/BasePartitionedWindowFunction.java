@@ -35,12 +35,12 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
-abstract class BasePartitionedLongWindowFunction extends BaseLongWindowFunction implements Reopenable {
+public abstract class BasePartitionedWindowFunction extends BaseWindowFunction implements Reopenable {
     protected final Map map;
     protected final VirtualRecord partitionByRecord;
     protected final RecordSink partitionBySink;
 
-    public BasePartitionedLongWindowFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
+    public BasePartitionedWindowFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
         super(arg);
         this.map = map;
         this.partitionByRecord = partitionByRecord;
@@ -50,7 +50,7 @@ abstract class BasePartitionedLongWindowFunction extends BaseLongWindowFunction 
     @Override
     public void close() {
         super.close();
-        map.close();
+        Misc.free(map);
         Misc.freeObjList(partitionByRecord.getFunctions());
     }
 
@@ -62,12 +62,14 @@ abstract class BasePartitionedLongWindowFunction extends BaseLongWindowFunction 
 
     @Override
     public void reopen() {
-        map.reopen();
+        if (map != null) {
+            map.reopen();
+        }
     }
 
     @Override
     public void reset() {
-        map.close();
+        Misc.free(map);
     }
 
     @Override
@@ -78,6 +80,9 @@ abstract class BasePartitionedLongWindowFunction extends BaseLongWindowFunction 
         } else {
             sink.val("(*)");
         }
+        if (isIgnoreNulls()) {
+            sink.val(" ignore nulls");
+        }
         sink.val(" over (");
         sink.val("partition by ");
         sink.val(partitionByRecord.getFunctions());
@@ -87,6 +92,6 @@ abstract class BasePartitionedLongWindowFunction extends BaseLongWindowFunction 
     @Override
     public void toTop() {
         super.toTop();
-        map.clear();
+        Misc.clear(map);
     }
 }
