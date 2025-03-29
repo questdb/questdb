@@ -56,8 +56,6 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private static final PageFrameReducer REDUCER = AsyncFilteredRecordCursorFactory::filter;
-
-    private final RecordCursorFactory base;
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncFilteredRecordCursor cursor;
     private final Function filter;
@@ -67,6 +65,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     private final int maxNegativeLimit;
     private final AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor;
     private final int workerCount;
+    private RecordCursorFactory base;
     private DirectLongList negativeLimitRows;
 
     public AsyncFilteredRecordCursorFactory(
@@ -189,6 +188,11 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
+    }
+
+    @Override
+    public void setBaseFactory(RecordCursorFactory base) {
+        this.base = base;
     }
 
     @Override

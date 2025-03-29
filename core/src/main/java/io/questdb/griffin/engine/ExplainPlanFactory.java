@@ -45,8 +45,8 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
 
     private final static GenericRecordMetadata METADATA;
     private final boolean analyze;
-    private final RecordCursorFactory base;
     private final ExplainPlanRecordCursor cursor;
+    private RecordCursorFactory base;
     private boolean isBaseClosed;
 
     public ExplainPlanFactory(RecordCursorFactory base, int format, boolean analyze) {
@@ -65,6 +65,11 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    public void setBaseFactory(RecordCursorFactory base) {
+        this.base = base;
     }
 
     @Override

@@ -44,13 +44,13 @@ import org.jetbrains.annotations.Nullable;
  */
 public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCursorFactory {
 
-    private final RecordCursorFactory base;
     private final RecordComparator comparator;
     private final CairoConfiguration configuration;
     private final Function hiFunction;
     private final Function loFunction;
     private final ListColumnFilter sortColumnFilter;
     private final int timestampIndex;
+    private RecordCursorFactory base;
     // factory does not own the chain, just keeps the reference to enable updating of the limits
     private LimitedSizeLongTreeChain chain = null;
     // initialization delayed to getCursor() because lo/hi need to be evaluated
@@ -150,6 +150,11 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    public void setBaseFactory(RecordCursorFactory base) {
+        this.base = base;
     }
 
     @Override

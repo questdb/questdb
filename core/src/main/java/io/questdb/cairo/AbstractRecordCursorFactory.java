@@ -47,6 +47,4 @@ public abstract class AbstractRecordCursorFactory implements RecordCursorFactory
     protected void _close() {
         // nothing to do
     }
-
-
 }

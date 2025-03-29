@@ -41,9 +41,9 @@ import io.questdb.griffin.SqlExecutionContext;
  * each row takes 32 bytes vs 36 bytes in the red-black tree-based factory.
  */
 public class LongSortedLightRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
     private final LongSortedLightRecordCursor cursor;
     private final ListColumnFilter sortColumnFilter;
+    private RecordCursorFactory base;
 
     public LongSortedLightRecordCursorFactory(
             CairoConfiguration configuration,
@@ -96,6 +96,11 @@ public class LongSortedLightRecordCursorFactory extends AbstractRecordCursorFact
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    public void setBaseFactory(RecordCursorFactory base) {
+        this.base = base;
     }
 
     @Override

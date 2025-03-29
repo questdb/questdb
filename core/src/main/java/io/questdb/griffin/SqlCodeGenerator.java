@@ -186,6 +186,7 @@ import io.questdb.griffin.engine.groupby.vect.SumLongVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.SumShortVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor;
+import io.questdb.griffin.engine.join.AbstractJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
@@ -246,6 +247,7 @@ import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
+import io.questdb.griffin.engine.union.AbstractSetRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptRecordCursorFactory;
 import io.questdb.griffin.engine.union.IntersectAllRecordCursorFactory;
@@ -6348,13 +6350,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (factory == null) {
             return factory;
         } else {
-            RecordCursorFactory nested = wrapFactoriesWithAnalyze(factory.getBaseFactory());
-            if (nested != null) {
-                factory.setBaseFactory(nested);
-                return new AnalyzeFactory(factory);
+            if (factory instanceof AbstractSetRecordCursorFactory) {
+                RecordCursorFactory factoryA = wrapFactoriesWithAnalyze(((AbstractSetRecordCursorFactory) factory).getFactoryA());
+                RecordCursorFactory factoryB = wrapFactoriesWithAnalyze(((AbstractSetRecordCursorFactory) factory).getFactoryB());
+                ((AbstractSetRecordCursorFactory) factory).setFactoryA(factoryA);
+                ((AbstractSetRecordCursorFactory) factory).setFactoryB(factoryB);
+            } else if (factory instanceof AbstractJoinRecordCursorFactory) {
+                RecordCursorFactory masterFactory = wrapFactoriesWithAnalyze(((AbstractJoinRecordCursorFactory) factory).getMasterFactory());
+                RecordCursorFactory slaveFactory = wrapFactoriesWithAnalyze(((AbstractJoinRecordCursorFactory) factory).getSlaveFactory());
+                ((AbstractJoinRecordCursorFactory) factory).setMasterFactory(masterFactory);
+                ((AbstractJoinRecordCursorFactory) factory).setSlaveFactory(slaveFactory);
             } else {
-                return new AnalyzeFactory(factory);
+                RecordCursorFactory nested = wrapFactoriesWithAnalyze(factory.getBaseFactory());
+
+                if (nested != null) {
+                    factory.setBaseFactory(nested);
+                    if (factory.getBaseFactory() != nested) {
+                        throw CairoException.nonCritical().put("could not set base factory [factory=").put(factory.getClass().getName()).put("]");
+                    }
+                }
             }
+            return new AnalyzeFactory(factory);
         }
     }
 
@@ -6414,6 +6430,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         @Override
         public boolean recordCursorSupportsRandomAccess() {
             return false;
+        }
+
+        @Override
+        public void setBaseFactory(RecordCursorFactory base) {
+            this.factory = base;
         }
 
         @Override

@@ -221,7 +221,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     default void setBaseFactory(RecordCursorFactory base) {
-        throw new UnsupportedOperationException();
+        
     }
 
     /**

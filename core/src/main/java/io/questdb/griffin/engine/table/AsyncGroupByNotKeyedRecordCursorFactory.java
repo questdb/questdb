@@ -61,13 +61,12 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final PageFrameReducer AGGREGATE = AsyncGroupByNotKeyedRecordCursorFactory::aggregate;
     private static final PageFrameReducer FILTER_AND_AGGREGATE = AsyncGroupByNotKeyedRecordCursorFactory::filterAndAggregate;
-
-    private final RecordCursorFactory base;
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncGroupByNotKeyedRecordCursor cursor;
     private final PageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final int workerCount;
+    private RecordCursorFactory base;
 
     public AsyncGroupByNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -157,6 +156,11 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    public void setBaseFactory(RecordCursorFactory base) {
+        this.base = base;
     }
 
     @Override

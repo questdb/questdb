@@ -81,6 +81,10 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
         return base.followedOrderByAdvice();
     }
 
+    public void formatRowCount(PlanSink sink, long rowCount) {
+        sink.val(String.format("%,d", rowCount));
+    }
+
     public void formatTiming(PlanSink sink, long nanos) {
         if (nanos > 1e9) {
             sink.val(roundTiming(nanos / 1e9));
@@ -219,9 +223,10 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("ANALYZE");
-        sink.meta("time");
+        sink.meta("TIME");
         formatTiming(sink, cursor.executionTimeNanos);
-        sink.meta("rows").val(cursor.numberOfRecords);
+        sink.meta("ROWS");
+        formatRowCount(sink, cursor.numberOfRecords);
         sink.child(base);
     }
 
@@ -273,7 +278,7 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
 
         @Override
         public Record getRecordB() {
-            throw new UnsupportedOperationException();
+            return baseCursor.getRecordB();
         }
 
         @Override

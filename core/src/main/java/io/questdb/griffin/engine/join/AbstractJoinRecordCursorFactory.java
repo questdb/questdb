@@ -31,13 +31,29 @@ import io.questdb.griffin.model.JoinContext;
 public abstract class AbstractJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
     protected final JoinContext joinContext;
-    protected final RecordCursorFactory masterFactory;
-    protected final RecordCursorFactory slaveFactory;
+    protected RecordCursorFactory masterFactory;
+    protected RecordCursorFactory slaveFactory;
 
     public AbstractJoinRecordCursorFactory(RecordMetadata metadata, JoinContext joinContext, RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) {
         super(metadata);
         this.joinContext = joinContext;
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
+    }
+
+    public RecordCursorFactory getMasterFactory() {
+        return masterFactory;
+    }
+
+    public RecordCursorFactory getSlaveFactory() {
+        return slaveFactory;
+    }
+
+    public void setMasterFactory(RecordCursorFactory factory) {
+        masterFactory = factory;
+    }
+
+    public void setSlaveFactory(RecordCursorFactory factory) {
+        slaveFactory = factory;
     }
 }

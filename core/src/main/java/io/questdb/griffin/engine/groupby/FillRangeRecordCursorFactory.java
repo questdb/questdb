@@ -64,14 +64,14 @@ import org.jetbrains.annotations.Nullable;
  */
 public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final Log LOG = LogFactory.getLog(FillRangeRecordCursorFactory.class);
-    private final RecordCursorFactory base;
     private final FillRangeRecordCursor cursor;
+    private final ObjList<Function> fillValues;
     private final Function fromFunc;
     private final long samplingInterval;
     private final char samplingIntervalUnit;
     private final int timestampIndex;
     private final Function toFunc;
-    private final ObjList<Function> fillValues;
+    private RecordCursorFactory base;
 
     public FillRangeRecordCursorFactory(
             RecordMetadata metadata,
@@ -132,6 +132,11 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public void setBaseFactory(RecordCursorFactory base) {
+        this.base = base;
+    }
+
+    @Override
     public void toPlan(PlanSink sink) {
         sink.type("Fill Range");
         if (fromFunc != TimestampConstant.NULL || toFunc != TimestampConstant.NULL) {
@@ -177,13 +182,13 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     private static class FillRangeRecordCursor implements NoRandomAccessRecordCursor {
+        private final ObjList<Function> fillValues;
         private final FillRangeRecord fillingRecord = new FillRangeRecord();
         private final FillRangeTimestampConstant fillingTimestampFunc = new FillRangeTimestampConstant();
         private final Function fromFunc;
         private final int timestampIndex;
         private final TimestampSampler timestampSampler;
         private final Function toFunc;
-        private final ObjList<Function> fillValues;
         private RecordCursor baseCursor;
         private Record baseRecord;
         private boolean gapFilling;

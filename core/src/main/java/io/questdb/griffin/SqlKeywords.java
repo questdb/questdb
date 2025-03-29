@@ -75,7 +75,7 @@ public class SqlKeywords {
                 && (tok.charAt(2) | 32) == 'a'
                 && (tok.charAt(3) | 32) == 'l'
                 && (tok.charAt(4) | 32) == 'y'
-                && (tok.charAt(5) | 32) == 'z'
+                && ((tok.charAt(5) | 32) == 'z' || (tok.charAt(5) | 32) == 's')
                 && (tok.charAt(6) | 32) == 'e';
     }
 

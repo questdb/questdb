@@ -38,10 +38,10 @@ import io.questdb.std.Misc;
  */
 public class LongTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     private final boolean ascending;
-    private final RecordCursorFactory base;
     private final int columnIndex;
     private final LongTopKRecordCursor cursor;
     private final int lo;
+    private RecordCursorFactory base;
 
     public LongTopKRecordCursorFactory(
             RecordMetadata metadata,
@@ -90,6 +90,11 @@ public class LongTopKRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    public void setBaseFactory(RecordCursorFactory base) {
+        this.base = base;
     }
 
     @Override
