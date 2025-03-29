@@ -6532,9 +6532,7 @@ public class SqlOptimiser implements Mutable {
                 && nested != null
                 && nested.getSelectModelType() == SELECT_MODEL_NONE
                 && nested.getPivotColumns() != null
-                && nested.getPivotFor() != null
-                && model.getBottomUpColumns().size() == 1
-                && Chars.equals(model.getBottomUpColumns().getQuick(0).getAst().token, "*")) {
+                && nested.getPivotFor() != null) {
 
             QueryColumn timestampColumn = null;
 
@@ -6546,10 +6544,15 @@ public class SqlOptimiser implements Mutable {
                 timestampColumn = queryColumnPool.next().of(timestampCs, expressionNodePool.next().of(LITERAL, timestampCs, 0, 0));
             }
 
+            if (!(model.getBottomUpColumns().size() > 1)) { // todo: handle mixed asterisk and extra case
+                // remove columns that appear in the group by
+                
+            }
+
             // todo(nwoolmer): pass through columns properly, so we can handle non '*' selects
             // clear out the '*'
-            model.getBottomUpColumns().clear();
-            model.getWildcardColumnNames().clear();
+
+            // we need to remove any columns that are already featured in the query
 
 
             QueryModel groupByModel = queryModelPool.next();
@@ -6560,7 +6563,7 @@ public class SqlOptimiser implements Mutable {
 
 
             // add sample by if needed
-            if (timestampColumn != null) {
+            if (timestampColumn != null && model.getColumnAliasIndex(timestampColumn.getAlias()) < 0) {
                 // todo(nwoolmer): only do this if they haven't specified it
                 model.addBottomUpColumn(timestampColumn);
                 groupByModel.moveSampleByFrom(nested);
