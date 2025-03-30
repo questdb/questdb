@@ -74,6 +74,9 @@ public class TextPlanSink extends BasePlanSink {
     public PlanSink child(Plannable p) {
         depth++;
         if (p instanceof AnalyzeFactory) {
+            if (analyzeIndent == 0) {
+                analyzeIndent = ((AnalyzeFactory) p).getMaxReprLength();
+            }
             newLineAnalyze((AnalyzeFactory) p);
             p = ((AnalyzeFactory) p).base;
         } else {

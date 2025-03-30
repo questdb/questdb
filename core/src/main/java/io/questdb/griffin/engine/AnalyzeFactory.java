@@ -84,11 +84,13 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
     }
 
     public void formatRowCount(PlanSink sink, long rowCount) {
-        sink.val(String.format("%,d", rowCount));
+//        sink.val(String.format("%,d", rowCount));
+        sink.val(rowCount);
     }
 
     public void formatRowCount(StringSink sink, long rowCount) {
-        sink.put(String.format("%,d", rowCount));
+//        sink.put(String.format("%,d", rowCount));
+        sink.put(rowCount);
     }
 
     public void formatTiming(PlanSink sink, long nanos) {
@@ -152,7 +154,6 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base.getBaseFactory();
-//        return base;
     }
 
     @Override
@@ -181,13 +182,20 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
         return base.getFilter();
     }
 
+    public int getMaxReprLength() {
+        AnalyzeFactory factory = this;
+        int max_length = 0;
+        while (factory != null) {
+            max_length = Math.max(factory.getReprLength(), max_length);
+            factory = (AnalyzeFactory) factory.getBaseFactory();
+            assert factory != null;
+        }
+        return max_length;
+    }
+
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         return base.getPageFrameCursor(executionContext, order);
-    }
-
-    public long getPlanLength() {
-        return getRepr().length();
     }
 
     public String getRepr() {
@@ -198,6 +206,10 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
         formatRowCount(sink, cursor.numberOfRecords);
         sink.put("] ");
         return sink.toString();
+    }
+
+    public int getReprLength() {
+        return getRepr().length();
     }
 
     @Override
@@ -269,7 +281,7 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
     public void toPlan(PlanSink sink) {
         sink.child(this);
     }
-    
+
     public void toSink(PlanSink sink) {
         sink.val("[time=");
         formatTiming(sink, cursor.executionTimeNanos);
