@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -32,6 +33,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SingleSymbolFilter;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -40,6 +43,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.DirectLongLongHeap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -204,6 +208,7 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
         formatTiming(sink, cursor.executionTimeNanos);
         sink.put(", rows=");
         formatRowCount(sink, cursor.numberOfRecords);
+        sink.put(", cols=").put(base.getMetadata().getColumnCount());
         sink.put("] ");
         return sink.toString();
     }
@@ -216,6 +221,7 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
     public int getScanDirection() {
         return base.getScanDirection();
     }
+
 
     @Override
     public TableToken getTableToken() {
@@ -285,8 +291,11 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
     public void toSink(PlanSink sink) {
         sink.val("[time=");
         formatTiming(sink, cursor.executionTimeNanos);
+        sink.val(", first=");
+        formatTiming(sink, cursor.firstTimeNanos);
         sink.val(", rows=");
         formatRowCount(sink, cursor.numberOfRecords);
+        sink.val(", cols=").val(base.getMetadata().getColumnCount());
         sink.val("] ");
     }
 
@@ -320,11 +329,18 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
     public static class AnalyzeRecordCursor implements RecordCursor {
         private RecordCursor baseCursor;
         private long executionTimeNanos;
+        private boolean firstLoop = true;
+        private long firstTimeNanos;
         private long numberOfRecords;
         private long timeAfterNanos;
         private long timeBeforeNanos;
 
         public AnalyzeRecordCursor() {
+        }
+
+        @Override
+        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+            baseCursor.calculateSize(circuitBreaker, counter);
         }
 
         @Override
@@ -342,6 +358,11 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return baseCursor.getSymbolTable(columnIndex);
+        }
+
+        @Override
         public boolean hasNext() {
             preTime();
             boolean hasNext = baseCursor.hasNext();
@@ -350,6 +371,21 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
                 numberOfRecords++;
             }
             return hasNext;
+        }
+
+        @Override
+        public boolean isUsingIndex() {
+            return baseCursor.isUsingIndex();
+        }
+
+        @Override
+        public void longTopK(DirectLongLongHeap heap, int columnIndex) {
+            baseCursor.longTopK(heap, columnIndex);
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return baseCursor.newSymbolTable(columnIndex);
         }
 
         public void of(RecordCursorFactory base, SqlExecutionContext executionContext) throws SqlException {
@@ -369,16 +405,28 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public void skipRows(Counter rowCount) throws DataUnavailableException {
+            baseCursor.skipRows(rowCount);
+        }
+
+        @Override
         public void toTop() {
             timeBeforeNanos = 0;
             timeAfterNanos = 0;
             numberOfRecords = 0;
             executionTimeNanos = 0;
+            firstLoop = true;
+            firstTimeNanos = 0;
+            baseCursor.toTop();
         }
 
         void postTime() {
             timeAfterNanos = Os.currentTimeNanos();
             executionTimeNanos += timeAfterNanos - timeBeforeNanos;
+            if (firstLoop) {
+                firstTimeNanos = executionTimeNanos;
+                firstLoop = false;
+            }
         }
 
         void preTime() {
