@@ -192,7 +192,6 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
         while (factory != null) {
             max_length = Math.max(factory.getReprLength(), max_length);
             factory = (AnalyzeFactory) factory.getBaseFactory();
-            assert factory != null;
         }
         return max_length;
     }
@@ -345,6 +344,7 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void close() {
+            baseCursor.close();
         }
 
         @Override

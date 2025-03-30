@@ -56,12 +56,11 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private static final int RECORD_INDEX_VALUE_IDX = 0;
     private static final int TIMESTAMP_VALUE_IDX = 1;
-
-    private final RecordCursorFactory base;
     private final LatestByRecordCursor cursor;
     private final RecordSink recordSink;
     private final DirectLongList rowIndexes;
     private final long rowIndexesInitialCapacity;
+    private RecordCursorFactory base;
 
     public LatestByRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -105,6 +104,11 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
+    }
+
+    @Override
+    public void setBaseFactory(RecordCursorFactory base) {
+        this.base = base;
     }
 
     @Override

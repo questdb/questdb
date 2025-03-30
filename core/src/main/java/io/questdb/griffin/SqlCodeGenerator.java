@@ -6347,7 +6347,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     RecordCursorFactory wrapFactoriesWithAnalyze(RecordCursorFactory factory) {
-        if (factory == null) {
+        if (factory == null || factory instanceof SqlCodeGenerator.RecordCursorFactoryStub) {
             return factory;
         } else {
             if (factory instanceof AbstractSetRecordCursorFactory) {
@@ -6424,7 +6424,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         @Override
         public RecordMetadata getMetadata() {
-            return null;
+            if (factory != null) {
+                return factory.getMetadata();
+            } else {
+                return null;
+            }
         }
 
         @Override

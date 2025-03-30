@@ -145,7 +145,7 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
         public void of(RecordCursorFactory base, SqlExecutionContext executionContext) throws SqlException {
             // open the cursor to ensure bind variable types are initialized
             RecordCursor baseCursor = base.getCursor(executionContext);
-            if (analyze) {
+            if (analyze && baseCursor != null) {
                 // we need to execute the cursor fully
                 //noinspection StatementWithEmptyBody
                 while (baseCursor.hasNext()) ;
@@ -154,7 +154,10 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
             planSink.of(base, executionContext);
 
             rowCount = planSink.getLineCount();
-            baseCursor.close();
+            if (baseCursor != null) {
+                baseCursor.close();
+            }
+           
             toTop();
         }
 
