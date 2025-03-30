@@ -108,7 +108,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public static CairoException fileNotFound() {
-        return instance(Os.isWindows() ? ERRNO_FILE_DOES_NOT_EXIST_WIN : ERRNO_FILE_DOES_NOT_EXIST);
+        return instance(Os.errno());
     }
 
     public static CairoException invalidMetadataRecoverable(@NotNull CharSequence msg, @NotNull CharSequence columnName) {
