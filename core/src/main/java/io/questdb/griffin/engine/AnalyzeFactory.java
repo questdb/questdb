@@ -40,9 +40,11 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -50,7 +52,7 @@ import org.jetbrains.annotations.Nullable;
 // wraps another factory and records runtime information about it
 
 public class AnalyzeFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
+    public final RecordCursorFactory base;
     private final AnalyzeRecordCursor cursor;
 
     private boolean isBaseClosed;
@@ -85,6 +87,10 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
         sink.val(String.format("%,d", rowCount));
     }
 
+    public void formatRowCount(StringSink sink, long rowCount) {
+        sink.put(String.format("%,d", rowCount));
+    }
+
     public void formatTiming(PlanSink sink, long nanos) {
         if (nanos > 1e9) {
             sink.val(roundTiming(nanos / 1e9));
@@ -109,6 +115,30 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
         }
     }
 
+    public void formatTiming(StringSink sink, long nanos) {
+        if (nanos > 1e9) {
+            sink.put(roundTiming(nanos / 1e9));
+            sink.put("s");
+            return;
+        }
+
+        if (nanos > 1e6) {
+            sink.put(roundTiming(nanos / 1e6));
+            sink.put("ms");
+            return;
+        }
+
+        if (nanos > 1e3) {
+            sink.put(roundTiming(nanos / 1e3));
+            sink.put("μs");
+        } else {
+            sink.put(nanos);
+            if (nanos != 0) {
+                sink.put("ns");
+            }
+        }
+    }
+
     @Override
     public boolean fragmentedSymbolTables() {
         return base.fragmentedSymbolTables();
@@ -122,6 +152,7 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base.getBaseFactory();
+//        return base;
     }
 
     @Override
@@ -153,6 +184,20 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         return base.getPageFrameCursor(executionContext, order);
+    }
+
+    public long getPlanLength() {
+        return getRepr().length();
+    }
+
+    public String getRepr() {
+        StringSink sink = Misc.getThreadLocalSink();
+        sink.put("[time=");
+        formatTiming(sink, cursor.executionTimeNanos);
+        sink.put(", rows=");
+        formatRowCount(sink, cursor.numberOfRecords);
+        sink.put("] ");
+        return sink.toString();
     }
 
     @Override
@@ -222,12 +267,15 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("ANALYZE");
-        sink.meta("TIME");
+        sink.child(this);
+    }
+    
+    public void toSink(PlanSink sink) {
+        sink.val("[time=");
         formatTiming(sink, cursor.executionTimeNanos);
-        sink.meta("ROWS");
+        sink.val(", rows=");
         formatRowCount(sink, cursor.numberOfRecords);
-        sink.child(base);
+        sink.val("] ");
     }
 
     @Override

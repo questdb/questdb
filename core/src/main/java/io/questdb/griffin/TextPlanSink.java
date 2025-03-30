@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.AnalyzeFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.Uuid;
@@ -38,6 +39,7 @@ import io.questdb.std.str.Utf8Sequence;
 public class TextPlanSink extends BasePlanSink {
 
     private final IntList eolIndexes;
+    private int analyzeIndent;
     private String attrIndent;
     private String childIndent;
     private int depth;
@@ -48,6 +50,7 @@ public class TextPlanSink extends BasePlanSink {
         this.childIndent = "    ";
         this.eolIndexes = new IntList();
         this.eolIndexes.add(0);
+        this.analyzeIndent = 0;
     }
 
     public PlanSink attr(CharSequence name) {
@@ -67,9 +70,16 @@ public class TextPlanSink extends BasePlanSink {
         return this;
     }
 
+
     public PlanSink child(Plannable p) {
         depth++;
-        newLine();
+        if (p instanceof AnalyzeFactory) {
+            newLineAnalyze((AnalyzeFactory) p);
+            p = ((AnalyzeFactory) p).base;
+        } else {
+            newLine();
+        }
+
         if (p instanceof RecordCursorFactory) {
             factoryStack.push((RecordCursorFactory) p);
             p.toPlan(this);
@@ -220,6 +230,28 @@ public class TextPlanSink extends BasePlanSink {
 
     private void newLine() {
         eolIndexes.add(sink.length());
+        for (int i = 0; i < analyzeIndent; i++) {
+            sink.put("&nbsp;");
+        }
+        for (int i = 0; i < depth; i++) {
+            sink.put(childIndent);
+        }
+    }
+
+
+    private void newLineAnalyze(AnalyzeFactory factory) {
+        if (sink.length() == 0) {
+            factory.toSink(this);
+            analyzeIndent = sink.length();
+            return;
+        }
+        eolIndexes.add(sink.length());
+        factory.toSink(this);
+        int length = sink.length() - eolIndexes.getLast();
+        analyzeIndent = Math.max(analyzeIndent, length);
+        for (int i = 0; i < analyzeIndent - length; i++) {
+            sink.put("&nbsp;");
+        }
         for (int i = 0; i < depth; i++) {
             sink.put(childIndent);
         }
