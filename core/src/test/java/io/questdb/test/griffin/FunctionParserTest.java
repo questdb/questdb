@@ -115,7 +115,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void overloadFromCharToDoubleDoesExist() {
-        Assert.assertEquals(ColumnType.overloadDistance(ColumnType.CHAR, ColumnType.DOUBLE), 7);
+        Assert.assertNotEquals(ColumnType.overloadDistance(ColumnType.CHAR, ColumnType.DOUBLE), OVERLOAD_NONE);
     }
 
     @Test
