@@ -1117,7 +1117,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         metadata.isIndexed(columnIndex),
                         columnName,
                         ColumnType.SYMBOL,
-                        false
+                        true
                 );
                 oldSymbolWriter.rebuildCapacity(
                         configuration,
@@ -2987,7 +2987,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             clearTodoLog();
 
             // rename column files has to be done after _todo is removed
-            hardLinkAndPurgeColumnFiles(columnName, index, isIndexed, newColumnName, type, true);
+            hardLinkAndPurgeColumnFiles(columnName, index, isIndexed, newColumnName, type, false);
         } catch (CairoException e) {
             throwDistressException(e);
         }
@@ -3292,6 +3292,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // Here we assume that it's the exactly what we need, linking the correct from/to paths.
                         // There is no good way to verify that, but there is no hypothetical scenario found
                         // when this is false.
+                        LOG.info().$("cannot delete file to create link with the same name," +
+                                " assuming already correctly linked [path=").$(to).$(", linkSrc=").$(from).I$();
                         return;
                     } else {
                         throw e;
@@ -5558,7 +5560,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void hardLinkAndPurgeColumnFiles(String columnName, int columnIndex, boolean isIndexed, CharSequence newName, int columnType, boolean copySymbolRoot) {
+    private void hardLinkAndPurgeColumnFiles(String columnName, int columnIndex, boolean isIndexed, CharSequence newName, int columnType, boolean symbolCapacityChange) {
         try {
             PurgingOperator purgingOperator = getPurgingOperator();
             long newColumnNameTxn = getTxn();
@@ -5585,12 +5587,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (ColumnType.isSymbol(columnType)) {
                 // Link .o, .c, .k, .v symbol files in the table root folder
                 try {
-                    linkFile(ff, offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
                     linkFile(ff, charFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-
-                    if (copySymbolRoot) {
+                    if (!symbolCapacityChange) {
+                        linkFile(ff, offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
                         linkFile(ff, keyFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
                         linkFile(ff, valueFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    } else {
+                        // in case it's symbol capacity rebuild copy symbol offset file
+                        // it's almost the same but the capacity in the file header is changed
+                        ff.copy(offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
                     }
                 } catch (Throwable e) {
                     ff.removeQuiet(offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
