@@ -1271,20 +1271,16 @@ public final class Timestamps {
                     Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)),
                     RESOLUTION_MICROS
             );
-            offset = zoneRules.getOffset(localTimestamp);
-            // getOffset really needs UTC date, not local
-            offset = zoneRules.getOffset(localTimestamp - offset);
+            offset = zoneRules.getLocalOffset(localTimestamp);
             return localTimestamp - offset;
         }
         offset = Numbers.decodeLowInt(l) * MINUTE_MICROS;
         return localTimestamp - offset;
     }
 
-    public static long toUTC(long timestampWithTimezone, TimeZoneRules zoneRules) {
-        long offset = zoneRules.getOffset(timestampWithTimezone);
-        // getOffset really needs UTC date, not local
-        offset = zoneRules.getOffset(timestampWithTimezone - offset);
-        return timestampWithTimezone - offset;
+    public static long toUTC(long localTimestamp, TimeZoneRules zoneRules) {
+        final long offset = zoneRules.getLocalOffset(localTimestamp);
+        return localTimestamp - offset;
     }
 
     /**

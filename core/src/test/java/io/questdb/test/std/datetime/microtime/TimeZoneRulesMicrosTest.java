@@ -32,7 +32,9 @@ import org.junit.Test;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -137,6 +139,52 @@ public class TimeZoneRulesMicrosTest {
         } catch (Throwable e) {
             System.out.println(zone.getId() + "; " + zdt + "; " + Timestamps.toString(millis + offset));
             throw e;
+        }
+    }
+
+    @Test
+    public void testToUtcCompatibility() {
+        Set<String> allZones = ZoneId.getAvailableZoneIds();
+        List<String> zoneList = new ArrayList<>(allZones);
+        Collections.sort(zoneList);
+        List<ZoneId> zones = new ArrayList<>(zoneList.size());
+        List<TimeZoneRulesMicros> zoneRules = new ArrayList<>(zoneList.size());
+
+        for (String z : zoneList) {
+            ZoneId zone = ZoneId.of(z);
+            zones.add(zone);
+            zoneRules.add(new TimeZoneRulesMicros(zone.getRules()));
+        }
+
+        DateTimeFormatter localDateTimeFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'.000Z'");
+        long micros = Timestamps.toMicros(1900, 1, 1, 0, 0);
+        long deadline = Timestamps.toMicros(2115, 12, 31, 0, 0);
+
+        while (micros < deadline) {
+            LocalDateTime dt = LocalDateTime.parse(Timestamps.toString(micros), localDateTimeFormat);
+
+            for (int i = 0, n = zones.size(); i < n; i++) {
+                ZoneId zone = zones.get(i);
+                TimeZoneRulesMicros rules = zoneRules.get(i);
+
+                ZonedDateTime zdt = dt.atZone(zone);
+
+                long expected = zdt.toInstant().toEpochMilli() * Timestamps.MILLI_MICROS;
+                // find out how much algo added to datetime itself
+                long offset = rules.getLocalOffset(dt.toInstant(ZoneOffset.UTC).toEpochMilli() * Timestamps.MILLI_MICROS);
+                long actual = micros - offset;
+
+                try {
+                    Assert.assertEquals(expected, actual);
+                } catch (Throwable e) {
+                    System.out.println(zone.getId() + "; " + zdt + "; " + Timestamps.toString(actual));
+                    System.out.println("e: " + expected + "; a: " + actual);
+                    System.out.println(dt);
+                    System.out.println(Timestamps.toString(micros));
+                    throw e;
+                }
+            }
+            micros += Timestamps.DAY_MICROS;
         }
     }
 }

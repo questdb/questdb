@@ -58,7 +58,7 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractCairoTest {
                     "2021-03-28T01:01:00.000000Z",
                     "Europe/Berlin"
             );
-            // non-existing local time
+            // non-existing local time (mapped to the "next" UTC hour)
             assertToUTC(
                     "to_utc\n" +
                             "2021-03-28T01:01:00.000000Z\n",

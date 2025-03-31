@@ -28,14 +28,14 @@ package io.questdb.std.datetime;
  * Pre-calculated DST transition that belong to a given year.
  */
 public class Transition {
-    // transition timestamp (UTC)
-    public final long epoch;
     public final long offsetAfterMicros;
     public final long offsetBeforeMicros;
+    // transition UTC timestamp
+    public final long transition;
 
-    public Transition(long offsetBeforeMicros, long offsetAfterMicros, long epoch) {
+    public Transition(long offsetBeforeMicros, long offsetAfterMicros, long transition) {
         this.offsetBeforeMicros = offsetBeforeMicros;
         this.offsetAfterMicros = offsetAfterMicros;
-        this.epoch = epoch;
+        this.transition = transition;
     }
 }

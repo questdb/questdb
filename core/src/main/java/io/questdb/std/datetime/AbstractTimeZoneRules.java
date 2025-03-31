@@ -29,47 +29,51 @@ import io.questdb.std.LongList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
+import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.zone.ZoneOffsetTransitionRule;
 import java.time.zone.ZoneRules;
 import java.util.function.IntFunction;
 
 public abstract class AbstractTimeZoneRules implements TimeZoneRules {
-    public static final long LAST_RULES = Unsafe.getFieldOffset(ZoneRules.class, "lastRules");
-    public static final long SAVING_INSTANT_TRANSITION = Unsafe.getFieldOffset(ZoneRules.class, "savingsInstantTransitions");
-    public static final long STANDARD_OFFSETS = Unsafe.getFieldOffset(ZoneRules.class, "standardOffsets");
-    public static final long WALL_OFFSETS = Unsafe.getFieldOffset(ZoneRules.class, "wallOffsets");
+    private static final long LAST_RULES_OFFSET = Unsafe.getFieldOffset(ZoneRules.class, "lastRules");
+    private static final long SAVING_INSTANT_TRANSITIONS_OFFSET = Unsafe.getFieldOffset(ZoneRules.class, "savingsInstantTransitions");
+    private static final long SAVING_LOCAL_TRANSITIONS_OFFSET = Unsafe.getFieldOffset(ZoneRules.class, "savingsLocalTransitions");
+    private static final long STANDARD_OFFSETS_OFFSET = Unsafe.getFieldOffset(ZoneRules.class, "standardOffsets");
+    private static final long WALL_OFFSETS_OFFSET = Unsafe.getFieldOffset(ZoneRules.class, "wallOffsets");
     private final IntFunction<Transition[]> computeTransitionsRef;
     private final long cutoffTransition;
     private final long firstWall;
     private final LongList historicTransitions = new LongList();
     private final long lastWall;
+    private final long localCutoffTransition;
+    private final LongList localHistoricTransitions = new LongList();
     private final long multiplier;
     private final int ruleCount;
     private final TransitionRule[] rules;
     private final long standardOffset;
-    // year to transition list cache
+    // TODO: consider pre-warming the cache and turning it into an array
+    // year to array of transitions cache
     private final ConcurrentIntHashMap<Transition[]> transitionsCache = new ConcurrentIntHashMap<>();
     private final int[] wallOffsets;
 
     public AbstractTimeZoneRules(ZoneRules rules, long multiplier) {
         this.multiplier = multiplier;
         this.computeTransitionsRef = this::computeTransitions;
-        final long[] savingsInstantTransition = (long[]) Unsafe.getUnsafe().getObject(rules, SAVING_INSTANT_TRANSITION);
 
-        if (savingsInstantTransition.length == 0) {
-            ZoneOffset[] standardOffsets = (ZoneOffset[]) Unsafe.getUnsafe().getObject(rules, STANDARD_OFFSETS);
+        final long[] savingsInstantTransitions = (long[]) Unsafe.getUnsafe().getObject(rules, SAVING_INSTANT_TRANSITIONS_OFFSET);
+        if (savingsInstantTransitions.length == 0) {
+            ZoneOffset[] standardOffsets = (ZoneOffset[]) Unsafe.getUnsafe().getObject(rules, STANDARD_OFFSETS_OFFSET);
             standardOffset = standardOffsets[0].getTotalSeconds() * multiplier;
         } else {
             standardOffset = Long.MIN_VALUE;
-            for (int i = 0, n = savingsInstantTransition.length; i < n; i++) {
-                historicTransitions.add(savingsInstantTransition[i] * multiplier);
+            for (int i = 0, n = savingsInstantTransitions.length; i < n; i++) {
+                historicTransitions.add(savingsInstantTransitions[i] * multiplier);
             }
         }
-
         cutoffTransition = historicTransitions.getLast();
 
-        final ZoneOffsetTransitionRule[] lastRules = (ZoneOffsetTransitionRule[]) Unsafe.getUnsafe().getObject(rules, LAST_RULES);
+        final ZoneOffsetTransitionRule[] lastRules = (ZoneOffsetTransitionRule[]) Unsafe.getUnsafe().getObject(rules, LAST_RULES_OFFSET);
         this.rules = new TransitionRule[lastRules.length];
         for (int i = 0, n = lastRules.length; i < n; i++) {
             final ZoneOffsetTransitionRule zr = lastRules[i];
@@ -85,7 +89,7 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
                     timeDef = TransitionRule.WALL;
                     break;
             }
-            TransitionRule tr = new TransitionRule(
+            final TransitionRule tr = new TransitionRule(
                     zr.getOffsetBefore().getTotalSeconds(),
                     zr.getOffsetAfter().getTotalSeconds(),
                     zr.getStandardOffset().getTotalSeconds(),
@@ -100,16 +104,43 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
             );
             this.rules[i] = tr;
         }
-
         this.ruleCount = lastRules.length;
 
-        ZoneOffset[] wallOffsets = (ZoneOffset[]) Unsafe.getUnsafe().getObject(rules, WALL_OFFSETS);
+        final ZoneOffset[] wallOffsets = (ZoneOffset[]) Unsafe.getUnsafe().getObject(rules, WALL_OFFSETS_OFFSET);
         this.wallOffsets = new int[wallOffsets.length];
         for (int i = 0, n = wallOffsets.length; i < n; i++) {
             this.wallOffsets[i] = wallOffsets[i].getTotalSeconds();
         }
         this.firstWall = this.wallOffsets[0] * multiplier;
         this.lastWall = this.wallOffsets[wallOffsets.length - 1] * multiplier;
+
+        final LocalDateTime[] savingsLocalTransitions = (LocalDateTime[]) Unsafe.getUnsafe().getObject(rules, SAVING_LOCAL_TRANSITIONS_OFFSET);
+        for (int i = 0, n = savingsLocalTransitions.length; i < n; i++) {
+            localHistoricTransitions.add(savingsLocalTransitions[i].toInstant(ZoneOffset.UTC).getEpochSecond() * multiplier);
+        }
+        localCutoffTransition = localHistoricTransitions.getLast();
+    }
+
+    @Override
+    public long getLocalOffset(long localEpoch) {
+        final int y = getYear(localEpoch);
+        return getLocalOffset(localEpoch, y);
+    }
+
+    @Override
+    public long getLocalOffset(long localEpoch, int year) {
+        if (standardOffset != Long.MIN_VALUE) {
+            return standardOffset;
+        }
+
+        if (ruleCount > 0 && localEpoch > localCutoffTransition) {
+            return localOffsetFromRules(localEpoch, year);
+        }
+
+        if (localEpoch > localCutoffTransition) {
+            return lastWall;
+        }
+        return localOffsetFromHistory(localEpoch);
     }
 
     @Override
@@ -208,16 +239,17 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
                     break;
             }
 
-            // go back to epoch
-            timestamp -= offsetBefore * multiplier;
-
-            transitions[i] = new Transition(zr.offsetBefore * multiplier, zr.offsetAfter * multiplier, timestamp);
+            transitions[i] = new Transition(
+                    zr.offsetBefore * multiplier,
+                    zr.offsetAfter * multiplier,
+                    timestamp - offsetBefore * multiplier // go back to epoch
+            );
         }
         return transitions;
     }
 
-    private long dstFromHistory(long epoch) {
-        int index = historicTransitions.binarySearch(epoch, Vect.BIN_SEARCH_SCAN_UP);
+    private long dstFromHistory(long utcEpoch) {
+        int index = historicTransitions.binarySearch(utcEpoch, Vect.BIN_SEARCH_SCAN_UP);
         if (index == -1) {
             return Long.MAX_VALUE;
         }
@@ -228,10 +260,10 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
         return historicTransitions.getQuick(index + 1);
     }
 
-    private long dstFromRules(long epoch, int year) {
+    private long dstFromRules(long utcEpoch, int year) {
         for (int i = 0; i < ruleCount; i++) {
             long date = getDSTFromRule(year, i);
-            if (epoch < date) {
+            if (utcEpoch < date) {
                 return date;
             }
         }
@@ -245,7 +277,7 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
 
     private long getDSTFromRule(int year, int i) {
         final Transition[] transitions = getTransitions(year);
-        return transitions[i].epoch;
+        return transitions[i].transition;
     }
 
     private Transition[] getTransitions(int year) {
@@ -256,8 +288,39 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
         return transitionsCache.computeIfAbsent(year, computeTransitionsRef);
     }
 
-    private long offsetFromHistory(long epoch) {
-        int index = historicTransitions.binarySearch(epoch, Vect.BIN_SEARCH_SCAN_UP);
+    private long localOffsetFromHistory(long localEpoch) {
+        int index = localHistoricTransitions.binarySearch(localEpoch, Vect.BIN_SEARCH_SCAN_UP);
+        if (index == -1) {
+            return firstWall;
+        }
+
+        if (index < 0) {
+            index = -index - 2;
+        }
+
+        // (index + 1) & ~0x1 aligns the index to 2, similar to how it's done in Bytes#align2b()
+        return wallOffsets[((index + 1) & ~0x1) / 2] * multiplier;
+    }
+
+    private long localOffsetFromRules(long localEpoch, int year) {
+        final Transition[] transitions = getTransitions(year);
+        long offsetAfterUs = 0;
+        for (int i = 0, n = transitions.length; i < n; i++) {
+            final Transition tr = transitions[i];
+            final long localTransition = tr.transition + tr.offsetBeforeMicros;
+            // in case of gap transition, e.g. +01:00 to +02:00, use the "before" offset
+            // for non-existing local timestamps
+            final long gapDuration = Math.max(tr.offsetAfterMicros - tr.offsetBeforeMicros, 0);
+            if (localEpoch < localTransition || localEpoch < localTransition + gapDuration) {
+                return tr.offsetBeforeMicros;
+            }
+            offsetAfterUs = tr.offsetAfterMicros;
+        }
+        return offsetAfterUs;
+    }
+
+    private long offsetFromHistory(long utcEpoch) {
+        int index = historicTransitions.binarySearch(utcEpoch, Vect.BIN_SEARCH_SCAN_UP);
         if (index == -1) {
             return firstWall;
         }
@@ -268,12 +331,12 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
         return wallOffsets[index + 1] * multiplier;
     }
 
-    private long offsetFromRules(long epoch, int year) {
+    private long offsetFromRules(long utcEpoch, int year) {
         final Transition[] transitions = getTransitions(year);
         long offsetAfterUs = 0;
         for (int i = 0, n = transitions.length; i < n; i++) {
             final Transition tr = transitions[i];
-            if (epoch < tr.epoch) {
+            if (utcEpoch < tr.transition) {
                 return tr.offsetBeforeMicros;
             }
             offsetAfterUs = tr.offsetAfterMicros;

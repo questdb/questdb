@@ -32,6 +32,16 @@ public class FixedTimeZoneRule implements TimeZoneRules {
     }
 
     @Override
+    public long getLocalOffset(long localEpoch) {
+        return offset;
+    }
+
+    @Override
+    public long getLocalOffset(long localEpoch, int year) {
+        return offset;
+    }
+
+    @Override
     public long getNextDST(long utcEpoch, int year) {
         return Long.MAX_VALUE;
     }

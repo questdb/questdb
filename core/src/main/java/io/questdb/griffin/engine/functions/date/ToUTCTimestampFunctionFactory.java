@@ -128,9 +128,7 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
         @Override
         public long getTimestamp(Record rec) {
             final long timestamp = timestampFunc.getTimestamp(rec);
-            long offset = tzRules.getOffset(timestamp);
-            // getOffset really needs UTC date, not local
-            offset = tzRules.getOffset(timestamp - offset);
+            final long offset = tzRules.getLocalOffset(timestamp);
             return timestamp - offset;
         }
     }
@@ -203,9 +201,7 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
         public long getTimestamp(Record rec) {
             final long timestamp = timestampFunc.getTimestamp(rec);
             if (tzRules != null) {
-                long offset = tzRules.getOffset(timestamp);
-                // getOffset really needs UTC date, not local
-                offset = tzRules.getOffset(timestamp - offset);
+                final long offset = tzRules.getLocalOffset(timestamp);
                 return timestamp - offset;
             }
             return timestamp - tzOffset;

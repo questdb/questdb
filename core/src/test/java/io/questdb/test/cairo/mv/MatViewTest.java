@@ -789,7 +789,7 @@ public class MatViewTest extends AbstractCairoTest {
             updateViewIncrementally(viewName, viewQuery, columns, "s", startTs, step, N, K);
 
             final String expected = "k\ts\tlat\tlon\n" +
-                    "2021-03-28T00:00:00.000000Z\ta\t144.77803379943109\t15.276535618609202\n" +
+                    "2021-03-28T01:00:00.000000Z\ta\t144.77803379943109\t15.276535618609202\n" +
                     "2021-03-28T03:00:00.000000Z\ta\tnull\t127.43011035722469\n" +
                     "2021-03-28T04:00:00.000000Z\ta\t60.30746433578906\t128.42101395467057\n";
 
@@ -868,24 +868,11 @@ public class MatViewTest extends AbstractCairoTest {
             final String columns = " rnd_double(1)*180 lat, rnd_double(1)*180 lon, rnd_symbol('a','b',null) s,";
             updateViewIncrementally(viewName, viewQuery, columns, "s", startTs, step, N, K);
 
-            assertQueryNoLeakCheck(
-                    "k\ts\tlat\tlon\n" +
-                            "2021-03-28T00:00:00.000000Z\ta\t142.30215575416736\t167.4566019970139\n" +
-                            "2021-03-28T00:00:00.000000Z\ta\t33.45558404694713\t128.42101395467057\n",
-                    outSelect(out, viewQuery),
-                    null,
-                    true,
-                    true
-            );
-            // mat view has one row less due to deduplication
-            assertQueryNoLeakCheck(
-                    "k\ts\tlat\tlon\n" +
-                            "2021-03-28T00:00:00.000000Z\ta\t33.45558404694713\t128.42101395467057\n",
-                    outSelect(out, viewName),
-                    null,
-                    true,
-                    true
-            );
+            final String expected = "k\ts\tlat\tlon\n" +
+                    "2021-03-28T00:00:00.000000Z\ta\t142.30215575416736\t167.4566019970139\n" +
+                    "2021-03-28T01:00:00.000000Z\ta\t33.45558404694713\t128.42101395467057\n";
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, true, true);
+            assertQueryNoLeakCheck(expected, outSelect(out, viewName), null, true, true);
         });
     }
 
@@ -923,9 +910,9 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final String viewName = "x_view";
             final String out = "select to_timezone(k, 'Europe/Berlin'), k, s, lat, lon";
-            final String viewQuery = "select k, s, first(lat) lat, last(k) lon " + //TODO(eugene): last(k) or last(lon) ?
+            final String viewQuery = "select k, s, first(lat) lat, last(k) lon " + // TODO(eugene): last(k) or last(lon) ?
                     "from x " +
-                    "where s in ('a') and k between '2021-03-27 21:00' and  '2021-03-28 04:00'" +
+                    "where s in ('a') and k between '2021-03-27 21:00' and '2021-03-28 04:00' " +
                     "sample by 1h align to calendar time zone 'Europe/Berlin' with offset '00:15'";
 
             final long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-26T20:30:00.000000Z");
@@ -941,8 +928,8 @@ public class MatViewTest extends AbstractCairoTest {
                             "2021-03-27T22:15:00.000000Z\t2021-03-27T21:15:00.000000Z\ta\t179.5841357536068\t2021-03-27T21:51:00.000000Z\n" +
                             "2021-03-27T23:15:00.000000Z\t2021-03-27T22:15:00.000000Z\ta\t77.68770182183965\t2021-03-27T22:56:00.000000Z\n" +
                             "2021-03-28T00:15:00.000000Z\t2021-03-27T23:15:00.000000Z\ta\tnull\t2021-03-27T23:48:00.000000Z\n" +
-                            "2021-03-28T00:15:00.000000Z\t2021-03-27T23:15:00.000000Z\ta\t3.6703591550328163\t2021-03-28T00:27:00.000000Z\n" +
-                            "2021-03-28T01:15:00.000000Z\t2021-03-28T00:15:00.000000Z\ta\t94.70222369149758\t2021-03-28T01:06:00.000000Z\n" +
+                            "2021-03-28T01:15:00.000000Z\t2021-03-28T00:15:00.000000Z\ta\t3.6703591550328163\t2021-03-28T00:27:00.000000Z\n" +
+                            "2021-03-28T03:15:00.000000Z\t2021-03-28T01:15:00.000000Z\ta\t94.70222369149758\t2021-03-28T01:06:00.000000Z\n" +
                             "2021-03-28T03:15:00.000000Z\t2021-03-28T01:15:00.000000Z\ta\tnull\t2021-03-28T02:11:00.000000Z\n" +
                             "2021-03-28T04:15:00.000000Z\t2021-03-28T02:15:00.000000Z\ta\tnull\t2021-03-28T02:37:00.000000Z\n" +
                             "2021-03-28T05:15:00.000000Z\t2021-03-28T03:15:00.000000Z\ta\t38.20430552091481\t2021-03-28T03:16:00.000000Z\n",
@@ -951,14 +938,17 @@ public class MatViewTest extends AbstractCairoTest {
                     true,
                     true
             );
-            // mat view has one row less due to the deduplication
+            // Due to the '00:15' offset, some timestamps get mapped to bucket with "non-existing" local time
+            // (the clock shifted one hour ahead). When the bucket is later converted back to UTC time, it's
+            // mapped to an "existing" previous UTC hour.
+            // As a result, mat view has one row less due to the deduplication.
             assertQueryNoLeakCheck(
                     "to_timezone\tk\ts\tlat\tlon\n" +
                             "2021-03-27T21:15:00.000000Z\t2021-03-27T20:15:00.000000Z\ta\t132.09083798490755\t2021-03-27T21:12:00.000000Z\n" +
                             "2021-03-27T22:15:00.000000Z\t2021-03-27T21:15:00.000000Z\ta\t179.5841357536068\t2021-03-27T21:51:00.000000Z\n" +
                             "2021-03-27T23:15:00.000000Z\t2021-03-27T22:15:00.000000Z\ta\t77.68770182183965\t2021-03-27T22:56:00.000000Z\n" +
-                            "2021-03-28T00:15:00.000000Z\t2021-03-27T23:15:00.000000Z\ta\t3.6703591550328163\t2021-03-28T00:27:00.000000Z\n" +
-                            "2021-03-28T01:15:00.000000Z\t2021-03-28T00:15:00.000000Z\ta\t94.70222369149758\t2021-03-28T01:06:00.000000Z\n" +
+                            "2021-03-28T00:15:00.000000Z\t2021-03-27T23:15:00.000000Z\ta\tnull\t2021-03-27T23:48:00.000000Z\n" +
+                            "2021-03-28T01:15:00.000000Z\t2021-03-28T00:15:00.000000Z\ta\t3.6703591550328163\t2021-03-28T00:27:00.000000Z\n" +
                             "2021-03-28T03:15:00.000000Z\t2021-03-28T01:15:00.000000Z\ta\tnull\t2021-03-28T02:11:00.000000Z\n" +
                             "2021-03-28T04:15:00.000000Z\t2021-03-28T02:15:00.000000Z\ta\tnull\t2021-03-28T02:37:00.000000Z\n" +
                             "2021-03-28T05:15:00.000000Z\t2021-03-28T03:15:00.000000Z\ta\t38.20430552091481\t2021-03-28T03:16:00.000000Z\n",
@@ -1667,7 +1657,7 @@ public class MatViewTest extends AbstractCairoTest {
             updateViewIncrementally(viewQuery, startTs, step, N, K);
 
             final String expected = "k\tc\n" +
-                    "2021-03-28T00:00:00.000000Z\t8\n" +
+                    "2021-03-28T01:00:00.000000Z\t8\n" +
                     "2021-03-28T03:00:00.000000Z\t10\n" +
                     "2021-03-28T04:00:00.000000Z\t10\n" +
                     "2021-03-28T05:00:00.000000Z\t10\n" +
