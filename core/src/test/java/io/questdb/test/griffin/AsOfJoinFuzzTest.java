@@ -39,8 +39,8 @@ import java.util.Collection;
 
 @RunWith(Parameterized.class)
 public class AsOfJoinFuzzTest extends AbstractCairoTest {
+    private final boolean exerciseIntervals;
     private final JoinType joinType;
-    private boolean exerciseIntervals;
 
     public AsOfJoinFuzzTest(JoinType joinType, boolean exerciseIntervals) {
         this.joinType = joinType;
