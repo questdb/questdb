@@ -140,22 +140,27 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
                 if (lo < mid) {
                     lo = mid;
                 } else {
+                    // special case: when lo == mid, we're down to two elements
+                    // check if the higher element exceeds the master timestamp
                     slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, hi));
                     if (slaveRecA.getTimestamp(slaveTimestampIndex) > masterTimestamp) {
-                        return lo;
+                        return lo; // hi's timestamp exceeds master, so return lo
                     }
-                    return hi;
+                    return hi; // Both elements are <= master, return the higher one
                 }
             } else {
                 hi = mid;
             }
         }
 
+        assert lo == hi;
+        // loop exited with lo == hi, verify the final candidate
         slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, lo));
         if (slaveRecA.getTimestamp(slaveTimestampIndex) > masterTimestamp) {
+            // current element exceeds master, return previous index
             return lo - 1;
         }
-        return lo;
+        return lo; // current element is <= master, return it
     }
 
     /**
