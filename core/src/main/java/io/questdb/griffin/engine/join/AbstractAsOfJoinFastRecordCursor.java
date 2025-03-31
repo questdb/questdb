@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.engine.table.SelectedRecord;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
 
@@ -49,7 +48,6 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
     protected long slaveFrameRow = Long.MIN_VALUE;
     protected Record slaveRecA; // used for internal navigation
     protected Record slaveRecB; // used inside the user-facing OuterJoinRecord
-    protected PageFrameMemoryRecord unwrappedSlaveRecB;
 
     public AbstractAsOfJoinFastRecordCursor(
             int columnSplit,
@@ -103,11 +101,6 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         masterRecord = masterCursor.getRecord();
         slaveRecA = slaveCursor.getRecord();
         slaveRecB = slaveCursor.getRecordB();
-        if (slaveRecB instanceof SelectedRecord) {
-            unwrappedSlaveRecB = (PageFrameMemoryRecord) ((SelectedRecord) slaveRecB).getBaseRecord();
-        } else {
-            unwrappedSlaveRecB = (PageFrameMemoryRecord) slaveRecB;
-        }
         record.of(masterRecord, slaveRecB);
         lookaheadTimestamp = Long.MIN_VALUE;
         slaveFrameRow = Long.MIN_VALUE;

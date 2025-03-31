@@ -189,14 +189,15 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
 
             // make sure the cursor points to the right frame - since `nextSlave()` might have moved it under our feet
             TimeFrame timeFrame = slaveCursor.getTimeFrame();
-            int slaveFrameIndex = unwrappedSlaveRecB.getFrameIndex();
+            long rowId = slaveRecB.getRowId();
+            int slaveFrameIndex = Rows.toPartitionIndex(rowId);
             origSlaveFrameIndex = slaveFrameIndex;
             int cursorFrameIndex = timeFrame.getFrameIndex();
             slaveCursor.jumpTo(slaveFrameIndex);
             slaveCursor.open();
 
             long rowLo = timeFrame.getRowLo();
-            long keyedRowId = unwrappedSlaveRecB.getRowIndex();
+            long keyedRowId = Rows.toLocalRowID(rowId);
             origSlaveRowId = keyedRowId;
             int keyedFrameIndex = timeFrame.getFrameIndex();
             for (; ; ) {
