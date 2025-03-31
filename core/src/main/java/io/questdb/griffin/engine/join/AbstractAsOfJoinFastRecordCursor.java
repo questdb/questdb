@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.engine.table.SelectedRecord;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
 
@@ -48,6 +49,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
     protected long slaveFrameRow = Long.MIN_VALUE;
     protected Record slaveRecA; // used for internal navigation
     protected Record slaveRecB; // used inside the user-facing OuterJoinRecord
+    protected PageFrameMemoryRecord unwrappedSlaveRecB;
 
     public AbstractAsOfJoinFastRecordCursor(
             int columnSplit,
@@ -101,6 +103,11 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         masterRecord = masterCursor.getRecord();
         slaveRecA = slaveCursor.getRecord();
         slaveRecB = slaveCursor.getRecordB();
+        if (slaveRecB instanceof SelectedRecord) {
+            unwrappedSlaveRecB = (PageFrameMemoryRecord) ((SelectedRecord) slaveRecB).getBaseRecord();
+        } else {
+            unwrappedSlaveRecB = (PageFrameMemoryRecord) slaveRecB;
+        }
         record.of(masterRecord, slaveRecB);
         lookaheadTimestamp = Long.MIN_VALUE;
         slaveFrameRow = Long.MIN_VALUE;
@@ -222,14 +229,17 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
 
     protected boolean openSlaveFrame(TimeFrame frame, long masterTimestamp) {
         while (true) {
+
+            // Case 1: Process a frame that was previously marked for opening
             if (isSlaveOpenPending) {
                 if (slaveCursor.open() < 1) {
-                    // Empty frame, scan further.
+                    // Empty frame, scan further -> case 2
                     isSlaveOpenPending = false;
                     continue;
                 }
                 // We're lucky! The frame is non-empty.
                 isSlaveOpenPending = false;
+
                 if (isSlaveForwardScan) {
                     if (masterTimestamp < frame.getTimestampLo()) {
                         // The frame is after the master timestamp, we need the previous frame.
@@ -248,6 +258,9 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
                 return true;
             }
 
+            // Case 2: Scan for a frame to open based on scan direction.
+            // This uses only estimated timestamp boundaries since we don't know
+            // the precise boundaries until we open the frame.
             if (isSlaveForwardScan) {
                 if (!slaveCursor.next() || masterTimestamp < frame.getTimestampEstimateLo()) {
                     // We've reached the last frame or a frame after the searched timestamp.
