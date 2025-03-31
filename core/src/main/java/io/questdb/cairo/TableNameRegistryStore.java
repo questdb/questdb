@@ -356,7 +356,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                             tableId = Math.abs(tableId);
                             tableName = TableUtils.readTableName(path.of(configuration.getDbRoot()).concat(dirNameSink), plimit, tableNameRoMemory, ff);
                         } catch (CairoException e) {
-                            if (e.errnoReadPathDoesNotExist()) {
+                            if (e.errnoFileCannotRead()) {
                                 // table is being removed.
                                 continue;
                             } else {
@@ -429,7 +429,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                 }
             } catch (CairoException e) {
                 if (!isLocked()) {
-                    if (e.errnoReadPathDoesNotExist()) {
+                    if (e.errnoFileCannotRead()) {
                         if (lastFileVersion == 0) {
                             // This is RO mode and file and tables.d.0 does not exist.
                             return false;

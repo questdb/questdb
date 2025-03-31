@@ -415,8 +415,8 @@ public class FilesFacadeImpl implements FilesFacade {
     public boolean removeQuiet(LPSZ name) {
         boolean ok = Files.remove(name);
         if (!ok) {
-            int errno = errno();
-            if (errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST || (Os.isWindows() && errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN)) {
+            final int errno = errno();
+            if (Files.errnoFileDoesNotExist(errno)) {
                 return true;
             }
             if (Os.isWindows() && errno == CairoException.ERRNO_ACCESS_DENIED_WIN) {

@@ -102,7 +102,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
                             notificationQueueIsFull = !engine.notifyWalTxnCommitted(tableToken);
                         }
                     } catch (CairoException e) {
-                        if (!e.errnoReadPathDoesNotExist()) {
+                        if (!e.errnoFileCannotRead()) {
                             throw e;
                         } // race, table is dropped, ApplyWal2TableJob is already deleting the files
                     }

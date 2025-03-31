@@ -117,6 +117,12 @@ public interface MetadataService {
             SecurityContext securityContext
     );
 
+    void changeSymbolCapacity(
+            CharSequence columnName,
+            int symbolCapacity,
+            SecurityContext securityContext
+    );
+
     boolean convertPartitionNativeToParquet(long partitionTimestamp);
 
     boolean convertPartitionParquetToNative(long partitionTimestamp);
