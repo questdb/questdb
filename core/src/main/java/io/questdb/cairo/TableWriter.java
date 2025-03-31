@@ -3284,7 +3284,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 return;
             } else if (ff.exists(to)) {
                 LOG.info().$("rename destination file exists, assuming previously failed rename attempt [path=").$(to).I$();
-                ff.remove(to);
+                try {
+                    ff.remove(to);
+                } catch (CairoException e) {
+                    if (Os.isWindows() && ff.errno() == CairoException.ERRNO_ACCESS_DENIED_WIN) {
+                        // On Windows it's not possible to delete link if the original file is open.
+                        // Here we assume that it's the exactly what we need, linking the correct from/to paths.
+                        // There is no good way to verify that, but there is no hypothetical scenario found
+                        // when this is false.
+                        return;
+                    } else {
+                        throw e;
+                    }
+                }
                 if (ff.hardLink(from, to) == FILES_RENAME_OK) {
                     LOG.debug().$("renamed [from=").$(from).$(", to=").$(to).I$();
                     return;
@@ -5581,10 +5593,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         linkFile(ff, valueFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
                     }
                 } catch (Throwable e) {
-                    ff.remove(offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                    ff.remove(charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                    ff.remove(keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                    ff.remove(valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    ff.removeQuiet(offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    ff.removeQuiet(charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    ff.removeQuiet(keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    ff.removeQuiet(valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
                     throw e;
                 }
                 purgingOperator.add(columnIndex, columnName, columnType, isIndexed, defaultColumnNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1L);
