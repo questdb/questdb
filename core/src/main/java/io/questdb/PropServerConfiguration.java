@@ -913,10 +913,12 @@ public class PropServerConfiguration implements ServerConfiguration {
                 // deprecated
                 String httpMinBindTo = getString(properties, env, PropertyKey.HTTP_MIN_BIND_TO, "0.0.0.0:9003");
 
-                parseBindTo(properties, env, PropertyKey.HTTP_MIN_NET_BIND_TO, httpMinBindTo, (a, p) -> {
-                    httpMinBindIPv4Address = a;
-                    httpMinBindPort = p;
-                });
+                parseBindTo(
+                        properties, env, PropertyKey.HTTP_MIN_NET_BIND_TO, httpMinBindTo, (a, p) -> {
+                            httpMinBindIPv4Address = a;
+                            httpMinBindPort = p;
+                        }
+                );
 
                 this.httpMinNetConnectionLimit = getInt(properties, env, PropertyKey.HTTP_MIN_NET_CONNECTION_LIMIT, 64);
 
@@ -1169,10 +1171,12 @@ public class PropServerConfiguration implements ServerConfiguration {
                     throw new ServerConfigurationException(PropertyKey.HTTP_JSON_QUERY_DOUBLE_SCALE.getPropertyPath() + " cannot be greater than " + Numbers.MAX_DOUBLE_SCALE);
                 }
                 String httpBindTo = getString(properties, env, PropertyKey.HTTP_BIND_TO, "0.0.0.0:9000");
-                parseBindTo(properties, env, PropertyKey.HTTP_NET_BIND_TO, httpBindTo, (a, p) -> {
-                    httpNetBindIPv4Address = a;
-                    httpNetBindPort = p;
-                });
+                parseBindTo(
+                        properties, env, PropertyKey.HTTP_NET_BIND_TO, httpBindTo, (a, p) -> {
+                            httpNetBindIPv4Address = a;
+                            httpNetBindPort = p;
+                        }
+                );
                 // load mime types
                 path.of(new File(new File(installRoot, CONFIG_DIRECTORY), "mime.types").getAbsolutePath());
                 this.mimeTypesCache = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path.$());
@@ -1200,10 +1204,12 @@ public class PropServerConfiguration implements ServerConfiguration {
                 pgNetConnectionLimit = getInt(properties, env, PropertyKey.PG_NET_ACTIVE_CONNECTION_LIMIT, 64);
                 pgNetConnectionLimit = getInt(properties, env, PropertyKey.PG_NET_CONNECTION_LIMIT, pgNetConnectionLimit);
                 pgNetConnectionHint = getBoolean(properties, env, PropertyKey.PG_NET_CONNECTION_HINT, false);
-                parseBindTo(properties, env, PropertyKey.PG_NET_BIND_TO, "0.0.0.0:8812", (a, p) -> {
-                    pgNetBindIPv4Address = a;
-                    pgNetBindPort = p;
-                });
+                parseBindTo(
+                        properties, env, PropertyKey.PG_NET_BIND_TO, "0.0.0.0:8812", (a, p) -> {
+                            pgNetBindIPv4Address = a;
+                            pgNetBindPort = p;
+                        }
+                );
 
                 // deprecated
                 this.pgNetIdleConnectionTimeout = getMillis(properties, env, PropertyKey.PG_NET_IDLE_TIMEOUT, 300_000);
@@ -1284,6 +1290,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.fileOperationRetryCount = getInt(properties, env, PropertyKey.CAIRO_FILE_OPERATION_RETRY_COUNT, 30);
             this.idleCheckInterval = getMillis(properties, env, PropertyKey.CAIRO_IDLE_CHECK_INTERVAL, 5 * 60 * 1000L);
             this.idGenerateBatchStep = getInt(properties, env, PropertyKey.CAIRO_ID_GENERATE_STEP, 512);
+            if (this.idGenerateBatchStep < 1) {
+                throw new ServerConfigurationException("cairo.id.generator.batch.step must be greater than 0");
+            }
             this.inactiveReaderMaxOpenPartitions = getInt(properties, env, PropertyKey.CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS, 10000);
             this.inactiveReaderTTL = getMillis(properties, env, PropertyKey.CAIRO_INACTIVE_READER_TTL, 120_000);
             this.inactiveWriterTTL = getMillis(properties, env, PropertyKey.CAIRO_INACTIVE_WRITER_TTL, 600_000);
@@ -1485,10 +1494,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.o3PartitionSplitMinSize = getLongSize(properties, env, PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 50 * Numbers.SIZE_1MB);
             this.o3PartitionOverwriteControlEnabled = getBoolean(properties, env, PropertyKey.CAIRO_O3_PARTITION_OVERWRITE_CONTROL_ENABLED, false);
 
-            parseBindTo(properties, env, PropertyKey.LINE_UDP_BIND_TO, "0.0.0.0:9009", (a, p) -> {
-                this.lineUdpBindIPV4Address = a;
-                this.lineUdpPort = p;
-            });
+            parseBindTo(
+                    properties, env, PropertyKey.LINE_UDP_BIND_TO, "0.0.0.0:9009", (a, p) -> {
+                        this.lineUdpBindIPV4Address = a;
+                        this.lineUdpPort = p;
+                    }
+            );
 
             this.lineUdpGroupIPv4Address = getIPv4Address(properties, env, PropertyKey.LINE_UDP_JOIN, "232.1.2.3");
             this.lineUdpCommitRate = getInt(properties, env, PropertyKey.LINE_UDP_COMMIT_RATE, 1_000_000);
@@ -1516,10 +1527,12 @@ public class PropServerConfiguration implements ServerConfiguration {
                 lineTcpNetConnectionLimit = getInt(properties, env, PropertyKey.LINE_TCP_NET_ACTIVE_CONNECTION_LIMIT, 256);
                 lineTcpNetConnectionLimit = getInt(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT, lineTcpNetConnectionLimit);
                 lineTcpNetConnectionHint = getBoolean(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_HINT, false);
-                parseBindTo(properties, env, PropertyKey.LINE_TCP_NET_BIND_TO, "0.0.0.0:9009", (a, p) -> {
-                    lineTcpNetBindIPv4Address = a;
-                    lineTcpNetBindPort = p;
-                });
+                parseBindTo(
+                        properties, env, PropertyKey.LINE_TCP_NET_BIND_TO, "0.0.0.0:9009", (a, p) -> {
+                            lineTcpNetBindIPv4Address = a;
+                            lineTcpNetBindPort = p;
+                        }
+                );
 
                 // deprecated
                 this.lineTcpNetConnectionTimeout = getMillis(properties, env, PropertyKey.LINE_TCP_NET_IDLE_TIMEOUT, 0);
