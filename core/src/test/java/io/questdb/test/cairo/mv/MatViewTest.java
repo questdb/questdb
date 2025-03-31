@@ -1893,6 +1893,8 @@ public class MatViewTest extends AbstractCairoTest {
             execute("cancel query " + queryId);
             stopped.await();
             Assert.assertFalse(refreshed.get());
+
+            drainWalQueue();
             assertQueryNoLeakCheck(
                     "view_name\tview_status\n" +
                             "price_1h\tinvalid\n",

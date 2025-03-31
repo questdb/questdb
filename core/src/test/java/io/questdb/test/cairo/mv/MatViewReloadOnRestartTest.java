@@ -354,6 +354,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
                     execute(main1, "truncate table base_price");
                     drainWalQueue(main1.getEngine());
                     refreshJob.run(0);
+                    drainWalQueue(main1.getEngine());
                     assertSql(
                             main1,
                             "view_name\tview_status\tinvalidation_reason\n" +
@@ -441,6 +442,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
             try (final TestServerMain main2 = startMainPortsDisabled()) {
                 try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine())) {
                     refreshJob.run(0);
+                    drainWalQueue(main2.getEngine());
                 }
 
                 // The mat view should be loaded, but left in invalid state.
@@ -498,6 +500,7 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
             try (final TestServerMain main2 = startMainPortsDisabled()) {
                 try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, main2.getEngine())) {
                     refreshJob.run(0);
+                    drainWalQueue(main2.getEngine());
                 }
 
                 // The mat view should be loaded, but marked as invalid after refresh.

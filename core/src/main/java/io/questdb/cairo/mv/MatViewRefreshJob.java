@@ -258,7 +258,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
             }
 
-            walWriter.commit();
+            walWriter.commitWithExtra(baseTableTxn, refreshTimestamp);
             state.refreshSuccess(factory, copier, walWriter.getMetadata().getMetadataVersion(), refreshTimestamp, refreshTriggeredTimestamp, baseTableTxn);
         } catch (Throwable th) {
             LOG.error().$("error refreshing materialized view [view=").$(viewDef.getMatViewToken()).$(", error=").$(th).I$();
@@ -293,7 +293,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
                 // Mark the view invalid only if the operation is forced or the view was ever refreshed.
                 if (force || state.getLastRefreshBaseTxn() != -1) {
-                    setInvalidState(state, invalidationReason);
+                    setInvalidState(state, walWriter, invalidationReason);
                 }
             } finally {
                 state.unlock();
@@ -423,6 +423,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return refreshed;
     }
 
+    private void refreshFailState(MatViewState state, long refreshTimestamp, String errorMessage) {
+        state.refreshFail(refreshTimestamp, errorMessage);
+        // Invalidate dependent views recursively.
+        enqueueInvalidateDependentViews(state.getViewDefinition().getMatViewToken(), "base materialized view refresh failed");
+    }
+
     private void refreshFailState(MatViewState state, WalWriter walWriter, long refreshTimestamp, String errorMessage) {
         state.refreshFail(refreshTimestamp, errorMessage);
         walWriter.invalidate(state.getLastRefreshBaseTxn(), state.getLastRefreshTimestamp(), true, errorMessage);
@@ -482,8 +488,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     walWriter.truncateSoft();
                     final MatViewDefinition viewDef = state.getViewDefinition();
                     insertAsSelect(state, viewDef, walWriter, toBaseTxn, refreshTriggeredTimestamp);
-                    resetInvalidState(state);
                     writeLastRefreshBaseTableTxn(state, walWriter, toBaseTxn);
+                    resetInvalidState(state, walWriter);
                 } finally {
                     refreshExecutionContext.clearReader();
                     engine.attachReader(baseTableReader);
@@ -588,16 +594,18 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return false;
     }
 
-    private void resetInvalidState(MatViewState state) {
+    private void resetInvalidState(MatViewState state, WalWriter walWriter) {
         state.markAsValid();
+        walWriter.invalidate(state.getLastRefreshBaseTxn(), state.getLastRefreshTimestamp(), false, null);
     }
 
-    private void setInvalidState(MatViewState state, String invalidationReason) {
+    private void setInvalidState(MatViewState state, WalWriter walWriter, String invalidationReason) {
         state.markAsInvalid(invalidationReason);
+        walWriter.invalidate(state.getLastRefreshBaseTxn(), state.getLastRefreshTimestamp(), true, invalidationReason);
     }
 
     private void writeLastRefreshBaseTableTxn(MatViewState state, WalWriter walWriter, long txn) {
-        walWriter.commitWithExtra(txn, state.getLastRefreshTimestamp());
+//        walWriter.commitWithExtra(txn, state.getLastRefreshTimestamp());
         state.writeLastRefreshBaseTableTxn(txn);
     }
 }
