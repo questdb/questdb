@@ -36,7 +36,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -192,7 +191,7 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
         telemetryFacade.store(MAT_VIEW_DROP, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, null, 0);
     }
 
-    public void markAsInvalid(@NotNull BlockFileWriter blockFileWriter, @NotNull Path dbRoot, @Nullable String invalidationReason) {
+    public void markAsInvalid(@Nullable String invalidationReason) {
         final boolean wasValid = !invalid;
         final boolean invalidationReasonChanged = Chars.compare(this.invalidationReason, invalidationReason) != 0;
         if (invalidationReasonChanged) {
@@ -200,7 +199,6 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
         }
         this.invalid = true;
         if (wasValid || invalidationReasonChanged) {
-            updateInvalidationStatus(blockFileWriter, dbRoot);
             telemetryFacade.store(MAT_VIEW_INVALIDATE, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, invalidationReason, 0);
         }
     }
@@ -209,20 +207,16 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
         pendingInvalidation = true;
     }
 
-    public void markAsValid(@NotNull BlockFileWriter blockFileWriter, @NotNull Path dbRoot) {
-        boolean wasInvalid = invalid;
+    public void markAsValid() {
         this.invalid = false;
         this.pendingInvalidation = false;
         this.invalidationReason = null;
-        if (wasInvalid) {
-            updateInvalidationStatus(blockFileWriter, dbRoot);
-        }
     }
 
-    public void refreshFail(@NotNull BlockFileWriter blockFileWriter, @NotNull Path dbRoot, long refreshTimestamp, String errorMessage) {
+    public void refreshFail(long refreshTimestamp, String errorMessage) {
         assert latch.get();
         this.lastRefreshTimestamp = refreshTimestamp;
-        markAsInvalid(blockFileWriter, dbRoot, errorMessage);
+        markAsInvalid(errorMessage);
         telemetryFacade.store(MAT_VIEW_REFRESH_FAIL, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, errorMessage, 0);
     }
 
@@ -273,26 +267,9 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
         }
     }
 
-    public void writeLastRefreshBaseTableTxn(@NotNull BlockFileWriter blockFileWriter, @NotNull Path dbRoot, long txn) {
+    public void writeLastRefreshBaseTableTxn(long txn) {
         if (lastRefreshBaseTxn != txn) {
             lastRefreshBaseTxn = txn;
-            dbRoot
-                    .concat(getViewDefinition().getMatViewToken())
-                    .concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
-            try (blockFileWriter) {
-                blockFileWriter.of(dbRoot.$());
-                MatViewState.append(this, blockFileWriter);
-            }
-        }
-    }
-
-    private void updateInvalidationStatus(@NotNull BlockFileWriter blockFileWriter, @NotNull Path dbRoot) {
-        dbRoot
-                .concat(getViewDefinition().getMatViewToken())
-                .concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
-        try (blockFileWriter) {
-            blockFileWriter.of(dbRoot.$());
-            MatViewState.append(this, blockFileWriter);
         }
     }
 }
