@@ -6921,7 +6921,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Sort light\n" +
                             "      keys: [column desc, a0]\n" +
                             "        VirtualRecord\n" +
-                            "          functions: [a0,sum,to_utc(ts,-1),10*a0]\n" +
+                            "          functions: [a0,sum,to_utc(ts),10*a0]\n" +
                             "            Async Group By workers: 1\n" +
                             "              keys: [a0,ts]\n" +
                             "              values: [sum(b)]\n" +
@@ -6937,7 +6937,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Sort light\n" +
                             "      keys: [column desc, a0, berlin_ts desc]\n" +
                             "        VirtualRecord\n" +
-                            "          functions: [to_utc(ts,-1),berlin_ts,a0,sum,10*a0]\n" +
+                            "          functions: [to_utc(ts),berlin_ts,a0,sum,10*a0]\n" +
                             "            Async Group By workers: 1\n" +
                             "              keys: [ts,berlin_ts,a0]\n" +
                             "              values: [sum(b)]\n" +
@@ -7349,7 +7349,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Sort light\n" +
                             "      keys: [column desc, a0]\n" +
                             "        VirtualRecord\n" +
-                            "          functions: [a0,sum,to_utc(ts,-1),10*a0]\n" +
+                            "          functions: [a0,sum,to_utc(ts),10*a0]\n" +
                             "            GroupBy vectorized: false\n" +
                             "              keys: [a0,ts]\n" +
                             "              values: [sum(b)]\n" +
@@ -7369,7 +7369,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Sort light\n" +
                             "      keys: [column desc, a0, berlin_ts desc]\n" +
                             "        VirtualRecord\n" +
-                            "          functions: [to_utc(ts,-1),berlin_ts,a0,sum,10*a0]\n" +
+                            "          functions: [to_utc(ts),berlin_ts,a0,sum,10*a0]\n" +
                             "            GroupBy vectorized: false\n" +
                             "              keys: [ts,berlin_ts,a0]\n" +
                             "              values: [sum(b)]\n" +
@@ -7675,7 +7675,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Sort light\n" +
                             "      keys: [column desc, a0]\n" +
                             "        VirtualRecord\n" +
-                            "          functions: [a0,sum,to_utc(ts,-1),10*a0]\n" +
+                            "          functions: [a0,sum,to_utc(ts),10*a0]\n" +
                             "            Async Group By workers: 1\n" +
                             "              keys: [a0,ts]\n" +
                             "              values: [sum(b)]\n" +
@@ -7691,9 +7691,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Sort light\n" +
                             "      keys: [column desc, a0, berlin_ts desc]\n" +
                             "        VirtualRecord\n" +
-                            "          functions: [ts,to_utc(ts,-1),a0,sum,10*a0]\n" +
+                            "          functions: [ts,to_utc(ts),a0,sum,10*a0]\n" +
                             "            VirtualRecord\n" +
-                            "              functions: [to_utc(ts,-1),a0,sum]\n" +
+                            "              functions: [to_utc(ts),a0,sum]\n" +
                             "                Async Group By workers: 1\n" +
                             "                  keys: [ts,a0]\n" +
                             "                  values: [sum(b)]\n" +
@@ -7715,7 +7715,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Radix sort light\n" +
                             "  keys: [berlin_ts desc]\n" +
                             "    VirtualRecord\n" +
-                            "      functions: [a,sum,to_utc(ts,1)]\n" +
+                            "      functions: [a,sum,to_timezone(ts)]\n" +
                             "        Async Group By workers: 1\n" +
                             "          keys: [a,ts]\n" +
                             "          values: [sum(b)]\n" +
@@ -7730,7 +7730,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Radix sort light\n" +
                             "  keys: [berlin_ts]\n" +
                             "    VirtualRecord\n" +
-                            "      functions: [a,sum,to_utc(ts,1)]\n" +
+                            "      functions: [a,sum,to_timezone(ts)]\n" +
                             "        Async Group By workers: 1\n" +
                             "          keys: [a,ts]\n" +
                             "          values: [sum(b)]\n" +
@@ -7745,7 +7745,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Radix sort light\n" +
                             "  keys: [berlin_ts]\n" +
                             "    VirtualRecord\n" +
-                            "      functions: [a,sum,to_utc(ts,1)]\n" +
+                            "      functions: [a,sum,to_timezone(ts)]\n" +
                             "        Async Group By workers: 1\n" +
                             "          keys: [a,ts]\n" +
                             "          values: [sum(b)]\n" +
@@ -7760,7 +7760,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Sort light\n" +
                             "  keys: [berlin_ts desc, a, month_ts]\n" +
                             "    VirtualRecord\n" +
-                            "      functions: [a,timestamp_floor('month',ts),sum,to_utc(ts,1)]\n" +
+                            "      functions: [a,timestamp_floor('month',ts),sum,to_timezone(ts)]\n" +
                             "        Async Group By workers: 1\n" +
                             "          keys: [a,ts]\n" +
                             "          values: [sum(b)]\n" +
