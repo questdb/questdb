@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
@@ -47,6 +48,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.ThreadLocal;
+import io.questdb.std.Transient;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -54,11 +56,13 @@ import io.questdb.std.datetime.millitime.DateFormatCompiler;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
+import static java.util.HexFormat.isHexDigit;
 
 public class SqlUtil {
 
@@ -748,6 +752,14 @@ public class SqlUtil {
         return implicitCastStrVarcharAsTimestamp0(value, ColumnType.VARCHAR);
     }
 
+    public static boolean isNotPlainSelectModel(QueryModel model) {
+        return model.getTableName() != null
+                || model.getGroupBy().size() > 0
+                || model.getJoinModels().size() > 1
+                || model.getLatestByType() != QueryModel.LATEST_BY_NONE
+                || model.getUnionModel() != null;
+    }
+
     public static boolean isParallelismSupported(ObjList<Function> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
             if (!functions.getQuick(i).supportsParallelism()) {
@@ -793,6 +805,84 @@ public class SqlUtil {
             return IntervalUtils.parseFloorPartialTimestamp(value);
         } catch (NumericException e) {
             throw ImplicitCastException.inconvertibleValue(tupleIndex, value, sourceColumnType, targetColumnType);
+        }
+    }
+
+    public static void parseUnicode(CharSequence input, int inputPosition, @Transient StringSink sink) throws CairoException {
+        int n = input.length();
+        for (int i = 0; i < n; i++) {
+            char current = input.charAt(i);
+
+            // Check for potential escape sequences
+            if (current == '\\' && i + 1 < n) {
+                char next = input.charAt(i + 1);
+
+                switch (next) {
+                    // Check for escaped backslash (\\)
+                    case '\\':
+                        sink.put('\\');
+                        i++; // Skip the second backslash
+                        break;
+                    // Check for Unicode escape (\\u)
+                    case 'u':
+                        // Skip the \\u part
+                        i += 2;
+
+                        // We need at least one hex digit
+                        if (i >= input.length()) {
+                            throw CairoException.nonCritical()
+                                    .position(inputPosition + i - 2)
+                                    .put("Incomplete Unicode escape sequence");
+                        }
+
+                        // Find how many hex digits we have (up to 4)
+                        int endPos = Math.min(i + 4, input.length());
+                        int j = i;
+                        while (j < endPos && isHexDigit(input.charAt(j))) {
+                            j++;
+                        }
+
+                        // Make sure we have at least one hex digit
+                        if (j == i) {
+                            throw CairoException.nonCritical()
+                                    .position(inputPosition + i - 2)
+                                    .put("Invalid Unicode escape sequence: not hex digits");
+                        }
+
+                        // Parse the hex digits (might be fewer than 4)
+                        try {
+                            writeUtf16CodePoint(Numbers.parseHexInt(input, i, j), sink);
+                        } catch (NumericException e) {
+                            throw CairoException.nonCritical()
+                                    .position(inputPosition + i - 2)
+                                    .put("Invalid Unicode escape sequence");
+                        }
+
+                        // Adjust index to continue after the hex digits
+                        i = j - 1; // -1 because the loop will increment i
+                        break;
+                    default:
+                        // Any other escaped character (just output both)
+                        sink.put('\\');
+                        sink.put(next);
+                        i++; // Skip the escaped character
+                        break;
+                }
+            } else {
+                // Regular character handling with surrogate pair support
+                // If this is a high surrogate and there's a following low surrogate,
+                // combine them to get the code point
+                if (
+                        Character.isHighSurrogate(current) && i + 1 < n
+                                && Character.isLowSurrogate(input.charAt(i + 1))
+                ) {
+                    writeUtf16CodePoint(Character.toCodePoint(current, input.charAt(i + 1)), sink);
+                    i++; // Skip the low surrogate
+                } else {
+                    // Regular character or isolated surrogate
+                    sink.put(current);
+                }
+            }
         }
     }
 
@@ -846,12 +936,20 @@ public class SqlUtil {
         return Numbers.LONG_NULL;
     }
 
-    public static boolean isNotPlainSelectModel(QueryModel model) {
-        return model.getTableName() != null
-                || model.getGroupBy().size() > 0
-                || model.getJoinModels().size() > 1
-                || model.getLatestByType() != QueryModel.LATEST_BY_NONE
-                || model.getUnionModel() != null;
+    private static void writeUtf16CodePoint(int codePoint, StringSink sink) {
+        if (codePoint < 0x10000) {
+            // BMP character - single char
+            sink.put((char) codePoint);
+        } else if (codePoint <= 0x10FFFF) {
+            // Supplementary character - surrogate pair
+            codePoint -= 0x10000;
+            char highSurrogate = (char) (0xD800 | ((codePoint >> 10) & 0x3FF));
+            char lowSurrogate = (char) (0xDC00 | (codePoint & 0x3FF));
+            sink.put(highSurrogate);
+            sink.put(lowSurrogate);
+        } else {
+            throw new IllegalArgumentException("Invalid Unicode code point: " + codePoint);
+        }
     }
 
     static CharSequence createColumnAlias(
