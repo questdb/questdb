@@ -36,6 +36,8 @@ import java.time.zone.ZoneRules;
 import java.util.function.IntFunction;
 
 public abstract class AbstractTimeZoneRules implements TimeZoneRules {
+    private static final int L1_CACHE_YEAR_HI = 2051; // exclusive
+    private static final int L1_CACHE_YEAR_LO = 2000; // inclusive
     private static final long LAST_RULES_OFFSET = Unsafe.getFieldOffset(ZoneRules.class, "lastRules");
     private static final long SAVING_INSTANT_TRANSITIONS_OFFSET = Unsafe.getFieldOffset(ZoneRules.class, "savingsInstantTransitions");
     private static final long SAVING_LOCAL_TRANSITIONS_OFFSET = Unsafe.getFieldOffset(ZoneRules.class, "savingsLocalTransitions");
@@ -52,9 +54,10 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     private final int ruleCount;
     private final TransitionRule[] rules;
     private final long standardOffset;
-    // TODO: consider pre-warming the cache and turning it into an array
-    // year to array of transitions cache
-    private final ConcurrentIntHashMap<Transition[]> transitionsCache = new ConcurrentIntHashMap<>();
+    // year to array of transitions level 1 cache: [L1_CACHE_YEAR_LO, L1_CACHE_YEAR_HI) years only
+    private final Transition[][] transitionsL1Cache;
+    // year to array of transitions level 2 cache (all other years)
+    private final ConcurrentIntHashMap<Transition[]> transitionsL2Cache = new ConcurrentIntHashMap<>();
     private final int[] wallOffsets;
 
     public AbstractTimeZoneRules(ZoneRules rules, long multiplier) {
@@ -119,6 +122,17 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
             localHistoricTransitions.add(savingsLocalTransitions[i].toInstant(ZoneOffset.UTC).getEpochSecond() * multiplier);
         }
         localCutoffTransition = localHistoricTransitions.getLast();
+
+        // warm-up L1 transitions cache
+        final int cutoffYear = getYear(cutoffTransition);
+        if (ruleCount > 0 && cutoffYear < L1_CACHE_YEAR_HI) {
+            transitionsL1Cache = new Transition[L1_CACHE_YEAR_HI - L1_CACHE_YEAR_LO][];
+            for (int i = Math.max(0, cutoffYear - L1_CACHE_YEAR_LO), n = transitionsL1Cache.length; i < n; i++) {
+                transitionsL1Cache[i] = computeTransitions(i + L1_CACHE_YEAR_LO);
+            }
+        } else {
+            transitionsL1Cache = null;
+        }
     }
 
     @Override
@@ -281,11 +295,15 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     }
 
     private Transition[] getTransitions(int year) {
-        Transition[] transitions = transitionsCache.get(year);
+        if (year >= L1_CACHE_YEAR_LO && year < L1_CACHE_YEAR_HI) {
+            return transitionsL1Cache[year - L1_CACHE_YEAR_LO];
+        }
+
+        final Transition[] transitions = transitionsL2Cache.get(year);
         if (transitions != null) {
             return transitions;
         }
-        return transitionsCache.computeIfAbsent(year, computeTransitionsRef);
+        return transitionsL2Cache.computeIfAbsent(year, computeTransitionsRef);
     }
 
     private long localOffsetFromHistory(long localEpoch) {
