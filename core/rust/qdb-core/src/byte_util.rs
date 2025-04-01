@@ -28,6 +28,10 @@ pub fn cast_slice<T>(data: &[u8]) -> CoreResult<&[T]>
 where
     T: Copy + 'static,
 {
+    if data.is_empty() {
+        return Ok(&[]);
+    }
+
     if size_of::<T>() == 0 {
         return Err(fmt_err!(
             InvalidLayout,
@@ -68,6 +72,8 @@ mod tests {
     fn test_empty_cast_slice() {
         let b1: [u8; 0] = [];
         let u16s: &[u16] = cast_slice(&b1).unwrap();
+        let expected: &[u16] = &[];
+        assert_eq!(u16s, expected);
     }
 
     #[test]
