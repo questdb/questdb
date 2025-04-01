@@ -195,13 +195,9 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     @Override
     public void clear() {
         sharded = false;
-        ownerFragment.close();
-        for (int i = 0, n = perWorkerFragments.size(); i < n; i++) {
-            Misc.free(perWorkerFragments.getQuick(i));
-        }
-        for (int i = 0, n = destShards.size(); i < n; i++) {
-            Misc.free(destShards.getQuick(i));
-        }
+        Misc.free(ownerFragment);
+        Misc.freeObjListAndKeepObjects(perWorkerFragments);
+        Misc.freeObjListAndKeepObjects(destShards);
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                 Misc.clearObjList(perWorkerGroupByFunctions.getQuick(i));

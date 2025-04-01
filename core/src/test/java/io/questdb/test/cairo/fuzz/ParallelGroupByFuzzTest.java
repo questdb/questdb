@@ -70,6 +70,7 @@ import static org.junit.Assert.fail;
 public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
     private static final int PAGE_FRAME_MAX_ROWS = 100;
+    private static final int PAGE_FRAME_MIN_ROWS = 10;
     private static final int ROW_COUNT = 10 * PAGE_FRAME_COUNT * PAGE_FRAME_MAX_ROWS;
     private final boolean convertToParquet;
     private final boolean enableJitCompiler;
@@ -107,6 +108,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     @Override
     @Before
     public void setUp() {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, PAGE_FRAME_MIN_ROWS);
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, PAGE_FRAME_MAX_ROWS);
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, PAGE_FRAME_MAX_ROWS);
         // We intentionally use small values for shard count and reduce
@@ -1941,6 +1943,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         Assume.assumeTrue(enableJitCompiler);
         // Validate parallel GROUP BY factories.
         Assume.assumeTrue(enableParallelGroupBy);
+        // The test is very sensitive to sharding threshold and page frame sizes.
+        Assert.assertEquals(2, configuration.getGroupByShardingThreshold());
+        Assert.assertEquals(PAGE_FRAME_MAX_ROWS, configuration.getSqlPageFrameMaxRows());
         assertMemoryLeak(() -> {
             final Rnd rnd = TestUtils.generateRandom(AbstractCairoTest.LOG);
             // We want the timeout to happen in either reduce (up to 43 ticks) or merge (44+ ticks).
