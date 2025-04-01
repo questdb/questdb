@@ -1946,8 +1946,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         Assert.assertEquals(PAGE_FRAME_MAX_ROWS, configuration.getSqlPageFrameMaxRows());
         assertMemoryLeak(() -> {
             final Rnd rnd = TestUtils.generateRandom(AbstractCairoTest.LOG);
-            // We want the timeout to happen in either reduce (up to 43 ticks) or merge (44+ ticks).
-            final long tripWhenTicks = rnd.nextBoolean() ? 42 : 44;
+            // We want the timeout to happen in either reduce or merge.
+            // Page frame count is 41 and shard count is 8.
+            final long tripWhenTicks = Math.max(10, rnd.nextLong(50));
 
             circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
                 private final AtomicLong ticks = new AtomicLong();
