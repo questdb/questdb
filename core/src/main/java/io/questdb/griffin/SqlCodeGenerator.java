@@ -2457,30 +2457,52 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             );
                                         }
                                     } else {
-                                        if (slave.supportsTimeFrameCursor() && fastAsOfJoins) {
-                                            master = new AsOfJoinNoKeyFastRecordCursorFactory(
-                                                    configuration,
-                                                    createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                                    master,
-                                                    slave,
-                                                    masterMetadata.getColumnCount()
-                                            );
-                                        } else {
-                                            // todo: make sure it works with SelectedCursorFactory
-                                            if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor() && fastAsOfJoins) {
-                                                RecordCursorFactory slaveBase = slave.getBaseFactory();
-                                                Function stolenFilter = slave.getFilter();
-                                                slave.halfClose();
-
-                                                master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(configuration, createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata), master, slaveBase, stolenFilter, masterMetadata.getColumnCount());
-                                            } else {
-                                                master = new AsOfJoinNoKeyRecordCursorFactory(
+                                        boolean created = false;
+                                        if (fastAsOfJoins) {
+                                            if (slave.supportsTimeFrameCursor()) {
+                                                master = new AsOfJoinNoKeyFastRecordCursorFactory(
+                                                        configuration,
                                                         createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
                                                         master,
                                                         slave,
                                                         masterMetadata.getColumnCount()
                                                 );
+                                                created = true;
                                             }
+
+                                            if (!created && slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
+                                                RecordCursorFactory slaveBase = slave.getBaseFactory();
+                                                Function stolenFilter = slave.getFilter();
+                                                slave.halfClose();
+
+                                                master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(configuration, createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata), master, slaveBase, stolenFilter, masterMetadata.getColumnCount());
+                                                created = true;
+                                            }
+
+                                            if (!created && slave instanceof SelectedRecordCursorFactory) {
+                                                SelectedRecordCursorFactory selectedRecordCursorFactory = (SelectedRecordCursorFactory) slave;
+                                                if (!selectedRecordCursorFactory.isCrossedIndex()) {
+                                                    RecordCursorFactory selectedRecordCursorFactoryBase = selectedRecordCursorFactory.getBaseFactory();
+                                                    if (selectedRecordCursorFactoryBase.supportsFilterStealing()) {
+                                                        RecordCursorFactory filterStealingBase = selectedRecordCursorFactoryBase.getBaseFactory();
+                                                        Function stolenFilter = selectedRecordCursorFactory.getFilter();
+                                                        selectedRecordCursorFactory.halfClose();
+
+                                                        master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(configuration, createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata), master, filterStealingBase, stolenFilter, masterMetadata.getColumnCount());
+                                                        created = true;
+                                                    }
+                                                }
+                                            }
+                                        }
+
+
+                                        if (!created) {
+                                            master = new AsOfJoinNoKeyRecordCursorFactory(
+                                                    createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                    master,
+                                                    slave,
+                                                    masterMetadata.getColumnCount()
+                                            );
                                         }
                                     }
                                 } else {
