@@ -2787,7 +2787,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 // Add virtual index record with replaceRangeTsHi with index -2
                 long rangeHiOffset = (commitRowCount + 1) << 4;
-                Unsafe.getUnsafe().putLong(timestampAddr + rangeHiOffset, replaceRangeTsHi - 1);
+                Unsafe.getUnsafe().putLong(timestampAddr + rangeHiOffset, replaceRangeTsHi);
                 Unsafe.getUnsafe().putLong(timestampAddr + rangeHiOffset + Long.BYTES, -2);
 
 //                if (rowLo > 0) {
@@ -6737,6 +6737,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long srcOoo = rowLo;
         int pCount = 0;
         int partitionParallelism = pressureControl.getMemoryPressureRegulationValue();
+        long replaceMaxTimestamp = Long.MIN_VALUE;
         try {
             resizePartitionUpdateSink();
 
@@ -6857,6 +6858,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
                     // original partition timestamp
                     Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, partitionTimestamp);
+
+                    if (isCommitReplaceMode() && partitionTimestamp >= lastPartitionTimestamp && o3TimestampMax >= txWriter.getMaxTimestamp()) {
+                        replaceMaxTimestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 2);
+                    }
 
                     if (append) {
                         // we are appending last partition, make sure it has been mapped!
@@ -6985,7 +6990,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // at this point we should know the last partition row count
             this.partitionTimestampHi = Math.max(this.partitionTimestampHi, txWriter.getNextPartitionTimestamp(o3TimestampMax) - 1);
-            this.txWriter.updateMaxTimestamp(Math.max(txWriter.getMaxTimestamp(), o3TimestampMax));
+
+            if (!isCommitReplaceMode()) {
+                this.txWriter.updateMaxTimestamp(Math.max(txWriter.getMaxTimestamp(), o3TimestampMax));
+            } else if (replaceMaxTimestamp != Long.MIN_VALUE) {
+                this.txWriter.updateMaxTimestamp(replaceMaxTimestamp);
+            }
         } catch (Throwable th) {
             LOG.error().$(th).$();
             throw th;

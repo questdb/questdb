@@ -432,6 +432,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     );
 
                     mergeDataSize = o3size + dataSize;
+                } else if (tableWriter.isCommitReplaceMode() && mergeType == O3_BLOCK_O3) {
+                    mergeDataSize = columnTypeDriver.getDataVectorSize(o3AuxAddr, mergeOOOLo, mergeOOOHi);
                 } else {
                     // Deduplication happens, some rows are eliminated.
                     // Dedup eliminates some rows, there is no way to know the append offset of var file beforehand.

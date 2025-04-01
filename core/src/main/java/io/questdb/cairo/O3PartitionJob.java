@@ -538,7 +538,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // Without deduplication, taking timestamp == o3TimestampHi into merge
                 // can result into unnecessary partition rewrites, when instead of appending
                 // rows with equal timestamp a merge is triggered.
-                long mergeEquals = tableWriter.isDeduplicationEnabled() ? 1 : 0;
+                long mergeEquals = tableWriter.isCommitDedupMode() || tableWriter.isCommitReplaceMode() ? 1 : 0;
 
                 if (o3TimestampLo >= dataTimestampLo) {
                     //   +------+
@@ -780,36 +780,30 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
 
                 if (tableWriter.isCommitReplaceMode()) {
-                    long o3TimestampLo2 = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo + 1);
-                    o3TimestampMin = o3TimestampLo2;
+                    o3TimestampMin = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo + 1);
 
                     if (mergeType == O3_BLOCK_MERGE) {
                         // When replace range deduplication mode is enabled, we need to take into the merge
                         // prefix and suffix it's O3 type.
+                        newPartitionSize -= mergeDataHi - mergeDataLo + 1 + 2;
+                        srcDataNewPartitionSize -= mergeDataHi - mergeDataLo + 1 + 2;
+
                         if (prefixType == O3_BLOCK_O3) {
                             prefixHi = mergeO3Hi;
                             mergeType = O3_BLOCK_NONE;
-                            newPartitionSize -= mergeDataHi - mergeDataLo + 1;
-                            srcDataNewPartitionSize -= mergeDataHi - mergeDataLo + 1;
                             mergeO3Hi = -1;
                             mergeO3Lo = -1;
                             mergeDataHi = -1;
                             mergeDataLo = -1;
-                        }
-
-                        if (suffixType == O3_BLOCK_O3) {
+                        } else if (suffixType == O3_BLOCK_O3) {
                             suffixLo = mergeO3Lo;
                             mergeType = O3_BLOCK_NONE;
-                            newPartitionSize -= mergeDataHi - mergeDataLo + 1;
-                            srcDataNewPartitionSize -= mergeDataHi - mergeDataLo + 1;
                             mergeO3Hi = -1;
                             mergeO3Lo = -1;
                             mergeDataHi = -1;
                             mergeDataLo = -1;
                         }
 
-                        srcDataNewPartitionSize -= 2;
-                        newPartitionSize -= 2;
                     } else {
                         // TODO: fix
                         assert false;
@@ -1952,21 +1946,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     // merge range is replaced by new data.
                     // Merge row count is the count of the new rows, compensated by 1 row that is start of the range
                     // and 1 row that is in the end of the range.
-//                    mergeOOOHi--;
-//                    mergeDataLo++;
-
                     timestampMergeIndexAddr = 0;
                     timestampMergeIndexSize = 0;
                     mergeType = O3_BLOCK_O3;
-
-                    // Merge index is not needed. Merge is like a copy from O3 to partition
-                    if (prefixType == O3_BLOCK_NONE) {
-                        // TODO: Make merge the prefix
-                    } else if (suffixType == O3_BLOCK_NONE) {
-                        // TODO: Make merge the suffix
-                    } else {
-                        // No otimisation, merge will be O3 block between DATA prefix and suffix
-                    }
                 } else {
                     throw new IllegalStateException("commit mode not supported");
                 }

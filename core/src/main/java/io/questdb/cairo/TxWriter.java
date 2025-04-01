@@ -489,7 +489,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public void updateMaxTimestamp(long timestamp) {
         prevMaxTimestamp = maxTimestamp;
-        assert timestamp >= maxTimestamp;
         maxTimestamp = timestamp;
     }
 
