@@ -2457,7 +2457,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             );
                                         }
                                     } else {
-                                        if (slave.supportsTimeFrameCursor()) {
+                                        if (slave.supportsTimeFrameCursor() && fastAsOfJoins) {
                                             master = new AsOfJoinNoKeyFastRecordCursorFactory(
                                                     configuration,
                                                     createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
@@ -2467,7 +2467,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             );
                                         } else {
                                             // todo: make sure it works with SelectedCursorFactory
-                                            if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
+                                            if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor() && fastAsOfJoins) {
                                                 RecordCursorFactory slaveBase = slave.getBaseFactory();
                                                 Function stolenFilter = slave.getFilter();
                                                 slave.halfClose();
