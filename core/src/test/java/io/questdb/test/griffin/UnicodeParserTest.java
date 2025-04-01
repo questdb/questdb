@@ -1,119 +1,158 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2024 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
 package io.questdb.test.griffin;
 
 import io.questdb.griffin.UnicodeEscapeParserStateMachine;
+import org.junit.Assert;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
-import java.util.Random;
+import java.util.*;
 
 /**
- * Comprehensive fuzz test for the UnicodeEscapeParserStateMachine.
- * This test generates random input strings with various Unicode escape patterns
- * and verifies that the parser handles them correctly.
+ * JUnit test suite for UnicodeEscapeParserStateMachine.
+ * Uses parameterized tests to dynamically generate test cases from existing test data.
  */
-public class UnicodeParserFuzzTest {
+@RunWith(Parameterized.class)
+public class UnicodeParserTest {
+
+    // Test case information
+    private final String description;
+    private final String input;
+    private final String expectedOutput;
+    private final boolean expectException;
+
     // Seed for reproducible tests
     private static final long SEED = 12345L;
-    // Number of test cases to generate
-    private static final int NUM_TEST_CASES = 1000;
     // Maximum length of generated test strings
     private static final int MAX_STRING_LENGTH = 100;
 
-    // Random instance with fixed seed for reproducibility
-    private static final Random random = new Random(SEED);
+    /**
+     * Constructor for parameterized tests.
+     */
+    public UnicodeParserTest(String description, String input, String expectedOutput, boolean expectException) {
+        this.description = description;
+        this.input = input;
+        this.expectedOutput = expectedOutput;
+        this.expectException = expectException;
+    }
 
-    // Test stats
-    private static int totalTests = 0;
-    private static int passedTests = 0;
-    private static int failedTests = 0;
+    /**
+     * Generates the test parameters from both basic and fuzz tests.
+     */
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        List<Object[]> testCases = new ArrayList<>();
 
-    public static void main(String[] args) {
-        System.out.println("Starting Unicode Parser Fuzz Test");
-        System.out.println("=================================");
-        System.out.println("Seed: " + SEED);
-        System.out.println("Test cases: " + NUM_TEST_CASES);
-        System.out.println();
+        // Add basic test cases
+        addBasicTestCases(testCases);
 
-        runBasicTests();
-        runRandomFuzzTests();
+        // Add fuzz test cases
+        addFuzzTestCases(testCases);
 
-        // Print test summary
-        System.out.println("\nTest Summary:");
-        System.out.println("=============");
-        System.out.println("Total tests: " + totalTests);
-        System.out.println("Passed: " + passedTests);
-        System.out.println("Failed: " + failedTests);
+        return testCases;
+    }
 
-        if (failedTests == 0) {
-            System.out.println("\nALL TESTS PASSED!");
-        } else {
-            System.out.println("\nTEST FAILURES DETECTED!");
-            System.exit(1);
+    /**
+     * Add predefined basic test cases to the test suite.
+     */
+    private static void addBasicTestCases(List<Object[]> testCases) {
+        // Basic test cases
+        addTestCase(testCases, "Empty string", "", "");
+        addTestCase(testCases, "Simple ASCII", "Hello, World!", "Hello, World!");
+        addTestCase(testCases, "Basic unicode escape", "\\u0041\\u0042\\u0043", "ABC");
+        addTestCase(testCases, "Shorter unicode escapes", "\\u41\\u42\\u43", "ABC");
+        addTestCase(testCases, "Single digit unicode", "\\u7\\uA\\uF", null);  // Should throw - need at least 2 digits
+        addTestCase(testCases, "Escaped unicode sequences", "\\\\u0041", "\\u0041");
+        addTestCase(testCases, "Mixed escaping", "\\\\\\u0041", "\\A");
+        addTestCase(testCases, "Double escaping", "\\\\\\\\u0041", "\\\\u0041");
+        addTestCase(testCases, "Control characters", "\\u0000\\u001F\\u007F", "\u0000\u001F\u007F");
+        addTestCase(testCases, "Invalid sequences", "\\uGGGG", null); // Should throw an exception
+        addTestCase(testCases, "Incomplete unicode", "\\u", null); // Should throw an exception
+        addTestCase(testCases, "Truncated unicode", "\\u123", "ģ");
+        addTestCase(testCases, "Boundary case BMP max", "\\uFFFF", "\uFFFF");
+        addTestCase(testCases, "Unicode at end", "abc\\u0041", "abcA");
+        addTestCase(testCases, "Backslash at end", "abc\\", null); // Should throw an exception
+        addTestCase(testCases, "Multiple backslashes", "\\\\\\\\", "\\\\");
+        addTestCase(testCases, "Escaped backslash at end", "\\\\", "\\");
+        addTestCase(testCases, "Surrogate pair", "\\uD83D\\uDE00", "😀");
+        addTestCase(testCases, "Dangling high surrogate", "\\uD83D", null);  // Should throw an exception
+        addTestCase(testCases, "Orphaned low surrogate", "\\uDE00", null);  // Should throw an exception
+        addTestCase(testCases, "Surrogate pair mixed with text", "Hello \\uD83D\\uDE00 World", "Hello 😀 World");
+    }
+
+    /**
+     * Add randomly generated fuzz test cases to the test suite.
+     */
+    private static void addFuzzTestCases(List<Object[]> testCases) {
+        Random random = new Random(SEED);
+
+        for (int i = 0; i < 1000; i++) {
+            // Generate a random test string with various escape patterns
+            String testString = generateRandomTestString(random);
+            ExpectedResult expected = calculateExpectedOutput(testString);
+
+            addTestCase(testCases, "Fuzz test #" + (i + 1), testString, expected.output);
         }
     }
 
     /**
-     * Run a set of basic predefined test cases to catch common issues.
+     * Helper method to add a test case to the list.
      */
-    private static void runBasicTests() {
-        System.out.println("Running basic tests...");
-
-        testCase("Empty string", "", "");
-        testCase("Simple ASCII", "Hello, World!", "Hello, World!");
-        testCase("Basic unicode escape", "\\u0041\\u0042\\u0043", "ABC");
-        testCase("Shorter unicode escapes", "\\u41\\u42\\u43", "ABC");
-        testCase("Single digit unicode", "\\u7\\uA\\uF", null);  // Should throw - need at least 2 digits
-        testCase("Escaped unicode sequences", "\\\\u0041", "\\u0041");
-        testCase("Mixed escaping", "\\\\\\u0041", "\\A");
-        testCase("Double escaping", "\\\\\\\\u0041", "\\\\u0041");
-        testCase("Control characters", "\\u0000\\u001F\\u007F", "\u0000\u001F\u007F");
-        testCase("Invalid sequences", "\\uGGGG", null); // Should throw an exception
-        testCase("Incomplete unicode", "\\u", null); // Should throw an exception
-        testCase("Truncated unicode", "\\u123", "\u0123");
-        testCase("Boundary case BMP max", "\\uFFFF", "\uFFFF");
-        testCase("Unicode at end", "abc\\u0041", "abcA");
-        testCase("Backslash at end", "abc\\", null); // Should throw an exception
-        testCase("Multiple backslashes", "\\\\\\\\", "\\\\");
-        testCase("Escaped backslash at end", "\\\\", "\\");
-        testCase("Surrogate pair", "\\uD83D\\uDE00", "😀");
-        testCase("Dangling high surrogate", "\\uD83D", null);  // Should throw an exception
-        testCase("Orphaned low surrogate", "\\uDE00", null);  // Should throw an exception
-        testCase("Surrogate pair mixed with text", "Hello \\uD83D\\uDE00 World", "Hello 😀 World");
+    private static void addTestCase(List<Object[]> testCases, String description, String input, String expectedOutput) {
+        boolean expectException = (expectedOutput == null);
+        testCases.add(new Object[] { description, input, expectedOutput, expectException });
     }
 
     /**
-     * Generate and run random fuzz tests.
+     * The actual test that runs for each test case.
      */
-    private static void runRandomFuzzTests() {
-        System.out.println("\nRunning random fuzz tests...");
-
-        for (int i = 0; i < NUM_TEST_CASES; i++) {
-            // Generate a random test string with various escape patterns
-            String testString = generateRandomTestString();
-            ExpectedResult expected = calculateExpectedOutput(testString);
-
+    @Test
+    public void testUnicodeParser() {
+        if (expectException) {
             try {
-                testCase("Fuzz test #" + (i + 1), testString, expected.output);
+                String actualOutput = parseString(input);
+                Assert.fail("Expected exception but got: " + escapeForDisplay(actualOutput));
             } catch (Exception e) {
-                // If we expect an exception but don't know which one specifically
-                if (expected.output == null) {
-                    // This is fine, we expected an exception
-                    System.out.println("  ✓ Exception correctly thrown: " + e.getClass().getSimpleName());
-                    totalTests++;
-                    passedTests++;
-                } else {
-                    // Unexpected exception
-                    System.out.println("  ✗ Unexpected exception: " + e.getMessage());
-                    e.printStackTrace(System.out);
-                    totalTests++;
-                    failedTests++;
-                }
+                // Expected behavior - test passes
             }
+        } else {
+            String actualOutput = parseString(input);
+            Assert.assertEquals(
+                    "Test failed for: " + description + "\nInput: " + escapeForDisplay(input),
+                    expectedOutput,
+                    actualOutput
+            );
         }
     }
 
     /**
      * Generate a random test string with various Unicode escape patterns.
      */
-    private static String generateRandomTestString() {
+    private static String generateRandomTestString(Random random) {
         int length = random.nextInt(MAX_STRING_LENGTH) + 1;
         StringBuilder sb = new StringBuilder(length);
 
@@ -122,27 +161,25 @@ public class UnicodeParserFuzzTest {
 
             switch (patternType) {
                 case 0: // Regular ASCII
-                    sb.append(generateRandomAscii(1 + random.nextInt(5)));
+                    sb.append(generateRandomAscii(random, 1 + random.nextInt(5)));
                     break;
                 case 1: // Standard Unicode escape
-                    sb.append("\\u").append(generateRandomHex(4));
+                    sb.append("\\u").append(generateRandomHex(random, 4));
                     break;
                 case 2: // Short Unicode escape (1-3 digits)
-                    sb.append("\\u").append(generateRandomHex(1 + random.nextInt(3)));
+                    sb.append("\\u").append(generateRandomHex(random, 1 + random.nextInt(3)));
                     break;
                 case 3: // Escaped Unicode
-                    sb.append("\\\\u").append(generateRandomHex(4));
+                    sb.append("\\\\u").append(generateRandomHex(random, 4));
                     break;
                 case 4: // Multiple backslashes
                     int numBackslashes = 1 + random.nextInt(4);
-                    for (int i = 0; i < numBackslashes; i++) {
-                        sb.append("\\");
-                    }
+                    sb.append("\\".repeat(numBackslashes));
                     break;
                 case 5: // Invalid hex in Unicode
                     if (random.nextBoolean()) {
                         // Invalid character
-                        sb.append("\\u").append(generateRandomHex(random.nextInt(4)))
+                        sb.append("\\u").append(generateRandomHex(random, random.nextInt(4)))
                                 .append((char)('G' + random.nextInt(20)));
                     } else {
                         // No hex digits
@@ -173,9 +210,9 @@ public class UnicodeParserFuzzTest {
                     break;
                 case 8: // Mixed normal and escaped backslashes with Unicode
                     if (random.nextBoolean()) {
-                        sb.append("\\\\\\u").append(generateRandomHex(4));
+                        sb.append("\\\\\\u").append(generateRandomHex(random, 4));
                     } else {
-                        sb.append("\\u").append(generateRandomHex(2)).append("\\\\");
+                        sb.append("\\u").append(generateRandomHex(random, 2)).append("\\\\");
                     }
                     break;
                 case 9: // Just add a backslash at the end
@@ -201,7 +238,7 @@ public class UnicodeParserFuzzTest {
     /**
      * Generate a random ASCII string.
      */
-    private static String generateRandomAscii(int length) {
+    private static String generateRandomAscii(Random random, int length) {
         StringBuilder sb = new StringBuilder(length);
         for (int i = 0; i < length; i++) {
             // Printable ASCII range (32-126)
@@ -213,7 +250,7 @@ public class UnicodeParserFuzzTest {
     /**
      * Generate a random hex string of specified length.
      */
-    private static String generateRandomHex(int length) {
+    private static String generateRandomHex(Random random, int length) {
         StringBuilder sb = new StringBuilder(length);
         String hexChars = "0123456789abcdefABCDEF";
         for (int i = 0; i < length; i++) {
@@ -241,7 +278,8 @@ public class UnicodeParserFuzzTest {
         }
     }
 
-    enum State {
+    // Parser states for expected result calculation
+    private enum State {
         NORMAL, BACKSLASH_SEEN, UNICODE_START, UNICODE_DIGITS
     }
 
@@ -370,7 +408,7 @@ public class UnicodeParserFuzzTest {
                             // Process current character in normal state
                             state = State.NORMAL;
                             if (hexBuffer.length() == 4 || !isHexDigit(c)) {
-                                // Need to reprocess the current character if it's not a hex digit
+                                // Need to reprocess the current character if it's not a hex digit,
                                 // or we've already collected 4 digits
                                 i--; // Back up one character
                             }
@@ -446,48 +484,6 @@ public class UnicodeParserFuzzTest {
     }
 
     /**
-     * Test a specific case and report results.
-     */
-    private static void testCase(String description, String input, String expectedOutput) {
-        System.out.println("Test: " + description);
-        System.out.println("  Input: " + escapeForDisplay(input));
-
-        totalTests++;
-
-        if (expectedOutput == null) {
-            // We expect an exception for this input
-            try {
-                String actualOutput = parseString(input);
-                System.out.println("  ✗ Expected exception, but got: " + escapeForDisplay(actualOutput));
-                failedTests++;
-            } catch (Exception e) {
-                System.out.println("  ✓ Exception correctly thrown: " + e.getClass().getSimpleName());
-                passedTests++;
-            }
-        } else {
-            try {
-                String actualOutput = parseString(input);
-                System.out.println("  Expected: " + escapeForDisplay(expectedOutput));
-                System.out.println("  Actual: " + escapeForDisplay(actualOutput));
-
-                if (expectedOutput.equals(actualOutput)) {
-                    System.out.println("  ✓ PASS");
-                    passedTests++;
-                } else {
-                    System.out.println("  ✗ FAIL");
-                    failedTests++;
-                }
-            } catch (Exception e) {
-                System.out.println("  ✗ Unexpected exception: " + e.getMessage());
-                e.printStackTrace(System.out);
-                failedTests++;
-            }
-        }
-
-        System.out.println();
-    }
-
-    /**
      * Parse a string using our parser and return the result.
      */
     private static String parseString(String input) {
@@ -523,4 +519,3 @@ public class UnicodeParserFuzzTest {
         return sb.toString();
     }
 }
-
