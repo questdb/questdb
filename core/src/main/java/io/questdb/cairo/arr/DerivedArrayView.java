@@ -76,7 +76,7 @@ public class DerivedArrayView extends ArrayView {
         if (getStride(dim) == 1 && getDimLen(dim) > 1) {
             throw CairoException.nonCritical()
                     .position(argPos)
-                    .put("cannot flatten dim with stride = 1 and length > 1 [dim=").put(dim)
+                    .put("cannot flatten dim with stride = 1 and length > 1 [dim=").put(dim + 1)
                     .put(", dimLen=").put(getDimLen(dim))
                     .put(", nDims=").put(nDims).put(']');
         }

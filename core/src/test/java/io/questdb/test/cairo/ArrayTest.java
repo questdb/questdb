@@ -723,6 +723,35 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFlatten() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][][], flatten_dim INT)");
+            execute("INSERT INTO tango VALUES (ARRAY[[[1.0, 2], [3.0, 4]], [[5.0, 6], [7.0, 8]]], 1)");
+            assertSql("arr\n[[1.0,2.0],[3.0,4.0],[5.0,6.0],[7.0,8.0]]\n", "SELECT flatten(arr, 1) arr FROM tango");
+            assertSql("arr\n[[1.0,2.0],[3.0,4.0],[5.0,6.0],[7.0,8.0]]\n", "SELECT flatten(arr, flatten_dim) arr FROM tango");
+            assertSql("arr\n[[1.0,2.0,3.0,4.0],[5.0,6.0,7.0,8.0]]\n", "SELECT flatten(arr, 2) arr FROM tango");
+            assertSql("arr\n[1.0,2.0,3.0,4.0,5.0,6.0,7.0,8.0]\n", "SELECT flatten(flatten(arr, 1), 1) arr FROM tango");
+            assertSql("arr\n[[[2.0],[4.0]],[[6.0],[8.0]]]\n", "SELECT arr[1:, 1:, 2:3] arr FROM tango");
+            assertSql("arr\n[[2.0,4.0],[6.0,8.0]]\n", "SELECT arr[1:, 1:, 2] arr FROM tango");
+            assertSql("arr\n[[2.0,4.0],[6.0,8.0]]\n", "SELECT flatten(arr[1:, 1:, 2:3], 3) arr FROM tango");
+        });
+    }
+
+    @Test
+    public void testFlattenInvalid() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[][][], flatten_dim INT)");
+            execute("INSERT INTO tango VALUES (ARRAY[[[1.0, 2], [3.0, 4]], [[5.0, 6], [7.0, 8]]], 4)");
+            assertException("SELECT flatten(arr, 3) FROM tango", 20,
+                    "cannot flatten dim with stride = 1 and length > 1 [dim=3, dimLen=2, nDims=3]");
+            assertException("SELECT flatten(arr, 4) FROM tango", 20,
+                    "dimension to flatten out of range [nDims=3, flattenDim=4]");
+            assertException("SELECT flatten(arr, flatten_dim) FROM tango", 20,
+                    "dimension to flatten out of range [nDims=3, flattenDim=4]");
+        });
+    }
+
+    @Test
     public void testGroupByArrayKey() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (arr DOUBLE[][], i int)");
