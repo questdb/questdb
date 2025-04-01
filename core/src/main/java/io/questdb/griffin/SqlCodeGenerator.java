@@ -2485,11 +2485,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     RecordCursorFactory selectedRecordCursorFactoryBase = selectedRecordCursorFactory.getBaseFactory();
                                                     if (selectedRecordCursorFactoryBase.supportsFilterStealing()) {
                                                         RecordCursorFactory filterStealingBase = selectedRecordCursorFactoryBase.getBaseFactory();
-                                                        Function stolenFilter = selectedRecordCursorFactory.getFilter();
-                                                        selectedRecordCursorFactory.halfClose();
+                                                        if (filterStealingBase.supportsTimeFrameCursor()) {
+                                                            Function stolenFilter = selectedRecordCursorFactory.getFilter();
+                                                            selectedRecordCursorFactory.halfClose();
 
-                                                        master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(configuration, createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata), master, filterStealingBase, stolenFilter, masterMetadata.getColumnCount());
-                                                        created = true;
+                                                            master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(configuration, createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata), master, filterStealingBase, stolenFilter, masterMetadata.getColumnCount());
+                                                            created = true;
+                                                        }
                                                     }
                                                 }
                                             }
