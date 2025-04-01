@@ -794,6 +794,42 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotWithSampleByKeyed2() throws Exception {
+        assertQueryAndPlan(
+                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n",
+                "select timestamp, symbol, side, price from trades\n" +
+                        "  pivot (\n" +
+                        "    sum(price)\n" +
+                        "    FOR \"symbol\" IN ('ETH-USDT')\n" +
+                        "        side in ('buy', 'sell')\n" +
+                        "    SAMPLE BY 100T\n" +
+                        "  );",
+                ddlTrades,
+                "timestamp###ASC",
+                dmlTrades,
+                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
+                        "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n" +
+                        "2024-12-19T08:10:00.736000Z\tnull\t3678.25\n" +
+                        "2024-12-19T08:10:00.759000Z\tnull\t3678.0\n" +
+                        "2024-12-19T08:10:00.772999Z\tnull\t3678.0\n" +
+                        "2024-12-19T08:10:00.887000Z\t3678.01\tnull\n" +
+                        "2024-12-19T08:10:00.950000Z\tnull\t3678.0\n",
+                true,
+                true,
+                false,
+                "GroupBy vectorized: false\n" +
+                        "  keys: [timestamp]\n" +
+                        "  values: [sum(case([(symbol='ETH-USDT' and side='buy'),sum,null])),sum(case([(symbol='ETH-USDT' and side='sell'),sum,null]))]\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [timestamp,symbol,side]\n" +
+                        "      values: [sum(price)]\n" +
+                        "      filter: (symbol in [ETH-USDT] and symbol in [ETH-USDT])\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: trades\n");
+    }
+
+    @Test
     public void testPivotWithTimestampGrouping() throws Exception {
         assertQueryAndPlan(
                 "2000\t2010\t2020\n" +
