@@ -38,7 +38,6 @@ import java.time.zone.ZoneRulesProvider;
 import java.util.Map;
 
 public class TimeZoneRuleFactory {
-
     public static final TimeZoneRuleFactory INSTANCE = new TimeZoneRuleFactory();
     public static final int RESOLUTION_MICROS = 1;
     public static final int RESOLUTION_MILLIS = 0;
