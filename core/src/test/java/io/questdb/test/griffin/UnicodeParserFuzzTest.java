@@ -67,7 +67,7 @@ public class UnicodeParserFuzzTest {
         testCase("Control characters", "\\u0000\\u001F\\u007F", "\u0000\u001F\u007F");
         testCase("Invalid sequences", "\\uGGGG", null); // Should throw an exception
         testCase("Incomplete unicode", "\\u", null); // Should throw an exception
-        testCase("Truncated unicode", "\\u123", "\u0123");
+        testCase("Truncated unicode", "\\u123", "ģ");
         testCase("Boundary case BMP max", "\\uFFFF", "\uFFFF");
         testCase("Unicode at end", "abc\\u0041", "abcA");
         testCase("Backslash at end", "abc\\", null); // Should throw an exception
@@ -135,9 +135,7 @@ public class UnicodeParserFuzzTest {
                     break;
                 case 4: // Multiple backslashes
                     int numBackslashes = 1 + random.nextInt(4);
-                    for (int i = 0; i < numBackslashes; i++) {
-                        sb.append("\\");
-                    }
+                    sb.append("\\".repeat(numBackslashes));
                     break;
                 case 5: // Invalid hex in Unicode
                     if (random.nextBoolean()) {
@@ -497,8 +495,7 @@ public class UnicodeParserFuzzTest {
         UnicodeEscapeParserStateMachine.Utf16Sink testSink = result::append;
 
         // Parse the input
-        UnicodeEscapeParserStateMachine parser = new UnicodeEscapeParserStateMachine();
-        parser.parse(input, testSink);
+        UnicodeEscapeParserStateMachine.parse(input, testSink);
 
         return result.toString();
     }
