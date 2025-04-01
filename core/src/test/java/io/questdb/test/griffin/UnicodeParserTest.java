@@ -493,8 +493,7 @@ public class UnicodeParserTest {
         UnicodeEscapeParserStateMachine.Utf16Sink testSink = result::append;
 
         // Parse the input
-        UnicodeEscapeParserStateMachine parser = new UnicodeEscapeParserStateMachine();
-        parser.parse(input, testSink);
+        UnicodeEscapeParserStateMachine.parse(input, testSink);
 
         return result.toString();
     }
