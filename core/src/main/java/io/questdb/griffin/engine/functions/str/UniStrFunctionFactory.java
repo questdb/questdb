@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.UnicodeParser;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
@@ -62,7 +62,7 @@ public class UniStrFunctionFactory implements FunctionFactory {
                 return NullConstant.NULL;
             }
             StringSink sink = new StringSink();
-            SqlUtil.parseUnicode(input, argPosition, sink);
+            UnicodeParser.parse(input, argPosition, sink);
             return new ConstUniStrFunction(Chars.toString(sink));
         } else if (arg.isRuntimeConstant()) {
             return new RuntimeConstUniStrFunction(arg, argPosition);
@@ -128,7 +128,7 @@ public class UniStrFunctionFactory implements FunctionFactory {
             } else {
                 sink.clear();
                 result = sink;
-                SqlUtil.parseUnicode(input, argPosition, sink);
+                UnicodeParser.parse(input, argPosition, sink);
             }
         }
     }
@@ -165,7 +165,7 @@ public class UniStrFunctionFactory implements FunctionFactory {
             }
 
             sink.clear();
-            SqlUtil.parseUnicode(input, argPosition, sink);
+            UnicodeParser.parse(input, argPosition, sink);
             return sink;
         }
     }
