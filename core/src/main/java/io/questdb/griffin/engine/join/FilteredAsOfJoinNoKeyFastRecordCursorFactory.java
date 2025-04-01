@@ -218,15 +218,6 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             this.circuitBreaker = circuitBreaker;
         }
 
-        public void skipRows(Counter rowCount) throws DataUnavailableException {
-            // isMasterHasNextPending is false is only possible when slave cursor navigation inside hasNext() threw DataUnavailableException
-            // and in such case we expect hasNext() to be called again, rather than skipRows()
-            assert isMasterHasNextPending;
-            while (rowCount.get() > 0 && masterCursor.hasNext()) {
-                rowCount.dec();
-            }
-        }
-
         @Override
         public void toTop() {
             super.toTop();

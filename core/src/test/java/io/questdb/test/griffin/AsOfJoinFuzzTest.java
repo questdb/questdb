@@ -41,21 +41,40 @@ import java.util.Collection;
 public class AsOfJoinFuzzTest extends AbstractCairoTest {
     private final boolean exerciseIntervals;
     private final JoinType joinType;
+    private final LimitType limitType;
 
-    public AsOfJoinFuzzTest(JoinType joinType, boolean exerciseIntervals) {
+    public AsOfJoinFuzzTest(JoinType joinType, boolean exerciseIntervals, LimitType limitType) {
         this.joinType = joinType;
         this.exerciseIntervals = exerciseIntervals;
+        this.limitType = limitType;
     }
 
-    @Parameterized.Parameters(name = "join type: {0}, intervals: {1}")
+    @Parameterized.Parameters(name = "join type: {0}, intervals: {1}, limit: {2}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {JoinType.ASOF, true},
-                {JoinType.ASOF, false},
-                {JoinType.LT_NONKEYD, true},
-                {JoinType.LT_NONKEYD, false},
-                {JoinType.ASOF_NONKEYD, true},
-                {JoinType.ASOF_NONKEYD, false}
+                {JoinType.ASOF, true, LimitType.NO_LIMIT},
+                {JoinType.ASOF, true, LimitType.POSITIVE_LIMIT},
+                {JoinType.ASOF, true, LimitType.NEGATIVE_LIMIT},
+
+                {JoinType.ASOF, false, LimitType.NO_LIMIT},
+                {JoinType.ASOF, false, LimitType.POSITIVE_LIMIT},
+                {JoinType.ASOF, false, LimitType.NEGATIVE_LIMIT},
+
+                {JoinType.LT_NONKEYD, true, LimitType.NO_LIMIT},
+                {JoinType.LT_NONKEYD, true, LimitType.POSITIVE_LIMIT},
+                {JoinType.LT_NONKEYD, true, LimitType.NEGATIVE_LIMIT},
+
+                {JoinType.LT_NONKEYD, false, LimitType.NO_LIMIT},
+                {JoinType.LT_NONKEYD, false, LimitType.POSITIVE_LIMIT},
+                {JoinType.LT_NONKEYD, false, LimitType.NEGATIVE_LIMIT},
+
+                {JoinType.ASOF_NONKEYD, true, LimitType.NO_LIMIT},
+                {JoinType.ASOF_NONKEYD, true, LimitType.POSITIVE_LIMIT},
+                {JoinType.ASOF_NONKEYD, true, LimitType.NEGATIVE_LIMIT},
+
+                {JoinType.ASOF_NONKEYD, false, LimitType.NO_LIMIT},
+                {JoinType.ASOF_NONKEYD, false, LimitType.POSITIVE_LIMIT},
+                {JoinType.ASOF_NONKEYD, false, LimitType.NEGATIVE_LIMIT},
         });
     }
 
@@ -124,14 +143,28 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             }
         }
 
+        String query = "select * from " + "t1" + join + " JOIN " + "(t2 " + timeFilter + ")" + onSuffix;
+        switch (limitType) {
+            case POSITIVE_LIMIT:
+                int limit = rnd.nextInt(100);
+                query = "select * from (" + query + " ) limit " + limit;
+                break;
+            case NEGATIVE_LIMIT:
+                limit = rnd.nextInt(100) + 1;
+                query = "select * from (" + query + ") limit -" + limit;
+                break;
+            case NO_LIMIT:
+                break;
+        }
+
         final StringSink expectedSink = new StringSink();
         sink.clear();
-        printSql("select * from " + "t1" + join + " JOIN " + "(t2 " + timeFilter + ")" + onSuffix, true);
+        printSql(query, true);
         expectedSink.put(sink);
 
         final StringSink actualSink = new StringSink();
         sink.clear();
-        printSql("select * from " + "t1" + join + " JOIN " + "(t2 " + timeFilter + ")" + onSuffix, false);
+        printSql(query, false);
         actualSink.put(sink);
 
         TestUtils.assertEquals(expectedSink, actualSink);
@@ -203,5 +236,11 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
 
     public enum JoinType {
         ASOF, ASOF_NONKEYD, LT_NONKEYD
+    }
+
+    public enum LimitType {
+        NO_LIMIT,
+        POSITIVE_LIMIT,
+        NEGATIVE_LIMIT
     }
 }
