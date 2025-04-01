@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -215,6 +216,15 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
         public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor);
             this.circuitBreaker = circuitBreaker;
+        }
+
+        public void skipRows(Counter rowCount) throws DataUnavailableException {
+            // isMasterHasNextPending is false is only possible when slave cursor navigation inside hasNext() threw DataUnavailableException
+            // and in such case we expect hasNext() to be called again, rather than skipRows()
+            assert isMasterHasNextPending;
+            while (rowCount.get() > 0 && masterCursor.hasNext()) {
+                rowCount.dec();
+            }
         }
 
         @Override
