@@ -69,7 +69,7 @@ public class TableSequencerAPI implements QuietCloseable {
         this.engine = engine;
         this.inactiveTtlUs = configuration.getInactiveWalWriterTTL() * 1000;
         this.recreateDistressedSequencerAttempts = configuration.getWalRecreateDistressedSequencerAttempts();
-        this.createTxnTracker = dir -> new SeqTxnTracker();
+        this.createTxnTracker = dir -> new SeqTxnTracker(configuration);
     }
 
     public void applyRename(TableToken tableToken) {
@@ -149,7 +149,7 @@ public class TableSequencerAPI implements QuietCloseable {
                         }
                     }
                 } catch (CairoException ex) {
-                    if (ex.errnoReadPathDoesNotExist() || ex.isTableDropped()) {
+                    if (ex.errnoFileCannotRead() || ex.isTableDropped()) {
                         // Table is partially dropped, but not fully.
                         lastTxn = -1;
                     } else {
@@ -257,8 +257,8 @@ public class TableSequencerAPI implements QuietCloseable {
         return getSeqTxnTracker(tableToken).isInitialised();
     }
 
-    public long lastTxn(final TableToken tableName) {
-        try (TableSequencerImpl sequencer = openSequencerLocked(tableName, SequencerLockType.READ)) {
+    public long lastTxn(final TableToken tableToken) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
             long lastTxn;
             try {
                 lastTxn = sequencer.lastTxn();

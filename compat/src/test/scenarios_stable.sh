@@ -125,3 +125,30 @@ if [[ $CLIENTS == 'ALL' || $CLIENTS == *'php'* ]]; then
 else
   echo "skipping php tests"
 fi
+
+if [[ $CLIENTS == 'ALL' || $CLIENTS == *'nodejs'* ]]; then
+  echo "starting nodejs tests"
+
+  # check if php is installed
+  if ! command -v node &> /dev/null
+  then
+      echo "node.js could not be found! Please install nodejs or exclude nodejs tests"
+      exit 1
+  fi
+
+  echo "$base_dir/compat/src/test/nodejs"
+  cd "$base_dir/compat/src/test/nodejs" || exit
+
+  # install deps
+  npm install
+
+  # run
+  node runner.js ../resources/test_cases.yaml
+  if [ $? -ne 0 ]; then
+      echo "nodejs tests failed"
+      exit 1
+  fi
+  echo "nodejs tests finished"
+else
+  echo "skipping nodejs tests"
+fi

@@ -99,6 +99,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.ThreadLocal;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.MutableCharSink;
@@ -127,6 +128,7 @@ public class CairoEngine implements Closeable, WriterSource {
     public static final String REASON_CHECKPOINT_IN_PROGRESS = "checkpointInProgress";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
     private static final int MAX_SLEEP_MILLIS = 250;
+    private static final ThreadLocal<MatViewRefreshTask> tlMatViewRefreshTask = new ThreadLocal<>(MatViewRefreshTask::new);
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
     private final DatabaseCheckpointAgent checkpointAgent;
@@ -134,7 +136,6 @@ public class CairoEngine implements Closeable, WriterSource {
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
     private final EngineMaintenanceJob engineMaintenanceJob;
     private final FunctionFactoryCache ffCache;
-    private final MatViewGraph matViewGraph;
     private final MessageBusImpl messageBus;
     private final MetadataCache metadataCache;
     private final Metrics metrics;
@@ -159,14 +160,11 @@ public class CairoEngine implements Closeable, WriterSource {
     private final WriterPool writerPool;
     private @NotNull ConfigReloader configReloader = () -> false; // no-op
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
+    private @NotNull MatViewGraph matViewGraph = NoOpMatViewGraph.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
 
     public CairoEngine(CairoConfiguration configuration) {
-        this(configuration, false);
-    }
-
-    public CairoEngine(CairoConfiguration configuration, boolean isReadOnlyReplica) {
         try {
             ffCache = new FunctionFactoryCache(
                     configuration,
@@ -192,8 +190,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.tableIdGenerator = IDGeneratorFactory.newIDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME, 1);
             this.checkpointAgent = new DatabaseCheckpointAgent(this);
             this.queryRegistry = new QueryRegistry(configuration);
-            this.rootExecutionContext = new SqlExecutionContextImpl(this, 1)
-                    .with(AllowAllSecurityContext.INSTANCE);
+            this.rootExecutionContext = createRootExecutionContext();
 
             tableIdGenerator.open();
             checkpointRecover();
@@ -210,15 +207,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 enablePartitionOverwriteControl();
             }
             this.metadataCache = new MetadataCache(this);
-            if (isReadOnlyReplica) {
-                // read-only replica does not need to publish refresh tasks,
-                // but it still needs to track mat view list
-                this.matViewGraph = new MatViewGraphImpl(this, true);
-            } else {
-                this.matViewGraph = configuration.isMatViewEnabled()
-                        ? new MatViewGraphImpl(this)
-                        : NoOpMatViewGraph.INSTANCE;
-            }
         } catch (Throwable th) {
             close();
             throw th;
@@ -455,7 +443,7 @@ public class CairoEngine implements Closeable, WriterSource {
     public void dropTableOrMatView(@Transient Path path, TableToken tableToken) {
         verifyTableToken(tableToken);
         if (tableToken.isWal()) {
-            if (tableNameRegistry.dropTable(tableToken)) {
+            if (notifyDropped(tableToken)) {
                 tableSequencerAPI.dropTable(tableToken, false);
                 matViewGraph.dropViewIfExists(tableToken);
             } else {
@@ -579,7 +567,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return getSequencerMetadata(tableToken, desiredVersion);
     }
 
-    public MatViewGraph getMatViewGraph() {
+    public @NotNull MatViewGraph getMatViewGraph() {
         return matViewGraph;
     }
 
@@ -933,6 +921,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // Convert tables to WAL/non-WAL, if necessary.
         final ObjList<TableToken> convertedTables = TableConverter.convertTables(this, tableSequencerAPI, tableFlagResolver, tableNameRegistry);
         tableNameRegistry.reload(convertedTables);
+        matViewGraph = configuration.isMatViewEnabled() ? createMatViewGraph() : NoOpMatViewGraph.INSTANCE;
         buildMatViewGraph();
     }
 
@@ -1020,8 +1009,17 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isMatView, isWal);
     }
 
-    public void notifyDropped(TableToken tableToken) {
-        tableNameRegistry.dropTable(tableToken);
+    public boolean notifyDropped(TableToken tableToken) {
+        if (tableNameRegistry.dropTable(tableToken)) {
+            final MatViewRefreshTask matViewRefreshTask = tlMatViewRefreshTask.get();
+            matViewRefreshTask.clear();
+            matViewRefreshTask.baseTableToken = tableToken;
+            matViewRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
+            matViewRefreshTask.invalidationReason = "table drop operation";
+            notifyMatViewBaseCommit(matViewRefreshTask, tableSequencerAPI.lastTxn(tableToken));
+            return true;
+        }
+        return false;
     }
 
     public void notifyMatViewBaseCommit(MatViewRefreshTask task, long seqTxn) {
@@ -1206,8 +1204,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     }
                 } else {
                     throw CairoException.nonCritical()
-                            .put("cannot rename table, new name is already in use" +
-                                    " [table=").put(fromTableName)
+                            .put("cannot rename table, new name is already in use [table=").put(fromTableName)
                             .put(", toTableName=").put(toTableName)
                             .put(']');
                 }
@@ -1541,8 +1538,8 @@ public class CairoEngine implements Closeable, WriterSource {
             }
             try {
                 String lockedReason = lockAll(tableToken, "createTable", true);
+                boolean locked = true;
                 if (lockedReason == null) {
-                    boolean tableCreated = false;
                     try {
                         if (inVolume) {
                             createTableOrMatViewInVolumeUnsafe(mem, blockFileWriter, path, struct, tableToken);
@@ -1553,15 +1550,21 @@ public class CairoEngine implements Closeable, WriterSource {
                         if (struct.isWalEnabled()) {
                             tableSequencerAPI.registerTable(tableToken.getTableId(), struct, tableToken);
                         }
-
+                        if (!keepLock) {
+                            // Unlock pools before registering the name
+                            // to avoid `table busy` errors when trying to use the table immediately after registration
+                            // in concurrent threads
+                            unlockTableUnsafe(tableToken, null, true);
+                            locked = false;
+                            LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
+                        }
                         tableNameRegistry.registerName(tableToken);
-                        tableCreated = true;
                     } catch (Throwable e) {
                         keepLock = false;
                         throw e;
                     } finally {
-                        if (!keepLock) {
-                            unlockTableUnsafe(tableToken, null, tableCreated);
+                        if (!keepLock && locked) {
+                            unlockTableUnsafe(tableToken, null, false);
                             LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
                         }
                     }
@@ -1688,6 +1691,14 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.tableDoesNotExist(tableName);
         }
         return token;
+    }
+
+    protected MatViewGraph createMatViewGraph() {
+        return new MatViewGraphImpl(this);
+    }
+
+    protected SqlExecutionContext createRootExecutionContext() {
+        return new SqlExecutionContextImpl(this, 1).with(AllowAllSecurityContext.INSTANCE);
     }
 
     protected @NotNull <T extends AbstractTelemetryTask> Telemetry<T> createTelemetry(

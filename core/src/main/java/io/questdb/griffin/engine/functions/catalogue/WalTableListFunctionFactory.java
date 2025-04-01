@@ -251,7 +251,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                         long txnFd = -1;
                         int rootLen = -1;
                         SeqTxnTracker seqTxnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-                        memoryPressureLevel = seqTxnTracker.getMemoryPressureLevel();
+                        memoryPressureLevel = seqTxnTracker.getMemPressureControl().getMemoryPressureLevel();
                         tableName = tableToken.getTableName();
 
                         if (seqTxnTracker.isInitialised()) {
@@ -296,7 +296,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                             final long spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
                             TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
                             bufferedTxnSize = txReader.getLagTxnCount();
-                            SeqTxnTracker txnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
                             return true;
                         } finally {
                             if (txnFd > -1) {
@@ -308,7 +307,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                             }
                         }
                     } catch (CairoException ex) {
-                        if (ex.errnoReadPathDoesNotExist()) {
+                        if (ex.errnoFileCannotRead()) {
                             return false;
                         }
                         throw ex;

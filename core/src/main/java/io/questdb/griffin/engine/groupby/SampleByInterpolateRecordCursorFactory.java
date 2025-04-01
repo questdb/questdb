@@ -200,7 +200,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
             // init all record functions for this cursor, in case functions require metadata and/or symbol tables
-            Function.init(recordFunctions, baseCursor, executionContext);
+            Function.init(recordFunctions, baseCursor, executionContext, null);
         } catch (Throwable th) {
             baseCursor.close();
             throw th;
@@ -327,10 +327,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
         @Override
         public boolean hasNext() {
-            if (!isMapBuilt) {
-                buildMap();
-                isMapBuilt = true;
-            }
+            buildMapConditionally();
             return super.hasNext();
         }
 
@@ -518,6 +515,13 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             }
             // refresh map cursor
             baseCursor = dataMap.getCursor();
+        }
+
+        private void buildMapConditionally() {
+            if (!isMapBuilt) {
+                buildMap();
+                isMapBuilt = true;
+            }
         }
 
         private void computeYPoints(MapValue x1Value, MapValue x2value) {

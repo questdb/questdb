@@ -370,7 +370,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
 
             // Invalidate dependent views recursively.
-            enqueueInvalidateDependentViews(viewToken, invalidationReason);
+            enqueueInvalidateDependentViews(viewToken, "base materialized view is invalidated");
         }
     }
 
@@ -466,7 +466,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private void refreshFailState(MatViewRefreshState state, long refreshTimestamp, String errorMessage) {
         state.refreshFail(blockFileWriter, dbRoot.trimTo(dbRootLen), refreshTimestamp, errorMessage);
         // Invalidate dependent views recursively.
-        enqueueInvalidateDependentViews(state.getViewDefinition().getMatViewToken(), errorMessage);
+        enqueueInvalidateDependentViews(state.getViewDefinition().getMatViewToken(), "base materialized view refresh failed");
     }
 
     private boolean refreshFull(@NotNull TableToken viewToken, MatViewGraph viewGraph, long refreshTriggeredTimestamp) {

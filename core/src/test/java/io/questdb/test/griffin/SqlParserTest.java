@@ -1196,6 +1196,51 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testBaseTableNameInQuotes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+            execute("create materialized view x_view with base 'x' as (select ts, max(v) from x sample by 1d) partition by day;");
+            execute("create materialized view x_view2 with base \"x\" as (select ts, max(v) from x sample by 1d) partition by day;");
+        });
+    }
+
+    @Test
+    public void testBaseTableNameWithPublicSchema() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
+
+            execute("create materialized view x_view with base public.x as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertTableExistence(true, engine.verifyTableName("x_view"));
+
+            execute("create materialized view x_view2 with base \"public\".\"x\" as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertTableExistence(true, engine.verifyTableName("x_view2"));
+
+            execute("create materialized view public.x_view3 with base \"public\".\"x\" as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertTableExistence(true, engine.verifyTableName("x_view3"));
+
+            execute("create materialized view \"public\".\"x_view4\" with base \"public\".\"x\" as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertTableExistence(true, engine.verifyTableName("x_view4"));
+
+            execute("create materialized view \"public.x_view5\" with base \"public\".\"x\" as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertTableExistence(true, engine.verifyTableName("public.x_view5"));
+
+            execute("create materialized view \"public\" with base \"public\".\"x\" as (select ts, max(v) from x sample by 1d) partition by day;");
+            assertTableExistence(true, engine.verifyTableName("public"));
+
+            assertSyntaxError(
+                    "create materialized view x_view5 with base 'dfc.x' as (select ts, max(v) from x sample by 1d) partition by day",
+                    43,
+                    "table does not exist [table=dfc.x]"
+            );
+            assertSyntaxError(
+                    "create materialized view x_view5 with base public.",
+                    50,
+                    "table name expected"
+            );
+        });
+    }
+
+    @Test
     public void testBetween() throws Exception {
         assertQuery(
                 "select-choose t from (select [t] from x where t between ('2020-01-01','2021-01-02'))",
@@ -2107,13 +2152,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableCastUnsupportedType() throws Exception {
         assertSyntaxError(
-                "create table x as (tab), cast(b as integer)",
+                "create table x as (tab), cast(b as invalidType)",
                 35,
                 "unsupported column type",
                 modelOf("tab")
-                        .col("a", ColumnType.INT)
                         .col("b", ColumnType.LONG)
-                        .col("c", ColumnType.STRING)
         );
     }
 
@@ -2646,7 +2689,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableInvalidColumnType() throws Exception {
         assertSyntaxError(
-                "create table tab (a int, b integer)",
+                "create table tab (a int, b invalidType)",
                 27,
                 "unsupported column type"
         );
@@ -3013,6 +3056,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateTableSupportedSynonymType() throws Exception {
+        assertCreateTable(
+                "create batch 1000000 table x as (select-choose * from (tab)), cast(b as INT:35)",
+                "create table x as (tab), cast(b as integer)",
+                modelOf("tab")
+                        .col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
     public void testCreateTableSymbolCapacityHigh() throws Exception {
         assertSyntaxError(
                 "create table x (" +
@@ -3117,6 +3170,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " index",
                 116,
                 "unexpected token"
+        );
+    }
+
+    @Test
+    public void testCreateTableValidSynonymColumnType() throws Exception {
+        assertCreateTable(
+                "create atomic table tab (a INT, b INT)",
+                "create table tab (a int, b integer)"
         );
     }
 
@@ -5713,18 +5774,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinTimestampPropagationWhenTimestampNotSelected() throws SqlException {
         assertQuery(
-                "select-distinct [id] id from (select-choose [id] id from (select-choose [a.id id] a.created ts_stop, a.id id, b.created ts_start, b.id id1 from " +
-                        "(select [id, created] from (select-choose [id, created] id, created, event, timestamp from " +
-                        "(select-choose [created, id] id, created, event, timestamp from " +
-                        "(select [created, id, event] from telemetry_users timestamp (timestamp) " +
-                        "where event = 101 " +
-                        "and id != '0x05ab1e873d165b00000005743f2c17') " +
-                        "order by created) timestamp (created)) a " +
-                        "lt join select [id, created] from (select-choose [id, created] id, created, event, timestamp from (select-choose [created, id] id, created, event, timestamp " +
-                        "from (select [created, id, event] from telemetry_users timestamp (timestamp) " +
-                        "where event = 100) " +
-                        "order by created) timestamp (created)) b on b.id = a.id " +
-                        "post-join-where a.created - b.created > 10000000000) a))",
+                "select-choose id from (select-group-by [id] id, count() count from (select-choose [a.id id] a.created ts_stop, a.id id, b.created ts_start, b.id id1 from (select [id, created] from (select-choose [id, created] id, created, event, timestamp from (select-choose [created, id] id, created, event, timestamp from (select [created, id, event] from telemetry_users timestamp (timestamp) where event = 101 and id != '0x05ab1e873d165b00000005743f2c17') order by created) timestamp (created)) a lt join select [id, created] from (select-choose [id, created] id, created, event, timestamp from (select-choose [created, id] id, created, event, timestamp from (select [created, id, event] from telemetry_users timestamp (timestamp) where event = 100) order by created) timestamp (created)) b on b.id = a.id post-join-where a.created - b.created > 10000000000) a))",
                 "with \n" +
                         "    starts as ((telemetry_users where event = 100 order by created) timestamp(created)),\n" +
                         "    stops as ((telemetry_users where event = 101 order by created) timestamp(created))\n" +
@@ -6510,7 +6560,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testNotMoveWhereIntoDistinct() throws SqlException {
         assertQuery(
-                "select-choose a from (select-distinct [a] a from (select-choose [a] a from (select [a] from tab)) where a = 10)",
+                "select-choose a from (select-choose [a] a from (select-group-by [a] a, count() count from (select [a] from tab where a = 10)))",
                 "(select distinct a from tab) where a = 10",
                 modelOf("tab").col("a", ColumnType.INT)
         );
@@ -7067,22 +7117,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testOrderByPropagation() throws SqlException {
         assertQuery(
-                "select-choose id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType from " +
-                        "(select-choose [C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, " +
-                        "contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, " +
-                        "contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp] C.contactId id, contactlist.customName customName, " +
-                        "contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, " +
-                        "contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, " +
-                        "timestamp from (select [contactId] from (select-distinct [contactId] contactId from (select-choose [contactId] contactId from (select-choose [contactId, groupId, timestamp] " +
-                        "contactId, groupId, timestamp from (select [groupId, contactId, timestamp] from contact_events latest on timestamp partition by contactId) where groupId = 'qIqlX6qESMtTQXikQA46' order by timestamp) " +
-                        "eventlist) except select-choose [_id contactId] _id contactId from (select-choose [_id, notRealType] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, " +
-                        "longitude, isNotReal, notRealType, timestamp from (select [notRealType, _id] from contacts latest on timestamp partition by _id) where notRealType = 'bot') contactlist) " +
-                        "C join select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] " +
-                        "from (select-choose [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] _id, " +
-                        "customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from " +
-                        "(select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from " +
-                        "contacts latest on timestamp partition by _id) order by timestamp) contactlist on contactlist._id = C.contactId) C order by timestamp desc)",
-
+                "select-choose id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType from (select-choose [C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp] C.contactId id, contactlist.customName customName, contactlist.name name, contactlist.email email, contactlist.country_name country_name, contactlist.country_code country_code, contactlist.city city, contactlist.region region, contactlist.emoji_flag emoji_flag, contactlist.latitude latitude, contactlist.longitude longitude, contactlist.isNotReal isNotReal, contactlist.notRealType notRealType, timestamp from (select [contactId] from (select-choose [contactId] contactId from (select-group-by [contactId] contactId, count() count from (select-choose [contactId, groupId] contactId, groupId, timestamp from (select [groupId, contactId] from contact_events latest on timestamp partition by contactId) where groupId = 'qIqlX6qESMtTQXikQA46') eventlist) eventlist except select-choose [_id contactId] _id contactId from (select-choose [_id, notRealType] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [notRealType, _id] from contacts latest on timestamp partition by _id) where notRealType = 'bot') contactlist) C join select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from (select-choose [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] _id, customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp from (select [customName, name, email, country_name, country_code, city, region, emoji_flag, latitude, longitude, isNotReal, notRealType, timestamp, _id] from contacts latest on timestamp partition by _id) order by timestamp) contactlist on contactlist._id = C.contactId) C order by timestamp desc)",
                 "WITH \n" +
                         "contactlist AS (SELECT * FROM contacts LATEST ON timestamp PARTITION BY _id ORDER BY timestamp),\n" +
                         "eventlist AS (SELECT * FROM contact_events LATEST ON timestamp PARTITION BY contactId ORDER BY timestamp),\n" +
@@ -7518,6 +7553,219 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-virtual 1 1, x, concat('2',cast(x + 1,string),'3') concat from (select [x] from tab)",
                 "select 1, x, '2' || cast(x + 1 as string) || '3' from tab",
                 modelOf("tab").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testPublicSchemaRemovalCreateTable() throws SqlException {
+        assertModel(
+                "create atomic table tab (a INT)",
+                "create table public.tab (a int)",
+                ExecutionModel.CREATE_TABLE
+        );
+
+        assertModel(
+                "create atomic table tab (a INT)",
+                "create table \"public\".tab (a int)",
+                ExecutionModel.CREATE_TABLE
+        );
+
+        assertModel(
+                "create atomic table tab (a INT)",
+                "create table \"public\".\"tab\" (a int)",
+                ExecutionModel.CREATE_TABLE
+        );
+
+        assertModel(
+                "create atomic table tab (a INT)",
+                "create table public.\"tab\" (a int)",
+                ExecutionModel.CREATE_TABLE
+        );
+
+        assertModel(
+                "create atomic table public (a INT)",
+                "create table public (a int)",
+                ExecutionModel.CREATE_TABLE
+        );
+
+        assertModel(
+                "create atomic table public (a INT)",
+                "create table \"public\" (a int)",
+                ExecutionModel.CREATE_TABLE
+        );
+    }
+
+    @Test
+    public void testPublicSchemaRemovalCreateTableAsSelect() throws SqlException {
+        assertModel(
+                "create batch 1000000 table tab as (select-choose * from (src))",
+                "create table public.tab as (select * from public.src)",
+                ExecutionModel.CREATE_TABLE,
+                modelOf("src").col("x", ColumnType.INT)
+        );
+
+        assertModel(
+                "create batch 1000000 table tab as (select-choose * from (src))",
+                "create table \"public\".tab as (select * from \"public\".src)",
+                ExecutionModel.CREATE_TABLE,
+                modelOf("src").col("x", ColumnType.INT)
+        );
+
+        assertModel(
+                "create batch 1000000 table tab as (select-choose * from (src))",
+                "create table public.\"tab\" as (select * from public.\"src\")",
+                ExecutionModel.CREATE_TABLE,
+                modelOf("src").col("x", ColumnType.INT)
+        );
+
+        assertModel(
+                "create batch 1000000 table tab as (select-choose * from (src))",
+                "create table \"public\".\"tab\" as (select * from \"public\".\"src\")",
+                ExecutionModel.CREATE_TABLE,
+                modelOf("src").col("x", ColumnType.INT)
+        );
+
+        assertModel(
+                "create batch 1000000 table public as (select-choose * from (src))",
+                "create table public as (select * from \"public\".\"src\")",
+                ExecutionModel.CREATE_TABLE,
+                modelOf("src").col("x", ColumnType.INT)
+        );
+
+        assertModel(
+                "create batch 1000000 table public as (select-choose * from (src))",
+                "create table \"public\" as (select * from \"public\".\"src\")",
+                ExecutionModel.CREATE_TABLE,
+                modelOf("src").col("x", ColumnType.INT)
+        );
+
+        assertModel(
+                "create batch 1000000 table tab as (select-choose * from (public))",
+                "create table public.tab as (select * from public)",
+                ExecutionModel.CREATE_TABLE,
+                modelOf("public").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testPublicSchemaRemovalInsert() throws Exception {
+        assertModel(
+                "insert into tab values (1)",
+                "insert into public.tab values (1)",
+                ExecutionModel.INSERT,
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+        );
+
+        assertModel(
+                "insert into tab values (1)",
+                "insert into \"public\".tab values (1)",
+                ExecutionModel.INSERT,
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+        );
+
+        assertModel(
+                "insert into tab values (1)",
+                "insert into \"public\".\"tab\" values (1)",
+                ExecutionModel.INSERT,
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+        );
+
+        assertModel(
+                "insert into tab values (1)",
+                "insert into public.\"tab\" values (1)",
+                ExecutionModel.INSERT,
+                modelOf("tab")
+                        .col("a", ColumnType.INT)
+        );
+
+        assertModel(
+                "insert into public values (1)",
+                "insert into public values (1)",
+                ExecutionModel.INSERT,
+                modelOf("public")
+                        .col("a", ColumnType.INT)
+        );
+
+        assertSyntaxError(
+                "insert into public.",
+                19,
+                "table name expected"
+        );
+    }
+
+    @Test
+    public void testPublicSchemaRemovalSelect() throws Exception {
+        assertQuery(
+                "select-choose x from (select [x] from tab)",
+                "select x from public.tab",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from tab)",
+                "select x from \"public\".tab",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from tab)",
+                "select x from \"public\".\"tab\"",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from tab)",
+                "select x from public.\"tab\"",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from public)",
+                "select x from public",
+                modelOf("public").col("x", ColumnType.INT)
+        );
+
+        assertQuery(
+                "select-choose x from (select [x] from public)",
+                "select x from \"public\"",
+                modelOf("public").col("x", ColumnType.INT)
+        );
+
+        assertSyntaxError(
+                "select x from public.",
+                14,
+                "table name expected",
+                modelOf("a").col("x", ColumnType.INT).col("y", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testPublicSchemaRemovalShowCreateTable() throws Exception {
+        assertQuery(
+                "show",
+                "show create table public.t1",
+                modelOf("t1").col("x", ColumnType.INT)
+        );
+
+        assertQuery(
+                "show",
+                "show create table public",
+                modelOf("public").col("x", ColumnType.INT)
+        );
+
+        assertSyntaxError(
+                "show create table public.",
+                25,
+                "table name expected"
+        );
+
+        assertSyntaxError(
+                "show create table public",
+                18,
+                "table does not exist [table=public]"
         );
     }
 
@@ -8655,7 +8903,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectAfterOrderBy() throws SqlException {
         assertQuery(
-                "select-distinct [Schema] Schema from (select-choose [Schema] Schema from (select-virtual [Schema, Name] Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relnamespace, relkind, oid] from pg_catalog.pg_class() c left join select [nspname, oid] from pg_catalog.pg_namespace() n on n.oid = c.relnamespace post-join-where n.nspname != 'pg_catalog' and n.nspname != 'information_schema' and n.nspname !~ '^pg_toast' where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid)) c) c order by Schema, Name))",
+                "select-choose Schema from (select-group-by [Schema] Schema, count() count from (select-virtual [Schema, Name] Schema, Name, switch(relkind,'r','table','v','view','m','materialized view','i','index','S','sequence','s','special','f','foreign table','p','table','I','index') Type, pg_catalog.pg_get_userbyid(relowner) Owner from (select-choose [n.nspname Schema, c.relname Name] n.nspname Schema, c.relname Name, c.relkind relkind, c.relowner relowner from (select [relname, relnamespace, relkind, oid] from pg_catalog.pg_class() c left join select [nspname, oid] from pg_catalog.pg_namespace() n on n.oid = c.relnamespace post-join-where n.nspname != 'pg_catalog' and n.nspname != 'information_schema' and n.nspname !~ '^pg_toast' where relkind in ('r','p','v','m','S','f','') and pg_catalog.pg_table_is_visible(oid)) c) c order by Schema, Name))",
                 "select distinct Schema from \n" +
                         "(SELECT n.nspname                              as \"Schema\",\n" +
                         "       c.relname                              as \"Name\",\n" +
@@ -8820,7 +9068,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectDistinct() throws SqlException {
         assertQuery(
-                "select-distinct [a, b] a, b from (select-choose [a, b] a, b from (select [a, b] from tab))",
+                "select-choose a, b from (select-group-by [a, b] a, b, count() count from (select [a, b] from tab))",
                 "select distinct a, b from tab",
                 modelOf("tab")
                         .col("a", ColumnType.STRING)
@@ -8831,7 +9079,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectDistinctArithmetic() throws SqlException {
         assertQuery(
-                "select-distinct [column] column from (select-virtual [a + b column] a + b column from (select [b, a] from tab))",
+                "select-choose column from (select-group-by [a + b column] a + b column, count() count from (select [b, a] from tab))",
                 "select distinct a + b from tab",
                 modelOf("tab")
                         .col("a", ColumnType.STRING)
@@ -8853,7 +9101,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectDistinctGroupByFunctionArithmetic() throws SqlException {
         assertQuery(
-                "select-distinct [a, bb] a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from (select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1 from (select [a, c, b] from tab)))",
+                "select-choose a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb, count from (select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1, count() count from (select [a, c, b] from tab)))",
                 "select distinct a, sum(b)+sum(c) bb from tab",
                 modelOf("tab")
                         .col("a", ColumnType.STRING)
@@ -8865,7 +9113,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectDistinctGroupByFunctionArithmeticLimit() throws SqlException {
         assertQuery(
-                "select-distinct [a, bb] a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from (select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1 from (select [a, c, b] from tab))) limit 10",
+                "select-choose a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb, count from (select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1, count() count from (select [a, c, b] from tab)) limit 10)",
                 "select distinct a, sum(b)+sum(c) bb from tab limit 10",
                 modelOf("tab")
                         .col("a", ColumnType.STRING)
@@ -8877,9 +9125,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectDistinctGroupByFunctionArithmeticOrderByLimit() throws SqlException {
         assertQuery(
-                "select-distinct [a, bb] a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb from " +
-                        "(select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1 " +
-                        "from (select [a, c, b] from tab))) order by a limit 10",
+                "select-choose a, bb from (select-virtual [a, sum1 + sum bb] a, sum1 + sum bb, count from (select-group-by [a, sum(c) sum, sum(b) sum1] a, sum(c) sum, sum(b) sum1, count() count from (select [a, c, b] from tab)) order by a limit 10)",
                 "select distinct a, sum(b)+sum(c) bb from tab order by a limit 10",
                 modelOf("tab")
                         .col("a", ColumnType.STRING)
@@ -8891,10 +9137,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectDistinctUnion() throws SqlException {
         assertQuery(
-                "select-choose c from (" +
-                        "select-distinct [c, b] c, b from (select-choose [a c, b] a c, b from (select [a, b] from trips)) " +
-                        "union all " +
-                        "select-distinct [c, b] c, b from (select-choose [c, d b] c, d b from (select [c, d] from trips)))",
+                "select-choose c from (select-choose [c] c, b from (select-group-by [a c, b] a c, b, count() count from (select [a, b] from trips)) union all select-choose [c] c, b from (select-group-by [c, d b] c, d b, count() count from (select [c, d] from trips)))",
                 "select c from (select distinct a c, b from trips union all select distinct c, d b from trips)",
                 modelOf("trips")
                         .col("a", ColumnType.INT)
@@ -9112,6 +9355,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose a, b, c from (select [a, b, c] from t)",
                 "select a,b,c from t",
                 modelOf("t").col("a", ColumnType.INT).col("b", ColumnType.INT).col("c", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testSelectQuotedEmptyTable() throws Exception {
+        assertSyntaxError(
+                "select * from \"\"",
+                14,
+                "come on, where is the table name?"
         );
     }
 

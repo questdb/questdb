@@ -41,6 +41,16 @@ public interface QuaternaryFunction extends Function {
     }
 
     @Override
+    default void offerStateTo(Function that) {
+        if (that instanceof QuaternaryFunction) {
+            getFunc0().offerStateTo(((QuaternaryFunction) that).getFunc0());
+            getFunc1().offerStateTo(((QuaternaryFunction) that).getFunc1());
+            getFunc2().offerStateTo(((QuaternaryFunction) that).getFunc2());
+            getFunc3().offerStateTo(((QuaternaryFunction) that).getFunc3());
+        }
+    }
+
+    @Override
     default void cursorClosed() {
         getFunc0().cursorClosed();
         getFunc1().cursorClosed();
@@ -62,14 +72,6 @@ public interface QuaternaryFunction extends Function {
         getFunc1().init(symbolTableSource, executionContext);
         getFunc2().init(symbolTableSource, executionContext);
         getFunc3().init(symbolTableSource, executionContext);
-    }
-
-    @Override
-    default void initCursor() {
-        getFunc0().initCursor();
-        getFunc1().initCursor();
-        getFunc2().initCursor();
-        getFunc3().initCursor();
     }
 
     @Override

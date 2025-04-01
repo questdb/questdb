@@ -259,6 +259,12 @@ class TestRunner {
 
         foreach ($tests as $test) {
             $iterations = $test['iterations'] ?? 50;
+            $exclusions = $test['exclude'] ?? [];
+            if (in_array('php', $exclusions)) {
+                echo "Skipping test '{$test['name']}' due to exclusion for PHP.\n";
+                continue;
+            }
+
             for ($i = 0; $i < $iterations; $i++) {
                 echo "Running test '{$test['name']}' iteration " . ($i + 1) . "...\n";
 

@@ -98,6 +98,8 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
         private final Function rightFunc;
         private final int rightPos;
         private long epoch;
+        private boolean stateInherited = false;
+        private boolean stateShared = false;
 
         public StrCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, int rightPos) {
             this.factory = factory;
@@ -123,7 +125,11 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+            if (stateInherited) {
+                return;
+            }
+            this.stateShared = false;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 if (cursor.hasNext()) {
                     final CharSequence value = cursor.getRecord().getStrA(0);
@@ -140,10 +146,17 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isThreadSafe() {
-            // The function is thread safe because its state is epoch, which does not mutate
-            // between frame executions. For non-thread-safe function, which operates a cursor,
-            // the cursor will be re-executed as many times as there are threads. Which is suboptimal.
-            return true;
+            return leftFunc.isThreadSafe();
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof StrCursorFunc) {
+                StrCursorFunc thatF = (StrCursorFunc) that;
+                thatF.epoch = epoch;
+                thatF.stateInherited = this.stateShared = true;
+            }
+            BinaryFunction.super.offerStateTo(that);
         }
 
         @Override
@@ -153,6 +166,9 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
                 sink.val('!');
             }
             sink.val('=').val(rightFunc);
+            if (stateShared) {
+                sink.val(" [state-shared]");
+            }
         }
     }
 
@@ -161,6 +177,8 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
         private final Function leftFunc;
         private final Function rightFunc;
         private long epoch;
+        private boolean stateInherited = false;
+        private boolean stateShared = false;
 
         public TimestampCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc) {
             this.factory = factory;
@@ -185,7 +203,11 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+            if (stateInherited) {
+                return;
+            }
+            this.stateShared = false;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 if (cursor.hasNext()) {
                     epoch = cursor.getRecord().getTimestamp(0);
@@ -197,10 +219,17 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isThreadSafe() {
-            // The function is thread safe because its state is epoch, which does not mutate
-            // between frame executions. For non-thread-safe function, which operates a cursor,
-            // the cursor will be re-executed as many times as there are threads. Which is suboptimal.
-            return true;
+            return leftFunc.isThreadSafe();
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof TimestampCursorFunc) {
+                TimestampCursorFunc thatF = (TimestampCursorFunc) that;
+                thatF.epoch = epoch;
+                thatF.stateInherited = this.stateShared = true;
+            }
+            BinaryFunction.super.offerStateTo(that);
         }
 
         @Override
@@ -210,6 +239,9 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
                 sink.val('!');
             }
             sink.val('=').val(rightFunc);
+            if (stateShared) {
+                sink.val(" [state-shared]");
+            }
         }
     }
 
@@ -219,6 +251,8 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
         private final Function rightFunc;
         private final int rightPos;
         private long epoch;
+        private boolean stateInherited = false;
+        private boolean stateShared = false;
 
         public VarcharCursorFunc(RecordCursorFactory factory, Function leftFunc, Function rightFunc, int rightPos) {
             this.factory = factory;
@@ -244,7 +278,11 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+            if (stateInherited) {
+                return;
+            }
+            this.stateShared = false;
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 if (cursor.hasNext()) {
                     final Utf8Sequence value = cursor.getRecord().getVarcharA(0);
@@ -261,10 +299,17 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isThreadSafe() {
-            // The function is thread safe because its state is epoch, which does not mutate
-            // between frame executions. For non-thread-safe function, which operates a cursor,
-            // the cursor will be re-executed as many times as there are threads. Which is suboptimal.
-            return true;
+            return leftFunc.isThreadSafe();
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof VarcharCursorFunc) {
+                VarcharCursorFunc thatF = (VarcharCursorFunc) that;
+                thatF.epoch = epoch;
+                thatF.stateInherited = this.stateShared = true;
+            }
+            BinaryFunction.super.offerStateTo(that);
         }
 
         @Override
@@ -274,6 +319,9 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
                 sink.val('!');
             }
             sink.val('=').val(rightFunc);
+            if (stateShared) {
+                sink.val(" [state-shared]");
+            }
         }
     }
 }
