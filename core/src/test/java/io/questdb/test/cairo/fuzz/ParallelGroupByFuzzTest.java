@@ -1285,6 +1285,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     public void testParallelNonKeyedGroupByThrowsOnTimeout() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
+        // Validate parallel GROUP BY factories.
         Assume.assumeTrue(enableParallelGroupBy);
         assertMemoryLeak(() -> {
             SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
@@ -1938,6 +1939,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     public void testParallelSingleKeyGroupByThrowsOnTimeout() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
+        // Validate parallel GROUP BY factories.
         Assume.assumeTrue(enableParallelGroupBy);
         assertMemoryLeak(() -> {
             final Rnd rnd = TestUtils.generateRandom(AbstractCairoTest.LOG);
