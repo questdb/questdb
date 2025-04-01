@@ -135,6 +135,14 @@ public final class Files {
         return -1;
     }
 
+    public static boolean errnoFileCannotRead(int errno) {
+        return errnoFileDoesNotExist(errno) || (Os.type == Os.WINDOWS && errno == CairoException.ERRNO_ACCESS_DENIED_WIN);
+    }
+
+    public static boolean errnoFileDoesNotExist(int errno) {
+        return errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST || (Os.type == Os.WINDOWS && errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN);
+    }
+
     public static boolean exists(long fd) {
         return exists(toOsFd(fd));
     }

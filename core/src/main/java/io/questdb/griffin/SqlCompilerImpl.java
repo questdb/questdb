@@ -517,7 +517,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 || (from == ColumnType.IPv4 && to == ColumnType.VARCHAR);
     }
 
-    private int addColumnWithType(AlterOperationBuilder addColumn, CharSequence columnName, int columnNamePosition) throws SqlException {
+    private int addColumnWithType(
+            AlterOperationBuilder addColumn,
+            CharSequence columnName,
+            int columnNamePosition,
+            boolean symbolsCanHaveIndex
+    ) throws SqlException {
         CharSequence tok;
         tok = expectToken(lexer, "column type");
 
@@ -604,6 +609,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             indexed = Chars.equalsLowerCaseAsciiNc("index", tok);
             if (indexed) {
+                if (!symbolsCanHaveIndex) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "INDEX is not supported when changing SYMBOL capacity");
+                }
                 tok = SqlUtil.fetchNext(lexer);
             }
 
@@ -711,7 +719,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
             }
 
-            addColumnWithType(addColumn, columnName, columnNamePosition);
+            addColumnWithType(addColumn, columnName, columnNamePosition, true);
             tok = SqlUtil.fetchNext(lexer);
 
             if (tok == null || (!isSingleQueryMode && isSemicolon(tok))) {
@@ -745,7 +753,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 tableMetadata.getTableId()
         );
         int existingColumnType = tableMetadata.getColumnType(columnIndex);
-        int newColumnType = addColumnWithType(changeColumn, columnName, columnNamePosition);
+        int newColumnType = addColumnWithType(changeColumn, columnName, columnNamePosition, true);
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok != null && !isSemicolon(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to change column type");
@@ -756,11 +764,42 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (newColumnType == existingColumnType) {
             throw SqlException.$(lexer.lastTokenPosition(), "column '").put(columnName)
                     .put("' type is already '").put(ColumnType.nameOf(existingColumnType)).put('\'');
+        } else {
+            if (!isCompatibleColumnTypeChange(existingColumnType, newColumnType)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "incompatible column type change [existing=")
+                        .put(ColumnType.nameOf(existingColumnType)).put(", new=").put(ColumnType.nameOf(newColumnType)).put(']');
+            }
         }
-        if (!isCompatibleColumnTypeChange(existingColumnType, newColumnType)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "incompatible column type change [existing=")
-                    .put(ColumnType.nameOf(existingColumnType)).put(", new=").put(ColumnType.nameOf(newColumnType)).put(']');
+        securityContext.authorizeAlterTableAlterColumnType(tableToken, alterOperationBuilder.getExtraStrInfo());
+        compiledQuery.ofAlter(alterOperationBuilder.build());
+    }
+
+    private void alterTableChangeSymbolCapacity(
+            SecurityContext securityContext,
+            int tableNamePosition,
+            TableToken tableToken,
+            int columnNamePosition,
+            CharSequence columnName,
+            TableRecordMetadata tableMetadata,
+            int columnIndex
+    ) throws SqlException {
+        AlterOperationBuilder changeColumn = alterOperationBuilder.ofSymbolCapacityChange(
+                tableNamePosition,
+                tableToken,
+                tableMetadata.getTableId()
+        );
+        int existingColumnType = tableMetadata.getColumnType(columnIndex);
+        if (!ColumnType.isSymbol(existingColumnType)) {
+            throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName).put("' is not of symbol type");
         }
+        lexer.unparseLast();
+        addColumnWithType(changeColumn, columnName, columnNamePosition, false);
+
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok != null && !isSemicolon(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to change column type");
+        }
+
         securityContext.authorizeAlterTableAlterColumnType(tableToken, alterOperationBuilder.getExtraStrInfo());
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
@@ -1437,7 +1476,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     final CharSequence columnName = GenericLexer.immutableOf(tok);
                     final int columnIndex = tableMetadata.getColumnIndexQuiet(columnName);
                     if (columnIndex == -1) {
-                        throw SqlException.$(columnNamePosition, "column '").put(columnName)
+                        throw SqlException.walRecoverable(columnNamePosition).put("column '").put(columnName)
                                 .put("' does not exists in table '").put(tableToken.getTableName()).put('\'');
                     }
 
@@ -1509,6 +1548,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         );
                     } else if (isTypeKeyword(tok)) {
                         alterTableChangeColumnType(
+                                securityContext,
+                                tableNamePosition,
+                                tableToken,
+                                columnNamePosition,
+                                columnName,
+                                tableMetadata,
+                                columnIndex
+                        );
+                    } else if (isSymbolKeyword(tok)) {
+                        alterTableChangeSymbolCapacity(
                                 securityContext,
                                 tableNamePosition,
                                 tableToken,
