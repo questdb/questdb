@@ -58,21 +58,21 @@ public class DoubleArrayTransposeFunctionFactory implements FunctionFactory {
     private static class TransposeDoubleArrayFunction extends ArrayFunction {
 
         private final DerivedArrayView borrowedView = new DerivedArrayView();
-        private Function arrayFunc;
+        private Function arrayArg;
 
-        public TransposeDoubleArrayFunction(Function arrayFunc) {
-            this.arrayFunc = arrayFunc;
-            this.type = arrayFunc.getType();
+        public TransposeDoubleArrayFunction(Function arrayArg) {
+            this.arrayArg = arrayArg;
+            this.type = arrayArg.getType();
         }
 
         @Override
         public void close() {
-            this.arrayFunc = Misc.free(this.arrayFunc);
+            this.arrayArg = Misc.free(this.arrayArg);
         }
 
         @Override
         public ArrayView getArray(Record rec) {
-            ArrayView array = arrayFunc.getArray(rec);
+            ArrayView array = arrayArg.getArray(rec);
             borrowedView.of(array);
             borrowedView.transpose();
             return borrowedView;
@@ -80,7 +80,7 @@ public class DoubleArrayTransposeFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("transpose(").val(arrayFunc).val(')');
+            sink.val("transpose(").val(arrayArg).val(')');
         }
     }
 }
