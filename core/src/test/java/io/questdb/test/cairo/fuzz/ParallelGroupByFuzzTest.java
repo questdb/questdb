@@ -3088,7 +3088,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         Assume.assumeTrue(enableParallelGroupBy);
         // The test is very sensitive to sharding threshold and page frame sizes.
         Assert.assertEquals(2, configuration.getGroupByShardingThreshold());
-        Assert.assertEquals(PAGE_FRAME_MAX_ROWS, configuration.getSqlPageFrameMaxRows());
+        final int rowCount = ROW_COUNT;
+        Assert.assertEquals(40, rowCount / configuration.getSqlPageFrameMaxRows());
         assertMemoryLeak(() -> {
             circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
                 private final AtomicLong ticks = new AtomicLong();
@@ -3126,7 +3127,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                     sqlExecutionContext
                             );
                             engine.execute(
-                                    "insert into tab select (x * 864000000)::timestamp, x, x % 100 from long_sequence(" + ROW_COUNT + ")",
+                                    "insert into tab select (x * 864000000)::timestamp, x, x % 100 from long_sequence(" + rowCount + ")",
                                     sqlExecutionContext
                             );
                             if (convertToParquet) {
@@ -3140,7 +3141,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                     context.getRequestFd(),
                                     circuitBreaker
                             );
-                            context.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                            context.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
 
                             TestUtils.assertSql(compiler, context, query, sink, "");
                             Assert.fail();

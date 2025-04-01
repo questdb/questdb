@@ -715,8 +715,9 @@ public class ParallelFilterTest extends AbstractCairoTest {
 
     private void testAsyncOffloadTimeout(String query) throws Exception {
         Assume.assumeFalse(convertToParquet);
+        final int rowCount = 10 * ROW_COUNT;
         // The test is very sensitive to page frame sizes.
-        Assert.assertEquals(PAGE_FRAME_MAX_ROWS, configuration.getSqlPageFrameMaxRows());
+        Assert.assertEquals(40, rowCount / configuration.getSqlPageFrameMaxRows());
         assertMemoryLeak(() -> {
             final Rnd rnd = TestUtils.generateRandom(AbstractCairoTest.LOG);
             // We want the timeout to happen in reduce.
@@ -758,7 +759,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                                     sqlExecutionContext
                             );
                             engine.execute(
-                                    "insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + 10 * ROW_COUNT + ")",
+                                    "insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + rowCount + ")",
                                     sqlExecutionContext
                             );
 
