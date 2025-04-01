@@ -3624,6 +3624,78 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalSegmentKeepsPendingOnClose() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testWalSegmentKeepsPendingOnClose";
+            TableToken tableToken;
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("a", ColumnType.BYTE)
+                    .timestamp("ts")
+                    .wal();
+            tableToken = createTable(model);
+
+            assertTableExistence(true, tableToken);
+            String pending = "custom.pending";
+            engine.setWalDirectoryPolicy(new WalDirectoryPolicy() {
+                @Override
+                public void initDirectory(Path dirPath) {
+                    final File segmentDirFile = new File(dirPath.toString());
+                    final File customInitFile = new File(segmentDirFile, pending);
+                    try {
+                        //noinspection ResultOfMethodCallIgnored
+                        customInitFile.createNewFile();
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+
+                @Override
+                public boolean isInUse(Path path) {
+                    return true;
+                }
+
+                @Override
+                public void rollbackDirectory(Path path) {
+                    final File segmentDirFile = new File(path.toString());
+                    final File customInitFile = new File(segmentDirFile, pending);
+                    customInitFile.delete();
+                }
+
+                @Override
+                public boolean truncateFilesOnClose() {
+                    return true;
+                }
+            });
+
+            try (WalWriter wal1 = engine.getWalWriter(tableToken);
+                 WalWriter wal2 = engine.getWalWriter(tableToken)
+            ) {
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row row = wal1.newRow(0);
+                    row.putByte(0, (byte) i);
+                    row.append();
+                }
+                wal1.commit();
+
+                // wal2 without commits
+                wal2.truncateSoft();
+            }
+
+            assertWalExistence(true, tableToken, 1);
+            File segmentDir = assertSegmentExistence(true, tableToken, 1, 0);
+
+            final File pendingFile = new File(segmentDir, pending);
+            assertTrue(pendingFile.exists());
+
+            assertWalExistence(true, tableToken, 2);
+            File segmentDir2 = assertSegmentExistence(true, tableToken, 2, 0);
+
+            final File pendingFile2 = new File(segmentDir2, pending);
+            assertTrue(pendingFile2.exists());
+        });
+    }
+
+    @Test
     public void testWalWritersUnknownTable() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
@@ -3861,8 +3933,10 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertSql("count\tmin\tmax\n" +
-                    totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - tsStep) + "\n", "select count(*), min(ts), max(ts) from sm");
+            assertSql(
+                    "count\tmin\tmax\n" +
+                            totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - tsStep) + "\n", "select count(*), min(ts), max(ts) from sm"
+            );
             assertSqlCursors("sm", "select * from sm order by id");
             assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(s as int)");
             assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(v as int)");
