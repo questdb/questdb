@@ -191,6 +191,7 @@ import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.FilteredAsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCursorFactory;
@@ -2465,12 +2466,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     masterMetadata.getColumnCount()
                                             );
                                         } else {
-                                            master = new AsOfJoinNoKeyRecordCursorFactory(
-                                                    createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                                    master,
-                                                    slave,
-                                                    masterMetadata.getColumnCount()
-                                            );
+                                            // todo: make sure it works with SelectedCursorFactory
+                                            if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
+                                                RecordCursorFactory slaveBase = slave.getBaseFactory();
+                                                Function stolenFilter = slave.getFilter();
+                                                slave.halfClose();
+
+                                                master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(configuration, createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata), master, slaveBase, stolenFilter, masterMetadata.getColumnCount());
+                                            } else {
+                                                master = new AsOfJoinNoKeyRecordCursorFactory(
+                                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                        master,
+                                                        slave,
+                                                        masterMetadata.getColumnCount()
+                                                );
+                                            }
                                         }
                                     }
                                 } else {
