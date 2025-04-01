@@ -118,9 +118,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         // isMasterHasNextPending is false is only possible when slave cursor navigation inside hasNext() threw DataUnavailableException
         // and in such case we expect hasNext() to be called again, rather than skipRows()
         assert isMasterHasNextPending;
-        while (rowCount.get() > 0 && masterCursor.hasNext()) {
-            rowCount.dec();
-        }
+        masterCursor.skipRows(rowCount);
     }
 
     @Override
