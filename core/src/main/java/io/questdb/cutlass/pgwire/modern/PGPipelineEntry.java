@@ -709,6 +709,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     getErrorMessageSink().putAscii("Internal error. Exception type: ").putAscii(th.getClass().getSimpleName());
                 }
             }
+            LOG.error().$(getErrorMessageSink()).$();
         }
         return transactionState;
     }
@@ -1483,7 +1484,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                                     cacheIfPossible(null, taiCache);
                                 }
                             } catch (Throwable e) {
-                                Misc.free(m);
+                                TableWriterAPI w = m.popWriter();
+                                pendingWriters.remove(w.getTableToken());
+                                Misc.free(w);
                                 throw e;
                             }
                             break;

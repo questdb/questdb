@@ -1,6 +1,5 @@
 use std::slice;
 
-use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
 use crate::parquet::error::ParquetResult;
 use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol, QdbMetaColFormat, QDB_META_KEY};
 use parquet2::encoding::Encoding;
@@ -10,6 +9,7 @@ use parquet2::schema::types::{
     IntegerType, ParquetType, PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
 };
 use parquet2::schema::Repetition;
+use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 
 pub fn column_type_to_parquet_type(
     column_id: i32,

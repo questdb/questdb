@@ -1203,8 +1203,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     }
                 } else {
                     throw CairoException.nonCritical()
-                            .put("cannot rename table, new name is already in use" +
-                                    " [table=").put(fromTableName)
+                            .put("cannot rename table, new name is already in use [table=").put(fromTableName)
                             .put(", toTableName=").put(toTableName)
                             .put(']');
                 }

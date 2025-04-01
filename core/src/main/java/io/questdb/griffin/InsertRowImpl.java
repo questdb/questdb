@@ -66,8 +66,13 @@ public final class InsertRowImpl implements QuietCloseable {
 
     public void append(TableWriterAPI writer) {
         final TableWriter.Row row = rowFactory.getRow(writer);
-        copier.copy(virtualRecord, row);
-        row.append();
+        try {
+            copier.copy(virtualRecord, row);
+            row.append();
+        } catch (Throwable e) {
+            row.cancel();
+            throw e;
+        }
     }
 
     @Override

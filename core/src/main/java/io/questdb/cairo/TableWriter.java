@@ -61,6 +61,7 @@ import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.ConvertOperatorImpl;
 import io.questdb.griffin.DropIndexOperator;
 import io.questdb.griffin.PurgingOperator;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.UpdateOperatorImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
@@ -485,8 +486,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return getPrimaryColumnIndex(index) + 1;
     }
 
-    public static long getTimestampIndexValue(long timestampIndex, long indexRow) {
-        return Unsafe.getUnsafe().getLong(timestampIndex + indexRow * 16);
+    public static long getTimestampIndexValue(long timestampIndexAddr, long indexRow) {
+        return Unsafe.getUnsafe().getLong(timestampIndexAddr + indexRow * 16);
+    }
+
+    public static void validateDesignatedTimestampBounds(long timestamp) {
+        if (timestamp == Numbers.LONG_NULL) {
+            throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
+        }
+        if (timestamp < Timestamps.O3_MIN_TS) {
+            throw CairoException.nonCritical().put("designated timestamp before 1970-01-01 is not allowed");
+        }
+        if (timestamp >= Timestamps.YEAR_10000) {
+            throw CairoException.nonCritical().put(
+                    "designated timestamp beyond 9999-12-31 is not allowed");
+        }
     }
 
     @Override
@@ -1032,6 +1046,131 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    @Override
+    public void changeSymbolCapacity(
+            CharSequence colName,
+            int newSymbolCapacity,
+            SecurityContext securityContext
+    ) {
+        int columnIndex = metadata.getColumnIndexQuiet(colName);
+        if (columnIndex < 0) {
+            // Log it as non-critical because it's not a structural change.
+            // It is possible in concurrent schema modification that SQl compiler allowed
+            // this alter but by the time it is applied the colum type has changed.
+            LOG.error().$("cannot change column type, column does not exist [table=").$(tableToken)
+                    .$(", column=").$(colName).I$();
+            return;
+        }
+
+        String columnName = metadata.getColumnName(columnIndex);
+        int existingType = metadata.getColumnType(columnIndex);
+        assert existingType > 0;
+
+        if (!ColumnType.isSymbol(existingType)) {
+            // Log it as non-critical because it's not a structural change.
+            // It is possible in concurrent schema modification that SQl compiler allowed
+            // this alter but by the time it is applied the colum type has changed.
+            LOG.error().$("cannot symbol capacity, column is not symbol [table=").$(tableToken)
+                    .$(", column=").$(columnName).$(", columnType=").$(ColumnType.nameOf(existingType)).I$();
+            return;
+        }
+
+
+        var oldSymbolWriter = (SymbolMapWriter) symbolMapWriters.getQuick(columnIndex);
+        int oldCapacity = oldSymbolWriter.getSymbolCapacity();
+        boolean symbolCacheFlag = metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag();
+
+        newSymbolCapacity = Numbers.ceilPow2(newSymbolCapacity);
+        try {
+            TableUtils.validateSymbolCapacity(0, newSymbolCapacity);
+        } catch (SqlException e) {
+            LOG.error().$("invalid symbol capacity to change to [table=").$(tableToken)
+                    .$(", column=").utf8(columnName)
+                    .$(", from=").$(oldCapacity)
+                    .$(", to=").$(newSymbolCapacity)
+                    .I$();
+
+            throw CairoException.nonCritical().put("invalid symbol capacity [name=").put(columnName).put(", capacity=").put(newSymbolCapacity).put(']');
+        }
+
+        LOG.info().$("changing symbol capacity [table=").$(tableToken).$(", column=").utf8(columnName)
+                .$(", from=").$(oldCapacity)
+                .$(", to=").$(newSymbolCapacity).I$();
+
+        if (oldCapacity == newSymbolCapacity) {
+            // Nothing to do.
+            return;
+        }
+
+        try {
+            commit();
+            long columnNameTxn = getTxn();
+            metadata.updateColumnSymbolCapacity(columnIndex, newSymbolCapacity);
+            rewriteAndSwapMetadata(metadata);
+
+            try {
+                // remove _todo
+                clearTodoLog();
+
+                // linking of the files has to be done after _todo is removed
+                hardLinkAndPurgeColumnFiles(
+                        columnName,
+                        columnIndex,
+                        metadata.isIndexed(columnIndex),
+                        columnName,
+                        ColumnType.SYMBOL,
+                        true
+                );
+                oldSymbolWriter.rebuildCapacity(
+                        configuration,
+                        path,
+                        columnName,
+                        columnNameTxn,
+                        newSymbolCapacity,
+                        symbolCacheFlag
+                );
+            } catch (CairoException e) {
+                throwDistressException(e);
+            }
+
+            bumpMetadataVersion();
+
+            // Call finish purge to remove old column files before renaming them in metadata
+            finishColumnPurge();
+
+            // open new column files
+            long transientRowCount = txWriter.getTransientRowCount();
+            if (transientRowCount > 0) {
+                long partitionTimestamp = txWriter.getLastPartitionTimestamp();
+                setStateForTimestamp(path, partitionTimestamp);
+                int plen = path.size();
+                openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
+                setColumnAppendPosition(columnIndex, transientRowCount, false);
+                path.trimTo(pathSize);
+
+                if (metadata.isIndexed(columnIndex)) {
+                    ColumnIndexer indexer = indexers.get(columnIndex);
+                    final long columnTop = columnVersionWriter.getColumnTopQuick(partitionTimestamp, columnIndex);
+                    assert indexer != null;
+                    indexer.configureFollowerAndWriter(path.trimTo(plen), columnName, columnNameTxn, getPrimaryColumn(columnIndex), columnTop);
+                }
+            }
+        } catch (Throwable th) {
+            LOG.critical().$("could not change column type [table=").$(tableToken.getTableName()).$(", column=").utf8(columnName)
+                    .$(", error=").$(th).I$();
+            distressed = true;
+            throw th;
+        } finally {
+            partitionRemoveCandidates.clear();
+            // clear temp resources
+            path.trimTo(pathSize);
+        }
+
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(metadata);
+        }
+    }
+
     public boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
         if (checkpointStatus.isInProgress()) {
             // do not alter scoreboard while checkpoint is in progress
@@ -1266,7 +1405,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn);
                             if (!ff.exists(path.$())) {
                                 LOG.error().$(path).$(" is not found").$();
-                                throw CairoException.critical(0).put("offset file does not exist: ").put(path);
+                                throw CairoException.fileNotFound().put("offset file does not exist: ").put(path);
                             }
 
                             final long fileLength = ff.length(path.$());
@@ -2294,17 +2433,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public Row newRow(long timestamp) {
+        if (rowAction != ROW_ACTION_NO_TIMESTAMP) {
+            validateDesignatedTimestampBounds(timestamp);
+        }
         switch (rowAction) {
             case ROW_ACTION_NO_PARTITION:
-
-                if (timestamp < Timestamps.O3_MIN_TS) {
-                    throw CairoException.nonCritical().put("timestamp before 1970-01-01 is not allowed");
-                }
-
                 if (timestamp < txWriter.getMaxTimestamp()) {
-                    throw CairoException.nonCritical().put("cannot insert rows out of order to non-partitioned table. Table=").put(path);
+                    throw CairoException.nonCritical()
+                            .put("cannot insert rows out of order to non-partitioned table. Table=").put(path);
                 }
-
                 bumpMasterRef();
                 updateMaxTimestamp(timestamp);
                 break;
@@ -2316,24 +2453,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 o3TimestampSetter(timestamp);
                 return row;
             case ROW_ACTION_OPEN_PARTITION:
-
-                if (timestamp == Numbers.LONG_NULL) {
-                    throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
-                }
-
-                if (timestamp < Timestamps.O3_MIN_TS) {
-                    throw CairoException.nonCritical().put("timestamp before 1970-01-01 is not allowed");
-                }
-
                 if (txWriter.getMaxTimestamp() == Long.MIN_VALUE) {
                     txWriter.setMinTimestamp(timestamp);
                     initLastPartition(txWriter.getPartitionTimestampByTimestamp(timestamp));
                 }
-                // fall thru
-
                 rowAction = ROW_ACTION_SWITCH_PARTITION;
-
-            default: // switch partition
+                // fall thru
+            case ROW_ACTION_SWITCH_PARTITION:
                 bumpMasterRef();
                 if (timestamp > partitionTimestampHi || timestamp < txWriter.getMaxTimestamp()) {
                     if (timestamp < txWriter.getMaxTimestamp()) {
@@ -2351,6 +2477,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 updateMaxTimestamp(timestamp);
                 break;
+            default:
+                throw new AssertionError("Invalid row action constant");
         }
         txWriter.append();
         return row;
@@ -2861,7 +2989,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             clearTodoLog();
 
             // rename column files has to be done after _todo is removed
-            hardLinkAndPurgeColumnFiles(columnName, index, isIndexed, newColumnName, type);
+            hardLinkAndPurgeColumnFiles(columnName, index, isIndexed, newColumnName, type, false);
         } catch (CairoException e) {
             throwDistressException(e);
         }
@@ -3158,7 +3286,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 return;
             } else if (ff.exists(to)) {
                 LOG.info().$("rename destination file exists, assuming previously failed rename attempt [path=").$(to).I$();
-                ff.remove(to);
+                try {
+                    ff.remove(to);
+                } catch (CairoException e) {
+                    if (Os.isWindows() && ff.errno() == CairoException.ERRNO_ACCESS_DENIED_WIN) {
+                        // On Windows it's not possible to delete link if the original file is open.
+                        // Here we assume that it's the exactly what we need, linking the correct from/to paths.
+                        // There is no good way to verify that, but there is no hypothetical scenario found
+                        // when this is false.
+                        LOG.info().$("cannot delete file to create link with the same name," +
+                                " assuming already correctly linked [path=").$(to).$(", linkSrc=").$(from).I$();
+                        return;
+                    } else {
+                        throw e;
+                    }
+                }
                 if (ff.hardLink(from, to) == FILES_RENAME_OK) {
                     LOG.debug().$("renamed [from=").$(from).$(", to=").$(to).I$();
                     return;
@@ -3556,14 +3698,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (metadata.isColumnIndexed(columnIndex)) {
                 valueFileName(partitionPath.trimTo(pathLen), columnName, columnNameTxn);
                 if (!ff.exists(partitionPath.$())) {
-                    throw CairoException.critical(0)
+                    throw CairoException.fileNotFound()
                             .put("Symbol index value file does not exist [file=")
                             .put(partitionPath)
                             .put(']');
                 }
                 keyFileName(partitionPath.trimTo(pathLen), columnName, columnNameTxn);
                 if (!ff.exists(partitionPath.$())) {
-                    throw CairoException.critical(0)
+                    throw CairoException.fileNotFound()
                             .put("Symbol index key file does not exist [file=")
                             .put(partitionPath)
                             .put(']');
@@ -5420,7 +5562,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void hardLinkAndPurgeColumnFiles(String columnName, int columnIndex, boolean isIndexed, CharSequence newName, int columnType) {
+    private void hardLinkAndPurgeColumnFiles(String columnName, int columnIndex, boolean isIndexed, CharSequence newName, int columnType, boolean symbolCapacityChange) {
         try {
             PurgingOperator purgingOperator = getPurgingOperator();
             long newColumnNameTxn = getTxn();
@@ -5446,10 +5588,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             if (ColumnType.isSymbol(columnType)) {
                 // Link .o, .c, .k, .v symbol files in the table root folder
-                linkFile(ff, offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                linkFile(ff, charFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                linkFile(ff, keyFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
-                linkFile(ff, valueFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                try {
+                    linkFile(ff, charFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    if (!symbolCapacityChange) {
+                        linkFile(ff, offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                        linkFile(ff, keyFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                        linkFile(ff, valueFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    } else {
+                        // in case it's symbol capacity rebuild copy symbol offset file
+                        // it's almost the same but the capacity in the file header is changed
+                        ff.copy(offsetFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn), offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    }
+                } catch (Throwable e) {
+                    ff.removeQuiet(offsetFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    ff.removeQuiet(charFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    ff.removeQuiet(keyFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    ff.removeQuiet(valueFileName(other.trimTo(pathSize), newName, newColumnNameTxn));
+                    throw e;
+                }
                 purgingOperator.add(columnIndex, columnName, columnType, isIndexed, defaultColumnNameTxn, PurgingOperator.TABLE_ROOT_PARTITION, -1L);
             }
             long columnAddedPartition = columnVersionWriter.getColumnTopPartitionTimestamp(columnIndex);
@@ -5776,13 +5932,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long o3TimestampMin = getTimestampIndexValue(sortedTimestampsAddr, 0);
             if (o3TimestampMin < Timestamps.O3_MIN_TS) {
                 o3InError = true;
-                throw CairoException.nonCritical().put("timestamps before 1970-01-01 are not allowed for O3");
+                throw CairoException.nonCritical().put("O3 commit encountered timestamp before 1970-01-01");
             }
 
             long o3TimestampMax = getTimestampIndexValue(sortedTimestampsAddr, o3RowCount - 1);
             if (o3TimestampMax < Timestamps.O3_MIN_TS) {
                 o3InError = true;
-                throw CairoException.nonCritical().put("timestamps before 1970-01-01 are not allowed for O3");
+                throw CairoException.nonCritical().put("O3 commit encountered timestamp before 1970-01-01");
             }
 
             // Safe check of the sort. No known way to reproduce
@@ -7911,7 +8067,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // If table is removed / renamed this should fail with table does not exist.
             todoCount = openTodoMem();
         } catch (CairoException ex) {
-            if (ex.errnoReadPathDoesNotExist()) {
+            if (ex.errnoFileCannotRead()) {
                 throw CairoException.tableDoesNotExist(tableToken.getTableName());
             }
             throw ex;
