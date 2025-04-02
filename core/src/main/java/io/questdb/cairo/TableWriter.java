@@ -9137,7 +9137,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .$(", actualResult=").$(rowCount)
                 .I$();
 
-        throw CairoException.txnApplyBlockError(tableToken);
+        if (configuration.getDebugWalApplyBlockFailureRetry()) {
+            throw CairoException.txnApplyBlockError(tableToken);
+        }
+        throw CairoException.critical(10000);
     }
 
     private void throwDistressException(Throwable cause) {
