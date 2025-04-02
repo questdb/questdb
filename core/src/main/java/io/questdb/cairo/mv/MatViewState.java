@@ -50,7 +50,7 @@ import static io.questdb.TelemetrySystemEvent.*;
 public class MatViewState implements ReadableMatViewState, QuietCloseable {
     public static final String MAT_VIEW_STATE_FILE_NAME = "_mv.s";
     public static final int MAT_VIEW_STATE_FORMAT_MSG_TYPE = 0;
-    public static final int MAT_VIEW_STATE_FORMAT_V2_MSG_TYPE = 1;
+    public static final int MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE = 1;
 
     // used to avoid concurrent refresh runs
     private final AtomicBoolean latch = new AtomicBoolean(false);
@@ -78,7 +78,10 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
     public static void append(@Nullable ReadableMatViewState refreshState, @NotNull BlockFileWriter writer) {
         final AppendableBlock block = writer.append();
         append(refreshState, block);
-        block.commit(MAT_VIEW_STATE_FORMAT_V2_MSG_TYPE);
+        block.commit(MAT_VIEW_STATE_FORMAT_MSG_TYPE);
+        final AppendableBlock blockTs = writer.append();
+        appendTs(refreshState, blockTs);
+        blockTs.commit(MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE);
         writer.commit();
     }
 
@@ -86,14 +89,20 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
         if (refreshState == null) {
             block.putBool(false);
             block.putLong(-1L);
-            block.putLong(Numbers.LONG_NULL);
             block.putStr(null);
             return;
         }
         block.putBool(refreshState.isInvalid());
         block.putLong(refreshState.getLastRefreshBaseTxn());
-        block.putLong(refreshState.getLastRefreshTimestamp());
         block.putStr(refreshState.getInvalidationReason());
+    }
+
+    public static void appendTs(@Nullable ReadableMatViewState refreshState, @NotNull AppendableBlock block) {
+        if (refreshState == null) {
+            block.putLong(Numbers.LONG_NULL);
+            return;
+        }
+        block.putLong(refreshState.getLastRefreshTimestamp());
     }
 
     public static void readFrom(@NotNull BlockFileReader reader, @NotNull MatViewState refreshState) {
@@ -106,14 +115,12 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
                 refreshState.invalid = block.getBool(0);
                 refreshState.lastRefreshBaseTxn = block.getLong(Byte.BYTES);
                 refreshState.invalidationReason = Chars.toString(block.getStr(Long.BYTES + Byte.BYTES));
+                refreshState.lastRefreshTimestamp = Numbers.LONG_NULL;
                 // keep going, because V2 block might follow
                 continue;
             }
-            if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_V2_MSG_TYPE) {
-                refreshState.invalid = block.getBool(0);
-                refreshState.lastRefreshBaseTxn = block.getLong(Byte.BYTES);
-                refreshState.lastRefreshTimestamp = block.getLong(Long.BYTES + Byte.BYTES);
-                refreshState.invalidationReason = Chars.toString(block.getStr(Long.BYTES + Long.BYTES + Byte.BYTES));
+            if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE) {
+                refreshState.lastRefreshTimestamp = block.getLong(0);
                 return;
             }
         }

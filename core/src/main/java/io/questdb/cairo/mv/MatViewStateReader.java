@@ -82,14 +82,12 @@ public class MatViewStateReader implements ReadableMatViewState, Mutable {
                 invalid = block.getBool(0);
                 lastRefreshBaseTxn = block.getLong(Byte.BYTES);
                 invalidationReason = Chars.toString(block.getStr(Long.BYTES + Byte.BYTES));
+                lastRefreshTimestamp = Numbers.LONG_NULL;
                 // keep going, because V2 block might follow
                 continue;
             }
-            if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_V2_MSG_TYPE) {
-                invalid = block.getBool(0);
-                lastRefreshBaseTxn = block.getLong(Byte.BYTES);
-                lastRefreshTimestamp = block.getLong(Long.BYTES + Byte.BYTES);
-                invalidationReason = Chars.toString(block.getStr(Long.BYTES + Long.BYTES + Byte.BYTES));
+            if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE) {
+                lastRefreshTimestamp = block.getLong(0);
                 return this;
             }
         }

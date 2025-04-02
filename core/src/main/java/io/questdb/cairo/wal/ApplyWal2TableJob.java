@@ -728,12 +728,16 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         tablePath.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
         try (BlockFileWriter stateWriter = mvStateWriter) {
             stateWriter.of(tablePath.$());
+
             final AppendableBlock block = stateWriter.append();
             block.putBool(invalid);
             block.putLong(lastRefreshBaseTxn);
-            block.putLong(lastRefreshTimestamp);
             block.putStr(invalidationReason);
-            block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_V2_MSG_TYPE);
+            block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_MSG_TYPE);
+
+            final AppendableBlock blockTs = stateWriter.append();
+            blockTs.putLong(lastRefreshTimestamp);
+            blockTs.commit(MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE);
             stateWriter.commit();
         }
     }

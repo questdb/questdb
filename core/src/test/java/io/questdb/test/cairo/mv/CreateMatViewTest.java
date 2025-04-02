@@ -1101,7 +1101,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     // Then write mat view state.
                     block = writer.append();
                     MatViewState.append(matViewState, block);
-                    block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_V2_MSG_TYPE);
+                    block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_MSG_TYPE);
+                    block = writer.append();
+                    MatViewState.appendTs(matViewState, block);
+                    block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE);
                     writer.commit();
                 }
 
