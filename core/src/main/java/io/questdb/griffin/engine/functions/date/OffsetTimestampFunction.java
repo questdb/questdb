@@ -29,17 +29,14 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.datetime.TimeZoneRules;
 
-class OffsetTimestampFunctionFromRules extends TimestampFunction implements UnaryFunction {
-    private final int multiplier;
-    private final TimeZoneRules rules;
+class OffsetTimestampFunction extends TimestampFunction implements UnaryFunction {
+    private final long offset;
     private final Function timestamp;
 
-    public OffsetTimestampFunctionFromRules(Function timestamp, TimeZoneRules rules, int multiplier) {
+    public OffsetTimestampFunction(Function timestamp, long offset) {
         this.timestamp = timestamp;
-        this.rules = rules;
-        this.multiplier = multiplier;
+        this.offset = offset;
     }
 
     @Override
@@ -49,12 +46,11 @@ class OffsetTimestampFunctionFromRules extends TimestampFunction implements Unar
 
     @Override
     public long getTimestamp(Record rec) {
-        final long utc = timestamp.getTimestamp(rec);
-        return utc + multiplier * rules.getOffset(utc);
+        return timestamp.getTimestamp(rec) + offset;
     }
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val("to_utc(").val(timestamp).val(',').val(multiplier).val(')');
+        sink.val(timestamp).val('+').val(offset);
     }
 }

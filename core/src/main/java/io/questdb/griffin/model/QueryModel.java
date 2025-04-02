@@ -1713,7 +1713,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                     sinkColumns(sink, topDownColumns);
                     sink.putAscii(']');
                 }
-                if (this.bottomUpColumns.size() > 0) {
+                if (bottomUpColumns.size() > 0) {
                     sink.putAscii(' ');
                     sinkColumns(sink, bottomUpColumns);
                 }

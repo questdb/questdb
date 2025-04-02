@@ -117,8 +117,8 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
             return Numbers.LONG_NULL;
         }
         long offset = timeZoneRules.getOffset(timestamp);
-        long t = periodAddFunction.add(timestamp + offset, stride);
-        return t - timeZoneRules.getOffset(t);
+        long localTimestamp = periodAddFunction.add(timestamp + offset, stride);
+        return localTimestamp - timeZoneRules.getLocalOffset(localTimestamp);
     }
 
     private static class TimestampAddConstConstVarConst extends TimestampFunction implements UnaryFunction {
