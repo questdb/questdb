@@ -402,7 +402,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private boolean recursiveDelete(Path path) {
         if (!ff.rmdir(path, false) && !Files.errnoFileDoesNotExist(ff.errno())) {
-            LOG.info()
+            LOG.debug()
                     .$("could not delete directory [path=").$(path)
                     .$(", errno=").$(ff.errno())
                     .I$();
@@ -605,10 +605,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             discovered.add(walId);
             discovered.add(segmentId);
             discovered.add(lockFd);
-            LOG.info().$("discovered segment [walId=").$(walId)
-                    .$(", segmentId=").$(segmentId)
-                    .$(", lockFd=").$(lockFd)
-                    .I$();
         }
 
         public void trackDiscoveredWal(int walId, long lockFd) {
@@ -619,9 +615,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             final int index = nextToApply.keyIndex(walId);
             if (index > -1) {  // not tracked yet
                 nextToApply.putAt(index, walId, segmentId);
-                LOG.info().$("discovered next to apply segment [walId=").$(walId)
-                        .$(", segmentId=").$(segmentId)
-                        .I$();
             }
         }
 
