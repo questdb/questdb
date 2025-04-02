@@ -156,6 +156,39 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testAutoCreationArrayType() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                String tableName = "arr_auto_creation_test";
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .autoFlushRows(Integer.MAX_VALUE) // we'll flush manually
+                        .retryTimeoutMillis(0)
+                        .build()
+                ) {
+                    double[] arr = createDoubleArray(1);
+                    sender.table(tableName)
+                            .doubleArray("arr", arr)
+                            .at(100000000000L, ChronoUnit.MICROS);
+                    sender.flush();
+                    serverMain.awaitTxn(tableName, 1);
+                    serverMain.assertSql(
+                            "show create table " + tableName,
+                            "ddl\n" +
+                                    "CREATE TABLE 'arr_auto_creation_test' ( \n" +
+                                    "\tarr DOUBLE[],\n" +
+                                    "\ttimestamp TIMESTAMP\n" +
+                                    ") timestamp(timestamp) PARTITION BY DAY WAL\n" +
+                                    "WITH maxUncommittedRows=500000, o3MaxLag=600000000us;\n");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAutoFlush() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         TestUtils.assertMemoryLeak(() -> {
