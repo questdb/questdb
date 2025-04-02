@@ -263,7 +263,7 @@ public class BlockFileReader implements Closeable {
 
             @Override
             public Utf8Sequence getVarchar(long offset) {
-                return VarcharTypeDriver.getPlainValue(memory, payloadOffset + offset, 1);
+                return VarcharTypeDriver.getPlainValue(memory, payloadOffset + offset);
             }
 
             @Override
