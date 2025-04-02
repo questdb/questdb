@@ -318,8 +318,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     }
                 } catch (Throwable th) {
                     factory = Misc.free(factory);
-                    if (CairoException.isCairoOomError(th) && i < maxRetriesOnOom) {
-                        intervalStep = Math.max(1, intervalStep / 2);
+                    if (CairoException.isCairoOomError(th) && i < maxRetriesOnOom && intervalStep > 1) {
+                        intervalStep /= 2;
                         LOG.info().$("query failed with out-of-memory error, retrying with smaller step [view=").$(viewDef.getMatViewToken())
                                 .$(", intervalStep=").$(intervalStep)
                                 .$(", error=").$(((CairoException) th).getFlyweightMessage())
