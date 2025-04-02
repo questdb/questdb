@@ -435,13 +435,13 @@ public class TableUpdateDetails implements Closeable {
         // maps column names to their indexes
         // keys are mangled strings created from the utf-8 encoded byte representations of the column names
         private final Utf8StringIntHashMap columnIndexByNameUtf8 = new Utf8StringIntHashMap();
+        private final IntList columnIndices = new IntList();
         // maps column names to their types
         // will be populated for dynamically added columns only
         private final Utf8StringIntHashMap columnTypeByNameUtf8 = new Utf8StringIntHashMap();
         // indexed by colIdx + 1, first value accounts for spurious, new cols (index -1)
         private final IntList columnTypeMeta = new IntList();
         private final IntList columnTypes = new IntList();
-        private final IntList columnIndices = new IntList();
         private final Path path = new Path();
         // tracking of processed columns by their index, duplicates will be ignored
         private final BitSet processedCols = new BitSet();
@@ -676,18 +676,21 @@ public class TableUpdateDetails implements Closeable {
             return colNameUtf8;
         }
 
-        int getColumnType(int colIndex) {
-            return columnTypes.getQuick(colIndex);
-        }
-
         int getColumnIndex(int colIndex) {
             return columnIndices.getQuick(colIndex);
         }
 
-        int getColumnType(Utf8String colName, byte entityType) {
+        int getColumnType(int colIndex) {
+            return columnTypes.getQuick(colIndex);
+        }
+
+        int getColumnType(Utf8String colName, LineTcpParser.ProtoEntity entity) {
             int colType = columnTypeByNameUtf8.get(colName);
             if (colType < 0) {
-                colType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entityType];
+                colType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entity.getType()];
+                if (colType == ColumnType.ARRAY) {
+                    colType = entity.getArray().getType();
+                }
                 columnTypeByNameUtf8.put(colName, colType);
             }
             return colType;
