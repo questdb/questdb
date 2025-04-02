@@ -60,4 +60,9 @@ public class FixedTimeZoneRule implements TimeZoneRules {
     public long getOffset(long utcEpoch) {
         return offset;
     }
+
+    @Override
+    public boolean isFixedOffset() {
+        return true;
+    }
 }

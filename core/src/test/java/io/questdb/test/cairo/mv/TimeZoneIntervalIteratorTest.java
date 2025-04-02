@@ -24,7 +24,7 @@
 
 package io.questdb.test.cairo.mv;
 
-import io.questdb.cairo.mv.SampleByIntervalIterator;
+import io.questdb.cairo.mv.TimeZoneIntervalIterator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
@@ -39,12 +39,12 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class SampleByIntervalIteratorTest {
-    private static final Log LOG = LogFactory.getLog(SampleByIntervalIteratorTest.class);
+public class TimeZoneIntervalIteratorTest {
+    private static final Log LOG = LogFactory.getLog(TimeZoneIntervalIteratorTest.class);
 
     @Test
     public void testBigStep() throws Exception {
-        final SampleByIntervalIterator iterator = new SampleByIntervalIterator();
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
         iterator.of(
                 sampler,
@@ -66,7 +66,7 @@ public class SampleByIntervalIteratorTest {
 
     @Test
     public void testFixedOffset() throws SqlException {
-        final SampleByIntervalIterator iterator = new SampleByIntervalIterator();
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
         final long offset = Timestamps.HOUR_MICROS;
         iterator.of(
@@ -118,7 +118,7 @@ public class SampleByIntervalIteratorTest {
 
     @Test
     public void testSmoke() throws SqlException {
-        final SampleByIntervalIterator iterator = new SampleByIntervalIterator();
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
         iterator.of(
                 sampler,
@@ -142,7 +142,7 @@ public class SampleByIntervalIteratorTest {
 
     @Test
     public void testTimeZoneWithDst() throws Exception {
-        final SampleByIntervalIterator iterator = new SampleByIntervalIterator();
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(2, 'h', 0);
         iterator.of(
                 sampler,
@@ -174,7 +174,7 @@ public class SampleByIntervalIteratorTest {
 
     @Test
     public void testTimeZoneWithDstForwardShitWithIntervalLargerThanShift() throws Exception {
-        final SampleByIntervalIterator iterator = new SampleByIntervalIterator();
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(75, 'm', 0);
         iterator.of(
                 sampler,
@@ -210,7 +210,7 @@ public class SampleByIntervalIteratorTest {
 
     @Test
     public void testTimeZoneWithDstWithSmallInterval() throws Exception {
-        final SampleByIntervalIterator iterator = new SampleByIntervalIterator();
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(30, 'm', 0);
         iterator.of(
                 sampler,
@@ -246,7 +246,7 @@ public class SampleByIntervalIteratorTest {
 
     @Test
     public void testTimeZoneWithFixedOffset() throws Exception {
-        final SampleByIntervalIterator iterator = new SampleByIntervalIterator();
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
         iterator.of(
                 sampler,
@@ -287,7 +287,7 @@ public class SampleByIntervalIteratorTest {
 
         final long fixedTzOffset = (rnd.nextBoolean() ? 1 : -1) * rnd.nextLong(Timestamps.HOUR_MICROS);
 
-        final SampleByIntervalIterator iterator = new SampleByIntervalIterator();
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(interval, timeUnit, 0);
         iterator.of(
                 sampler,

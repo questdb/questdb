@@ -205,6 +205,11 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
         return getOffset(utcEpoch, y);
     }
 
+    @Override
+    public boolean isFixedOffset() {
+        return false;
+    }
+
     private Transition[] computeTransitions(int year) {
         final Transition[] transitions = new Transition[ruleCount];
         final boolean leap = isLeapYear(year);

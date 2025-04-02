@@ -52,10 +52,12 @@ import io.questdb.mp.Job;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public class MatViewRefreshJob implements Job, QuietCloseable {
@@ -68,10 +70,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final Path dbRoot;
     private final int dbRootLen;
     private final CairoEngine engine;
-    private final SampleByIntervalIterator intervalIterator = new SampleByIntervalIterator();
+    private final FixedOffsetIntervalIterator fixedOffsetIterator = new FixedOffsetIntervalIterator();
     private final MicrosecondClock microsecondClock;
     private final MatViewRefreshExecutionContext refreshExecutionContext;
     private final MatViewRefreshTask refreshTask = new MatViewRefreshTask();
+    private final TimeZoneIntervalIterator timeZoneIterator = new TimeZoneIntervalIterator();
     private final WalTxnRangeLoader txnRangeLoader;
     private final MatViewGraph viewGraph;
     private final int workerId;
@@ -199,7 +202,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             final int step = Math.max(1, (int) (rowsPerQuery / rowsPerBucket));
 
             // there are no concurrent accesses to the sampler at this point as we've locked the state
-            intervalIterator.of(
+            final SampleByIntervalIterator intervalIterator = intervalIterator(
                     timestampSampler,
                     viewDefinition.getTzRules(),
                     viewDefinition.getFixedOffset(),
@@ -338,6 +341,35 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
 
         return rowCount > 0;
+    }
+
+    private SampleByIntervalIterator intervalIterator(
+            @NotNull TimestampSampler sampler,
+            @Nullable TimeZoneRules tzRules,
+            long fixedOffset,
+            long minTs,
+            long maxTs,
+            int step
+    ) {
+        if (tzRules == null || tzRules.isFixedOffset()) {
+            long fixedTzOffset = tzRules != null ? tzRules.getOffset(0) : 0;
+            return fixedOffsetIterator.of(
+                    sampler,
+                    fixedOffset - fixedTzOffset,
+                    minTs,
+                    maxTs,
+                    step
+            );
+        }
+
+        return timeZoneIterator.of(
+                sampler,
+                tzRules,
+                fixedOffset,
+                minTs,
+                maxTs,
+                step
+        );
     }
 
     private void invalidateDependentViews(TableToken baseTableToken, MatViewGraph viewGraph, String invalidationReason) {

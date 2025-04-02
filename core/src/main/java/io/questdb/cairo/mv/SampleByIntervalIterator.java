@@ -24,91 +24,25 @@
 
 package io.questdb.cairo.mv;
 
-import io.questdb.griffin.engine.groupby.TimestampSampler;
-import io.questdb.std.Numbers;
-import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.microtime.Timestamps;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-
 /**
  * Allows iterating through SAMPLE BY buckets with the given step.
  * The goal is to split a potentially large time interval to be scanned by
  * the materialized view query into smaller intervals, thus minimizing
  * chances of out-of-memory kills.
  */
-public class SampleByIntervalIterator {
-    private long maxTimestamp;
-    private long minTimestamp;
-    private TimestampSampler sampler;
-    private int step;
-    private long timestampHi;
-    private long timestampLo;
-    private TimeZoneRules tzRules;
+public interface SampleByIntervalIterator {
 
-    public long getMaxTimestamp() {
-        return maxTimestamp;
-    }
+    long getMaxTimestamp();
 
-    public long getMinTimestamp() {
-        return minTimestamp;
-    }
+    long getMinTimestamp();
 
-    public int getStep() {
-        return step;
-    }
+    int getStep();
 
-    public long getTimestampHi() {
-        return timestampHi;
-    }
+    long getTimestampHi();
 
-    public long getTimestampLo() {
-        return timestampLo;
-    }
+    long getTimestampLo();
 
-    public boolean next() {
-        if (timestampHi != maxTimestamp) {
-            timestampLo = timestampHi;
-            for (int i = 0; i < step; i++) {
-                timestampHi = nextTimestamp(timestampHi);
-                if (timestampHi == maxTimestamp) {
-                    break;
-                }
-            }
-            return true;
-        }
-        return false;
-    }
+    boolean next();
 
-    public void of(
-            @NotNull TimestampSampler sampler,
-            @Nullable TimeZoneRules tzRules,
-            long fixedTzOffset,
-            long minTs,
-            long maxTs,
-            int step
-    ) {
-        this.sampler = sampler;
-        this.tzRules = tzRules;
-
-        sampler.setStart(fixedTzOffset);
-        final long tzMinOffset = tzRules != null ? tzRules.getOffset(minTs) : 0;
-        final long tzMinTs = sampler.round(minTs + tzMinOffset);
-        minTimestamp = tzRules != null ? Timestamps.toUTC(tzMinTs, tzRules) : tzMinTs - tzMinOffset;
-        maxTimestamp = nextTimestamp(maxTs);
-
-        toTop(step);
-    }
-
-    public void toTop(int step) {
-        this.timestampLo = Numbers.LONG_NULL;
-        this.timestampHi = minTimestamp;
-        this.step = step;
-    }
-
-    private long nextTimestamp(long ts) {
-        final long tzOffset = tzRules != null ? tzRules.getOffset(ts) : 0;
-        final long tzTs = sampler.nextTimestamp(sampler.round(ts + tzOffset));
-        return tzRules != null ? Timestamps.toUTC(tzTs, tzRules) : tzTs - tzOffset;
-    }
+    void toTop(int step);
 }
