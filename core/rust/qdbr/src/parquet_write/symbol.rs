@@ -1,7 +1,5 @@
 use super::util::BinaryMaxMin;
-use crate::parquet::error::{
-    fmt_err, ParquetError, ParquetErrorCause, ParquetErrorExt, ParquetResult,
-};
+use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetErrorReason, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
@@ -132,7 +130,7 @@ fn encode_symbols_dict<'a>(
             let qdb_utf16_buf: &[u16] = unsafe { std::mem::transmute(qdb_utf16_buf) };
             let qdb_utf16_buf = &qdb_utf16_buf[..qdb_utf16_len];
             let utf8_len = write_utf8_from_utf16(&mut dict_buffer, qdb_utf16_buf)
-                .map_err(|e| ParquetErrorCause::Utf16Decode(e).into_err())?;
+                .map_err(|e| ParquetErrorReason::Utf16Decode(e).into_err())?;
             let utf8_buf = &dict_buffer[(key_index + 4)..(key_index + 4 + utf8_len)];
 
             // Update the page's min/max statistics for the referenced UTF-8 strings.

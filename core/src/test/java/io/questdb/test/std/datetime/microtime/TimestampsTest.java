@@ -44,6 +44,7 @@ import java.time.temporal.ChronoUnit;
 
 import static io.questdb.cairo.PartitionBy.getPartitionDirFormatMethod;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
+import static io.questdb.std.datetime.microtime.TimestampFormatUtils.parseHTTP;
 
 public class TimestampsTest {
 
@@ -194,13 +195,15 @@ public class TimestampsTest {
 
     @Test
     public void testDaysBetween() throws Exception {
-        Assert.assertEquals(41168,
+        Assert.assertEquals(
+                41168,
                 Timestamps.getDaysBetween(
                         TimestampFormatUtils.parseTimestamp("1904-11-05T23:45:41.045Z"),
                         TimestampFormatUtils.parseTimestamp("2017-07-24T23:45:31.045Z")
                 )
         );
-        Assert.assertEquals(41169,
+        Assert.assertEquals(
+                41169,
                 Timestamps.getDaysBetween(
                         TimestampFormatUtils.parseTimestamp("1904-11-05T23:45:41.045Z"),
                         TimestampFormatUtils.parseTimestamp("2017-07-24T23:45:51.045Z")
@@ -373,18 +376,6 @@ public class TimestampsTest {
     }
 
     @Test
-    public void testFormatHTTP() throws Exception {
-        TimestampFormatUtils.formatHTTP(sink, TimestampFormatUtils.parseTimestamp("2015-12-05T12:34:55.332Z"));
-        TestUtils.assertEquals("Sat, 5 Dec 2015 12:34:55 GMT", sink);
-    }
-
-    @Test
-    public void testFormatHTTP2() throws Exception {
-        TimestampFormatUtils.formatHTTP(sink, TimestampFormatUtils.parseTimestamp("2015-12-05T12:04:55.332Z"));
-        TestUtils.assertEquals("Sat, 5 Dec 2015 12:04:55 GMT", sink);
-    }
-
-    @Test
     public void testFormatNanosTz() throws Exception {
         final long micros = TimestampFormatUtils.parseDateTime("2008-05-10T12:31:02.008998991+01:00");
         TimestampFormatUtils.USEC_UTC_FORMAT.format(micros, DateLocaleFactory.INSTANCE.getLocale("en"), null, sink);
@@ -451,7 +442,8 @@ public class TimestampsTest {
     @Test
     public void testMonthsBetween() throws Exception {
         // a < b, same year
-        Assert.assertEquals(2,
+        Assert.assertEquals(
+                2,
                 Timestamps.getMonthsBetween(
                         TimestampFormatUtils.parseTimestamp("2014-05-12T23:45:51.045Z"),
                         TimestampFormatUtils.parseTimestamp("2014-07-15T23:45:51.045Z")
@@ -459,7 +451,8 @@ public class TimestampsTest {
         );
 
         // a > b, same year
-        Assert.assertEquals(2,
+        Assert.assertEquals(
+                2,
                 Timestamps.getMonthsBetween(
                         TimestampFormatUtils.parseTimestamp("2014-07-15T23:45:51.045Z"),
                         TimestampFormatUtils.parseTimestamp("2014-05-12T23:45:51.045Z")
@@ -467,7 +460,8 @@ public class TimestampsTest {
         );
 
         // a < b, different year
-        Assert.assertEquals(26,
+        Assert.assertEquals(
+                26,
                 Timestamps.getMonthsBetween(
                         TimestampFormatUtils.parseTimestamp("2014-05-12T23:45:51.045Z"),
                         TimestampFormatUtils.parseTimestamp("2016-07-15T23:45:51.045Z")
@@ -475,15 +469,21 @@ public class TimestampsTest {
         );
 
         // a < b, same year, a has higher residuals
-        Assert.assertEquals(1,
-                Timestamps.getMonthsBetween(TimestampFormatUtils.parseTimestamp("2014-05-12T23:45:51.045Z"),
-                        TimestampFormatUtils.parseTimestamp("2014-07-03T23:45:51.045Z"))
+        Assert.assertEquals(
+                1,
+                Timestamps.getMonthsBetween(
+                        TimestampFormatUtils.parseTimestamp("2014-05-12T23:45:51.045Z"),
+                        TimestampFormatUtils.parseTimestamp("2014-07-03T23:45:51.045Z")
+                )
         );
 
         // a < b, a before epoch, a has higher residuals
-        Assert.assertEquals(109 * 12 + 1,
-                Timestamps.getMonthsBetween(TimestampFormatUtils.parseTimestamp("1905-05-12T23:45:51.045Z"),
-                        TimestampFormatUtils.parseTimestamp("2014-07-03T23:45:51.045Z"))
+        Assert.assertEquals(
+                109 * 12 + 1,
+                Timestamps.getMonthsBetween(
+                        TimestampFormatUtils.parseTimestamp("1905-05-12T23:45:51.045Z"),
+                        TimestampFormatUtils.parseTimestamp("2014-07-03T23:45:51.045Z")
+                )
         );
     }
 
@@ -617,6 +617,16 @@ public class TimestampsTest {
         String date = "1812-02-29T10:54:01.010Z";
         TimestampFormatUtils.appendDateTime(sink, TimestampFormatUtils.parseTimestamp(date));
         TestUtils.assertEquals(date, sink);
+    }
+
+    @Test
+    public void testParseHttp() throws NumericException {
+        Assert.assertEquals(1744545248000000L, parseHTTP("Sun, 13 Apr 2025 11:54:08 GMT"));
+        Assert.assertEquals(1744545248000000L, parseHTTP("Sun, 13-Apr-2025 11:54:08 GMT"));
+        Assert.assertEquals(1741375399000000L, parseHTTP("Fri, 07 Mar 2025 19:23:19 GMT"));
+        Assert.assertEquals(1741375399000000L, parseHTTP("Fri, 07-Mar-2025 19:23:19 GMT"));
+        Assert.assertEquals(1741375399000000L, parseHTTP("Fri, 7 Mar 2025 19:23:19 GMT"));
+        Assert.assertEquals(1741375399000000L, parseHTTP("Fri, 7-Mar-2025 19:23:19 GMT"));
     }
 
     @Test
@@ -827,14 +837,16 @@ public class TimestampsTest {
 
     @Test
     public void testYearsBetween() throws Exception {
-        Assert.assertEquals(112,
+        Assert.assertEquals(
+                112,
                 Timestamps.getYearsBetween(
                         TimestampFormatUtils.parseTimestamp("1904-11-05T23:45:41.045Z"),
                         TimestampFormatUtils.parseTimestamp("2017-07-24T23:45:31.045Z")
                 )
         );
 
-        Assert.assertEquals(113,
+        Assert.assertEquals(
+                113,
                 Timestamps.getYearsBetween(
                         TimestampFormatUtils.parseTimestamp("1904-11-05T23:45:41.045Z"),
                         TimestampFormatUtils.parseTimestamp("2017-12-24T23:45:51.045Z")
