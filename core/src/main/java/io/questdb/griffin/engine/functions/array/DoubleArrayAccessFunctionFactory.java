@@ -110,9 +110,25 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                             .put("invalid argument type [type=").put(argType).put(']');
                 }
             }
-            return resultNDims == 0
-                    ? new AccessDoubleArrayFunction(arrayArg, args, argPositions)
-                    : new SliceDoubleArrayFunction(arrayArg, resultNDims, args, argPositions);
+            if (resultNDims == 0) {
+                boolean indexArgsAreConstant = true;
+                for (int n = args.size(), i = 0; i < n; i++) {
+                    if (!args.getQuick(i).isConstant()) {
+                        indexArgsAreConstant = false;
+                        break;
+                    }
+                }
+                if (indexArgsAreConstant) {
+                    IntList indexArgs = new IntList(args.size());
+                    for (int n = args.size(), i = 0; i < n; i++) {
+                        indexArgs.add(args.getQuick(i).getInt(null));
+                    }
+                    Misc.freeObjList(args);
+                    return new AccessDoubleArrayConstantIndexFunction(arrayArg, indexArgs, argPositions);
+                }
+                return new AccessDoubleArrayFunction(arrayArg, args, argPositions);
+            }
+            return new SliceDoubleArrayFunction(arrayArg, resultNDims, args, argPositions);
         } catch (Throwable e) {
             Misc.free(arrayArg);
             Misc.freeObjList(inputArgs);
@@ -120,8 +136,65 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static int flatIndexDelta(ArrayView array, int dim, int indexAtDim, int argPos) {
+        int strideAtDim = array.getStride(dim);
+        int dimLen = array.getDimLen(dim);
+        if (indexAtDim < 0 || indexAtDim >= dimLen) {
+            throw CairoException.nonCritical()
+                    .position(argPos)
+                    .put("array index out of range [dim=").put(dim)
+                    .put(", index=").put(indexAtDim + 1)
+                    .put(", dimLen=").put(dimLen).put(']');
+        }
+        return strideAtDim * indexAtDim;
+    }
+
     private static boolean isIndexArg(int argType) {
         return argType == ColumnType.INT || argType == ColumnType.SHORT || argType == ColumnType.BYTE;
+    }
+
+    static class AccessDoubleArrayConstantIndexFunction extends DoubleFunction {
+        final IntList indexArgPositions;
+        final IntList indexArgs;
+        Function arrayArg;
+
+        AccessDoubleArrayConstantIndexFunction(Function arrayArg, IntList indexArgs, IntList indexArgPositions) {
+            this.arrayArg = arrayArg;
+            this.indexArgs = indexArgs;
+            this.indexArgPositions = indexArgPositions;
+        }
+
+        @Override
+        public void close() {
+            this.arrayArg = Misc.free(arrayArg);
+            indexArgs.clear();
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            ArrayView array = arrayArg.getArray(rec);
+            if (array.isNull()) {
+                return Double.NaN;
+            }
+            int flatIndex = 0;
+            for (int n = indexArgs.size(), dim = 0; dim < n; dim++) {
+                // Decrement the index in the argument because Postgres uses 1-based array indexing
+                int indexAtDim = indexArgs.get(dim) - 1;
+                flatIndex += flatIndexDelta(array, dim, indexAtDim, indexArgPositions.get(dim));
+            }
+            return array.getDouble(flatIndex);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arrayArg).val('[');
+            String comma = "";
+            for (int n = indexArgs.size(), i = 0; i < n; i++) {
+                sink.val(comma).val(indexArgs.getQuick(i));
+                comma = ",";
+            }
+            sink.val(']');
+        }
     }
 
     static class AccessDoubleArrayFunction extends DoubleFunction {
@@ -152,16 +225,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
             for (int n = indexArgs.size(), dim = 0; dim < n; dim++) {
                 // Decrement the index in the argument because Postgres uses 1-based array indexing
                 int indexAtDim = indexArgs.getQuick(dim).getInt(rec) - 1;
-                int strideAtDim = array.getStride(dim);
-                int dimLen = array.getDimLen(dim);
-                if (indexAtDim < 0 || indexAtDim >= dimLen) {
-                    throw CairoException.nonCritical()
-                            .position(indexArgPositions.get(dim))
-                            .put("array index out of range [dim=").put(dim)
-                            .put(", index=").put(indexAtDim + 1)
-                            .put(", dimLen=").put(dimLen).put(']');
-                }
-                flatIndex += strideAtDim * indexAtDim;
+                flatIndex += flatIndexDelta(array, dim, indexAtDim, indexArgPositions.get(dim));
             }
             return array.getDouble(flatIndex);
         }
