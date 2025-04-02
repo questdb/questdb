@@ -1837,6 +1837,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         try (Path path = new Path()) {
             path.of(root).concat(tableToken).concat("wal").put(walId).slash().put(segmentId);
             Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+            LOG.info().$("segment path=").$(path).$("exists=").$(expectExists).$();
             return new File(Utf8s.toString(path));
         }
     }
@@ -1949,6 +1950,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         try (Path path = new Path()) {
             path.of(root).concat(tableToken).concat("wal").put(walId);
             Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+            LOG.info().$("wal path=").$(path).$("exists=").$(expectExists).$();
         }
     }
 
@@ -1963,6 +1965,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             path.of(root).concat(tableToken).concat("wal").put(walId).put(".lock").$();
             final boolean could = couldObtainLock(path);
             Assert.assertEquals(Utf8s.toString(path), expectLocked, !could);
+            LOG.info().$("lock path=").$(path).$("locked=").$(expectLocked).$();
         }
     }
 
@@ -1972,6 +1975,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             TableToken tableToken = engine.verifyTableName(tableName);
             path.of(root).concat(tableToken).concat("wal").put(walId).put(".lock");
             Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+            LOG.info().$("lock path=").$(path).$("exists=").$(expectExists).$();
         }
     }
 

@@ -1410,12 +1410,14 @@ public class WalWriter implements TableWriterAPI {
     private void releaseSegmentLock(int segmentId, long segmentLockFd, long segmentTxn) {
         if (ff.close(segmentLockFd)) {
             // if events file has some transactions
+            LOG.info().$("released segment lock [walId=").$(walId)
+                    .$(", segmentId=").$(segmentId)
+                    .$(", fd=").$(segmentLockFd)
+                    .$(", txn=").$(segmentTxn)
+                    .$(']').$();
             if (segmentTxn >= 0) {
                 sequencer.notifySegmentClosed(tableToken, lastSeqTxn, walId, segmentId);
-                LOG.debug().$("released segment lock [walId=").$(walId)
-                        .$(", segmentId=").$(segmentId)
-                        .$(", fd=").$(segmentLockFd)
-                        .$(']').$();
+
             } else {
                 path.trimTo(pathSize).slash().put(segmentId);
                 walDirectoryPolicy.rollbackDirectory(path);
