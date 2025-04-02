@@ -44,9 +44,9 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -927,7 +927,7 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final String viewName = "x_view";
             final String out = "select to_timezone(k, 'Europe/Berlin'), k, s, lat, lon";
-            final String viewQuery = "select k, s, first(lat) lat, last(k) lon " + // TODO(eugene): last(k) or last(lon) ?
+            final String viewQuery = "select k, s, first(lat) lat, last(k) lon " +
                     "from x " +
                     "where s in ('a') " +
                     "sample by 1d align to calendar time zone 'Europe/Berlin'";
@@ -956,7 +956,7 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final String viewName = "x_view";
             final String out = "select to_timezone(k, 'Europe/Berlin'), k, s, lat, lon";
-            final String viewQuery = "select k, s, first(lat) lat, last(k) lon " + // TODO(eugene): last(k) or last(lon) ?
+            final String viewQuery = "select k, s, first(lat) lat, last(k) lon " +
                     "from x " +
                     "where s in ('a') and k between '2021-03-27 21:00' and '2021-03-28 04:00' " +
                     "sample by 1h align to calendar time zone 'Europe/Berlin' with offset '00:15'";
@@ -1011,7 +1011,7 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final String viewName = "x_view";
             final String out = "select to_timezone(k, 'Europe/Berlin'), k, s, lat, lon";
-            final String viewQuery = "select k, s, first(lat) lat, last(k) lon " + //TODO(eugene): last(k) or last(lon) ?
+            final String viewQuery = "select k, s, first(lat) lat, last(k) lon " +
                     "from x " +
                     "where s in ('a') " +
                     "sample by 1d align to calendar time zone 'Europe/Berlin'";
@@ -1035,12 +1035,11 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    @Ignore
     public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftBack() throws Exception {
         assertMemoryLeak(() -> {
             final String viewName = "x_view";
             final String out = "select to_timezone(k, 'Europe/London'), k, s, lat, lon";
-            final String viewQuery = "select k, s, first(lat) lat, last(k) lon " + //TODO(eugene): last(k) or last(lon) ?
+            final String viewQuery = "select k, s, first(lat) lat, last(k) lon " +
                     "from x " +
                     "where s in ('a') " +
                     "sample by 1d align to calendar time zone 'Europe/London'";
@@ -1059,13 +1058,12 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-03-29T00:00:00.000000Z\t2021-03-28T23:00:00.000000Z\ta\t70.00560222114518\t2021-03-29T16:40:00.000000Z\n" +
                     "2021-03-30T00:00:00.000000Z\t2021-03-29T23:00:00.000000Z\ta\t13.290235514836048\t2021-03-30T02:40:00.000000Z\n";
 
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery));
-            assertQueryNoLeakCheck(expected, outSelect(out, viewName));
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), "k", true, true);
+            assertQueryNoLeakCheck(expected, outSelect(out, viewName), "k", true, true);
         });
     }
 
     @Test
-    @Ignore
     public void testIndexSampleByAlignToCalendarWithTimezoneLondonShiftForwardHourly() throws Exception {
         assertMemoryLeak(() -> {
             final String viewName = "x_view";
@@ -1091,8 +1089,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "2020-10-25T03:00:00.000000Z\t2020-10-25T03:00:00.000000Z\ta\tnull\t2020-10-25T03:43:26.000000Z\n" +
                     "2020-10-25T04:00:00.000000Z\t2020-10-25T04:00:00.000000Z\ta\t34.49948946607576\t2020-10-25T04:56:49.000000Z\n";
 
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery));
-            assertQueryNoLeakCheck(expected, outSelect(out, viewName));
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), "k", true, true);
+            assertQueryNoLeakCheck(expected, outSelect(out, viewName), "k", true, true);
         });
     }
 
@@ -1600,37 +1598,39 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    @Ignore
     public void testSampleByDST() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table base_price (" +
-                    "sym varchar, price double, ts timestamp" +
-                    ") timestamp(ts) partition by DAY WAL"
+            execute(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
             );
 
-            execute("insert into base_price values" +
-                    " ('gbpusd', 1.320, '2024-10-26T00:00')" +
-                    ",('gbpusd', 1.321, '2024-10-26T01:00')" +
-
-                    ",('gbpusd', 1.324, '2024-10-27T00:00')" +
-                    ",('gbpusd', 1.325, '2024-10-27T01:00')" +
-                    ",('gbpusd', 1.326, '2024-10-27T02:00')" +
-
-                    ",('gbpusd', 1.327, '2024-10-28T00:00')" +
-                    ",('gbpusd', 1.328, '2024-10-28T01:00')"
+            execute(
+                    "insert into base_price values" +
+                            " ('gbpusd', 1.320, '2024-10-26T00:00')" +
+                            ",('gbpusd', 1.321, '2024-10-26T01:00')" +
+                            ",('gbpusd', 1.324, '2024-10-27T00:00')" +
+                            ",('gbpusd', 1.325, '2024-10-27T01:00')" +
+                            ",('gbpusd', 1.326, '2024-10-27T02:00')" +
+                            ",('gbpusd', 1.327, '2024-10-28T00:00')" +
+                            ",('gbpusd', 1.328, '2024-10-28T01:00')"
             );
             drainQueues();
-            String exp = "sym\tfirst\tlast\tts\tberlin\n" +
-                    "gbpusd\t1.32\t1.321\t2024-10-25T22:00:00.000000Z\t2024-10-26T00:00:00.000000Z\n" +
-                    "gbpusd\t1.325\t1.326\t2024-10-27T00:00:00.000000Z\t2024-10-27T02:00:00.000000Z\n" +
-                    "gbpusd\t1.327\t1.328\t2024-10-27T23:00:00.000000Z\t2024-10-28T00:00:00.000000Z\n";
 
+            final String expected = "sym\tfirst\tlast\tcount\tts\n" +
+                    "gbpusd\t1.32\t1.321\t2\t2024-10-25T22:00:00.000000Z\n" +
+                    "gbpusd\t1.324\t1.326\t3\t2024-10-26T22:00:00.000000Z\n" +
+                    "gbpusd\t1.327\t1.328\t2\t2024-10-27T23:00:00.000000Z\n";
             assertQueryNoLeakCheck(
-                    exp,
+                    expected,
                     "select sym, first(price) as first, last(price) as last, count() count, ts " +
                             "from base_price " +
                             "sample by 1d ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' " +
-                            "order by ts, sym"
+                            "order by ts, sym",
+                    "ts",
+                    true,
+                    true
             );
         });
     }
@@ -1726,7 +1726,6 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    @Ignore
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneOct() throws Exception {
         // We are going over spring time change. Because time is "expanding" we don't have
         // to do anything special. Our UTC timestamps will show "gap" and data doesn't
@@ -1753,14 +1752,14 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-10-31T11:00:00.000000Z\t2\n";
             final String out = "select to_timezone(k, 'Europe/Berlin') k, c";
             assertQueryNoLeakCheck(expected, outSelect(out, viewQuery));
-            //TODO(eugene): Sample by bug around DST ?
             assertQueryNoLeakCheck(expected, outSelect(out, viewName));
         });
     }
 
     @Test
-    @Ignore
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneOctMin() throws Exception {
+        // TODO(puzpuzpuz): mat view has different results for rowsPerQuery = 1
+        Assume.assumeTrue(rowsPerQuery == -1);
         // We are going over spring time change. Because time is "expanding" we don't have
         // to do anything special. Our UTC timestamps will show "gap" and data doesn't
         // have to change
@@ -1774,8 +1773,8 @@ public class MatViewTest extends AbstractCairoTest {
             updateViewIncrementally(viewQuery, startTs, step, N, K);
 
             final String expected = "k\tc\n" +
-                    "2021-10-31T02:00:00.000000Z\t3\n" +
-                    "2021-10-31T02:30:00.000000Z\t15\n" +
+                    "2021-10-31T02:00:00.000000Z\t8\n" +
+                    "2021-10-31T02:30:00.000000Z\t10\n" +
                     "2021-10-31T03:00:00.000000Z\t5\n" +
                     "2021-10-31T03:30:00.000000Z\t5\n" +
                     "2021-10-31T04:00:00.000000Z\t5\n" +
@@ -1795,9 +1794,8 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-10-31T11:00:00.000000Z\t2\n";
 
             final String out = "select to_timezone(k, 'Europe/Berlin') k, c";
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery));
-            //TODO(eugene): Sample by bug around DST ?
-            assertQueryNoLeakCheck(expected, outSelect(out, viewName));
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, true, true);
+            assertQueryNoLeakCheck(expected, outSelect(out, viewName), null, true, true);
         });
     }
 
