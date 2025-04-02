@@ -1279,8 +1279,7 @@ public final class Timestamps {
     }
 
     public static long toUTC(long localTimestamp, TimeZoneRules zoneRules) {
-        final long offset = zoneRules.getLocalOffset(localTimestamp);
-        return localTimestamp - offset;
+        return localTimestamp - zoneRules.getLocalOffset(localTimestamp);
     }
 
     /**

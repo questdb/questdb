@@ -36,26 +36,32 @@ public class FixedOffsetIntervalIterator implements SampleByIntervalIterator {
     private long timestampHi;
     private long timestampLo;
 
+    @Override
     public long getMaxTimestamp() {
         return maxTimestamp;
     }
 
+    @Override
     public long getMinTimestamp() {
         return minTimestamp;
     }
 
+    @Override
     public int getStep() {
         return step;
     }
 
+    @Override
     public long getTimestampHi() {
         return timestampHi;
     }
 
+    @Override
     public long getTimestampLo() {
         return timestampLo;
     }
 
+    @Override
     public boolean next() {
         if (timestampHi != maxTimestamp) {
             timestampLo = timestampHi;
@@ -84,10 +90,10 @@ public class FixedOffsetIntervalIterator implements SampleByIntervalIterator {
         maxTimestamp = sampler.nextTimestamp(sampler.round(maxTs));
 
         toTop(step);
-
         return this;
     }
 
+    @Override
     public void toTop(int step) {
         this.timestampLo = Numbers.LONG_NULL;
         this.timestampHi = minTimestamp;

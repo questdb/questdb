@@ -29,46 +29,60 @@ import io.questdb.std.Numbers;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
-// TODO(puzpuzpuz): migrate to getLocalOffset() and iterate in local time
 public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
-    private long maxTimestamp;
-    private long minTimestamp;
+    private long localMaxTimestamp;
+    private long localMinTimestamp;
+    private long localTimestampHi;
+    private long localTimestampLo;
     private TimestampSampler sampler;
     private int step;
-    private long timestampHi;
-    private long timestampLo;
     private TimeZoneRules tzRules;
 
+    @Override
     public long getMaxTimestamp() {
-        return maxTimestamp;
+        return Timestamps.toUTC(localMaxTimestamp, tzRules);
     }
 
+    @Override
     public long getMinTimestamp() {
-        return minTimestamp;
+        return Timestamps.toUTC(localMinTimestamp, tzRules);
     }
 
+    @Override
     public int getStep() {
         return step;
     }
 
+    @Override
     public long getTimestampHi() {
-        return timestampHi;
+        return Timestamps.toUTC(localTimestampHi, tzRules);
     }
 
+    @Override
     public long getTimestampLo() {
-        return timestampLo;
+        return Timestamps.toUTC(localTimestampLo, tzRules);
     }
 
+    @Override
     public boolean next() {
-        if (timestampHi != maxTimestamp) {
-            timestampLo = timestampHi;
-            for (int i = 0; i < step; i++) {
-                timestampHi = nextTimestamp(timestampHi);
-                if (timestampHi == maxTimestamp) {
+        if (localTimestampHi != localMaxTimestamp) {
+            localTimestampLo = localTimestampHi;
+            long timestampHi = Timestamps.toUTC(localTimestampHi, tzRules);
+            for (int i = 0; i < step; ) {
+                localTimestampHi = sampler.nextTimestamp(localTimestampHi);
+                if (localTimestampHi == localMaxTimestamp) {
                     break;
                 }
+                long newTimestampHi = Timestamps.toUTC(localTimestampHi, tzRules);
+                if (newTimestampHi <= timestampHi) {
+                    // We're in a DST gap, so keep skipping the interval until we get out of it.
+                    // A DST gap means nonexistent local time, e.g. if the clocks move forward +1 hour
+                    // at 02:00, the local hour between 02:00 and 03:00 is nonexistent.
+                    continue;
+                }
+                timestampHi = newTimestampHi;
+                i++;
             }
             return true;
         }
@@ -77,7 +91,7 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
 
     public TimeZoneIntervalIterator of(
             @NotNull TimestampSampler sampler,
-            @Nullable TimeZoneRules tzRules,
+            @NotNull TimeZoneRules tzRules,
             long fixedOffset,
             long minTs,
             long maxTs,
@@ -87,25 +101,19 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
         this.tzRules = tzRules;
 
         sampler.setStart(fixedOffset);
-        final long tzMinOffset = tzRules != null ? tzRules.getOffset(minTs) : 0;
-        final long tzMinTs = sampler.round(minTs + tzMinOffset);
-        minTimestamp = tzRules != null ? Timestamps.toUTC(tzMinTs, tzRules) : tzMinTs - tzMinOffset;
-        maxTimestamp = nextTimestamp(maxTs);
+        final long localMinTs = minTs + tzRules.getOffset(minTs);
+        localMinTimestamp = sampler.round(localMinTs);
+        final long localMaxTs = maxTs + tzRules.getOffset(maxTs);
+        localMaxTimestamp = sampler.nextTimestamp(sampler.round(localMaxTs));
 
         toTop(step);
-
         return this;
     }
 
+    @Override
     public void toTop(int step) {
-        this.timestampLo = Numbers.LONG_NULL;
-        this.timestampHi = minTimestamp;
+        this.localTimestampLo = Numbers.LONG_NULL;
+        this.localTimestampHi = localMinTimestamp;
         this.step = step;
-    }
-
-    private long nextTimestamp(long ts) {
-        final long tzOffset = tzRules != null ? tzRules.getOffset(ts) : 0;
-        final long tzTs = sampler.nextTimestamp(sampler.round(ts + tzOffset));
-        return tzRules != null ? Timestamps.toUTC(tzTs, tzRules) : tzTs - tzOffset;
     }
 }
