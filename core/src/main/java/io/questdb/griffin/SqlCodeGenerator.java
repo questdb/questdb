@@ -2516,7 +2516,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             }
                                         }
 
-
+                                        // slow path: this always works, but can be quite slow, especially with large slave tables
                                         if (!created) {
                                             master = new AsOfJoinNoKeyRecordCursorFactory(
                                                     createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
