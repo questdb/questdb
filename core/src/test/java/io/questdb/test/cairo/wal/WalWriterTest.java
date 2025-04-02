@@ -97,6 +97,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 import static io.questdb.cairo.wal.WalUtils.*;
+import static io.questdb.test.tools.TestUtils.assertEventually;
 import static org.junit.Assert.*;
 
 public class WalWriterTest extends AbstractCairoTest {
@@ -1774,9 +1775,11 @@ public class WalWriterTest extends AbstractCairoTest {
                 assertSegmentLockEngagement(false, tableName, 1, 0);
 
                 drainWalQueue();
-                runWalPurgeJob();
 
-                assertSegmentExistence(false, tableName, 1, 0);
+                assertEventually(() -> {
+                    runWalPurgeJob();
+                    assertSegmentExistence(false, tableName, 1, 0);
+                });
             }
         });
     }
