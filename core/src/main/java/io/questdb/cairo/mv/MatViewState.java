@@ -274,9 +274,7 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
         }
     }
 
-    public void writeLastRefreshBaseTableTxn(long txn) {
-        if (lastRefreshBaseTxn != txn) {
-            lastRefreshBaseTxn = txn;
-        }
+    public void setLastRefreshBaseTableTxn(long txn) {
+        lastRefreshBaseTxn = txn;
     }
 }
