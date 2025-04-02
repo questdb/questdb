@@ -26,6 +26,7 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.std.LongList;
@@ -56,6 +57,11 @@ public interface MetadataServiceStub extends MetadataService {
     @Override
     default boolean convertPartitionParquetToNative(long partitionTimestamp) {
         throw CairoException.critical(0).put("convert parquet partition to native does not update sequencer metadata");
+    }
+
+    @Override
+    default void changeSymbolCapacity(CharSequence columnName, int symbolCapacity, SecurityContext securityContext) {
+        throw CairoException.critical(0).put("change symbol capacity does not update sequencer metadata");
     }
 
     @Override
