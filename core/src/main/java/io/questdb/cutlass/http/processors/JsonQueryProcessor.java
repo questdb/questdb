@@ -225,6 +225,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             }
         } catch (SqlException | ImplicitCastException e) {
             sqlError(context.getChunkedResponse(), state, e, configuration.getKeepAliveHeader());
+            // close the factory on reset instead of caching it
+            state.setQueryCacheable(false);
             readyForNextRequest(context);
         } catch (EntryUnavailableException e) {
             LOG.info().$("[fd=").$(context.getFd()).$("] resource busy, will retry").$();
@@ -546,6 +548,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 break;
             } catch (SqlException | ImplicitCastException e) {
                 sqlError(context.getChunkedResponse(), state, e, configuration.getKeepAliveHeader());
+                // close the factory on reset instead of caching it
+                state.setQueryCacheable(false);
                 break;
             } catch (DataUnavailableException e) {
                 response.resetToBookmark();
@@ -620,13 +624,13 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         sendConfirmation(state, keepAliveHeader);
     }
 
-    // same as for select new but disallows caching of explain plans
+    // same as select new but disallows caching of explain plans
     private void executeExplain(
             JsonQueryProcessorState state,
             CompiledQuery cq,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
-        executeSelect0(state, cq.getRecordCursorFactory(), true);
+        executeSelect0(state, cq.getRecordCursorFactory(), false);
     }
 
     private void executeInsert(
