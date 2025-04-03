@@ -22,27 +22,33 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.catalogue;
+package io.questdb.griffin.engine.functions.test;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.cutlass.http.processors.WarningsProcessor;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 
-public class SimulateWarningsFunctionFactory implements FunctionFactory {
+/**
+ * Always returns 42 long value. Allocates the given number of bytes in native memory
+ * to simplify testing record factory / function leaks.
+ */
+public class TestAllocatingFunctionFactory implements FunctionFactory {
+    private static final long MAX_BYTES = Numbers.SIZE_1MB;
 
     @Override
     public String getSignature() {
-        return "simulate_warnings(SS)";
+        return "alloc(l)";
     }
 
     @Override
@@ -52,44 +58,39 @@ public class SimulateWarningsFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) {
+    ) throws SqlException {
         if (configuration.isDevModeEnabled()) {
-            final String tag = args.get(0).getStrA(null).toString();
-            final String warning = args.get(1).getStrA(null).toString();
-            return new SimulateWarningsFunction(tag, warning);
+            long bytes = args.getQuick(0).getLong(null);
+            if (bytes > MAX_BYTES) {
+                throw SqlException.$(argPositions.getQuick(0), "too much to allocate: ").put(bytes);
+            }
+            return new Func(bytes);
         }
-        return BooleanConstant.FALSE;
+        return LongConstant.ZERO;
     }
 
-    private static class SimulateWarningsFunction extends BooleanFunction {
-        final String tag;
-        final String warning;
+    private static class Func extends LongFunction {
+        private final long allocSize;
+        private long addr;
 
-        SimulateWarningsFunction(String tag, String warning) {
-            this.tag = tag;
-            this.warning = warning;
+        public Func(long allocSize) {
+            this.addr = Unsafe.malloc(allocSize, MemoryTag.NATIVE_DEFAULT);
+            this.allocSize = allocSize;
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            WarningsProcessor.override(tag, warning);
-            return true;
+        public void close() {
+            addr = Unsafe.free(addr, allocSize, MemoryTag.NATIVE_DEFAULT);
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            executionContext.getSecurityContext().authorizeSystemAdmin();
-            super.init(symbolTableSource, executionContext);
-        }
-
-        @Override
-        public boolean isThreadSafe() {
-            return true;
+        public long getLong(Record rec) {
+            return 42;
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("simulate_warnings(").val(tag).val(", ").val(warning).val(")");
+            sink.val("alloc(").val(allocSize).val(')');
         }
     }
 }
