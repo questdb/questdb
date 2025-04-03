@@ -280,7 +280,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean getDebugWalApplyBlockFailureRetry() {
+    public boolean getDebugWalApplyBlockFailureNoRetry() {
         return true;
     }
 

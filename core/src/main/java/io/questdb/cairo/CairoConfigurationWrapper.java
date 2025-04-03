@@ -247,8 +247,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean getDebugWalApplyBlockFailureRetry() {
-        return getDelegate().getDebugWalApplyBlockFailureRetry();
+    public boolean getDebugWalApplyBlockFailureNoRetry() {
+        return getDelegate().getDebugWalApplyBlockFailureNoRetry();
     }
 
     @Override

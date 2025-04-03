@@ -9136,17 +9136,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void throwApplyBlockColumnShuffleFailed(int columnIndex, int columnType, long totalRows, long rowCount) {
-        LOG.error().$("wal block apply failed [table=").$(tableToken.getDirName())
+        LOG.error().$("wal block apply failed [table=").$(tableToken)
                 .$(", column=").$(metadata.getColumnName(columnIndex))
                 .$(", columnType=").$(ColumnType.nameOf(columnType))
                 .$(", expectedResult=").$(totalRows)
                 .$(", actualResult=").$(rowCount)
                 .I$();
 
-        if (configuration.getDebugWalApplyBlockFailureRetry()) {
-            throw CairoException.txnApplyBlockError(tableToken);
+        if (configuration.getDebugWalApplyBlockFailureNoRetry()) {
+            throw CairoException.critical(10000).put("wal block apply failed [table=").put(tableToken.getDirName()).put(']');
         }
-        throw CairoException.critical(10000);
+        throw CairoException.txnApplyBlockError(tableToken);
     }
 
     private void throwDistressException(Throwable cause) {

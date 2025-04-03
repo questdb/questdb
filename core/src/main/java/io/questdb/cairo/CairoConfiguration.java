@@ -728,5 +728,5 @@ public interface CairoConfiguration {
 
     long getWriteBackOffTimeoutOnMemPressureMs();
 
-    boolean getDebugWalApplyBlockFailureRetry();
+    boolean getDebugWalApplyBlockFailureNoRetry();
 }
