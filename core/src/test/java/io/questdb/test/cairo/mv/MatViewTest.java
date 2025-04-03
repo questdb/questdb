@@ -44,7 +44,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -1758,8 +1757,6 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByNoFillNotKeyedAlignToCalendarTimezoneOctMin() throws Exception {
-        // TODO(puzpuzpuz): mat view has different results for rowsPerQuery = 1
-        Assume.assumeTrue(rowsPerQuery == -1);
         // We are going over spring time change. Because time is "expanding" we don't have
         // to do anything special. Our UTC timestamps will show "gap" and data doesn't
         // have to change

@@ -208,7 +208,36 @@ public class TimeZoneIntervalIteratorTest {
     }
 
     @Test
-    public void testTimeZoneWithDstWithSmallInterval() throws Exception {
+    public void testTimeZoneWithDstShiftBackwardWithSmallInterval() throws Exception {
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(15, 'm', 0);
+        iterator.of(
+                sampler,
+                Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "Europe/Berlin"),
+                0,
+                TimestampFormatUtils.parseTimestamp("2021-10-30T23:51:00.000000Z"),
+                TimestampFormatUtils.parseTimestamp("2021-10-31T01:41:00.000000Z"),
+                1
+        );
+
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-10-30T23:45:00.000000Z"), iterator.getMinTimestamp());
+        // the max timestamp has to be aligned at the backward shift, not at 01:45
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-10-31T02:00:00.000000Z"), iterator.getMaxTimestamp());
+
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-10-30T23:45:00.000000Z"), iterator.getTimestampLo());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-10-31T00:00:00.000000Z"), iterator.getTimestampHi());
+
+        // TODO: we need to include "merged" hours into a single step
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-10-31T00:00:00.000000Z"), iterator.getTimestampLo());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-10-31T02:00:00.000000Z"), iterator.getTimestampHi());
+
+        Assert.assertFalse(iterator.next());
+    }
+
+    @Test
+    public void testTimeZoneWithDstShiftForwardWithSmallInterval() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(30, 'm', 0);
         iterator.of(
