@@ -6539,18 +6539,7 @@ public class SqlOptimiser implements Mutable {
 
             QueryColumn timestampColumn = null;
 
-            // get the timestamp column if there is a sample by
-            if (nested.getSampleBy() != null) {
-                // must come from somewhere
-                CharSequence timestampCs = findTimestamp(nested);
-
-                timestampColumn = queryColumnPool.next().of(timestampCs, expressionNodePool.next().of(LITERAL, timestampCs, 0, 0));
-            }
-
-
             // we need to remove any columns that are already featured in the query
-
-
             QueryModel groupByModel = queryModelPool.next();
             groupByModel.setSelectModelType(SELECT_MODEL_CHOOSE);
 
@@ -6559,22 +6548,8 @@ public class SqlOptimiser implements Mutable {
 
             // todo(nwoolmer): pass through columns properly, so we can handle non '*' selects
             // clear out the '*'
-
             model.getBottomUpColumns().clear();
             model.getWildcardColumnNames().clear();
-
-
-            // add sample by if needed
-            if (timestampColumn != null && model.getColumnAliasIndex(timestampColumn.getAlias()) < 0) {
-                // todo(nwoolmer): only do this if they haven't specified it
-                model.addBottomUpColumn(timestampColumn);
-                groupByModel.moveSampleByFrom(nested);
-                groupByModel.addBottomUpColumn(timestampColumn);
-                groupByModel.setTimestamp(timestampColumn.getAst());
-                bonusModel.setTimestamp(timestampColumn.getAst());
-                model.setTimestamp(timestampColumn.getAst());
-                nested.setTimestamp(timestampColumn.getAst());
-            }
 
             model.moveOrderByFrom(nested);
 //            model.moveLimitFrom(nested);
@@ -6586,7 +6561,6 @@ public class SqlOptimiser implements Mutable {
                 if (groupByExpr.type == CONSTANT) {
                     // todo: find a way to handle positional group by perhaps by re-ordering calls in `optimise()`
                     throw SqlException.$(groupByExpr.position, "cannot use positional group by inside `PIVOT`");
-
                 } else {
                     if (!model.getColumnNameToAliasMap().contains(groupByExpr.token)) {
                         model.addBottomUpColumn(queryColumnPool.next().of(
@@ -6609,7 +6583,6 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0, n = groupByModel.getGroupBy().size(); i < n; i++) {
                 model.addGroupBy(groupByModel.getGroupBy().getQuick(i));
             }
-
 
             // copy pivot for expressions into group by and where filter
             for (int i = 0, n = nested.getPivotFor().size(); i < n; i++) {
@@ -6638,7 +6611,6 @@ public class SqlOptimiser implements Mutable {
                 }
             }
 
-
             // add group by columns
             for (int i = 0, n = nested.getPivotColumns().size(); i < n; i++) {
                 QueryColumn pivotColumn = nested.getPivotColumns().getQuick(i);
@@ -6646,7 +6618,6 @@ public class SqlOptimiser implements Mutable {
                         pivotColumn.getAlias() == null ? pivotColumn.getAst().token : pivotColumn.getAlias(),
                         pivotColumn.getAst()
                 ));
-//                groupByModel.addBottomUpColumn(pivotColumn);
             }
 
 
@@ -6654,7 +6625,6 @@ public class SqlOptimiser implements Mutable {
             // FOR year in (2000, 2010, 2020)
             //     country in ('NL, 'US')
             // should give 6 columns.
-
             int pivotForSize = nested.getPivotFor().size();
             IntList forMaxes = new IntList(pivotForSize);
             IntList forDepths = new IntList(pivotForSize);
@@ -6808,17 +6778,13 @@ public class SqlOptimiser implements Mutable {
             }
 
             model.getNestedModel().clearPivot();
-
             groupByModel.setNestedModel(model.getNestedModel());
             bonusModel.setNestedModel(groupByModel);
             model.setNestedModel(bonusModel);
-
-//            }
         } else {
             if (model.getPivotColumns() != null || model.getPivotFor() != null) {
                 throw SqlException.$(model.getModelPosition(), "PIVOT queries must use SELECT '*'");
             }
-
             model.setNestedModel(rewritePivot(model.getNestedModel()));
         }
 

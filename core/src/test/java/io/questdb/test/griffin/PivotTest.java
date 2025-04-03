@@ -722,110 +722,50 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithSampleBy() throws Exception {
         assertQueryAndPlan(
-                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n",
-                "(trades where symbol in 'ETH-USDT')\n" +
-                        "  pivot (\n" +
-                        "    sum(price)\n" +
-                        "    FOR \"symbol\" IN ('ETH-USDT')\n" +
-                        "        side in ('buy', 'sell')\n" +
-                        "    SAMPLE BY 100T\n" +
-                        "  );",
+                "symbol\tbuy_price\tsell_price\n",
+                "(\n" +
+                        "  SELECT timestamp, symbol, side, last(price)\n" +
+                        "  FROM trades\n" +
+                        "  SAMPLE BY 1d\n" +
+                        ") PIVOT (\n" +
+                        "  sum(last) as price\n" +
+                        "  FOR side in ('buy', 'sell')\n" +
+                        "  GROUP BY symbol\n" +
+                        ");\n",
                 ddlTrades,
                 null,
                 dmlTrades,
-                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
-                        "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n" +
-                        "2024-12-19T08:10:00.736000Z\tnull\t3678.25\n" +
-                        "2024-12-19T08:10:00.759000Z\tnull\t3678.0\n" +
-                        "2024-12-19T08:10:00.772999Z\tnull\t3678.0\n" +
-                        "2024-12-19T08:10:00.887000Z\t3678.01\tnull\n" +
-                        "2024-12-19T08:10:00.950000Z\tnull\t3678.0\n",
+                "symbol\tbuy_price\tsell_price\n" +
+                        "ETH-USD\t3678.01\t3678.0\n" +
+                        "DOGE-USD\t0.36047\t0.36041\n" +
+                        "SOL-USDT\tnull\t210.41\n" +
+                        "ADA-USD\tnull\t0.9716\n" +
+                        "SOL-USD\tnull\t210.41\n" +
+                        "BTC-USD\t101497.6\t101497.0\n" +
+                        "ETH-USDC\tnull\t3675.72\n" +
+                        "ETH-USDT\t3678.01\t3678.0\n" +
+                        "BTC-USDT\t101497.6\t101497.0\n" +
+                        "USDT-USDC\t0.9994\tnull\n" +
+                        "DOGE-USDT\t0.36047\t0.36041\n" +
+                        "ADA-USDT\tnull\t0.9716\n",
                 true,
                 true,
                 false,
                 "GroupBy vectorized: false\n" +
-                        "  keys: [timestamp]\n" +
-                        "  values: [sum(case([(symbol='ETH-USDT' and side='buy'),sum,null])),sum(case([(symbol='ETH-USDT' and side='sell'),sum,null]))]\n" +
-                        "    SelectedRecord\n" +
-                        "        Async Group By workers: 1\n" +
-                        "          keys: [timestamp,symbol,side]\n" +
-                        "          values: [sum(price)]\n" +
-                        "          filter: (symbol in [ETH-USDT] and symbol in [ETH-USDT])\n" +
-                        "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: trades\n");
-    }
-
-    @Test
-    public void testPivotWithSampleByKeyed2() throws Exception {
-        assertQueryAndPlan(
-                "timestamp\tsymbol\tbuy\tsell\n",
-                "trades\n" +
-                        "  pivot (\n" +
-                        "    avg(price)\n" +
-                        "    FOR side in ('buy', 'sell')\n" +
-                        "    SAMPLE BY 1s\n" +
-                        "    GROUP BY timestamp, symbol\n" +
-                        "  );",
-                ddlTrades,
-                null,
-                dmlTrades,
-                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
-                        "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n" +
-                        "2024-12-19T08:10:00.736000Z\tnull\t3678.25\n" +
-                        "2024-12-19T08:10:00.759000Z\tnull\t3678.0\n" +
-                        "2024-12-19T08:10:00.772999Z\tnull\t3678.0\n" +
-                        "2024-12-19T08:10:00.887000Z\t3678.01\tnull\n" +
-                        "2024-12-19T08:10:00.950000Z\tnull\t3678.0\n",
-                true,
-                true,
-                false,
-                "GroupBy vectorized: false\n" +
-                        "  keys: [timestamp]\n" +
-                        "  values: [sum(case([(symbol='ETH-USDT' and side='buy'),sum,null])),sum(case([(symbol='ETH-USDT' and side='sell'),sum,null]))]\n" +
-                        "    Async Group By workers: 1\n" +
-                        "      keys: [timestamp,symbol,side]\n" +
-                        "      values: [sum(price)]\n" +
-                        "      filter: (symbol in [ETH-USDT] and symbol in [ETH-USDT])\n" +
-                        "        PageFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: trades\n");
-    }
-
-    @Test
-    public void testPivotWithSampleByNotKeyed() throws Exception {
-        assertQueryAndPlan(
-                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n",
-                "trades pivot (\n" +
-                        "    sum(price)\n" +
-                        "    FOR \"symbol\" IN ('ETH-USDT')\n" +
-                        "        side in ('buy', 'sell')\n" +
-                        "    SAMPLE BY 100T\n" +
-                        "  );",
-                ddlTrades,
-                null,
-                dmlTrades,
-                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
-                        "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n" +
-                        "2024-12-19T08:10:00.736000Z\tnull\t3678.25\n" +
-                        "2024-12-19T08:10:00.759000Z\tnull\t3678.0\n" +
-                        "2024-12-19T08:10:00.772999Z\tnull\t3678.0\n" +
-                        "2024-12-19T08:10:00.887000Z\t3678.01\tnull\n" +
-                        "2024-12-19T08:10:00.950000Z\tnull\t3678.0\n",
-                true,
-                true,
-                false,
-                "GroupBy vectorized: false\n" +
-                        "  keys: [timestamp]\n" +
-                        "  values: [sum(case([(symbol='ETH-USDT' and side='buy'),sum,null])),sum(case([(symbol='ETH-USDT' and side='sell'),sum,null]))]\n" +
-                        "    SelectedRecord\n" +
-                        "        Async JIT Group By workers: 1\n" +
-                        "          keys: [timestamp,symbol,side]\n" +
-                        "          values: [sum(price)]\n" +
-                        "          filter: symbol in [ETH-USDT]\n" +
-                        "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: trades\n");
+                        "  keys: [symbol]\n" +
+                        "  values: [sum(case([price,NaN,side])),sum(case([price,NaN,side]))]\n" +
+                        "    GroupBy vectorized: false\n" +
+                        "      keys: [symbol,side]\n" +
+                        "      values: [sum(last)]\n" +
+                        "        Radix sort light\n" +
+                        "          keys: [timestamp]\n" +
+                        "            Async JIT Group By workers: 1\n" +
+                        "              keys: [symbol,side,timestamp]\n" +
+                        "              values: [last(price)]\n" +
+                        "              filter: side in [buy,sell]\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: trades\n");
     }
 
     @Test
