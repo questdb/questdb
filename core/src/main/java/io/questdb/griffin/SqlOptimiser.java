@@ -5380,6 +5380,7 @@ public class SqlOptimiser implements Mutable {
         if (sampleBy != null) {
             // move sample by to group by model
             groupByModel.moveSampleByFrom(baseModel);
+            groupByModel.setTimestamp(baseModel.getTimestamp());
         }
 
         if (baseModel.getGroupBy().size() > 0) {
@@ -6532,7 +6533,9 @@ public class SqlOptimiser implements Mutable {
                 && nested != null
                 && nested.getSelectModelType() == SELECT_MODEL_NONE
                 && nested.getPivotColumns() != null
-                && nested.getPivotFor() != null) {
+                && nested.getPivotFor() != null
+                && model.getBottomUpColumns().size() == 1
+                && Chars.equals(model.getBottomUpColumns().getQuick(0).getAlias(), '*')) {
 
             QueryColumn timestampColumn = null;
 
@@ -6544,13 +6547,6 @@ public class SqlOptimiser implements Mutable {
                 timestampColumn = queryColumnPool.next().of(timestampCs, expressionNodePool.next().of(LITERAL, timestampCs, 0, 0));
             }
 
-            if (!(model.getBottomUpColumns().size() > 1)) { // todo: handle mixed asterisk and extra case
-                // remove columns that appear in the group by
-                
-            }
-
-            // todo(nwoolmer): pass through columns properly, so we can handle non '*' selects
-            // clear out the '*'
 
             // we need to remove any columns that are already featured in the query
 
@@ -6561,6 +6557,12 @@ public class SqlOptimiser implements Mutable {
             QueryModel bonusModel = queryModelPool.next();
             bonusModel.setSelectModelType(SELECT_MODEL_CHOOSE);
 
+            // todo(nwoolmer): pass through columns properly, so we can handle non '*' selects
+            // clear out the '*'
+
+            model.getBottomUpColumns().clear();
+            model.getWildcardColumnNames().clear();
+
 
             // add sample by if needed
             if (timestampColumn != null && model.getColumnAliasIndex(timestampColumn.getAlias()) < 0) {
@@ -6568,6 +6570,10 @@ public class SqlOptimiser implements Mutable {
                 model.addBottomUpColumn(timestampColumn);
                 groupByModel.moveSampleByFrom(nested);
                 groupByModel.addBottomUpColumn(timestampColumn);
+                groupByModel.setTimestamp(timestampColumn.getAst());
+                bonusModel.setTimestamp(timestampColumn.getAst());
+                model.setTimestamp(timestampColumn.getAst());
+                nested.setTimestamp(timestampColumn.getAst());
             }
 
             model.moveOrderByFrom(nested);
@@ -6582,14 +6588,18 @@ public class SqlOptimiser implements Mutable {
                     throw SqlException.$(groupByExpr.position, "cannot use positional group by inside `PIVOT`");
 
                 } else {
-                    model.addBottomUpColumn(queryColumnPool.next().of(
-                            nested.getGroupBy().getQuick(i).token,
-                            nested.getGroupBy().getQuick(i)
-                    ));
-                    groupByModel.addBottomUpColumn(queryColumnPool.next().of(
-                            nested.getGroupBy().getQuick(i).token,
-                            nested.getGroupBy().getQuick(i)
-                    ));
+                    if (!model.getColumnNameToAliasMap().contains(groupByExpr.token)) {
+                        model.addBottomUpColumn(queryColumnPool.next().of(
+                                nested.getGroupBy().getQuick(i).token,
+                                nested.getGroupBy().getQuick(i)
+                        ));
+                    }
+                    if (!groupByModel.getColumnNameToAliasMap().contains(groupByExpr.token)) {
+                        groupByModel.addBottomUpColumn(queryColumnPool.next().of(
+                                nested.getGroupBy().getQuick(i).token,
+                                nested.getGroupBy().getQuick(i)
+                        ));
+                    }
                     bonusModel.addGroupBy(groupByExpr);
                 }
             }
@@ -6801,10 +6811,14 @@ public class SqlOptimiser implements Mutable {
 
             groupByModel.setNestedModel(model.getNestedModel());
             bonusModel.setNestedModel(groupByModel);
-
             model.setNestedModel(bonusModel);
 
+//            }
         } else {
+            if (model.getPivotColumns() != null || model.getPivotFor() != null) {
+                throw SqlException.$(model.getModelPosition(), "PIVOT queries must use SELECT '*'");
+            }
+
             model.setNestedModel(rewritePivot(model.getNestedModel()));
         }
 

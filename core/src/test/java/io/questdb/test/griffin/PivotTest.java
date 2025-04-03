@@ -538,12 +538,12 @@ public class PivotTest extends AbstractSqlParserTest {
                 true,
                 false,
                 "GroupBy vectorized: false\n" +
-                        "  keys: [country]\n" +
-                        "  values: [sum(case([total,nullL,year])),sum(case([total,nullL,year])),sum(case([total,nullL,year]))]\n" +
+                        "  keys: [name]\n" +
+                        "  values: [sum(case([(year=2000 and country='NL'),total,null])),count(case([(year=2000 and country='NL'),count,null])),sum(case([(year=2000 and country='US'),total,null])),count(case([(year=2000 and country='US'),count,null])),sum(case([(year=2010 and country='NL'),total,null])),count(case([(year=2010 and country='NL'),count,null])),sum(case([(year=2010 and country='US'),total,null])),count(case([(year=2010 and country='US'),count,null]))]\n" +
                         "    Async JIT Group By workers: 1\n" +
-                        "      keys: [country,year]\n" +
-                        "      values: [sum(population)]\n" +
-                        "      filter: year in [2000,2010,2020]\n" +
+                        "      keys: [name,year,country]\n" +
+                        "      values: [sum(population),count(population)]\n" +
+                        "      filter: year in [2000,2010]\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: cities\n");
@@ -552,7 +552,8 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotWithMultipleAliasedAggregatesImplicitGroupBy() throws Exception {
         assertQueryAndPlan(
-                "name\t2000_NL_total\t2000_NL_count\t2000_US_total\t2000_US_count\t2010_NL_total\t2010_NL_count\t2010_US_total\t2010_US_count\n",
+                "2000_NL_total\t2000_NL_count\t2000_US_total\t2000_US_count\t2010_NL_total\t2010_NL_count\t2010_US_total\t2010_US_count\n" +
+                        "null\t0\tnull\t0\tnull\t0\tnull\t0\n",
                 "cities\n" +
                         "PIVOT (\n" +
                         "    SUM(population) as total,\n" +
@@ -564,20 +565,17 @@ public class PivotTest extends AbstractSqlParserTest {
                 ddlCities,
                 null,
                 dmlCities,
-                "name\t2000_NL_total\t2000_NL_count\t2000_US_total\t2000_US_count\t2010_NL_total\t2010_NL_count\t2010_US_total\t2010_US_count\n" +
-                        "Amsterdam\t1005\t1\tnull\t0\t1065\t1\tnull\t0\n" +
-                        "Seattle\tnull\t0\t564\t1\tnull\t0\t608\t1\n" +
-                        "New York City\tnull\t0\t8015\t1\tnull\t0\t8175\t1\n",
-                true,
+                "2000_NL_total\t2000_NL_count\t2000_US_total\t2000_US_count\t2010_NL_total\t2010_NL_count\t2010_US_total\t2010_US_count\n" +
+                        "1005\t1\t8579\t1\t1065\t1\t8783\t1\n",
+                false,
                 true,
                 false,
                 "GroupBy vectorized: false\n" +
-                        "  keys: [country]\n" +
-                        "  values: [sum(case([total,nullL,year])),sum(case([total,nullL,year])),sum(case([total,nullL,year]))]\n" +
+                        "  values: [sum(case([(year=2000 and country='NL'),total,null])),count(case([(year=2000 and country='NL'),count,null])),sum(case([(year=2000 and country='US'),total,null])),count(case([(year=2000 and country='US'),count,null])),sum(case([(year=2010 and country='NL'),total,null])),count(case([(year=2010 and country='NL'),count,null])),sum(case([(year=2010 and country='US'),total,null])),count(case([(year=2010 and country='US'),count,null]))]\n" +
                         "    Async JIT Group By workers: 1\n" +
-                        "      keys: [country,year]\n" +
-                        "      values: [sum(population)]\n" +
-                        "      filter: year in [2000,2010,2020]\n" +
+                        "      keys: [year,country]\n" +
+                        "      values: [sum(population),count(population)]\n" +
+                        "      filter: year in [2000,2010]\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: cities\n");
@@ -748,64 +746,29 @@ public class PivotTest extends AbstractSqlParserTest {
                 "GroupBy vectorized: false\n" +
                         "  keys: [timestamp]\n" +
                         "  values: [sum(case([(symbol='ETH-USDT' and side='buy'),sum,null])),sum(case([(symbol='ETH-USDT' and side='sell'),sum,null]))]\n" +
-                        "    Async Group By workers: 1\n" +
-                        "      keys: [timestamp,symbol,side]\n" +
-                        "      values: [sum(price)]\n" +
-                        "      filter: (symbol in [ETH-USDT] and symbol in [ETH-USDT])\n" +
-                        "        PageFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: trades\n");
-    }
-
-    @Test
-    public void testPivotWithSampleByKeyed() throws Exception {
-        assertQueryAndPlan(
-                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n",
-                "select timestamp, symbol, side, price from trades\n" +
-                        "  pivot (\n" +
-                        "    sum(price)\n" +
-                        "    FOR \"symbol\" IN ('ETH-USDT')\n" +
-                        "        side in ('buy', 'sell')\n" +
-                        "    SAMPLE BY 100T\n" +
-                        "  );",
-                ddlTrades,
-                "timestamp###ASC",
-                dmlTrades,
-                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
-                        "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n" +
-                        "2024-12-19T08:10:00.736000Z\tnull\t3678.25\n" +
-                        "2024-12-19T08:10:00.759000Z\tnull\t3678.0\n" +
-                        "2024-12-19T08:10:00.772999Z\tnull\t3678.0\n" +
-                        "2024-12-19T08:10:00.887000Z\t3678.01\tnull\n" +
-                        "2024-12-19T08:10:00.950000Z\tnull\t3678.0\n",
-                true,
-                true,
-                false,
-                "GroupBy vectorized: false\n" +
-                        "  keys: [timestamp]\n" +
-                        "  values: [sum(case([(symbol='ETH-USDT' and side='buy'),sum,null])),sum(case([(symbol='ETH-USDT' and side='sell'),sum,null]))]\n" +
-                        "    Async Group By workers: 1\n" +
-                        "      keys: [timestamp,symbol,side]\n" +
-                        "      values: [sum(price)]\n" +
-                        "      filter: (symbol in [ETH-USDT] and symbol in [ETH-USDT])\n" +
-                        "        PageFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: trades\n");
+                        "    SelectedRecord\n" +
+                        "        Async Group By workers: 1\n" +
+                        "          keys: [timestamp,symbol,side]\n" +
+                        "          values: [sum(price)]\n" +
+                        "          filter: (symbol in [ETH-USDT] and symbol in [ETH-USDT])\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: trades\n");
     }
 
     @Test
     public void testPivotWithSampleByKeyed2() throws Exception {
         assertQueryAndPlan(
-                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n",
-                "select timestamp, symbol, side, price from trades\n" +
+                "timestamp\tsymbol\tbuy\tsell\n",
+                "trades\n" +
                         "  pivot (\n" +
-                        "    sum(price)\n" +
-                        "    FOR \"symbol\" IN ('ETH-USDT')\n" +
-                        "        side in ('buy', 'sell')\n" +
-                        "    SAMPLE BY 100T\n" +
+                        "    avg(price)\n" +
+                        "    FOR side in ('buy', 'sell')\n" +
+                        "    SAMPLE BY 1s\n" +
+                        "    GROUP BY timestamp, symbol\n" +
                         "  );",
                 ddlTrades,
-                "timestamp###ASC",
+                null,
                 dmlTrades,
                 "timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
                         "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n" +
@@ -827,6 +790,42 @@ public class PivotTest extends AbstractSqlParserTest {
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: trades\n");
+    }
+
+    @Test
+    public void testPivotWithSampleByNotKeyed() throws Exception {
+        assertQueryAndPlan(
+                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n",
+                "trades pivot (\n" +
+                        "    sum(price)\n" +
+                        "    FOR \"symbol\" IN ('ETH-USDT')\n" +
+                        "        side in ('buy', 'sell')\n" +
+                        "    SAMPLE BY 100T\n" +
+                        "  );",
+                ddlTrades,
+                null,
+                dmlTrades,
+                "timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
+                        "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n" +
+                        "2024-12-19T08:10:00.736000Z\tnull\t3678.25\n" +
+                        "2024-12-19T08:10:00.759000Z\tnull\t3678.0\n" +
+                        "2024-12-19T08:10:00.772999Z\tnull\t3678.0\n" +
+                        "2024-12-19T08:10:00.887000Z\t3678.01\tnull\n" +
+                        "2024-12-19T08:10:00.950000Z\tnull\t3678.0\n",
+                true,
+                true,
+                false,
+                "GroupBy vectorized: false\n" +
+                        "  keys: [timestamp]\n" +
+                        "  values: [sum(case([(symbol='ETH-USDT' and side='buy'),sum,null])),sum(case([(symbol='ETH-USDT' and side='sell'),sum,null]))]\n" +
+                        "    SelectedRecord\n" +
+                        "        Async JIT Group By workers: 1\n" +
+                        "          keys: [timestamp,symbol,side]\n" +
+                        "          values: [sum(price)]\n" +
+                        "          filter: symbol in [ETH-USDT]\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: trades\n");
     }
 
     @Test
