@@ -75,9 +75,6 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         if (columnModels.get(columnName) != null) {
             throw SqlException.duplicateColumn(model.getColumnNamePos(), columnName);
         }
-        if (!TableUtils.isValidColumnName(columnName, Integer.MAX_VALUE)) {
-            throw SqlException.$(model.getColumnNamePos(), columnName).put("is not valid.");
-        }
         columnNameIndexMap.put(columnName, columnModels.size());
         columnModels.put(columnName, model);
         columnNames.add(columnName);
