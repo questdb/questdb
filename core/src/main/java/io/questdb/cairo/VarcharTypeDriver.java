@@ -188,18 +188,14 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      *
      * @param dataMem memory with header and UTF8 bytes
      * @param offset  in the memory
-     * @param ab      1 for A memory
      */
-    public static Utf8Sequence getPlainValue(@NotNull MemoryR dataMem, long offset, int ab) {
+    public static Utf8Sequence getPlainValue(@NotNull MemoryR dataMem, long offset) {
         long address = dataMem.addressOf(offset);
         int header = Unsafe.getUnsafe().getInt(address);
         assert header != 0;
-        if (isNull(header)) {
-            return null;
-        }
-        return (ab == 1)
-                ? dataMem.getDirectVarcharA(offset + Integer.BYTES, size(header), isAscii(header))
-                : dataMem.getDirectVarcharB(offset + Integer.BYTES, size(header), isAscii(header));
+        return isNull(header)
+                ? null
+                : dataMem.getDirectVarchar(offset + Integer.BYTES, size(header), isAscii(header));
     }
 
     /**
