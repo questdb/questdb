@@ -79,8 +79,8 @@ import static java.net.HttpURLConnection.*;
 
 public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
-    private static final LocalValue<JsonQueryProcessorState> LV = new LocalValue<>();
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessor.class);
+    private static final LocalValue<JsonQueryProcessorState> LV = new LocalValue<>();
     protected final ObjList<QueryExecutor> queryExecutors = new ObjList<>();
     private final long asyncCommandTimeout;
     private final long asyncWriterStartTimeout;
@@ -369,40 +369,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         throw SqlException.$(0, "copy from STDIN is not supported over REST");
     }
 
-    private void doResumeSend(
-            JsonQueryProcessorState state,
-            HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
-        LOG.debug().$("resume [fd=").$(context.getFd()).I$();
-
-        final HttpChunkedResponse response = context.getChunkedResponse();
-        while (true) {
-            try {
-                state.resume(response);
-                break;
-            } catch (SqlException | ImplicitCastException e) {
-                sqlError(context.getChunkedResponse(), state, e, configuration.getKeepAliveHeader());
-                readyForNextRequest(context);
-            } catch (DataUnavailableException e) {
-                response.resetToBookmark();
-                throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
-            } catch (NoSpaceLeftInResponseBufferException ignored) {
-                if (response.resetToBookmark()) {
-                    response.sendChunk(false);
-                } else {
-                    // out unit of data, column value or query is larger than response content buffer
-                    state.logBufferTooSmall();
-                    throw CairoException.nonCritical()
-                            .put("response buffer is too small for the column value [columnName=").put(state.getCurrentColumnName())
-                            .put(", columnIndex=").put(state.getCurrentColumnIndex())
-                            .put(']');
-                }
-            }
-        }
-        // reached the end naturally?
-        readyForNextRequest(context);
-    }
-
     private static int getStatusCode(CairoException e) {
         if (e.isAuthorizationError()) {
             return HTTP_FORBIDDEN;
@@ -565,6 +531,40 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         } finally {
             state.setContainsSecret(sqlExecutionContext.containsSecret());
         }
+    }
+
+    private void doResumeSend(
+            JsonQueryProcessorState state,
+            HttpConnectionContext context
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
+        LOG.debug().$("resume [fd=").$(context.getFd()).I$();
+
+        final HttpChunkedResponse response = context.getChunkedResponse();
+        while (true) {
+            try {
+                state.resume(response);
+                break;
+            } catch (SqlException | ImplicitCastException e) {
+                sqlError(context.getChunkedResponse(), state, e, configuration.getKeepAliveHeader());
+                break;
+            } catch (DataUnavailableException e) {
+                response.resetToBookmark();
+                throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
+            } catch (NoSpaceLeftInResponseBufferException ignored) {
+                if (response.resetToBookmark()) {
+                    response.sendChunk(false);
+                } else {
+                    // out unit of data, column value or query is larger than response content buffer
+                    state.logBufferTooSmall();
+                    throw CairoException.nonCritical()
+                            .put("response buffer is too small for the column value [columnName=").put(state.getCurrentColumnName())
+                            .put(", columnIndex=").put(state.getCurrentColumnIndex())
+                            .put(']');
+                }
+            }
+        }
+        // reached the end naturally?
+        readyForNextRequest(context);
     }
 
     private void executeAlterTable(
