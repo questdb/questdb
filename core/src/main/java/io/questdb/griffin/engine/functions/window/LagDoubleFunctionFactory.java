@@ -53,9 +53,10 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
 public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
-    public static final ArrayColumnTypes LAG_COLUMN_TYPES;
+
     public static final String NAME = "lag";
     private static final String SIGNATURE = NAME + "(DV)";
+    public static final ArrayColumnTypes LAG_COLUMN_TYPES;
 
     @Override
     public String getSignature() {
@@ -114,10 +115,8 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                     windowContext.getPartitionByKeyTypes(),
                     LAG_COLUMN_TYPES
             );
-            MemoryARW mem = Vm.getCARWInstance(
-                    configuration.getSqlWindowStorePageSize(),
-                    configuration.getSqlWindowStoreMaxPages(),
-                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER
             );
 
             return new LagOverPartitionFunction(
@@ -140,125 +139,21 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         return new LagFunction(args.get(0), defaultValue, offset, mem, windowContext.isIgnoreNulls());
     }
 
-    public static class LagFunction extends BaseDoubleWindowFunction implements Reopenable {
-        private final MemoryARW buffer;
-        private final Function defaultValue;
-        private final boolean ignoreNulls;
-        private final long offset;
-        private long count = 0;
-        private double lagValue;
-        private int loIdx = 0;
-
-        public LagFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls) {
-            super(arg);
-            this.offset = offset;
-            this.buffer = memory;
-            this.defaultValue = defaultValueFunc;
-            this.ignoreNulls = ignoreNulls;
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            buffer.close();
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            if (count < offset) {
-                lagValue = defaultValue == null ? Double.NaN : defaultValue.getDouble(record);
-            } else {
-                lagValue = buffer.getDouble((long) loIdx * Double.BYTES);
-            }
-            double d = arg.getDouble(record);
-            if (!ignoreNulls || Numbers.isFinite(d)) {
-                buffer.putDouble((long) loIdx * Double.BYTES, d);
-                loIdx = (int) ((loIdx + 1) % offset);
-                count++;
-            }
-        }
-
-        @Override
-        public double getDouble(Record rec) {
-            return lagValue;
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public boolean isIgnoreNulls() {
-            return ignoreNulls;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), lagValue);
-        }
-
-        @Override
-        public void reopen() {
-            loIdx = 0;
-            count = 0;
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            buffer.close();
-            loIdx = 0;
-            count = 0;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(getName());
-            sink.val('(').val(arg).val(", ").val(offset).val(", ");
-            if (defaultValue != null) {
-                sink.val(defaultValue);
-            } else {
-                sink.val("NULL");
-            }
-            sink.val(')');
-            if (ignoreNulls) {
-                sink.val(" ignore nulls");
-            }
-            sink.val(" over ()");
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            loIdx = 0;
-            count = 0;
-        }
-    }
-
     static class LagOverPartitionFunction extends BasePartitionedDoubleWindowFunction {
         private final Function defaultValue;
-        private final boolean ignoreNulls;
-        private final MemoryARW memory;
         private final long offset;
         private double lagValue;
+        private final MemoryARW memory;
+        private final boolean ignoreNulls;
 
-        public LagOverPartitionFunction(
-                Map map,
-                VirtualRecord partitionByRecord,
-                RecordSink partitionBySink,
-                MemoryARW memory,
-                Function arg,
-                boolean ignoreNulls,
-                Function defaultValue,
-                long offset
-        ) {
+        public LagOverPartitionFunction(Map map,
+                                        VirtualRecord partitionByRecord,
+                                        RecordSink partitionBySink,
+                                        MemoryARW memory,
+                                        Function arg,
+                                        boolean ignoreNulls,
+                                        Function defaultValue,
+                                        long offset) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.defaultValue = defaultValue;
             this.offset = offset;
@@ -267,9 +162,8 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
-        public void close() {
-            super.close();
-            Misc.free(memory);
+        public boolean isIgnoreNulls() {
+            return ignoreNulls;
         }
 
         @Override
@@ -324,20 +218,27 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
-        public boolean isIgnoreNulls() {
-            return ignoreNulls;
-        }
-
-        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), lagValue);
         }
 
         @Override
+        public void close() {
+            super.close();
+            Misc.free(memory);
+        }
+
+        @Override
         public void reset() {
             super.reset();
             Misc.free(memory);
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            memory.truncate();
         }
 
         @Override
@@ -358,34 +259,122 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
             sink.val(partitionByRecord.getFunctions());
             sink.val(')');
         }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            memory.truncate();
-        }
     }
 
-    static class LeadLagValueCurrentRow extends BaseDoubleWindowFunction {
+    public static class LagFunction extends BaseDoubleWindowFunction implements Reopenable {
+        private final MemoryARW buffer;
+        private final long offset;
+        private double lagValue;
+        private final Function defaultValue;
+        private int loIdx = 0;
+        private long count = 0;
         private final boolean ignoreNulls;
-        private final String name;
-        // keep it to call the partition function's close in the window function's close
-        private final VirtualRecord partitionByRecord;
-        private double value;
 
-        public LeadLagValueCurrentRow(VirtualRecord partitionByRecord, Function arg, String name, boolean ignoreNulls) {
+        public LagFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls) {
             super(arg);
-            this.partitionByRecord = partitionByRecord;
-            this.name = name;
+            this.offset = offset;
+            this.buffer = memory;
+            this.defaultValue = defaultValueFunc;
             this.ignoreNulls = ignoreNulls;
         }
 
         @Override
         public void close() {
             super.close();
-            if (partitionByRecord != null) {
-                Misc.freeObjList(partitionByRecord.getFunctions());
+            buffer.close();
+        }
+
+        @Override
+        public boolean isIgnoreNulls() {
+            return ignoreNulls;
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            if (count < offset) {
+                lagValue = defaultValue == null ? Double.NaN : defaultValue.getDouble(record);
+            } else {
+                lagValue = buffer.getDouble((long) loIdx * Double.BYTES);
             }
+            double d = arg.getDouble(record);
+            if (!ignoreNulls || Numbers.isFinite(d)) {
+                buffer.putDouble((long) loIdx * Double.BYTES, d);
+                loIdx = (int) ((loIdx + 1) % offset);
+                count++;
+            }
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            return lagValue;
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), lagValue);
+        }
+
+        @Override
+        public void reopen() {
+            loIdx = 0;
+            count = 0;
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            buffer.close();
+            loIdx = 0;
+            count = 0;
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            loIdx = 0;
+            count = 0;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName());
+            sink.val('(').val(arg).val(", ").val(offset).val(", ");
+            if (defaultValue != null) {
+                sink.val(defaultValue);
+            } else {
+                sink.val("NULL");
+            }
+            sink.val(')');
+            if (ignoreNulls) {
+                sink.val(" ignore nulls");
+            }
+            sink.val(" over ()");
+        }
+    }
+
+    static class LeadLagValueCurrentRow extends BaseDoubleWindowFunction {
+        private double value;
+        private final String name;
+        private final boolean ignoreNulls;
+        // keep it to call the partition function's close in the window function's close
+        private final VirtualRecord partitionByRecord;
+
+        public LeadLagValueCurrentRow(VirtualRecord partitionByRecord, Function arg, String name, boolean ignoreNulls) {
+            super(arg);
+            this.partitionByRecord = partitionByRecord;
+            this.name = name;
+            this.ignoreNulls = ignoreNulls;
         }
 
         @Override
@@ -422,6 +411,14 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                 sink.val(" ignore nulls");
             }
             sink.val(" over ()");
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            if (partitionByRecord != null) {
+                Misc.freeObjList(partitionByRecord.getFunctions());
+            }
         }
     }
 
