@@ -43,6 +43,7 @@ import io.questdb.cairo.wal.WalEventCursor;
 import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalTxnType;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlCompiler;
@@ -1590,6 +1591,75 @@ public class WalWriterTest extends AbstractCairoTest {
                     }
                 }
         );
+    }
+
+    @Test
+    public void testExtractLastRefreshBaseTableTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testExtractLastRefreshBaseTableTxn";
+            TableToken tableToken;
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("a", ColumnType.BYTE)
+                    .col("b", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal();
+            tableToken = createTable(model);
+
+            long maxTxn = 3;
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                for (int i = 0; i < maxTxn; i++) {
+                    TableWriter.Row row = walWriter.newRow(0);
+                    row.putByte(0, (byte) i);
+                    row.putSym(1, "sym" + i);
+                    row.append();
+                    walWriter.commit();
+                }
+            }
+
+            try (Path path = new Path();
+                 TransactionLogCursor transactionLogCursor = engine.getTableSequencerAPI().getCursor(tableToken, maxTxn - 1);
+                 WalEventReader walEventReader = new WalEventReader(configuration.getFilesFacade())
+            ) {
+
+                path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+                long txn = WalUtils.getMatViewLastRefreshBaseTxn(path, transactionLogCursor, walEventReader);
+                assertEquals(-1, txn); // incomplete refresh, no commitWithExtra
+            }
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                for (int i = 0; i < maxTxn; i++) {
+                    TableWriter.Row row = walWriter.newRow(0);
+                    row.putByte(0, (byte) i);
+                    row.putSym(1, "sym" + i);
+                    row.append();
+                    walWriter.commitWithExtra(42, 42);
+                }
+            }
+
+            try (Path path = new Path();
+                 TransactionLogCursor transactionLogCursor = engine.getTableSequencerAPI().getCursor(tableToken, 2 * maxTxn - 1);
+                 WalEventReader walEventReader = new WalEventReader(configuration.getFilesFacade())
+            ) {
+
+                path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+                long txn = WalUtils.getMatViewLastRefreshBaseTxn(path, transactionLogCursor, walEventReader);
+                assertEquals(42, txn); // refresh commit
+            }
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                walWriter.invalidate(45, 45, false, "test_invalidate");
+            }
+
+            try (Path path = new Path();
+                 TransactionLogCursor transactionLogCursor = engine.getTableSequencerAPI().getCursor(tableToken, (2 * maxTxn + 1) - 1);
+                 WalEventReader walEventReader = new WalEventReader(configuration.getFilesFacade())
+            ) {
+
+                path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+                long txn = WalUtils.getMatViewLastRefreshBaseTxn(path, transactionLogCursor, walEventReader);
+                assertEquals(-2, txn); // invalidate commit
+            }
+        });
     }
 
     @Test
@@ -3878,8 +3948,10 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertSql("count\tmin\tmax\n" +
-                    totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - tsStep) + "\n", "select count(*), min(ts), max(ts) from sm");
+            assertSql(
+                    "count\tmin\tmax\n" +
+                            totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - tsStep) + "\n", "select count(*), min(ts), max(ts) from sm"
+            );
             assertSqlCursors("sm", "select * from sm order by id");
             assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(s as int)");
             assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(v as int)");
