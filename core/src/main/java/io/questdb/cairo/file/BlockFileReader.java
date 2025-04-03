@@ -128,16 +128,18 @@ public class BlockFileReader implements Closeable {
         close();
         final long pageSize = ff.getPageSize();
         if (!ff.exists(path)) {
-            throw CairoException.critical(CairoException.ERRNO_FILE_DOES_NOT_EXIST)
-                    .put("cannot open block file [path")
+            throw CairoException.fileNotFound()
+                    .put("cannot open block file [path=")
                     .put(path)
                     .put(']');
         }
 
-        if (ff.length(path) < HEADER_SIZE) {
+        long fileLen = ff.length(path);
+        if (fileLen < HEADER_SIZE) {
             throw CairoException.critical(0)
-                    .put("cannot read block file, expected at least " + HEADER_SIZE + " bytes [path=")
-                    .put(path)
+                    .put("block file too small [expected=").put(HEADER_SIZE)
+                    .put(", actual=").put(fileLen)
+                    .put(", path=").put(path)
                     .put(']');
         }
 
@@ -261,7 +263,7 @@ public class BlockFileReader implements Closeable {
 
             @Override
             public Utf8Sequence getVarchar(long offset) {
-                return VarcharTypeDriver.getPlainValue(memory, payloadOffset + offset, 1);
+                return VarcharTypeDriver.getPlainValue(memory, payloadOffset + offset);
             }
 
             @Override
