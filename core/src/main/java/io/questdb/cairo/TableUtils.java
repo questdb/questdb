@@ -1459,12 +1459,6 @@ public final class TableUtils {
         deletedMeta.markDeleted();
     }
 
-    public static void removeOrException(FilesFacade ff, long fd, LPSZ path) {
-        if (ff.exists(path) && !ff.closeRemove(fd, path)) {
-            throw CairoException.critical(ff.errno()).put("Cannot remove ").put(path);
-        }
-    }
-
     public static void renameColumnInMetadata(
             CharSequence columnName,
             CharSequence newName,

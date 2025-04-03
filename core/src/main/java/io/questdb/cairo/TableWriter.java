@@ -3214,6 +3214,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private static void closeRemove(FilesFacade ff, long fd, LPSZ path) {
+        if (!ff.closeRemove(fd, path)) {
+            LOG.critical().$("cannot remove lock file ").put(path);
+        }
+    }
+
     private static void configureNullSetters(ObjList<Runnable> nullers, int columnType, MemoryA dataMem, MemoryA auxMem) {
         short columnTag = ColumnType.tagOf(columnType);
         if (ColumnType.isVarSize(columnTag)) {
@@ -5230,7 +5236,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (tempMem16b != 0) {
                 tempMem16b = Unsafe.free(tempMem16b, 16, MemoryTag.NATIVE_TABLE_WRITER);
             }
-            LOG.info().$("closed '").utf8(tableToken.getTableName()).$('\'').$();
+            LOG.info().$("closed '").$(tableToken).I$();
         }
     }
 
@@ -8165,7 +8171,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             try {
-                removeOrException(ff, lockFd, lockName(path));
+                closeRemove(ff, lockFd, lockName(path));
             } finally {
                 path.trimTo(pathSize);
             }
