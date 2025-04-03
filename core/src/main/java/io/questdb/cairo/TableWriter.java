@@ -3216,7 +3216,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private static void closeRemove(FilesFacade ff, long fd, LPSZ path) {
         if (!ff.closeRemove(fd, path)) {
-            LOG.critical().$("cannot remove lock file ").put(path);
+            throw CairoException.critical(ff.errno()).put("cannot remove ").put(path);
         }
     }
 
