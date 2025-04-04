@@ -541,7 +541,6 @@ jlong merge_shuffle_symbol_column_from_many_addresses(
 
     int64_t out_index = 0;
     jlong rows_processed = 0;
-    jlong dups = 0;
     for (uint64_t txn_index = 0; txn_index < txn_count; txn_index++) {
         auto segment_addr = src[segment_txns[txn_index].seg_info_index];
         uint64_t hi = segment_txns[txn_index].segment_row_offset + segment_txns[txn_index].row_count;
@@ -553,7 +552,6 @@ jlong merge_shuffle_symbol_column_from_many_addresses(
             if (merge_format == dedup_shuffle_index_format) {
                 if (dst_index == 0) {
                     // 0 means this row is not in the result set
-                    dups++;
                     continue;
                 }
                 // rows shifted by 1
@@ -571,7 +569,7 @@ jlong merge_shuffle_symbol_column_from_many_addresses(
             rows_processed++;
         }
     }
-    return rows_processed - dups;
+    return rows_processed;
 }
 
 template<typename TIdx>

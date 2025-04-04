@@ -191,6 +191,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int dateAdapterPoolCapacity;
     private final String dbDirectory;
     private final String dbRoot;
+    private final boolean debugWalApplyBlockFailureNoRetry;
     private final int defaultSeqPartTxnCount;
     private final boolean defaultSymbolCacheFlag;
     private final int defaultSymbolCapacity;
@@ -771,6 +772,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.systemWalWriterEventAppendPageSize = Files.ceilPageSize(getLongSize(properties, env, PropertyKey.CAIRO_SYSTEM_WAL_WRITER_EVENT_APPEND_PAGE_SIZE, 16 * 1024));
         this.walSquashUncommittedRowsMultiplier = getDouble(properties, env, PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, "20.0");
         this.walMaxLagTxnCount = getInt(properties, env, PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, -1);
+        this.debugWalApplyBlockFailureNoRetry = getBoolean(properties, env, PropertyKey.DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY, false);
         this.walMaxLagSize = getLongSize(properties, env, PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, 75 * Numbers.SIZE_1MB);
         this.walMaxSegmentFileDescriptorsCache = getInt(properties, env, PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, 30);
         this.walApplyTableTimeQuota = getMillis(properties, env, PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 1000);
@@ -2723,6 +2725,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull String getDbRoot() {
             return dbRoot;
+        }
+
+        @Override
+        public boolean getDebugWalApplyBlockFailureNoRetry() {
+            return debugWalApplyBlockFailureNoRetry;
         }
 
         @Override
