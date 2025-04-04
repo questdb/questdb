@@ -38,7 +38,6 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
  * Used to synchronize access to list-like collections used by worker threads.
  */
 public class PerWorkerLocks {
-
     private final AtomicIntegerArray locks;
     // Used to randomize acquire attempts for work stealing threads. Accessed in a racy way, intentionally.
     private final Rnd rnd;

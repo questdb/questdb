@@ -71,6 +71,7 @@ import static io.questdb.cairo.ErrorTag.OUT_OF_MEMORY;
 import static io.questdb.cairo.ErrorTag.resolveTag;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
+import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
 import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
@@ -525,6 +526,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
         switch (walTxnType) {
             case DATA:
+            case MAT_VIEW_DATA:
                 walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);
                 writer.commitWalInsertTransactions(
                         walPath,
@@ -546,7 +548,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
             case SQL:
                 try (WalEventReader eventReader = walEventReader) {
-                    final WalEventCursor walEventCursor = eventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
+                    final WalEventCursor walEventCursor = eventReader.of(walPath, segmentTxn);
                     final WalEventCursor.SqlInfo sqlInfo = walEventCursor.getSqlInfo();
                     walTelemetryFacade.store(WAL_TXN_APPLY_START, writer.getTableToken(), walId, seqTxn, -1L, -1L, start - commitTimestamp);
                     processWalSql(writer, sqlInfo, operationExecutor, seqTxn);
@@ -567,6 +569,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 // Invalidate dependent mat views on truncate.
                 mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
                 mvRefreshTask.invalidationReason = "truncate operation";
+                return 1;
+            case MAT_VIEW_INVALIDATE:
+                writer.setSeqTxn(seqTxn);
+                writer.markSeqTxnCommitted(seqTxn);
+                lastCommittedRows = 0;
                 return 1;
             default:
                 throw new UnsupportedOperationException("Unsupported WAL txn type: " + walTxnType);
@@ -600,6 +607,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             throw new UnsupportedOperationException("Unsupported command type: " + cmdType);
                     }
                 } catch (SqlException ex) {
+                    if (ex.isWalRecoverable()) {
+                        LOG.info().$("recoverable error applying SQL to wal table [table=").$(tableWriter.getTableToken())
+                                .$(", sql=").$(sql)
+                                .$(", position=").$(ex.getPosition())
+                                .$(", error=").$(ex.getFlyweightMessage())
+                                .I$();
+
+                        return;
+                    }
                     if (!ex.isTableDoesNotExist()) {
                         throw ex;
                     }

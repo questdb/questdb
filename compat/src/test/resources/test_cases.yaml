@@ -2,6 +2,34 @@ variables:
   table_name: "sensor_data"
 
 tests:
+  - name: Bindvar gaps with subqueries
+    description: https://github.com/questdb/questdb/issues/5512
+    exclude: [ 'psycopg2', 'psycopg3', 'asyncpg', 'rust', 'php' ]
+    prepare:
+      - action: execute
+        query: "CREATE TABLE test_table (value double, state symbol, opened_at timestamp) timestamp(opened_at) PARTITION BY YEAR BYPASS WAL;"
+      - action: execute
+        query: "INSERT INTO test_table(value,state,opened_at) VALUES (1, 'OPEN', '2001'), (4, 'CLOSED', '2002'), (2, 'CLOSED', '2003'), (7, 'CLOSED', '2004'), (1, 'CLOSED', '2005')"
+    steps:
+      - action: query
+        query: "WITH s AS (SELECT * from test_table WHERE value < $[1]) SELECT s.state, s.opened_at FROM s WHERE 1=1 AND state <> $[4];"
+        parameters:
+          - value: "7"
+            type: "FLOAT8"
+          - value: ""
+            type: "VARCHAR"
+          - value: ""
+            type: "VARCHAR"
+          - value: "OPEN"
+            type: "VARCHAR"
+        expect:
+          result:
+            - [ 'CLOSED', '2002-01-01T00:00:00.000000Z' ]
+            - [ 'CLOSED', '2003-01-01T00:00:00.000000Z' ]
+            - [ 'CLOSED', '2005-01-01T00:00:00.000000Z' ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS test_table;"
   - name: Binding in projection
     description: Test binding variable in projection, without any function
     prepare:
