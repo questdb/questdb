@@ -100,10 +100,13 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
                     return true;
                 }
             }
-            // Make sure to adjust the right boundary in case if we ended up
-            // in a gap or a backward shift interval.
+            // Make sure to adjust the right boundary in case if we ended up in a backward shift interval.
+            final long ogLocalTimestampHi = localTimestampHi;
             localTimestampHi = adjustHiBoundaryAtBwdShift(localTimestampHi);
-            localTimestampHi = adjustHiBoundaryAtGap(localTimestampHi);
+            if (localTimestampHi == ogLocalTimestampHi) {
+                // OK, it wasn't a backward shift. Maybe we're in a forward shift gap?
+                localTimestampHi = adjustHiBoundaryAtGap(localTimestampHi);
+            }
             return true;
         }
         return false;
@@ -165,7 +168,7 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
     private long adjustHiBoundaryAtBwdShift(long localTs) {
         final int idx = IntervalUtils.findInterval(localBwdShifts, localTs);
         if (idx != -1) {
-            final long shiftHi = IntervalUtils.getEncodedPeriodHi(localBwdShifts, idx);
+            final long shiftHi = IntervalUtils.getEncodedPeriodHi(localBwdShifts, idx << 1);
             return sampler.nextTimestamp(sampler.round(shiftHi));
         }
         return localTs;
@@ -174,7 +177,7 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
     private long adjustHiBoundaryAtGap(long localTs) {
         final int idx = IntervalUtils.findInterval(localGaps, localTs);
         if (idx != -1) {
-            final long shiftHi = IntervalUtils.getEncodedPeriodHi(localGaps, idx);
+            final long shiftHi = IntervalUtils.getEncodedPeriodHi(localGaps, idx << 1);
             return sampler.nextTimestamp(sampler.round(shiftHi));
         }
         return localTs;
@@ -183,7 +186,7 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
     private long adjustLoBoundaryAtBwdShift(long localTs) {
         final int idx = IntervalUtils.findInterval(localBwdShifts, localTs);
         if (idx != -1) {
-            final long shiftLo = IntervalUtils.getEncodedPeriodLo(localBwdShifts, idx);
+            final long shiftLo = IntervalUtils.getEncodedPeriodLo(localBwdShifts, idx << 1);
             return sampler.round(shiftLo - 1);
         }
         return localTs;

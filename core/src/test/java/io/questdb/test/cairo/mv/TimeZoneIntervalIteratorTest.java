@@ -98,6 +98,15 @@ public class TimeZoneIntervalIteratorTest {
     }
 
     @Test
+    public void testFuzzTimeZoneWithDstLargeInterval() throws Exception {
+        testFuzz(
+                Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "Europe/Berlin"),
+                TimestampFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"),
+                TimestampFormatUtils.parseTimestamp("2030-01-01T00:00:00.000000Z")
+        );
+    }
+
+    @Test
     public void testFuzzTimeZoneWithFixedOffset() throws Exception {
         testFuzz(
                 Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "GMT+2"),

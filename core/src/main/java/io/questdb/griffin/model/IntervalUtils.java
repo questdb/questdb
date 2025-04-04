@@ -143,8 +143,8 @@ public final class IntervalUtils {
         int right = intervals.size() / 2 - 1;
         while (left <= right) {
             int mid = (left + right) >>> 1;
-            long lo = getEncodedPeriodLo(intervals, mid * 2);
-            long hi = getEncodedPeriodHi(intervals, mid * 2);
+            long lo = getEncodedPeriodLo(intervals, mid << 1);
+            long hi = getEncodedPeriodHi(intervals, mid << 1);
             if (lo > timestamp) {
                 right = mid - 1;
             } else if (hi < timestamp) {
@@ -318,8 +318,8 @@ public final class IntervalUtils {
         int right = intervals.size() / 2 - 1;
         while (left <= right) {
             int mid = (left + right) >>> 1;
-            long lo = getEncodedPeriodLo(intervals, mid * 2);
-            long hi = getEncodedPeriodHi(intervals, mid * 2);
+            long lo = getEncodedPeriodLo(intervals, mid << 1);
+            long hi = getEncodedPeriodHi(intervals, mid << 1);
             if (lo > timestamp) {
                 right = mid - 1;
             } else if (hi < timestamp) {
