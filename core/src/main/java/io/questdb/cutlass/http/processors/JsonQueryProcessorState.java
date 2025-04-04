@@ -65,6 +65,7 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -1002,7 +1003,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     void querySuffixWithError(
             HttpChunkedResponse response,
             int code,
-            CharSequence message
+            @Nullable CharSequence message
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         // we no longer need cursor when we reached query suffix
         // closing cursor here guarantees that by the time http client finished reading response the table

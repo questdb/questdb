@@ -2016,28 +2016,6 @@ if __name__ == "__main__":
         testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.WEEK);
     }
 
-//Testing through postgres - need to establish connection
-//    @Test
-//    public void testReadINet() throws SQLException, IOException {
-//        Properties properties = new Properties();
-//        properties.setProperty("user", "admin");
-//        properties.setProperty("password", "postgres");
-//        properties.setProperty("sslmode", "disable");
-//        properties.setProperty("binaryTransfer", Boolean.toString(true));
-//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
-//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-//
-//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
-//
-//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
-//            var stmt = connection.prepareStatement("select * from ipv4");
-//            ResultSet rs = stmt.executeQuery();
-//            assertResultSet("a[OTHER]\n" +
-//                    "1.1.1.1\n" +
-//                    "12.2.65.90\n", sink, rs);
-//        }
-//    }
-
     @Test
     public void testBindVariableDropLastPartitionListWithWeekPrecision() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -2066,6 +2044,28 @@ if __name__ == "__main__":
             }
         });
     }
+
+//Testing through postgres - need to establish connection
+//    @Test
+//    public void testReadINet() throws SQLException, IOException {
+//        Properties properties = new Properties();
+//        properties.setProperty("user", "admin");
+//        properties.setProperty("password", "postgres");
+//        properties.setProperty("sslmode", "disable");
+//        properties.setProperty("binaryTransfer", Boolean.toString(true));
+//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
+//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+//
+//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
+//
+//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
+//            var stmt = connection.prepareStatement("select * from ipv4");
+//            ResultSet rs = stmt.executeQuery();
+//            assertResultSet("a[OTHER]\n" +
+//                    "1.1.1.1\n" +
+//                    "12.2.65.90\n", sink, rs);
+//        }
+//    }
 
     @Test
     public void testBindVariableInFilter() throws Exception {
@@ -4914,6 +4914,42 @@ if __name__ == "__main__":
                         sink,
                         rs
                 );
+            }
+        });
+    }
+
+    @Test
+    public void testImplicitCastExceptionInWindowFunction() throws Exception {
+        Assume.assumeFalse(legacyMode);
+        skipOnWalRun(); // Non-WAL
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            final String ddl = "CREATE TABLE 'trades' ( " +
+                    " symbol SYMBOL, " +
+                    " side SYMBOL, " +
+                    " price DOUBLE, " +
+                    " amount DOUBLE, " +
+                    " timestamp TIMESTAMP " +
+                    ") timestamp(timestamp) PARTITION BY DAY;";
+            try (PreparedStatement stmt = connection.prepareStatement(ddl)) {
+                stmt.execute();
+            }
+
+            final String insert = "INSERT INTO trades VALUES ('ETH-USD', 'sell', 2615.54, 0.00044, '2022-03-08T18:03:57.609765Z');";
+            try (PreparedStatement stmt = connection.prepareStatement(insert)) {
+                stmt.execute();
+            }
+
+            final String query = "SELECT " +
+                    "    timestamp, " +
+                    "    price, " +
+                    "    lag('timestamp') OVER (ORDER BY timestamp) AS previous_price " +
+                    "FROM trades " +
+                    "LIMIT 10;";
+            try (PreparedStatement stmt = connection.prepareStatement(query)) {
+                stmt.executeQuery();
+                Assert.fail();
+            } catch (PSQLException e) {
+                TestUtils.assertContains(e.getMessage(), "ERROR: inconvertible value: `timestamp` [STRING -> DOUBLE]");
             }
         });
     }
