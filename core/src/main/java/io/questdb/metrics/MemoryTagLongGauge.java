@@ -88,7 +88,6 @@ public class MemoryTagLongGauge implements LongGauge {
         return 1;
     }
 
-    //
     @Override
     public void setValue(long value) {
         // do nothing as this gauge is RO view of memory tag stats
