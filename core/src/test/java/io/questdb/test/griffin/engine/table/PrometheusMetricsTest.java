@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin.engine.table;
 
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory;
 import io.questdb.metrics.Counter;
@@ -40,17 +39,14 @@ import org.junit.Test;
 
 public class PrometheusMetricsTest extends AbstractCairoTest {
 
-    @Test
-    public void testCoverage() throws Exception {
-        assertMemoryLeak(() -> {
-            RecordCursorFactory ignore = select("prometheus_metrics();");
-            ignore.close();
-        });
-    }
-
-    @Test
-    public void testPlan() throws Exception {
-        assertMemoryLeak(() -> assertPlanNoLeakCheck("prometheus_metrics();", "prometheus_metrics\n"));
+    public void assertPrometheusMetrics(CharSequence expected, MetricsRegistry metricsRegistry) {
+        try (PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor cursor = new PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor()) {
+            cursor.of(metricsRegistry);
+            printSql(cursor, PrometheusMetricsRecordCursorFactory.METADATA);
+        } catch (SqlException e) {
+            throw new RuntimeException(e);
+        }
+        TestUtils.assertEquals(expected, sink);
     }
 
     @Test
@@ -150,13 +146,8 @@ public class PrometheusMetricsTest extends AbstractCairoTest {
                 metricsRegistry);
     }
 
-    public void assertPrometheusMetrics(CharSequence expected, MetricsRegistry metricsRegistry) {
-        try (PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor cursor = new PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor()) {
-            cursor.of(metricsRegistry);
-            printSql(cursor, PrometheusMetricsRecordCursorFactory.METADATA);
-        } catch (SqlException e) {
-            throw new RuntimeException(e);
-        }
-        TestUtils.assertEquals(expected, sink);
+    @Test
+    public void testPlan() throws Exception {
+        assertMemoryLeak(() -> assertPlanNoLeakCheck("prometheus_metrics();", "prometheus_metrics\n"));
     }
 }

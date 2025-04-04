@@ -24,13 +24,11 @@
 
 package io.questdb.metrics;
 
-import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory;
 import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor.PrometheusMetricsRecord;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -73,6 +71,14 @@ public class MemoryTagLongGauge implements LongGauge {
     }
 
     @Override
+    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
+        appendType(sink);
+        appendMetricName(sink);
+        PrometheusFormatUtils.appendSampleLineSuffix(sink, getValue());
+        PrometheusFormatUtils.appendNewLine(sink);
+    }
+
+    @Override
     public int scrapeIntoRecord(PrometheusMetricsRecord record) {
         record
                 .setType("gauge")
@@ -80,15 +86,6 @@ public class MemoryTagLongGauge implements LongGauge {
                 .setValue(getValue())
                 .setKind("LONG");
         return 1;
-    }
-
-
-    @Override
-    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
-        appendType(sink);
-        appendMetricName(sink);
-        PrometheusFormatUtils.appendSampleLineSuffix(sink, getValue());
-        PrometheusFormatUtils.appendNewLine(sink);
     }
 
     @Override
@@ -99,13 +96,13 @@ public class MemoryTagLongGauge implements LongGauge {
     private void appendMetricName(CharSink<?> sink) {
         sink.putAscii(PrometheusFormatUtils.METRIC_NAME_PREFIX);
         sink.putAscii(MEMORY_TAG_PREFIX);
-        sink.put(this.getName());
+        sink.put(getName());
     }
 
     private void appendType(CharSink<?> sink) {
         sink.putAscii(PrometheusFormatUtils.TYPE_PREFIX);
         sink.putAscii(MEMORY_TAG_PREFIX);
-        sink.put(this.getName());
+        sink.put(getName());
         sink.putAscii(" gauge\n");
     }
 }
