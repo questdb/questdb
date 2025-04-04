@@ -2776,19 +2776,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 MemoryMA timestampColumn = columns.get(getPrimaryColumnIndex(timestampIndex));
                 final long mappedTimestampIndexAddr = walTimestampColumn.addressOf(rowLo << 4);
-                long timestampAddr = o3TimestampMem.getAddress();
+                long timestampAddr = walTimestampColumn.addressOf(0);
 
+//                long timestampAddr = o3TimestampMem.getAddress();
                 // Add virtual index records with replaceRangeTsLow with index -1
-                Unsafe.getUnsafe().putLong(timestampAddr, replaceRangeTsLow);
-                Unsafe.getUnsafe().putLong(timestampAddr + Long.BYTES, -1);
-
-                // Copy the timestamp index from WAL to memory
-                Vect.memcpy(timestampAddr + 2 * Long.BYTES, mappedTimestampIndexAddr, commitRowCount << 4);
-
-                // Add virtual index record with replaceRangeTsHi with index -2
-                long rangeHiOffset = (commitRowCount + 1) << 4;
-                Unsafe.getUnsafe().putLong(timestampAddr + rangeHiOffset, replaceRangeTsHi);
-                Unsafe.getUnsafe().putLong(timestampAddr + rangeHiOffset + Long.BYTES, -2);
+//                Unsafe.getUnsafe().putLong(timestampAddr, replaceRangeTsLow);
+//                Unsafe.getUnsafe().putLong(timestampAddr + Long.BYTES, -1);
+//
+//                // Copy the timestamp index from WAL to memory
+//                Vect.memcpy(timestampAddr + 2 * Long.BYTES, mappedTimestampIndexAddr, commitRowCount << 4);
+//
+//                // Add virtual index record with replaceRangeTsHi with index -2
+//                long rangeHiOffset = (commitRowCount + 1) << 4;
+//                Unsafe.getUnsafe().putLong(timestampAddr + rangeHiOffset, replaceRangeTsHi);
+//                Unsafe.getUnsafe().putLong(timestampAddr + rangeHiOffset + Long.BYTES, -2);
 
 //                if (rowLo > 0) {
 //                    memColumnShifted = true;
@@ -2822,15 +2823,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 //                    swapO3ColumnsExcept(timestampIndex);
 //                }
 
-
-                if (o3Columns != o3ColumnOverrides) {
-                    o3ColumnOverrides.clear();
-                    o3ColumnOverrides.addAll(o3Columns);
-                    o3Columns = o3ColumnOverrides;
-                }
-
-                assert o3TimestampMem == o3MemColumns1.get(getPrimaryColumnIndex(timestampIndex));
-                o3ColumnOverrides.set(getPrimaryColumnIndex(timestampIndex), o3MemColumns1.get(getPrimaryColumnIndex(timestampIndex)));
+//                if (o3Columns != o3ColumnOverrides) {
+//                    o3ColumnOverrides.clear();
+//                    o3ColumnOverrides.addAll(o3Columns);
+//                    o3Columns = o3ColumnOverrides;
+//                }
+//
+//                assert o3TimestampMem == o3MemColumns1.get(getPrimaryColumnIndex(timestampIndex));
+//                o3ColumnOverrides.set(getPrimaryColumnIndex(timestampIndex), o3MemColumns1.get(getPrimaryColumnIndex(timestampIndex)));
                 txWriter.setLagMinTimestamp(replaceRangeTsLow);
                 txWriter.setLagMaxTimestamp(replaceRangeTsHi);
                 this.dedupMode = WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
@@ -2838,9 +2838,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // total rows to process is commitRowCount + 2 virtual index records
                 // Sorted data is now sorted in memory copy of the data from mmap files
                 // Row indexes start from 0, not rowLo
-                o3Hi = rowHi + 2;
+                o3Hi = rowHi;
                 o3Lo = rowLo;
-                timestampAddr -= rowLo * 2 * Long.BYTES;
+//                timestampAddr -= rowLo * 2 * Long.BYTES;
                 processWalCommitFinishApply(0, timestampAddr, o3Lo, o3Hi, pressureControl, false, initialPartitionTimestampHi);
             } finally {
                 finishO3Append(0);
@@ -6074,7 +6074,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long oldPartitionSize,
             long partitionUpdateSinkAddr,
             long dedupColSinkAddr,
-            boolean isParquet
+            boolean isParquet,
+            long o3TimestampLo,
+            long o3TimestampHi
     ) {
         long cursor = messageBus.getO3PartitionPubSeq().next();
         if (cursor > -1) {
@@ -6102,7 +6104,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     oldPartitionSize,
                     partitionUpdateSinkAddr,
                     dedupColSinkAddr,
-                    isParquet
+                    isParquet,
+                    o3TimestampLo,
+                    o3TimestampHi
             );
             messageBus.getO3PartitionPubSeq().done(cursor);
         } else {
@@ -6129,7 +6133,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     oldPartitionSize,
                     partitionUpdateSinkAddr,
                     dedupColSinkAddr,
-                    isParquet
+                    isParquet,
+                    o3TimestampLo,
+                    o3TimestampHi
             );
         }
     }
@@ -6712,8 +6718,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int timestampIndex,
             long sortedTimestampsAddr,
             final long srcOooMax,
-            long o3TimestampMin,
-            long o3TimestampMax,
+            final long o3TimestampMin,
+            final long o3TimestampMax,
             boolean flattenTimestamp,
             long rowLo,
             TableWriterPressureControl pressureControl
@@ -6744,8 +6750,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // One loop iteration per partition.
             int inflightPartitions = 0;
             while (srcOoo < srcOooMax) {
-                inflightPartitions++;
-                pressureControl.updateInflightPartitions(inflightPartitions);
+                pressureControl.updateInflightPartitions(++inflightPartitions);
                 try {
                     final long srcOooLo = srcOoo;
                     final long o3Timestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
@@ -6802,7 +6807,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
 
                     // Final partition size after current insertions.
-                    final long newPartitionSize = srcDataMax + srcOooBatchRowSize;
+                    long newPartitionSize = srcDataMax + srcOooBatchRowSize;
 
                     // check partition read-only state
                     final boolean partitionIsReadOnly = partitionIndexRaw > -1 && txWriter.isPartitionReadOnlyByRawIndex(partitionIndexRaw);
@@ -6860,10 +6865,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, partitionTimestamp);
 
                     if (isCommitReplaceMode() && partitionTimestamp >= lastPartitionTimestamp && o3TimestampMax >= txWriter.getMaxTimestamp()) {
-                        replaceMaxTimestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 2);
+                        replaceMaxTimestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOooMax - 1);
                     }
 
                     if (append) {
+//                        if (isCommitReplaceMode()) {
+//                            newPartitionSize -= 2;
+//                        }
+
                         // we are appending last partition, make sure it has been mapped!
                         // this also might fail, make sure exception is trapped and partitions are
                         // counted down correctly
@@ -6901,7 +6910,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             final MemoryMA dstFixMem;
                             final MemoryMA dstVarMem;
                             if (!ColumnType.isVarSize(columnType)) {
-                                srcOooFixAddr = oooMem1.addressOf(0);
+                                srcOooFixAddr = notTheTimestamp ? oooMem1.addressOf(0) : sortedTimestampsAddr;
                                 srcOooVarAddr = 0;
                                 dstFixMem = mem1;
                                 dstVarMem = null;
@@ -6912,6 +6921,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 dstVarMem = mem1;
                             }
 
+                            long srcO3Lo = srcOooLo;
+                            long srcO3Hi = srcOooHi;
+//                            if (isCommitReplaceMode()) {
+//                                if (notTheTimestamp) {
+//                                    srcO3Hi -= 2;
+//                                } else {
+//                                    srcO3Lo++;
+//                                    srcO3Hi--;
+//                                }
+//                            }
                             columnsPublished++;
                             try {
                                 O3OpenColumnJob.appendLastPartition(
@@ -6922,8 +6941,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
                                         srcOooFixAddr,
                                         srcOooVarAddr,
-                                        srcOooLo,
-                                        srcOooHi,
+                                        srcO3Lo,
+                                        srcO3Hi,
                                         srcOooMax,
                                         o3TimestampMin,
                                         partitionTimestamp,
@@ -6956,6 +6975,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             flattenTimestamp = false;
                         }
                         final long dedupColSinkAddr = dedupColumnCommitAddresses != null ? dedupColumnCommitAddresses.allocateBlock() : 0;
+
+                        long o3TimestampLo, o3TimestampHi;
+                        if (isCommitReplaceMode()) {
+                            // TODO: handle muti parition commit
+                            o3TimestampLo = o3TimestampMin;
+                            o3TimestampHi = o3TimestampMax;
+                        } else {
+                            o3TimestampLo = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
+                            o3TimestampHi = getTimestampIndexValue(sortedTimestampsAddr, srcOooHi);
+                        }
+
                         o3CommitPartitionAsync(
                                 columnCounter,
                                 maxTimestamp,
@@ -6973,7 +7003,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 srcDataMax,
                                 partitionUpdateSinkAddr,
                                 dedupColSinkAddr,
-                                isParquet
+                                isParquet,
+                                o3TimestampLo,
+                                o3TimestampHi
                         );
                     }
                 } catch (CairoException | CairoError e) {

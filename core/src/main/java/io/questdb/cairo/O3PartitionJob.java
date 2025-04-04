@@ -354,12 +354,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             final long oldPartitionSize,
             long partitionUpdateSinkAddr,
             long dedupColSinkAddr,
-            boolean isParquet
+            boolean isParquet,
+            long o3TimestampLo,
+            long o3TimestampHi
     ) {
         // is out of order data hitting the last partition?
         // if so we do not need to re-open files and write to existing file descriptors
-        final long o3TimestampLo = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
-        final long o3TimestampHi = getTimestampIndexValue(sortedTimestampsAddr, srcOooHi);
         final RecordMetadata metadata = tableWriter.getMetadata();
         final int timestampIndex = metadata.getTimestampIndex();
         if (isParquet) {
@@ -646,6 +646,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             mergeType = O3_BLOCK_MERGE;
                             suffixType = O3_BLOCK_O3;
                             suffixLo = mergeO3Hi + 1;
+                            if (suffixLo > srcOooHi && tableWriter.isCommitReplaceMode()) {
+                                // In replace mode o3TimestampHi can be greater than the highest timestamp in the o3 data
+                                // This means that the suffix has to include all the o3 data
+                                suffixLo = srcOooHi;
+                            }
                             suffixHi = srcOooHi;
                             assert suffixLo <= suffixHi : String.format("Branch %,d suffixLo %,d > suffixHi %,d",
                                     branch, suffixLo, suffixHi);
@@ -780,13 +785,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
 
                 if (tableWriter.isCommitReplaceMode()) {
-                    o3TimestampMin = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo + 1);
+                    o3TimestampMin = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
 
                     if (mergeType == O3_BLOCK_MERGE) {
                         // When replace range deduplication mode is enabled, we need to take into the merge
                         // prefix and suffix it's O3 type.
-                        newPartitionSize -= mergeDataHi - mergeDataLo + 1 + 2;
-                        srcDataNewPartitionSize -= mergeDataHi - mergeDataLo + 1 + 2;
+                        newPartitionSize -= mergeDataHi - mergeDataLo + 1;
+                        srcDataNewPartitionSize -= mergeDataHi - mergeDataLo + 1;
 
                         if (prefixType == O3_BLOCK_O3) {
                             prefixHi = mergeO3Hi;
@@ -804,8 +809,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             mergeDataLo = -1;
                         }
 
+                    } else if (mergeType == O3_BLOCK_O3) {
+//                        newPartitionSize -= 2;
+//                        srcDataNewPartitionSize -= 2;
                     } else {
-                        // TODO: fix
+                        // TODO: should be impossible, need to prove it
                         assert false;
                     }
                 }
@@ -1010,6 +1018,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long partitionUpdateSinkAddr = task.getPartitionUpdateSinkAddr();
         final long dedupColSinkAddr = task.getDedupColSinkAddr();
         final boolean isParquet = task.isParquet();
+        final long o3TimestampLo = task.getO3TimestampLo();
+        final long o3TimestampHi = task.getO3TimestampHi();
 
         subSeq.done(cursor);
 
@@ -1036,7 +1046,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 oldPartitionSize,
                 partitionUpdateSinkAddr,
                 dedupColSinkAddr,
-                isParquet
+                isParquet,
+                o3TimestampLo,
+                o3TimestampHi
         );
     }
 

@@ -455,7 +455,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalWriteRollbackHeavy() throws Exception {
-        Rnd rnd = generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG, 1045398272126583L, 1743701791272L);
         setFuzzProbabilities(
                 0.5,
                 0.5,

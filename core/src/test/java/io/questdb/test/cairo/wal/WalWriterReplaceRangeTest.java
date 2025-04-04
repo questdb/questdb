@@ -106,6 +106,17 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceBetweenExisting() throws Exception {
+        testReplaceRangeCommit("2022-02-24T16:25", "2022-02-24T16:25", "2022-02-24T16:26");
+    }
+
+    @Test
+    public void testReplaceRangeTwoPartitions() throws Exception {
+        testReplaceRangeCommit("2022-02-24T16:25", "2022-02-24T16:25", "2022-02-25T01:00");
+    }
+
+
+    @Test
     public void testReplaceRangeLastPartitionPrefix() throws Exception {
         testReplaceRangeCommit("2022-02-25T00:53", "2022-02-25T00:00", "2022-02-25T04");
     }
@@ -369,7 +380,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                     "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(100)");
             drainWalQueue();
 
-            execute("create table copy as (select * from rg)");
+            execute("create table expected as (select * from rg where ts not between '" + rangeStartStr + "' and '" + rangeEndStr + "') timestamp(ts) partition by DAY WAL");
 
             assertSql("min\tmax\tcount\n" +
                     "2022-02-24T12:30:00.000000Z\t2022-02-25T13:15:00.000000Z\t100\n", "select min(ts), max(ts), count(*) from rg");
@@ -378,8 +389,6 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             insertOneRowWithRangeReplace(tableToken, sink, tsStr, rangeStartStr, rangeEndStr, true);
             drainWalQueue();
 
-            execute("create table expected as (select * from copy where ts not between '" + rangeStartStr + "' and '" + rangeEndStr + "') timestamp(ts) partition by DAY WAL");
-            drainWalQueue();
             var ttExpected = engine.verifyTableName("expected");
             insertOneRowWithRangeReplace(ttExpected, sink, tsStr, rangeStartStr, rangeEndStr, false);
             drainWalQueue();
