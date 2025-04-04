@@ -49,7 +49,6 @@ import java.util.Objects;
 
 import static io.questdb.metrics.MemoryTagLongGauge.MEMORY_TAG_PREFIX;
 
-/// todo: handle labeled metrics, when we choose to expose them over prometheus
 public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final RecordMetadata METADATA;
     private final PrometheusMetricsCursor prometheusMetricsCursor = new PrometheusMetricsCursor();
@@ -97,10 +96,6 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
             record.value.clear();
         }
 
-        public boolean getExtended() {
-            return false;
-        }
-
         @Override
         public Record getRecord() {
             return record;
@@ -136,8 +131,7 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
                     return hasNext();
                 }
             }
-
-            return getExtended();
+            return false;
         }
 
         public void of(Metrics metrics) {
