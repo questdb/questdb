@@ -6537,49 +6537,45 @@ public class SqlOptimiser implements Mutable {
                 && model.getBottomUpColumns().size() == 1
                 && Chars.equals(model.getBottomUpColumns().getQuick(0).getAlias(), '*')) {
 
-            QueryColumn timestampColumn = null;
-
-            // we need to remove any columns that are already featured in the query
+            // inner group by to perform initial aggregation
+            // if we just use one group by and case, first/last won't work properly with nulls
             QueryModel groupByModel = queryModelPool.next();
             groupByModel.setSelectModelType(SELECT_MODEL_CHOOSE);
 
+            // needed because rewriteSelectClause assumes there's an extra model and clear things out
             QueryModel bonusModel = queryModelPool.next();
             bonusModel.setSelectModelType(SELECT_MODEL_CHOOSE);
 
-            // todo(nwoolmer): pass through columns properly, so we can handle non '*' selects
+            // we need to remove any columns that are already featured in the query
             // clear out the '*'
             model.getBottomUpColumns().clear();
             model.getWildcardColumnNames().clear();
 
+            // pull up any order by
             model.moveOrderByFrom(nested);
-//            model.moveLimitFrom(nested);
 
-
-            // add the group by column
+            // copy the group by columns into the new group by model
             for (int i = 0, n = nested.getGroupBy().size(); i < n; i++) {
                 ExpressionNode groupByExpr = nested.getGroupBy().getQuick(i);
                 if (groupByExpr.type == CONSTANT) {
-                    // todo: find a way to handle positional group by perhaps by re-ordering calls in `optimise()`
+                    // in future, perhaps find a way to handle positional group by perhaps by re-ordering calls in `optimise()`
                     throw SqlException.$(groupByExpr.position, "cannot use positional group by inside `PIVOT`");
                 } else {
-                    if (!model.getColumnNameToAliasMap().contains(groupByExpr.token)) {
-                        model.addBottomUpColumn(queryColumnPool.next().of(
-                                nested.getGroupBy().getQuick(i).token,
-                                nested.getGroupBy().getQuick(i)
-                        ));
-                    }
-                    if (!groupByModel.getColumnNameToAliasMap().contains(groupByExpr.token)) {
-                        groupByModel.addBottomUpColumn(queryColumnPool.next().of(
-                                nested.getGroupBy().getQuick(i).token,
-                                nested.getGroupBy().getQuick(i)
-                        ));
-                    }
-                    bonusModel.addGroupBy(groupByExpr);
+                    model.addBottomUpColumn(queryColumnPool.next().of(
+                            nested.getGroupBy().getQuick(i).token,
+                            nested.getGroupBy().getQuick(i)
+                    ));
+                    groupByModel.addBottomUpColumn(queryColumnPool.next().of(
+                            nested.getGroupBy().getQuick(i).token,
+                            nested.getGroupBy().getQuick(i)
+                    ));
                 }
             }
 
+            // shift the expressions too, if present
             groupByModel.moveGroupByFrom(nested);
 
+            // copy group bys to top level
             for (int i = 0, n = groupByModel.getGroupBy().size(); i < n; i++) {
                 model.addGroupBy(groupByModel.getGroupBy().getQuick(i));
             }
@@ -6587,7 +6583,6 @@ public class SqlOptimiser implements Mutable {
             // copy pivot for expressions into group by and where filter
             for (int i = 0, n = nested.getPivotFor().size(); i < n; i++) {
                 ExpressionNode forExpr = nested.getPivotFor().getQuick(i);
-
                 ExpressionNode groupByName = rewritePivotGetAppropriateNameFromInExpr(forExpr);
 
                 if (groupByModel.getSampleBy() == null) {
@@ -6756,7 +6751,6 @@ public class SqlOptimiser implements Mutable {
                     model.addBottomUpColumn(queryColumnPool.next().of(
                             nameSink.toString(),
                             aggExpr
-//                            caseExpr
                     ));
 
                     nameSink.clear();

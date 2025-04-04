@@ -687,8 +687,7 @@ public class PivotTest extends AbstractSqlParserTest {
     public void testPivotWithOrderBy() throws Exception {
         assertQueryAndPlan(
                 "country\t2000\t2010\t2020\n",
-                "SELECT *\n" +
-                        "FROM cities\n" +
+                "cities\n" +
                         "PIVOT (\n" +
                         "    SUM(population)\n" +
                         "    FOR\n" +
@@ -757,15 +756,13 @@ public class PivotTest extends AbstractSqlParserTest {
                         "    GroupBy vectorized: false\n" +
                         "      keys: [symbol,side]\n" +
                         "      values: [sum(last)]\n" +
-                        "        Radix sort light\n" +
-                        "          keys: [timestamp]\n" +
-                        "            Async JIT Group By workers: 1\n" +
-                        "              keys: [symbol,side,timestamp]\n" +
-                        "              values: [last(price)]\n" +
-                        "              filter: side in [buy,sell]\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: trades\n");
+                        "        Async JIT Group By workers: 1\n" +
+                        "          keys: [symbol,side,timestamp]\n" +
+                        "          values: [last(price)]\n" +
+                        "          filter: side in [buy,sell]\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: trades\n");
     }
 
     @Test
@@ -838,8 +835,8 @@ public class PivotTest extends AbstractSqlParserTest {
     public void testPivotWithTradesDataAndLimit() throws Exception {
         assertQueryAndPlan(
                 "timestamp\tETH-USDT_buy\tETH-USDT_sell\n",
-                "(trades where symbol in 'ETH-USDT')\n" +
-                        "  pivot (\n" +
+                "trades\n" +
+                        "  PIVOT (\n" +
                         "    sum(price)\n" +
                         "    FOR \"symbol\" IN ('ETH-USDT')\n" +
                         "        side in ('buy', 'sell')\n" +
@@ -860,10 +857,10 @@ public class PivotTest extends AbstractSqlParserTest {
                         "    GroupBy vectorized: false\n" +
                         "      keys: [timestamp]\n" +
                         "      values: [sum(case([(symbol='ETH-USDT' and side='buy'),sum,null])),sum(case([(symbol='ETH-USDT' and side='sell'),sum,null]))]\n" +
-                        "        Async Group By workers: 1\n" +
+                        "        Async JIT Group By workers: 1\n" +
                         "          keys: [timestamp,symbol,side]\n" +
                         "          values: [sum(price)]\n" +
-                        "          filter: (symbol in [ETH-USDT] and symbol in [ETH-USDT])\n" +
+                        "          filter: symbol in [ETH-USDT]\n" +
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: trades\n");
@@ -873,8 +870,8 @@ public class PivotTest extends AbstractSqlParserTest {
     public void testPivotWithTradesDataAndOrderByAsc() throws Exception {
         assertQueryAndPlan(
                 "timestamp\tETH-USDT_buy\tETH-USDT_sell\n",
-                "(trades where symbol in 'ETH-USDT')\n" +
-                        "  pivot (\n" +
+                "trades\n" +
+                        "  PIVOT (\n" +
                         "    sum(price)\n" +
                         "    FOR \"symbol\" IN ('ETH-USDT')\n" +
                         "        side in ('buy', 'sell')\n" +
@@ -899,10 +896,10 @@ public class PivotTest extends AbstractSqlParserTest {
                         "    GroupBy vectorized: false\n" +
                         "      keys: [timestamp]\n" +
                         "      values: [sum(case([(symbol='ETH-USDT' and side='buy'),sum,null])),sum(case([(symbol='ETH-USDT' and side='sell'),sum,null]))]\n" +
-                        "        Async Group By workers: 1\n" +
+                        "        Async JIT Group By workers: 1\n" +
                         "          keys: [timestamp,symbol,side]\n" +
                         "          values: [sum(price)]\n" +
-                        "          filter: (symbol in [ETH-USDT] and symbol in [ETH-USDT])\n" +
+                        "          filter: symbol in [ETH-USDT]\n" +
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: trades\n"
@@ -913,8 +910,8 @@ public class PivotTest extends AbstractSqlParserTest {
     public void testPivotWithTradesDataAndOrderByDesc() throws Exception {
         assertQueryAndPlan(
                 "timestamp\tETH-USDT_buy\tETH-USDT_sell\n",
-                "(trades where symbol in 'ETH-USDT')\n" +
-                        "  pivot (\n" +
+                "trades\n" +
+                        "  PIVOT (\n" +
                         "    sum(price)\n" +
                         "    FOR \"symbol\" IN ('ETH-USDT')\n" +
                         "        side in ('buy', 'sell')\n" +
@@ -939,13 +936,13 @@ public class PivotTest extends AbstractSqlParserTest {
                         "    GroupBy vectorized: false\n" +
                         "      keys: [timestamp]\n" +
                         "      values: [sum(case([(symbol='ETH-USDT' and side='buy'),sum,null])),sum(case([(symbol='ETH-USDT' and side='sell'),sum,null]))]\n" +
-                        "        Async Group By workers: 1\n" +
+                        "        Async JIT Group By workers: 1\n" +
                         "          keys: [timestamp,symbol,side]\n" +
                         "          values: [sum(price)]\n" +
-                        "          filter: (symbol in [ETH-USDT] and symbol in [ETH-USDT])\n" +
+                        "          filter: symbol in [ETH-USDT]\n" +
                         "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: trades\n"
+                        "                Row backward scan\n" +
+                        "                Frame backward scan on: trades\n"
         );
     }
 
@@ -957,14 +954,14 @@ public class PivotTest extends AbstractSqlParserTest {
             execute(dmlTrades);
             drainWalQueue();
 
-            String pivotQuery = " select * from (select * from trades where symbol in 'ETH-USDT')\n" +
-                    "  pivot (\n" +
-                    "    sum(price)\n" +
-                    "    FOR \"symbol\" IN ('ETH-USDT')\n" +
-                    "        side in ('buy', 'sell')\n" +
-                    "    GROUP BY timestamp\n" +
-                    "    ORDER BY timestamp ASC\n" +
-                    "  );";
+            String pivotQuery =
+                    "  trades PIVOT (\n" +
+                            "    sum(price)\n" +
+                            "    FOR \"symbol\" IN ('ETH-USDT')\n" +
+                            "        side in ('buy', 'sell')\n" +
+                            "    GROUP BY timestamp\n" +
+                            "    ORDER BY timestamp ASC\n" +
+                            "  );";
 
             assertQuery("timestamp\tETH-USDT_buy\tETH-USDT_sell\n" +
                             "2024-12-19T08:10:00.700999Z\tnull\t3678.25\n" +
@@ -980,7 +977,7 @@ public class PivotTest extends AbstractSqlParserTest {
 
             assertException(
                     pivotQuery.replace("GROUP BY timestamp", "GROUP BY 1"),
-                    168,
+                    110,
                     "cannot use positional group by inside `PIVOT`");
         });
     }
@@ -1156,7 +1153,6 @@ public class PivotTest extends AbstractSqlParserTest {
                         "            Row forward scan\n" +
                         "            Frame forward scan on: trades\n");
     }
-
 }
 
 
