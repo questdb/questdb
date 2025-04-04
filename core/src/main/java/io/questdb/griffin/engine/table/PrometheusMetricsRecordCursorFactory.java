@@ -97,6 +97,10 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
             record.value.clear();
         }
 
+        public boolean getExtended() {
+            return false;
+        }
+
         @Override
         public Record getRecord() {
             return record;
@@ -132,7 +136,8 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
                     return hasNext();
                 }
             }
-            return false;
+
+            return getExtended();
         }
 
         public void of(Metrics metrics) {
