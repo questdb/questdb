@@ -33,7 +33,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 
 public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
-    // Contains intervals with backward clock shifts, in UTC. Both low and high
+    // Contains intervals with clock shifts, in UTC. Both low and high
     // boundaries are inclusive.
     //
     // Example:
@@ -43,11 +43,10 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
     // at 00:00-01:00 and at 01:00-02:00, UTC time. Then, if the sampling interval
     // is '1m', 02:00-02:01 local time interval corresponds to two UTC intervals:
     // 00:00-00:01 and 01:00-01:01. Thus, we want to include the whole 00:00-02:00
-    // UTC time interval into a single iteration.
+    // UTC time interval into a single iteration. As a result, the 02:00-03:00 local
+    // time interval will be stored in the list.
     //
-    // As a result, the 02:00-03:00 local time interval will be stored in the list.
-    private final LongList localBwdShifts = new LongList();
-    // Similar to localBackwardShifts, but contains local time "gaps" that happen
+    // Similar to local shifts, this list also contains local time "gaps" that happen
     // due to forward clock shifts.
     //
     // Example:
@@ -55,8 +54,9 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
     // Namely, at 02:00, local time, the clocks are shifted one hour ahead.
     // This means that 02:00-03:00 local time interval never happens. We need to
     // avoid iterating in local time over this interval as such nonexistent timestamps
-    // are converted to the next UTC hour.
-    private final LongList localGaps = new LongList();
+    // are converted to the next UTC hour. As a result, the 02:00-03:00 local time
+    // interval will be stored in the list.
+    private final LongList localShifts = new LongList();
     private long localMaxTimestamp;
     private long localMinTimestamp;
     private long localTimestampHi;
@@ -100,13 +100,9 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
                     return true;
                 }
             }
-            // Make sure to adjust the right boundary in case if we ended up in a backward shift interval.
-            final long ogLocalTimestampHi = localTimestampHi;
-            localTimestampHi = adjustHiBoundaryAtBwdShift(localTimestampHi);
-            if (localTimestampHi == ogLocalTimestampHi) {
-                // OK, it wasn't a backward shift. Maybe we're in a forward shift gap?
-                localTimestampHi = adjustHiBoundaryAtGap(localTimestampHi);
-            }
+            // Make sure to adjust the right boundary in case if we ended up
+            // in a gap or a backward shift interval.
+            localTimestampHi = adjustHiBoundary(localTimestampHi);
             return true;
         }
         return false;
@@ -130,8 +126,7 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
         localMaxTimestamp = sampler.nextTimestamp(sampler.round(localMaxTs));
 
         // Collect shift intervals.
-        localGaps.clear();
-        localBwdShifts.clear();
+        localShifts.clear();
         final long limitTs = Timestamps.ceilYYYY(localMaxTimestamp);
         long ts = tzRules.getNextDST(Timestamps.floorYYYY(localMinTimestamp));
         while (ts < limitTs) {
@@ -141,18 +136,18 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
             if (duration < 0) { // backward shift
                 final long localStart = ts + offsetAfter;
                 final long localEnd = localStart - duration;
-                localBwdShifts.add(localStart, localEnd);
+                localShifts.add(localStart, localEnd);
             } else { // forward shift (gap)
                 final long localStart = ts + offsetBefore;
                 final long localEnd = localStart + duration;
-                localGaps.add(localStart, localEnd);
+                localShifts.add(localStart, localEnd);
             }
             ts = tzRules.getNextDST(ts);
         }
 
         // Adjust min/max boundaries in case if they're in a backward shift.
-        localMinTimestamp = adjustLoBoundaryAtBwdShift(localMinTimestamp);
-        localMaxTimestamp = adjustHiBoundaryAtBwdShift(localMaxTimestamp);
+        localMinTimestamp = adjustLoBoundary(localMinTimestamp);
+        localMaxTimestamp = adjustHiBoundary(localMaxTimestamp);
 
         toTop(step);
         return this;
@@ -165,28 +160,19 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
         this.step = step;
     }
 
-    private long adjustHiBoundaryAtBwdShift(long localTs) {
-        final int idx = IntervalUtils.findInterval(localBwdShifts, localTs);
+    private long adjustHiBoundary(long localTs) {
+        final int idx = IntervalUtils.findInterval(localShifts, localTs);
         if (idx != -1) {
-            final long shiftHi = IntervalUtils.getEncodedPeriodHi(localBwdShifts, idx << 1);
+            final long shiftHi = IntervalUtils.getEncodedPeriodHi(localShifts, idx << 1);
             return sampler.nextTimestamp(sampler.round(shiftHi));
         }
         return localTs;
     }
 
-    private long adjustHiBoundaryAtGap(long localTs) {
-        final int idx = IntervalUtils.findInterval(localGaps, localTs);
+    private long adjustLoBoundary(long localTs) {
+        final int idx = IntervalUtils.findInterval(localShifts, localTs);
         if (idx != -1) {
-            final long shiftHi = IntervalUtils.getEncodedPeriodHi(localGaps, idx << 1);
-            return sampler.nextTimestamp(sampler.round(shiftHi));
-        }
-        return localTs;
-    }
-
-    private long adjustLoBoundaryAtBwdShift(long localTs) {
-        final int idx = IntervalUtils.findInterval(localBwdShifts, localTs);
-        if (idx != -1) {
-            final long shiftLo = IntervalUtils.getEncodedPeriodLo(localBwdShifts, idx << 1);
+            final long shiftLo = IntervalUtils.getEncodedPeriodLo(localShifts, idx << 1);
             return sampler.round(shiftLo - 1);
         }
         return localTs;
