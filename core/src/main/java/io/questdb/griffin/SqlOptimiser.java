@@ -6590,6 +6590,8 @@ public class SqlOptimiser implements Mutable {
                     groupByModel.addGroupBy(groupByName);
                 }
 
+                assert groupByName != null;
+
                 if (!groupByModel.getAliasToColumnMap().contains(groupByName.token)) {
                     // add to select
                     groupByModel.addBottomUpColumn(queryColumnPool.next().of(
@@ -6662,7 +6664,6 @@ public class SqlOptimiser implements Mutable {
                     QueryColumn pivotColumn = nested.getPivotColumns().get(j);
                     CharSequence pivotColumnName = pivotColumn.getAst().token;
                     CharSequence pivotColumnParamToken = pivotColumn.getAst().rhs.token;
-                    ExpressionNode pivotColumnParam = pivotColumn.getAst().rhs;
                     CharSequence pivotColumnAlias = pivotColumn.getAlias();
                     CharSequence pivotDefaultValue = "null";
 
