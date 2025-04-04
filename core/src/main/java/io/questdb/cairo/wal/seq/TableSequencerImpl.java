@@ -28,8 +28,8 @@ import io.questdb.cairo.BinaryAlterSerializer;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.IDGeneratorFactory;
 import io.questdb.cairo.IDGenerator;
+import io.questdb.cairo.IDGeneratorFactory;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
@@ -125,7 +125,7 @@ public class TableSequencerImpl implements TableSequencer {
             if (ex.isTableDropped()) {
                 throw ex;
             }
-            if (ex.errnoReadPathDoesNotExist() && engine.isTableDropped(tableToken)) {
+            if (ex.errnoFileCannotRead() && engine.isTableDropped(tableToken)) {
                 LOG.info().$("could not open sequencer, table is dropped [name=").utf8(tableToken.getDirName())
                         .$(", path=").$(path)
                         .$(", error=").$(ex.getMessage())
