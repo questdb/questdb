@@ -1030,11 +1030,6 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
-    public void testIPv4BitwiseAndFailsStr() throws Exception {
-        assertException("select '1.1.1.1' & '0.0.1.1'", 0, "inconvertible value: `1.1.1.1` [STRING -> LONG]");
-    }
-
-    @Test
     public void testIPv4BitwiseAndHalfConst() throws Exception {
         assertQuery(
                 "column\n" +
@@ -1151,6 +1146,15 @@ public class IPv4Test extends AbstractCairoTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testIPv4BitwiseAndStr() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "column\n" +
+                        "0.0.1.1\n",
+                "select '1.1.1.1' & '0.0.1.1'"
+        ));
     }
 
     @Test
@@ -1539,8 +1543,12 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
-    public void testIPv4BitwiseOrFailsStr() throws Exception {
-        assertException("select '1.1.1.1' | '0.0.1.1'", 0, "inconvertible value: `1.1.1.1` [STRING -> LONG]");
+    public void testIPv4BitwiseOrStr() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "column\n" +
+                        "1.1.1.1\n",
+                "select '1.1.1.1' | '0.0.1.1'"
+        ));
     }
 
     @Test
