@@ -6245,15 +6245,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .$(", txn=").$(txWriter.txn)
                             .I$();
 
-                    final long parquetFileSize = Unsafe.getUnsafe().getLong(blockAddress + 7 * Long.BYTES);
-                    if (parquetFileSize > -1) {
-                        txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
-                        txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileSize);
-                    } else {
-                        txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
+                    if (isCommitReplaceMode() && srcDataNewPartitionSize == 0) {
+                        // Partition data is fully removed by the replace-commit
+                        txWriter.removeAttachedPartitions(partitionTimestamp);
                         partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+                        txWriter.bumpPartitionTableVersion();
+                    } else {
+                        final long parquetFileSize = Unsafe.getUnsafe().getLong(blockAddress + 7 * Long.BYTES);
+                        if (parquetFileSize > -1) {
+                            txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
+                            txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileSize);
+                        } else {
+                            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
+                            partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+                        }
+                        txWriter.bumpPartitionTableVersion();
                     }
-                    txWriter.bumpPartitionTableVersion();
                 } else {
                     if (partitionTimestamp != lastPartitionTimestamp) {
                         txWriter.bumpPartitionTableVersion();
@@ -6744,19 +6751,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int pCount = 0;
         int partitionParallelism = pressureControl.getMemoryPressureRegulationValue();
         long replaceMaxTimestamp = Long.MIN_VALUE;
+        long partitionTimestamp = o3TimestampMin;
+        final long minO3PartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3TimestampMin);
+        long maxO3PartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3TimestampMax);
+
         try {
             resizePartitionUpdateSink();
 
             // One loop iteration per partition.
             int inflightPartitions = 0;
-            while (srcOoo < srcOooMax) {
+            while (srcOoo < srcOooMax || (isCommitReplaceMode() && partitionTimestamp <= maxO3PartitionTimestamp)) {
                 pressureControl.updateInflightPartitions(++inflightPartitions);
                 try {
                     final long srcOooLo = srcOoo;
-                    final long o3Timestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
+                    final long o3Timestamp;
+                    if (!isCommitReplaceMode()) {
+                        o3Timestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
+                    } else {
+                        if (srcOoo < srcOooMax) {
+                            long o3ts = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
+                            long o3PartitionTs = txWriter.getPartitionTimestampByTimestamp(o3ts);
+                            o3Timestamp = o3PartitionTs == partitionTimestamp ? o3ts : partitionTimestamp;
+                        } else {
+                            // There is no O3 data for this partition, but it's inside the replacement range
+                            // e.g. the partition will be fully or partially deleted
+                            o3Timestamp = partitionTimestamp;
+                        }
+                    }
+                    partitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3Timestamp);
 
                     // Check that the value is not 0 (or another unreasonable value) because of reading beyond written range.
-                    assert o3Timestamp >= Math.min(o3TimestampMin, Math.max(txWriter.getMinTimestamp(), 0));
+                    assert o3Timestamp >= o3TimestampMin;
 
                     final long srcOooHi;
                     // keep ceil inclusive in the interval
@@ -6772,8 +6797,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     } else {
                         srcOooHi = srcOooMax - 1;
                     }
-
-                    final long partitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3Timestamp);
 
                     // This partition is the last partition.
                     final boolean last = partitionTimestamp == lastPartitionTimestamp;
@@ -6979,8 +7002,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         long o3TimestampLo, o3TimestampHi;
                         if (isCommitReplaceMode()) {
                             // TODO: handle muti parition commit
-                            o3TimestampLo = o3TimestampMin;
-                            o3TimestampHi = o3TimestampMax;
+                            o3TimestampLo = (partitionTimestamp == minO3PartitionTimestamp) ? o3TimestampMin : partitionTimestamp;
+                            o3TimestampHi = (partitionTimestamp == maxO3PartitionTimestamp) ? o3TimestampMax :
+                                    txWriter.getNextPartitionTimestamp(partitionTimestamp) - 1;
                         } else {
                             o3TimestampLo = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
                             o3TimestampHi = getTimestampIndexValue(sortedTimestampsAddr, srcOooHi);
@@ -7018,6 +7042,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3DoneLatch.await(latchCount);
                     inflightPartitions = 0;
                 }
+                partitionTimestamp = txWriter.getNextExistingPartitionTimestamp(partitionTimestamp);
             } // end while(srcOoo < srcOooMax)
 
             // at this point we should know the last partition row count

@@ -260,6 +260,25 @@ public class TxReader implements Closeable, Mutable {
         return partitionCeilMethod.ceil(timestamp);
     }
 
+    public long getNextExistingPartitionTimestamp(long timestamp) {
+        if (partitionBy == PartitionBy.NONE) {
+            return Long.MAX_VALUE;
+        }
+
+        int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, timestamp, Vect.BIN_SEARCH_SCAN_UP);
+        if (index < 0) {
+            index = -index - 1;
+        } else {
+            index += LONGS_PER_TX_ATTACHED_PARTITION;
+        }
+        int nextIndex = index + PARTITION_TS_OFFSET;
+        if (nextIndex < attachedPartitions.size()) {
+            return attachedPartitions.getQuick(nextIndex);
+        }
+        return Long.MAX_VALUE;
+    }
+
+
     public int getPartitionCount() {
         return attachedPartitions.size() / LONGS_PER_TX_ATTACHED_PARTITION;
     }

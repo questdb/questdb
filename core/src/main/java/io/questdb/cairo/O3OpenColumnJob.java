@@ -1498,6 +1498,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         } else if (mergeType == O3_BLOCK_O3) {
             // This can happen in replace commit mode
             mergeRowCount = mergeOOOHi - mergeOOOLo + 1;
+        } else if (mergeType == O3_BLOCK_NONE) {
+            // This can happen in replace commit mode
+            mergeRowCount = 0;
         } else {
             mergeRowCount = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
         }

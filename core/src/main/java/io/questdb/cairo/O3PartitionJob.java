@@ -572,7 +572,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // | data | | OOO |
                         // +------+
 
-                        prefixType = O3_BLOCK_DATA;
                         prefixLo = 0;
                         // When deduplication is enabled, take into the merge the rows which are equals
                         // to the o3TimestampLo in the else block, e.g. reduce the prefix size
@@ -583,6 +582,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 srcDataMax - 1,
                                 Vect.BIN_SEARCH_SCAN_DOWN
                         );
+                        prefixType = prefixLo <= prefixHi ? O3_BLOCK_DATA : O3_BLOCK_NONE;
                         mergeDataLo = prefixHi + 1;
                         mergeO3Lo = srcOooLo;
 
@@ -784,37 +784,81 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
 
+                // Save inital overlap state, mergeType can be re-written in commit replace mode
+                boolean overlaps = mergeType == O3_BLOCK_MERGE;
                 if (tableWriter.isCommitReplaceMode()) {
-                    o3TimestampMin = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
 
-                    if (mergeType == O3_BLOCK_MERGE) {
-                        // When replace range deduplication mode is enabled, we need to take into the merge
-                        // prefix and suffix it's O3 type.
-                        newPartitionSize -= mergeDataHi - mergeDataLo + 1;
-                        srcDataNewPartitionSize -= mergeDataHi - mergeDataLo + 1;
+                    if (srcOooLo <= srcOooHi) {
+                        o3TimestampMin = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo);
 
-                        if (prefixType == O3_BLOCK_O3) {
-                            prefixHi = mergeO3Hi;
-                            mergeType = O3_BLOCK_NONE;
-                            mergeO3Hi = -1;
-                            mergeO3Lo = -1;
-                            mergeDataHi = -1;
-                            mergeDataLo = -1;
-                        } else if (suffixType == O3_BLOCK_O3) {
-                            suffixLo = mergeO3Lo;
-                            mergeType = O3_BLOCK_NONE;
-                            mergeO3Hi = -1;
-                            mergeO3Lo = -1;
-                            mergeDataHi = -1;
-                            mergeDataLo = -1;
-                        }
+                        if (mergeType == O3_BLOCK_MERGE) {
+                            // When replace range deduplication mode is enabled, we need to take into the merge
+                            // prefix and suffix it's O3 type.
+                            newPartitionSize -= mergeDataHi - mergeDataLo + 1;
+                            srcDataNewPartitionSize -= mergeDataHi - mergeDataLo + 1;
 
-                    } else if (mergeType == O3_BLOCK_O3) {
+                            if (prefixType == O3_BLOCK_O3) {
+                                prefixHi = mergeO3Hi;
+                                mergeType = O3_BLOCK_NONE;
+                                mergeO3Hi = -1;
+                                mergeO3Lo = -1;
+                                mergeDataHi = -1;
+                                mergeDataLo = -1;
+                            } else if (suffixType == O3_BLOCK_O3) {
+                                suffixLo = mergeO3Lo;
+                                mergeType = O3_BLOCK_NONE;
+                                mergeO3Hi = -1;
+                                mergeO3Lo = -1;
+                                mergeDataHi = -1;
+                                mergeDataLo = -1;
+                            }
+                        } else if (mergeType == O3_BLOCK_O3) {
 //                        newPartitionSize -= 2;
 //                        srcDataNewPartitionSize -= 2;
+                        } else {
+                            // TODO: should be impossible, need to prove it
+                            assert false;
+                        }
+
                     } else {
-                        // TODO: should be impossible, need to prove it
-                        assert false;
+
+                        // srcOooLo > srcOooHi means that O3 data is empty
+                        // and the commit effectively deletes part or all of the partition
+                        if (prefixType == O3_BLOCK_O3) {
+                            prefixType = O3_BLOCK_NONE;
+                        }
+
+                        if (mergeType == O3_BLOCK_MERGE) {
+                            // When replace range deduplication mode is enabled, we need to take into the merge
+                            // prefix and suffix it's O3 type.
+                            newPartitionSize -= mergeDataHi - mergeDataLo + 1;
+                            srcDataNewPartitionSize -= mergeDataHi - mergeDataLo + 1;
+                        }
+                        mergeType = O3_BLOCK_NONE;
+
+                        if (suffixType == O3_BLOCK_O3) {
+                            suffixType = O3_BLOCK_NONE;
+                        }
+
+                        if (prefixType == O3_BLOCK_NONE && suffixType == O3_BLOCK_NONE) {
+                            // full partition removal
+                            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
+                            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, o3TimestampMin);
+                            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, 0); // new partition size
+                            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, oldPartitionSize);
+                            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, 1); // partitionMutates
+                            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0); // o3SplitPartitionSize
+                            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1); // update parquet partition file size
+
+                            O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
+                            O3Utils.close(ff, srcTimestampFd);
+
+                            tableWriter.o3ClockDownPartitionUpdateCount();
+                            tableWriter.o3CountDownDoneLatch();
+
+                            return;
+                        }
+
                     }
                 }
 
@@ -914,7 +958,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
 
-                if (!partitionSplit && prefixType == O3_BLOCK_NONE) {
+                boolean canAppendOnly = !partitionSplit;
+                if (tableWriter.isCommitReplaceMode()) {
+                    canAppendOnly &= (!overlaps && suffixType == O3_BLOCK_O3);
+                } else {
+                    canAppendOnly &= prefixType == O3_BLOCK_NONE;
+                }
+                if (canAppendOnly) {
                     // We do not need to create a copy of partition when we simply need to append
                     // to the existing one.
                     openColumnMode = OPEN_MID_PARTITION_FOR_APPEND;

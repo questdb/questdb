@@ -44,6 +44,7 @@ import io.questdb.cairo.wal.WalEventCursor;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
@@ -111,10 +112,23 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReplaceRangeTwoPartitions() throws Exception {
-        testReplaceRangeCommit("2022-02-24T16:25", "2022-02-24T16:25", "2022-02-25T01:00");
+    public void testReplaceCommitRemoves2PartitionsAndAdds1() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            TableToken tableToken = engine.verifyTableName("rg");
+
+            execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
+                    "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(400)");
+            drainWalQueue();
+
+            insertRowWithReplaceRange("2022-02-26T17", "2022-02-24T17", "2022-02-28T02", tableToken);
+        });
     }
 
+    @Test
+    public void testReplaceRangeTwoPartitionsDataInFirst() throws Exception {
+        testReplaceRangeCommit("2022-02-24T16:25", "2022-02-24T16:25", "2022-02-25T01:00");
+    }
 
     @Test
     public void testReplaceRangeLastPartitionPrefix() throws Exception {
@@ -371,6 +385,32 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         return sink.toString();
     }
 
+    @Test
+    public void testReplaceRangeTwoPartitionsDataInSecond() throws Exception {
+        testReplaceRangeCommit("2022-02-25T01:00", "2022-02-24T16:25", "2022-02-25T01:00");
+    }
+
+    private void insertRowWithReplaceRange(String tsStr, String rangeStartStr, String rangeEndStr, TableToken tableToken) throws SqlException, NumericException {
+        execute("create table expected as (select * from rg where ts not between '" + rangeStartStr + "' and '" + rangeEndStr + "') timestamp(ts) partition by DAY WAL");
+
+        Utf8StringSink sink = new Utf8StringSink();
+
+        insertOneRowWithRangeReplace(tableToken, sink, tsStr, rangeStartStr, rangeEndStr, true);
+        drainWalQueue();
+
+        var ttExpected = engine.verifyTableName("expected");
+        insertOneRowWithRangeReplace(ttExpected, sink, tsStr, rangeStartStr, rangeEndStr, false);
+        drainWalQueue();
+
+        Assert.assertEquals(
+                readTxnToSTring(ttExpected),
+                readTxnToSTring(tableToken)
+        );
+
+        assertSqlCursors("expected", "rg");
+        assertSqlCursors("select count(*), min(ts), max(ts) from expected", "select count(*), min(ts), max(ts) from rg");
+    }
+
     private void testReplaceRangeCommit(String tsStr, String rangeStartStr, String rangeEndStr) throws Exception {
         assertMemoryLeak(() -> {
             execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
@@ -380,26 +420,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                     "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(100)");
             drainWalQueue();
 
-            execute("create table expected as (select * from rg where ts not between '" + rangeStartStr + "' and '" + rangeEndStr + "') timestamp(ts) partition by DAY WAL");
-
-            assertSql("min\tmax\tcount\n" +
-                    "2022-02-24T12:30:00.000000Z\t2022-02-25T13:15:00.000000Z\t100\n", "select min(ts), max(ts), count(*) from rg");
-
-            Utf8StringSink sink = new Utf8StringSink();
-            insertOneRowWithRangeReplace(tableToken, sink, tsStr, rangeStartStr, rangeEndStr, true);
-            drainWalQueue();
-
-            var ttExpected = engine.verifyTableName("expected");
-            insertOneRowWithRangeReplace(ttExpected, sink, tsStr, rangeStartStr, rangeEndStr, false);
-            drainWalQueue();
-
-            assertSqlCursors("expected", "rg");
-            assertSqlCursors("select count(*), min(ts), max(ts) from expected", "select count(*), min(ts), max(ts) from rg");
-
-            Assert.assertEquals(
-                    readTxnToSTring(ttExpected),
-                    readTxnToSTring(tableToken)
-            );
+            insertRowWithReplaceRange(tsStr, rangeStartStr, rangeEndStr, tableToken);
         });
     }
 
