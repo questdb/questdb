@@ -194,10 +194,11 @@ public final class Timestamps {
     }
 
     public static long ceilDD(long micros) {
-        int y, m;
-        boolean l;
-        return yearMicros(y = getYear(micros), l = isLeapYear(y))
-                + monthOfYearMicros(m = getMonthOfYear(micros, y, l), l)
+        int y = getYear(micros);
+        boolean l = isLeapYear(y);
+        int m = getMonthOfYear(micros, y, l);
+        return yearMicros(y, l)
+                + monthOfYearMicros(m, l)
                 + (getDayOfMonth(micros, y, m, l)) * DAY_MICROS;
     }
 
@@ -210,10 +211,11 @@ public final class Timestamps {
     }
 
     public static long ceilMM(long micros) {
-        int y, m;
-        boolean l;
-        return yearMicros(y = getYear(micros), l = isLeapYear(y))
-                + monthOfYearMicros(m = getMonthOfYear(micros, y, l), l)
+        int y = getYear(micros);
+        boolean l = isLeapYear(y);
+        int m = getMonthOfYear(micros, y, l);
+        return yearMicros(y, l)
+                + monthOfYearMicros(m, l)
                 + (getDaysPerMonth(m, l)) * DAY_MICROS;
     }
 
@@ -230,9 +232,9 @@ public final class Timestamps {
     }
 
     public static long ceilYYYY(long micros) {
-        int y;
-        boolean l;
-        return yearMicros(y = getYear(micros), l = isLeapYear(y))
+        int y = getYear(micros);
+        boolean l = isLeapYear(y);
+        return yearMicros(y, l)
                 + monthOfYearMicros(12, l)
                 + (DAYS_PER_MONTH[11]) * DAY_MICROS;
     }
@@ -462,13 +464,13 @@ public final class Timestamps {
     }
 
     public static long floorYYYY(long micros) {
-        int y;
-        return yearMicros(y = getYear(micros), isLeapYear(y));
+        final int y = getYear(micros);
+        return yearMicros(y, isLeapYear(y));
     }
 
     public static long floorYYYY(long micros, int stride) {
         final int origin = getYear(0);
-        int y = origin + ((getYear(micros) - origin) / stride) * stride;
+        final int y = origin + ((getYear(micros) - origin) / stride) * stride;
         return yearMicros(y, isLeapYear(y));
     }
 

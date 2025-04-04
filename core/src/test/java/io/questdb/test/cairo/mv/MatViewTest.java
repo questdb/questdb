@@ -79,7 +79,7 @@ public class MatViewTest extends AbstractCairoTest {
     public static Collection<Object[]> testParams() {
         // only run a single combination per CI run
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        if (rnd.nextBoolean()) {
+        if (rnd.nextInt(100) > 50) {
             return Arrays.asList(new Object[][]{{-1}});
         }
         return Arrays.asList(new Object[][]{{1}});
