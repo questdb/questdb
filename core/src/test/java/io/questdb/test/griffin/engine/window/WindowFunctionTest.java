@@ -3095,6 +3095,33 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImplicitCastExceptionInLag() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE 'trades' ( " +
+                            " symbol SYMBOL, " +
+                            " side SYMBOL, " +
+                            " price DOUBLE, " +
+                            " amount DOUBLE, " +
+                            " timestamp TIMESTAMP " +
+                            ") timestamp(timestamp) PARTITION BY DAY;"
+            );
+            execute("INSERT INTO trades VALUES ('ETH-USD', 'sell', 2615.54, 0.00044, '2022-03-08T18:03:57.609765Z');");
+
+            assertExceptionNoLeakCheck(
+                    "SELECT " +
+                            "    timestamp, " +
+                            "    price, " +
+                            "    lag('timestamp') OVER (ORDER BY timestamp) AS previous_price " +
+                            "FROM trades " +
+                            "LIMIT 10;",
+                    0,
+                    "inconvertible value: `timestamp` [STRING -> DOUBLE]"
+            );
+        });
+    }
+
+    @Test
     public void testLagException() throws Exception {
         execute("create table tab (ts timestamp, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)");
         assertExceptionNoLeakCheck(

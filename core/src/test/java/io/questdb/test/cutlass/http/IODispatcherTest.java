@@ -6140,6 +6140,42 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testQueryImplicitCastExceptionInWindowFunctionFirstRecord() throws Exception {
+        getSimpleTester()
+                .run((engine, sqlExecutionContext) -> {
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.execute(
+                                "CREATE TABLE 'trades' ( " +
+                                        " symbol SYMBOL, " +
+                                        " side SYMBOL, " +
+                                        " price DOUBLE, " +
+                                        " amount DOUBLE, " +
+                                        " timestamp TIMESTAMP " +
+                                        ") timestamp(timestamp) PARTITION BY DAY;",
+                                executionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO trades VALUES ('ETH-USD', 'sell', 2615.54, 0.00044, '2022-03-08T18:03:57.609765Z');",
+                                executionContext
+                        );
+
+                        testHttpClient.setKeepConnection(true);
+                        testHttpClient.assertGet(
+                                "{\"query\":\"SELECT timestamp, price, lag('timestamp') OVER (ORDER BY timestamp) AS previous_price FROM trades LIMIT 10;\",\"error\":\"inconvertible value: `timestamp` [STRING -> DOUBLE]\",\"position\":0}",
+                                "SELECT timestamp, price, lag('timestamp') OVER (ORDER BY timestamp) AS previous_price FROM trades LIMIT 10;"
+                        );
+
+                        // verify that HTTP server is healthy, use the same connection
+                        testHttpClient.setKeepConnection(false);
+                        testHttpClient.assertGet(
+                                "{\"query\":\"SELECT count() FROM trades;\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
+                                "SELECT count() FROM trades;"
+                        );
+                    }
+                });
+    }
+
+    @Test
     public void testQueryReturnsEncodedNonPrintableCharacters() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
@@ -7314,7 +7350,6 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTextQueryCorrectQuoting() throws Exception {
-
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
                 .withMicrosecondClock(new TestMicroClock(0, 0))
@@ -7353,7 +7388,6 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTextQueryCorrectQuotingOfHeader() throws Exception {
-
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
                 .withMicrosecondClock(new TestMicroClock(0, 0))
@@ -7392,7 +7426,6 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTextQueryCorrectQuotingWithSpecialChars() throws Exception {
-
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
                 .withMicrosecondClock(new TestMicroClock(0, 0))
@@ -7470,6 +7503,45 @@ public class IODispatcherTest extends AbstractTest {
                         "\"q\",\"u10\",\"questd\",\"questdb12345\",\"1\"\r\n",
                 "/exp"
         );
+    }
+
+    @Test
+    public void testTextQueryImplicitCastExceptionInWindowFunctionFirstRecord() throws Exception {
+        getSimpleTester()
+                .run((engine, sqlExecutionContext) -> {
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.execute(
+                                "CREATE TABLE 'trades' ( " +
+                                        " symbol SYMBOL, " +
+                                        " side SYMBOL, " +
+                                        " price DOUBLE, " +
+                                        " amount DOUBLE, " +
+                                        " timestamp TIMESTAMP " +
+                                        ") timestamp(timestamp) PARTITION BY DAY;",
+                                executionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO trades VALUES ('ETH-USD', 'sell', 2615.54, 0.00044, '2022-03-08T18:03:57.609765Z');",
+                                executionContext
+                        );
+
+                        testHttpClient.setKeepConnection(true);
+                        testHttpClient.assertGet(
+                                "/exp",
+                                "{\"query\":\"SELECT timestamp, price, lag('timestamp') OVER (ORDER BY timestamp) AS previous_price FROM trades LIMIT 10;\",\"error\":\"inconvertible value: `timestamp` [STRING -> DOUBLE]\",\"position\":0}",
+                                "SELECT timestamp, price, lag('timestamp') OVER (ORDER BY timestamp) AS previous_price FROM trades LIMIT 10;"
+                        );
+
+                        // verify that HTTP server is healthy, use the same connection
+                        testHttpClient.setKeepConnection(false);
+                        testHttpClient.assertGet(
+                                "/exp",
+                                "\"count\"\r\n" +
+                                        "1\r\n",
+                                "SELECT count() FROM trades;"
+                        );
+                    }
+                });
     }
 
     @Test
