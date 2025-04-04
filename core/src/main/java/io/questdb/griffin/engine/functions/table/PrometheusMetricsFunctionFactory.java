@@ -22,41 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.metrics;
+package io.questdb.griffin.engine.functions.table;
 
-import org.jetbrains.annotations.Nullable;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public interface MetricsRegistry extends Target {
-
-    void addTarget(Target target);
-
-    default int getSize() {
-        throw new UnsupportedOperationException();
+public final class PrometheusMetricsFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "prometheus_metrics()";
     }
 
-    default @Nullable Target getTarget(int index) {
-        throw new UnsupportedOperationException();
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        return new CursorFunction(new PrometheusMetricsRecordCursorFactory());
     }
-
-    AtomicLongGauge newAtomicLongGauge(CharSequence name);
-
-    CounterWithTwoLabels newCounter(
-            CharSequence name,
-            CharSequence labelName0,
-            CharSequence[] labelValues0,
-            CharSequence labelName1,
-            CharSequence[] labelValues1
-    );
-
-    Counter newCounter(CharSequence name);
-
-    CounterWithOneLabel newCounter(CharSequence name, CharSequence labelName0, CharSequence[] labelValues0);
-
-    DoubleGauge newDoubleGauge(CharSequence name);
-
-    LongGauge newLongGauge(CharSequence name);
-
-    LongGauge newLongGauge(int memoryTag);
-
-    LongGauge newVirtualGauge(CharSequence name, VirtualLongGauge.StatProvider provider);
 }

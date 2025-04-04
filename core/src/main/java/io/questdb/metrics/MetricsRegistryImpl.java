@@ -24,9 +24,12 @@
 
 package io.questdb.metrics;
 
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory;
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor.PrometheusMetricsRecord;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class MetricsRegistryImpl implements MetricsRegistry {
     private final ObjList<Target> metrics = new ObjList<>();
@@ -34,6 +37,16 @@ public class MetricsRegistryImpl implements MetricsRegistry {
     @Override
     public void addTarget(Target target) {
         metrics.add(target);
+    }
+
+    @Override
+    public int getSize() {
+        return metrics.size();
+    }
+
+    @Override
+    public @Nullable Target getTarget(int index) {
+        return metrics.getQuiet(index);
     }
 
     @Override
@@ -102,5 +115,10 @@ public class MetricsRegistryImpl implements MetricsRegistry {
             Target metric = metrics.getQuick(i);
             metric.scrapeIntoPrometheus(sink);
         }
+    }
+
+    @Override
+    public int scrapeIntoRecord(PrometheusMetricsRecord record) {
+        throw new UnsupportedOperationException();
     }
 }
