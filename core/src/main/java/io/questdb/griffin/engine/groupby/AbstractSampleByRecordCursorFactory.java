@@ -36,8 +36,8 @@ import io.questdb.std.ObjList;
 
 public abstract class AbstractSampleByRecordCursorFactory extends AbstractRecordCursorFactory {
 
-    protected final RecordCursorFactory base;
     protected final ObjList<Function> recordFunctions;
+    protected RecordCursorFactory base;
 
     public AbstractSampleByRecordCursorFactory(
             RecordCursorFactory base,
@@ -57,6 +57,11 @@ public abstract class AbstractSampleByRecordCursorFactory extends AbstractRecord
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    public void setBaseFactory(RecordCursorFactory base) {
+        this.base = base;
     }
 
     @Override

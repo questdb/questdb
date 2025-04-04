@@ -72,6 +72,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     private SqlExecutionContext executionContext;
     private long sqlId;
 
+
     public QueryProgress(QueryRegistry registry, CharSequence sqlText, RecordCursorFactory base) {
         super(base.getMetadata());
         this.base = base;

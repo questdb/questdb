@@ -52,7 +52,6 @@ import org.jetbrains.annotations.Nullable;
 
 public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory {
     private final ObjList<WindowFunction> allFunctions;
-    private final RecordCursorFactory base;
     private final GenericRecordMetadata chainMetadata;
     private final ObjList<RecordComparator> comparators;
     private final CachedWindowRecordCursor cursor;
@@ -63,6 +62,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
     private final ObjList<WindowFunction> unordered2PassFunctions;
     @Nullable
     private final ObjList<WindowFunction> unorderedFunctions;
+    private RecordCursorFactory base;
     private boolean closed = false;
 
     public CachedWindowRecordCursorFactory(
@@ -197,6 +197,11 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    public void setBaseFactory(RecordCursorFactory base) {
+        this.base = base;
     }
 
     @Override

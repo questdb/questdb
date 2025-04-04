@@ -26,8 +26,16 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.VirtualRecordNoRowid;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -40,11 +48,11 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
     private final GroupByNotKeyedRecordCursor cursor;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final SimpleMapValue simpleMapValue;
     private final VirtualRecord virtualRecordA;
+    private RecordCursorFactory base;
 
     public GroupByNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -95,6 +103,11 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    public void setBaseFactory(RecordCursorFactory base) {
+        this.base = base;
     }
 
     @Override

@@ -36,9 +36,9 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
 
 public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
     private final SortedLightRecordCursor cursor;
     private final ListColumnFilter sortColumnFilter;
+    private RecordCursorFactory base;
 
     public SortedLightRecordCursorFactory(
             CairoConfiguration configuration,
@@ -90,6 +90,11 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    public void setBaseFactory(RecordCursorFactory base) {
+        this.base = base;
     }
 
     @Override

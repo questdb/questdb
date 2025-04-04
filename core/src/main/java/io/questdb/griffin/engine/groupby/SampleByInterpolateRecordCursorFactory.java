@@ -67,7 +67,6 @@ import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
 
 public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursorFactory {
 
-    protected final RecordCursorFactory base;
     private final SampleByInterpolateRecordCursor cursor;
     private final int groupByFunctionCount;
     private final ObjList<GroupByFunction> groupByFunctions;
@@ -84,6 +83,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
     private final ObjList<InterpolationUtil.StoreYFunction> storeYFunctions;
     private final int timestampIndex;
     private final int yDataSize;
+    protected RecordCursorFactory base;
     private long yData;
 
     public SampleByInterpolateRecordCursorFactory(
@@ -218,6 +218,11 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    public void setBaseFactory(RecordCursorFactory base) {
+        this.base = base;
     }
 
     @Override

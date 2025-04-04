@@ -24,7 +24,12 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -91,6 +96,11 @@ public class DistinctIntKeyRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return baseAggregatorFactory.recordCursorSupportsRandomAccess();
+    }
+
+    @Override
+    public void setBaseFactory(RecordCursorFactory base) {
+        baseAggregatorFactory.setBaseFactory(base);
     }
 
     @Override

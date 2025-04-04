@@ -35,12 +35,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactory {
-    protected final RecordCursorFactory factoryA;
-    protected final RecordCursorFactory factoryB;
+public abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactory {
     private final ObjList<Function> castFunctionsA;
     private final ObjList<Function> castFunctionsB;
     protected AbstractSetRecordCursor cursor;
+    protected RecordCursorFactory factoryA;
+    protected RecordCursorFactory factoryB;
 
     public AbstractSetRecordCursorFactory(
             RecordMetadata metadata,
@@ -85,9 +85,25 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
         }
     }
 
+    public RecordCursorFactory getFactoryA() {
+        return factoryA;
+    }
+
+    public RecordCursorFactory getFactoryB() {
+        return factoryB;
+    }
+
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return factoryA.recordCursorSupportsRandomAccess();
+    }
+
+    public void setFactoryA(RecordCursorFactory factory) {
+        this.factoryA = factory;
+    }
+
+    public void setFactoryB(RecordCursorFactory factory) {
+        this.factoryB = factory;
     }
 
     @Override

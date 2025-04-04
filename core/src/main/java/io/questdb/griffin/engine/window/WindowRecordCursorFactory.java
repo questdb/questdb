@@ -45,11 +45,11 @@ import io.questdb.std.ObjList;
  * - all functions and their framing clause do support stream-ed processing (single pass)
  */
 public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
     private final WindowRecordCursor cursor;
     private final ObjList<Function> functions;
     private final ObjList<WindowFunction> windowFunctions;
     private final int windowFunctionsCount;
+    private RecordCursorFactory base;
     private boolean closed = false;
 
     public WindowRecordCursorFactory(
@@ -104,6 +104,11 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     public boolean recordCursorSupportsRandomAccess() {
         // window functions normally depends on other rows in the window/frame, so we can't just jump to an arbitrary position
         return false;
+    }
+
+    @Override
+    public void setBaseFactory(RecordCursorFactory base) {
+        this.base = base;
     }
 
     @Override

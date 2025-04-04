@@ -28,8 +28,19 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.VirtualRecordNoRowid;
 import io.questdb.cairo.sql.async.WorkStealingStrategy;
 import io.questdb.cairo.sql.async.WorkStealingStrategyFactory;
 import io.questdb.griffin.PlanSink;
@@ -38,8 +49,16 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.*;
-import io.questdb.std.*;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SOUnboundedCountDownLatch;
+import io.questdb.mp.Sequence;
+import io.questdb.mp.Worker;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Os;
+import io.questdb.std.Transient;
 import io.questdb.tasks.VectorAggregateTask;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -48,7 +67,6 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final Log LOG = LogFactory.getLog(GroupByNotKeyedVectorRecordCursorFactory.class);
-    private final RecordCursorFactory base;
     private final GroupByNotKeyedVectorRecordCursor cursor;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final ObjectPool<VectorAggregateEntry> entryPool;
@@ -60,6 +78,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
     private final ObjList<VectorAggregateFunction> vafList;
     private final WorkStealingStrategy workStealingStrategy;
     private final int workerCount;
+    private RecordCursorFactory base;
 
     public GroupByNotKeyedVectorRecordCursorFactory(
             CairoConfiguration configuration,
@@ -115,6 +134,11 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    public void setBaseFactory(RecordCursorFactory base) {
+        this.base = base;
     }
 
     @Override

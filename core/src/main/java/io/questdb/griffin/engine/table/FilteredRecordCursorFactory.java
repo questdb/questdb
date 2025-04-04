@@ -35,9 +35,9 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
 public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
     private final FilteredRecordCursor cursor;
     private final Function filter;
+    private RecordCursorFactory base;
 
     public FilteredRecordCursorFactory(RecordCursorFactory base, Function filter) {
         super(base.getMetadata());
@@ -74,6 +74,11 @@ public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
+    }
+
+    @Override
+    public void setBaseFactory(RecordCursorFactory base) {
+        this.base = base;
     }
 
     @Override

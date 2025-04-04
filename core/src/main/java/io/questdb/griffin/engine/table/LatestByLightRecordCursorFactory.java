@@ -53,12 +53,11 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
 
     private static final int ROW_ID_VALUE_IDX = 0;
     private static final int TIMESTAMP_VALUE_IDX = 1;
-
-    private final RecordCursorFactory base;
     private final LatestByLightRecordCursor cursor;
     private final boolean orderedByTimestampAsc;
     private final RecordSink recordSink;
     private final int timestampIndex;
+    private RecordCursorFactory base;
 
     public LatestByLightRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -101,6 +100,11 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
+    }
+
+    @Override
+    public void setBaseFactory(RecordCursorFactory base) {
+        this.base = base;
     }
 
     @Override

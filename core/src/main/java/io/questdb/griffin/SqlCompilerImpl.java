@@ -3156,7 +3156,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     updateQueryModel,
                     executionContext
             );
-            return codeGenerator.generateExplain(updateQueryModel, recordCursorFactory, model.getFormat());
+            return codeGenerator.generateExplain(updateQueryModel, recordCursorFactory, model.getFormat(), model.isAnalyze());
         } else {
             return codeGenerator.generateExplain(model, executionContext);
         }

@@ -24,12 +24,20 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -39,8 +47,8 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorFactory {
-    protected final RecordCursorFactory base;
     private final DistinctTimeSeriesRecordCursor cursor;
+    protected RecordCursorFactory base;
 
     public DistinctTimeSeriesRecordCursorFactory(
             CairoConfiguration configuration,
@@ -98,6 +106,11 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    public void setBaseFactory(RecordCursorFactory base) {
+        this.base = base;
     }
 
     @Override

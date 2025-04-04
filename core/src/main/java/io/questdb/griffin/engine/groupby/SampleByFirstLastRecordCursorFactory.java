@@ -24,9 +24,28 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.IndexFrame;
+import io.questdb.cairo.IndexFrameCursor;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SingleSymbolFilter;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -34,7 +53,14 @@ import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
-import io.questdb.std.*;
+import io.questdb.std.BitmapIndexUtilsNative;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
@@ -44,7 +70,6 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     private static final int ITEMS_PER_OUT_ARRAY_SHIFT = 2;
     private static final int LAST_OUT_INDEX = 1;
     private static final int TIMESTAMP_OUT_INDEX = 2;
-    private final RecordCursorFactory base;
     private final LongList crossFrameRow;
     private final SampleByFirstLastRecordCursor cursor;
     private final int[] firstLastIndexByCol;
@@ -55,6 +80,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     private final int[] queryToFrameColumnMapping;
     private final SingleSymbolFilter symbolFilter;
     private final int timestampIndex;
+    private RecordCursorFactory base;
     private int groupByTimestampIndex = -1;
     private DirectLongList rowIdOutAddress;
     private DirectLongList samplePeriodAddress;
@@ -147,6 +173,11 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    public void setBaseFactory(RecordCursorFactory base) {
+        this.base = base;
     }
 
     @Override

@@ -53,13 +53,13 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory base;
     private final GroupByRecordCursor cursor;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final ObjList<Function> keyFunctions;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink;
     private final ObjList<Function> recordFunctions;
+    private RecordCursorFactory base;
 
     public GroupByRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -135,6 +135,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    public void setBaseFactory(RecordCursorFactory base) {
+        this.base = base;
     }
 
     @Override

@@ -57,7 +57,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
     private final IntObjHashMap<RowCursorFactory> factoriesB = new IntObjHashMap<>(64, 0.5, -5);
     private final Function filter;
     private final Record.CharSequenceFunction func;
-    private final RecordCursorFactory recordCursorFactory;
+    private RecordCursorFactory recordCursorFactory;
 
     public FilterOnSubQueryRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -96,6 +96,11 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    public void setBaseFactory(RecordCursorFactory factory) {
+        this.recordCursorFactory = factory;
     }
 
     @Override

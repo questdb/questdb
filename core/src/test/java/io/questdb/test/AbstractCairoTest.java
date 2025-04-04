@@ -1508,7 +1508,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         if (expectedPlan != null) {
             planSink.clear();
             factory.toPlan(planSink);
-            assertCursor(expectedPlan, new ExplainPlanFactory(factory, ExplainModel.FORMAT_TEXT), false, expectSize, sizeCanBeVariable);
+            assertCursor(expectedPlan, new ExplainPlanFactory(factory, ExplainModel.FORMAT_TEXT, false), false, expectSize, sizeCanBeVariable);
         }
         try {
             assertTimestamp(expectedTimestamp, factory);
