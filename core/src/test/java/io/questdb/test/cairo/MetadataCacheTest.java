@@ -166,7 +166,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     }
                 } catch (SqlException | CairoException ignore) {
                 } catch (Throwable e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     exception.set(e);
                 } finally {
                     Path.clearThreadLocals();
@@ -181,7 +181,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     }
                 } catch (SqlException | CairoException ignore) {
                 } catch (Throwable e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     exception.set(e);
                 } finally {
                     Path.clearThreadLocals();
@@ -201,7 +201,8 @@ public class MetadataCacheTest extends AbstractCairoTest {
                 s = dumpTables(ss);
                 Assert.assertTrue(
                         TestUtils.dumpMetadataCache(engine),
-                        s.contains("foo\t") ^ s.contains("bah\t"));
+                        s.contains("foo\t") ^ s.contains("bah\t")
+                );
                 Thread.sleep(50);
             }
 
@@ -270,7 +271,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     }
                 } catch (InterruptedException | SqlException | CairoException ignore) {
                 } catch (Throwable e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     exception.set(e);
                 } finally {
                     Path.clearThreadLocals();
@@ -286,7 +287,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     }
                 } catch (InterruptedException | SqlException | CairoException ignore) {
                 } catch (Throwable e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     exception.set(e);
                 } finally {
                     Path.clearThreadLocals();
@@ -301,7 +302,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     }
                 } catch (SqlException | CairoException ignored) {
                 } catch (Throwable e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     exception.set(e);
                 } finally {
                     Path.clearThreadLocals();
@@ -692,8 +693,6 @@ public class MetadataCacheTest extends AbstractCairoTest {
     @Test
     public void testDropTable() throws Exception {
         assertMemoryLeak(() -> {
-
-
             execute("CREATE TABLE y ( ts TIMESTAMP, x INT ) timestamp(ts) partition by day wal;");
             drainWalQueue();
 
@@ -705,7 +704,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             execute("DROP TABLE y");
             drainWalQueue();
 
-            assertException("table_columns('y')", -1, "table does not exist");
+            assertException("table_columns('y')", 14, "table does not exist");
         });
     }
 

@@ -1092,12 +1092,12 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
                     "from long_sequence(48L)");
 
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between 'invalid' and '2020-01-01'");
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between '2020-01-01' and 'invalid'");
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between '2020-01-01' and 'invalid' || 'dd'");
-            assertTimestampTtFailedQuery("Invalid column: invalidCol", "select min(nts), max(nts) from tt where invalidCol not between '2020-01-01' and '2020-01-02'");
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts in ('2020-01-01', 'invalid')");
-            assertTimestampTtFailedQuery("cannot compare TIMESTAMP with type CURSOR", "select min(nts), max(nts) from tt where nts in (select nts from tt)");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where nts between 'invalid' and '2020-01-01'", 52, "Invalid date");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where nts between '2020-01-01' and 'invalid'", 69, "Invalid date");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where nts between '2020-01-01' and 'invalid' || 'dd'", 79, "Invalid date");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where invalidCol not between '2020-01-01' and '2020-01-02'", 40, "Invalid column: invalidCol");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where nts in ('2020-01-01', 'invalid')", 62, "Invalid date");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where nts in (select nts from tt)", 48, "cannot compare TIMESTAMP with type CURSOR");
         });
     }
 
@@ -1231,8 +1231,8 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
                     "from long_sequence(48L)");
 
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts > 'invalid'");
-            assertTimestampTtFailedQuery("cannot compare STRING with type DOUBLE", "select min(nts), max(nts) from tt where '2020-01-01' in (0.34)");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where nts > 'invalid'", 46, "Invalid date");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where '2020-01-01' in (0.34)", 57, "cannot compare STRING with type DOUBLE");
         });
     }
 
@@ -1340,12 +1340,12 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
                     "from long_sequence(48L)");
 
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between cast('invalid' as symbol) and cast('2020-01-01' as symbol)");
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between cast('2020-01-01' as symbol) and cast('invalid' as symbol)");
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts between cast('2020-01-01' as symbol) and cast('invalid' as symbol) || cast('dd' as symbol)");
-            assertTimestampTtFailedQuery("Invalid column: invalidCol", "select min(nts), max(nts) from tt where invalidCol not between cast('2020-01-01' as symbol) and cast('2020-01-02' as symbol)");
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts in (cast('2020-01-01' as symbol), cast('invalid' as symbol))");
-            assertTimestampTtFailedQuery("cannot compare TIMESTAMP with type CURSOR", "select min(nts), max(nts) from tt where nts in (select nts from tt)");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where nts between cast('invalid' as symbol) and cast('2020-01-01' as symbol)", 52, "Invalid date");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where nts between cast('2020-01-01' as symbol) and cast('invalid' as symbol)", 85, "Invalid date");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where nts between cast('2020-01-01' as symbol) and cast('invalid' as symbol) || cast('dd' as symbol)", 111, "Invalid date");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where invalidCol not between cast('2020-01-01' as symbol) and cast('2020-01-02' as symbol)", 40, "Invalid column: invalidCol");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where nts in (cast('2020-01-01' as symbol), cast('invalid' as symbol))", 78, "Invalid date");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where nts in (select nts from tt)", 48, "cannot compare TIMESTAMP with type CURSOR");
         });
     }
 
@@ -1358,8 +1358,8 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
                     "from long_sequence(48L)");
 
-            assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts > cast('invalid' as symbol)");
-            assertTimestampTtFailedQuery("STRING constant expected", "select min(nts), max(nts) from tt where cast('2020-01-01' as symbol) in (3.14)");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where nts > cast('invalid' as symbol)", 46, "Invalid date");
+            assertTimestampTtFailedQuery("select min(nts), max(nts) from tt where cast('2020-01-01' as symbol) in (3.14)", 73, "STRING constant expected");
         });
     }
 
@@ -1444,14 +1444,14 @@ public class TimestampQueryTest extends AbstractCairoTest {
         assertSql(expected, query + joining + columnName + " not in '1970-01-01'");
     }
 
-    private void assertTimestampTtFailedQuery(String expectedError, String sql) throws Exception {
-        assertTimestampTtFailedQuery0(sql, expectedError);
+    private void assertTimestampTtFailedQuery(String sql, int errorPos, String expectedError) throws Exception {
+        assertTimestampTtFailedQuery0(sql, errorPos, expectedError);
         String dtsQuery = sql.replace("nts", "dts");
-        assertTimestampTtFailedQuery0(dtsQuery, expectedError);
+        assertTimestampTtFailedQuery0(dtsQuery, errorPos, expectedError);
     }
 
-    private void assertTimestampTtFailedQuery0(String sql, String contains) throws Exception {
-        assertExceptionNoLeakCheck(sql, -1, contains);
+    private void assertTimestampTtFailedQuery0(String sql, int errorPos, String contains) throws Exception {
+        assertExceptionNoLeakCheck(sql, errorPos, contains);
     }
 
     private void assertTimestampTtQuery(String expected, String query) throws SqlException {
