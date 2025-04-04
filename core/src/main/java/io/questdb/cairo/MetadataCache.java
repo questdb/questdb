@@ -135,7 +135,7 @@ public class MetadataCache implements QuietCloseable {
         return cacheWriter;
     }
 
-    private ColumnVersionReader getColumnVersionReader() {
+    private @NotNull ColumnVersionReader getColumnVersionReader() {
         if (columnVersionReader != null) {
             return columnVersionReader;
         }
@@ -595,9 +595,13 @@ public class MetadataCache implements QuietCloseable {
         public void renameTable(@NotNull TableToken fromTableToken, @NotNull TableToken toTableToken) {
             String tableName = fromTableToken.getTableName();
             final int index = tableMap.keyIndex(tableName);
-            CairoTable fromTab = tableMap.valueAt(index);
-            tableMap.removeAt(index);
-            tableMap.put(toTableToken.getTableName(), new CairoTable(toTableToken, fromTab));
+
+            // Metadata may not be hydrated at this point, handle this case
+            if (index < 0) {
+                CairoTable fromTab = tableMap.valueAt(index);
+                tableMap.removeAt(index);
+                tableMap.put(toTableToken.getTableName(), new CairoTable(toTableToken, fromTab));
+            }
         }
     }
 }

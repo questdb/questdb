@@ -23,7 +23,7 @@
  ******************************************************************************/
 
 use super::util::BinaryMaxMin;
-use crate::parquet::error::{fmt_err, ParquetError, ParquetResult};
+use crate::parquet::error::{fmt_err, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
     build_plain_page, encode_bool_iter, transmute_slice, ExactSizedIter,

@@ -229,7 +229,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             this.baseCursor = baseCursor;
             circuitBreaker = executionContext.getCircuitBreaker();
             initState = INIT_PENDING;
-            Function.init(groupByFunctions, baseCursor, executionContext);
+            Function.init(groupByFunctions, baseCursor, executionContext, null);
             toTop();
             return this;
         }

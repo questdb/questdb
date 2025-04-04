@@ -555,7 +555,7 @@ public final class WhereClauseParser implements Mutable {
         if (a.type == ExpressionNode.LITERAL && isTimestamp(a) && b.type == ExpressionNode.QUERY) {
             final Function func = functionParser.parseFunction(b, m, executionContext);
             try {
-                if (checkCursorFunctionReturnsSingleTimestamp(func, b.position)) {
+                if (checkCursorFunctionReturnsSingleTimestamp(func)) {
                     return analyzeTimestampEqualsFunction(model, node, func, b.position);
                 }
                 Misc.free(func);
@@ -1415,7 +1415,7 @@ public final class WhereClauseParser implements Mutable {
             // special case for ts = (<subquery>) and similar cases
             final Function func = functionParser.parseFunction(compareWithNode, metadata, executionContext);
             try {
-                if (checkCursorFunctionReturnsSingleTimestamp(func, compareWithNode.position)) {
+                if (checkCursorFunctionReturnsSingleTimestamp(func)) {
                     model.intersectIntervals(func, Long.MAX_VALUE, adjustComparison(equalsTo, true));
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
@@ -1479,7 +1479,7 @@ public final class WhereClauseParser implements Mutable {
             // special case for ts = (<subquery>) and similar cases
             final Function func = functionParser.parseFunction(compareWithNode, metadata, executionContext);
             try {
-                if (checkCursorFunctionReturnsSingleTimestamp(func, compareWithNode.position)) {
+                if (checkCursorFunctionReturnsSingleTimestamp(func)) {
                     model.intersectIntervals(Long.MIN_VALUE, func, adjustComparison(equalsTo, false));
                     node.intrinsicValue = IntrinsicModel.TRUE;
                     return true;
@@ -1582,7 +1582,7 @@ public final class WhereClauseParser implements Mutable {
         keyExclNodes.clear();
     }
 
-    private boolean checkCursorFunctionReturnsSingleTimestamp(Function function, int functionPosition) {
+    private boolean checkCursorFunctionReturnsSingleTimestamp(Function function) {
         final RecordCursorFactory factory = function.getRecordCursorFactory();
         if (factory != null) {
             final RecordMetadata metadata = factory.getMetadata();

@@ -881,13 +881,13 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "01ed\r\n" +
+                        "01f9\r\n" +
                         "\"QUERY PLAN\"\r\n" +
                         "\"VirtualRecord\"\r\n" +
                         "\"&nbsp;&nbsp;functions: [1]\"\r\n" +
                         "\"&nbsp;&nbsp;&nbsp;&nbsp;Async Filter workers: 2\"\r\n" +
                         "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;limit: 1\"\r\n" +
-                        "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0)\"\r\n" +
+                        "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0) [pre-touch]\"\r\n" +
                         "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;PageFrame\"\r\n" +
                         "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan\"\r\n" +
                         "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: x\"\r\n" +
@@ -997,14 +997,14 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0288\r\n" +
+                        "0294\r\n" +
                         "{\"query\":\"explain select 1 from x where f>systimestamp() and f<0 limit 1\",\"columns\":[{\"name\":\"QUERY PLAN\",\"type\":\"STRING\"}]," +
                         "\"timestamp\":-1,\"dataset\":" +
                         "[[\"VirtualRecord\"]," +
                         "[\"&nbsp;&nbsp;functions: [1]\"]," +
                         "[\"&nbsp;&nbsp;&nbsp;&nbsp;Async Filter workers: 2\"]," +
                         "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;limit: 1\"]," +
-                        "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0)\"]," +
+                        "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0) [pre-touch]\"]," +
                         "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;PageFrame\"]," +
                         "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan\"]," +
                         "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: x\"]]," +
@@ -4491,7 +4491,7 @@ public class IODispatcherTest extends AbstractTest {
         );
         ObjList<SqlExecutionContextImpl> contexts = builder.getSqlExecutionContexts();
         for (int i = 0, n = contexts.size(); i < n; i++) {
-            if (!contexts.getQuick(i).isColumnPreTouchEnabled()) {
+            if (!contexts.getQuick(i).isColumnPreTouchEnabledOverride()) {
                 return;
             }
         }
@@ -6140,6 +6140,42 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testQueryImplicitCastExceptionInWindowFunctionFirstRecord() throws Exception {
+        getSimpleTester()
+                .run((engine, sqlExecutionContext) -> {
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.execute(
+                                "CREATE TABLE 'trades' ( " +
+                                        " symbol SYMBOL, " +
+                                        " side SYMBOL, " +
+                                        " price DOUBLE, " +
+                                        " amount DOUBLE, " +
+                                        " timestamp TIMESTAMP " +
+                                        ") timestamp(timestamp) PARTITION BY DAY;",
+                                executionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO trades VALUES ('ETH-USD', 'sell', 2615.54, 0.00044, '2022-03-08T18:03:57.609765Z');",
+                                executionContext
+                        );
+
+                        testHttpClient.setKeepConnection(true);
+                        testHttpClient.assertGet(
+                                "{\"query\":\"SELECT timestamp, price, lag('timestamp') OVER (ORDER BY timestamp) AS previous_price FROM trades LIMIT 10;\",\"error\":\"inconvertible value: `timestamp` [STRING -> DOUBLE]\",\"position\":0}",
+                                "SELECT timestamp, price, lag('timestamp') OVER (ORDER BY timestamp) AS previous_price FROM trades LIMIT 10;"
+                        );
+
+                        // verify that HTTP server is healthy, use the same connection
+                        testHttpClient.setKeepConnection(false);
+                        testHttpClient.assertGet(
+                                "{\"query\":\"SELECT count() FROM trades;\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
+                                "SELECT count() FROM trades;"
+                        );
+                    }
+                });
+    }
+
+    @Test
     public void testQueryReturnsEncodedNonPrintableCharacters() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
@@ -7314,7 +7350,6 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTextQueryCorrectQuoting() throws Exception {
-
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
                 .withMicrosecondClock(new TestMicroClock(0, 0))
@@ -7353,7 +7388,6 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTextQueryCorrectQuotingOfHeader() throws Exception {
-
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
                 .withMicrosecondClock(new TestMicroClock(0, 0))
@@ -7392,7 +7426,6 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTextQueryCorrectQuotingWithSpecialChars() throws Exception {
-
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
                 .withMicrosecondClock(new TestMicroClock(0, 0))
@@ -7470,6 +7503,45 @@ public class IODispatcherTest extends AbstractTest {
                         "\"q\",\"u10\",\"questd\",\"questdb12345\",\"1\"\r\n",
                 "/exp"
         );
+    }
+
+    @Test
+    public void testTextQueryImplicitCastExceptionInWindowFunctionFirstRecord() throws Exception {
+        getSimpleTester()
+                .run((engine, sqlExecutionContext) -> {
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.execute(
+                                "CREATE TABLE 'trades' ( " +
+                                        " symbol SYMBOL, " +
+                                        " side SYMBOL, " +
+                                        " price DOUBLE, " +
+                                        " amount DOUBLE, " +
+                                        " timestamp TIMESTAMP " +
+                                        ") timestamp(timestamp) PARTITION BY DAY;",
+                                executionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO trades VALUES ('ETH-USD', 'sell', 2615.54, 0.00044, '2022-03-08T18:03:57.609765Z');",
+                                executionContext
+                        );
+
+                        testHttpClient.setKeepConnection(true);
+                        testHttpClient.assertGet(
+                                "/exp",
+                                "{\"query\":\"SELECT timestamp, price, lag('timestamp') OVER (ORDER BY timestamp) AS previous_price FROM trades LIMIT 10;\",\"error\":\"inconvertible value: `timestamp` [STRING -> DOUBLE]\",\"position\":0}",
+                                "SELECT timestamp, price, lag('timestamp') OVER (ORDER BY timestamp) AS previous_price FROM trades LIMIT 10;"
+                        );
+
+                        // verify that HTTP server is healthy, use the same connection
+                        testHttpClient.setKeepConnection(false);
+                        testHttpClient.assertGet(
+                                "/exp",
+                                "\"count\"\r\n" +
+                                        "1\r\n",
+                                "SELECT count() FROM trades;"
+                        );
+                    }
+                });
     }
 
     @Test
@@ -8655,10 +8727,6 @@ public class IODispatcherTest extends AbstractTest {
                         TestCase testCase = testCases.getQuick(i);
                         // http does not support bind variables yet
                         if (testCase.getBindVariableValues().length == 0) {
-                            System.out.println("************** SQL " + i + " ******************");
-                            System.out.println(testCase.getQuery());
-                            System.out.println("*************************************");
-
                             engine.releaseAllReaders();
                             engine.setReaderListener(null);
 

@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.functions.finance;
+package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.math.LeastNumericFunctionFactory;
@@ -30,7 +30,6 @@ import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest {
-
 
     @Test
     public void testLeastNumericFunctionFactoryBytes() throws Exception {
@@ -48,6 +47,18 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
         assertSqlWithTypes("least\n1.0:DOUBLE\n", "select least(1::short, 4.0)");
         assertSqlWithTypes("least\n1.0:DOUBLE\n", "select least(1f, 4.0::double)");
         assertSqlWithTypes("least\n1.0000:FLOAT\n", "select least(1f, 4::int)");
+    }
+
+    @Test
+    public void testLeastNumericFunctionFactoryDates() throws Exception {
+        assertSqlWithTypes(
+                "least\n2020-09-10T00:00:00.000Z:DATE\n",
+                "select least('2020-09-10'::date, '2020-09-11'::date)"
+        );
+        assertSqlWithTypes(
+                "least\n2020-09-03T00:00:00.000Z:DATE\n",
+                "select least('2020-09-10'::date, '2020-09-11'::date, '2020-09-03'::date)"
+        );
     }
 
     @Test
@@ -77,12 +88,26 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
     @Test
     public void testLeastNumericFunctionFactoryNulls() throws Exception {
         assertSqlWithTypes("least\nnull:NULL\n", "select least(1L, null, 2L)");
+        // verify that we've cleaned up the counter array after the NULL returned earlier
+        assertSqlWithTypes("least\n1:INT\n", "select least(1, 2)");
     }
 
     @Test
     public void testLeastNumericFunctionFactoryShorts() throws Exception {
         assertSqlWithTypes("least\n1:SHORT\n", "select least(1::short, 40::short)");
         assertSqlWithTypes("least\n1:SHORT\n", "select least(1::short, 4::short, 3::short, 12::short, 8::short)");
+    }
+
+    @Test
+    public void testLeastNumericFunctionFactoryTimestamps() throws Exception {
+        assertSqlWithTypes(
+                "least\n2020-09-10T20:00:00.000000Z:TIMESTAMP\n",
+                "select least('2020-09-10T20:00:00.000000Z'::timestamp, '2020-09-10T20:01:00.000000Z'::timestamp)"
+        );
+        assertSqlWithTypes(
+                "least\n2020-09-01T20:00:00.000000Z:TIMESTAMP\n",
+                "select least('2020-09-10T20:00:00.000000Z'::timestamp, '2020-09-10T20:01:00.000000Z'::timestamp, '2020-09-01T20:00:00.000000Z'::timestamp)"
+        );
     }
 
     @Test
@@ -95,28 +120,54 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
     public void testLeastNumericFunctionFactoryWithData() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select rnd_int() a, rnd_int() b from long_sequence(20))");
-            drainWalQueue();
-            assertSqlWithTypes("least\n" +
-                    "-1148479920:INT\n" +
-                    "-727724771:INT\n" +
-                    "-948263339:INT\n" +
-                    "592859671:INT\n" +
-                    "-847531048:INT\n" +
-                    "-2041844972:INT\n" +
-                    "-1575378703:INT\n" +
-                    "806715481:INT\n" +
-                    "1569490116:INT\n" +
-                    "-409854405:INT\n" +
-                    "1530831067:INT\n" +
-                    "-1532328444:INT\n" +
-                    "-1849627000:INT\n" +
-                    "-1432278050:INT\n" +
-                    "-1792928964:INT\n" +
-                    "-1844391305:INT\n" +
-                    "-1153445279:INT\n" +
-                    "-1715058769:INT\n" +
-                    "-1125169127:INT\n" +
-                    "-1975183723:INT\n", "select least(a, b) from x");
+
+            assertSqlWithTypes(
+                    "least\n" +
+                            "-1148479920:INT\n" +
+                            "-727724771:INT\n" +
+                            "-948263339:INT\n" +
+                            "592859671:INT\n" +
+                            "-847531048:INT\n" +
+                            "-2041844972:INT\n" +
+                            "-1575378703:INT\n" +
+                            "806715481:INT\n" +
+                            "1569490116:INT\n" +
+                            "-409854405:INT\n" +
+                            "1530831067:INT\n" +
+                            "-1532328444:INT\n" +
+                            "-1849627000:INT\n" +
+                            "-1432278050:INT\n" +
+                            "-1792928964:INT\n" +
+                            "-1844391305:INT\n" +
+                            "-1153445279:INT\n" +
+                            "-1715058769:INT\n" +
+                            "-1125169127:INT\n" +
+                            "-1975183723:INT\n",
+                    "select least(a, b) from x"
+            );
+        });
+    }
+
+    @Test
+    public void testMultiLeastFunctionInSingleQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (timestamp TIMESTAMP, symbol SYMBOL, price DOUBLE, amount DOUBLE) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute(
+                    "INSERT INTO x VALUES " +
+                            "('2021-10-05T11:31:35.878Z', 'AAPL', 245, 123.4), " +
+                            "('2021-10-05T12:31:35.878Z', 'AAPL', 245, 123.3), " +
+                            "('2021-10-05T13:31:35.878Z', 'AAPL', 250, 123.1), " +
+                            "('2021-10-05T14:31:35.878Z', 'AAPL', 250, 123.0);"
+            );
+
+            assertQuery(
+                    "least\tleast1\n" +
+                            "245.0\t123.2\n" +
+                            "245.0\t123.2\n" +
+                            "247.0\t123.1\n" +
+                            "247.0\t123.0\n",
+                    "select least(price, 247), least(amount, 123.2) from x"
+            );
         });
     }
 

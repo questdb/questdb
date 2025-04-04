@@ -869,7 +869,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
         }
     }
 
-    protected void assertTableSize(int expected) {
+    protected void assertTableSize(int expected) throws Exception {
         try (TableReader reader = getReader("plug")) {
             TestUtils.assertEventually(() -> {
                 drainWalQueue();

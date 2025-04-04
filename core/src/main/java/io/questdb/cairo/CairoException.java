@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.std.Files;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Os;
 import io.questdb.std.ThreadLocal;
@@ -48,6 +49,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static final int PARTITION_MANIPULATION_RECOVERABLE = METADATA_VALIDATION_RECOVERABLE - 1;
     public static final int TABLE_DOES_NOT_EXIST = PARTITION_MANIPULATION_RECOVERABLE - 1;
     public static final int MAT_VIEW_DOES_NOT_EXIST = TABLE_DOES_NOT_EXIST - 1;
+    public static final int TXN_BLOCK_APPLY_FAILED = MAT_VIEW_DOES_NOT_EXIST - 1;
     public static final int NON_CRITICAL = -1;
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
@@ -57,6 +59,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     private boolean authorizationError = false;
     private boolean cacheable;
     private boolean cancellation; // when query is explicitly cancelled by user
+    private boolean housekeeping;
     private boolean interruption; // used when a query times out
     private int messagePosition;
     private boolean outOfMemory;
@@ -88,7 +91,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public static CairoException duplicateColumn(CharSequence column, CharSequence columnAlias) {
-        CairoException exception = critical(METADATA_VALIDATION).put("Duplicate column [name=").put(column);
+        CairoException exception = critical(METADATA_VALIDATION).put("duplicate column [name=").put(column);
         if (columnAlias != null) {
             exception.put(", alias=").put(columnAlias);
         }
@@ -104,12 +107,8 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return nonCritical().put("entity is disabled [name=").put(entityName).put(']');
     }
 
-    public static boolean errnoPathDoesNotExist(int errno) {
-        return errno == ERRNO_FILE_DOES_NOT_EXIST || (Os.type == Os.WINDOWS && errno == ERRNO_FILE_DOES_NOT_EXIST_WIN);
-    }
-
-    public static boolean errnoReadPathDoesNotExist(int errno) {
-        return errnoPathDoesNotExist(errno) || (Os.type == Os.WINDOWS && errno == ERRNO_ACCESS_DENIED_WIN);
+    public static CairoException fileNotFound() {
+        return instance(Os.errno());
     }
 
     public static CairoException invalidMetadataRecoverable(@NotNull CharSequence msg, @NotNull CharSequence columnName) {
@@ -167,8 +166,14 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
                 .put(']');
     }
 
-    public boolean errnoReadPathDoesNotExist() {
-        return errnoReadPathDoesNotExist(errno);
+    public static CairoException txnApplyBlockError(TableToken tableToken) {
+        return critical(TXN_BLOCK_APPLY_FAILED)
+                .put("sorting transaction block failed, need to be re-run in 1 by 1 apply mode [dirName=").put(tableToken.getDirName())
+                .put(", tableName=").put(tableToken.getTableName()).put(']');
+    }
+
+    public boolean errnoFileCannotRead() {
+        return Files.errnoFileCannotRead(errno);
     }
 
     public int getErrno() {
@@ -212,6 +217,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return authorizationError;
     }
 
+    public boolean isBlockApplyError() {
+        return errno == TXN_BLOCK_APPLY_FAILED;
+    }
+
     public boolean isCacheable() {
         return cacheable;
     }
@@ -224,8 +233,16 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return errno != NON_CRITICAL && errno != PARTITION_MANIPULATION_RECOVERABLE && errno != METADATA_VALIDATION_RECOVERABLE;
     }
 
+    public boolean isHousekeeping() {
+        return housekeeping;
+    }
+
     public boolean isInterruption() {
         return interruption;
+    }
+
+    public boolean isMetadataValidation() {
+        return errno == METADATA_VALIDATION || errno == METADATA_VALIDATION_RECOVERABLE;
     }
 
     public boolean isOutOfMemory() {
@@ -305,6 +322,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return this;
     }
 
+    public void setHousekeeping(boolean housekeeping) {
+        this.housekeeping = housekeeping;
+    }
+
     public CairoException setInterruption(boolean interruption) {
         this.interruption = interruption;
         return this;
@@ -362,5 +383,6 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         authorizationError = false;
         messagePosition = 0;
         outOfMemory = false;
+        housekeeping = false;
     }
 }
