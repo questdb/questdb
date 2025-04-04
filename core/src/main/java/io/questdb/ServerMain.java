@@ -79,9 +79,9 @@ public class ServerMain implements Closeable {
     protected IPGWireServer pgWireServer;
     private FileWatcher fileWatcher;
     private HttpServer httpServer;
+    private Thread hydrateMetadataThread;
     private boolean initialized;
     private WorkerPoolManager workerPoolManager;
-    private Thread hydrateMetadataThread;
 
     public ServerMain(String... args) {
         this(new Bootstrap(args));
@@ -384,6 +384,8 @@ public class ServerMain implements Closeable {
                 }
             }
         };
+
+        engine.buildMatViewGraph();
 
         if (matViewEnabled && !isReadOnly && config.getMatViewRefreshPoolConfiguration().isEnabled()) {
             // create dedicated worker pool for materialized view refresh

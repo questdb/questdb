@@ -36,7 +36,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -44,9 +43,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.TelemetrySystemEvent.*;
 
-public class MatViewRefreshState implements QuietCloseable {
+/**
+ * Mat view refresh state serves the purpose of synchronizing and coordinating
+ * {@link MatViewRefreshJob}s.
+ */
+public class MatViewState implements ReadableMatViewState, QuietCloseable {
     public static final String MAT_VIEW_STATE_FILE_NAME = "_mv.s";
     public static final int MAT_VIEW_STATE_FORMAT_MSG_TYPE = 0;
+    public static final int MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE = 1;
 
     // used to avoid concurrent refresh runs
     private final AtomicBoolean latch = new AtomicBoolean(false);
@@ -62,54 +66,70 @@ public class MatViewRefreshState implements QuietCloseable {
     private long recordRowCopierMetadataVersion;
     private RecordToRowCopier recordToRowCopier;
 
-    public MatViewRefreshState(
+    public MatViewState(
             @NotNull MatViewDefinition viewDefinition,
-            boolean invalid,
             MatViewTelemetryFacade telemetryFacade
     ) {
         this.viewDefinition = viewDefinition;
         this.telemetryFacade = telemetryFacade;
-        this.invalid = invalid;
     }
 
     // refreshState can be null, in this case "default" record will be written
-    public static void append(@Nullable MatViewRefreshState refreshState, @NotNull BlockFileWriter writer) {
+    public static void append(@Nullable ReadableMatViewState refreshState, @NotNull BlockFileWriter writer) {
         final AppendableBlock block = writer.append();
         append(refreshState, block);
         block.commit(MAT_VIEW_STATE_FORMAT_MSG_TYPE);
+        final AppendableBlock blockTs = writer.append();
+        appendTs(refreshState, blockTs);
+        blockTs.commit(MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE);
         writer.commit();
     }
 
-    public static void append(@Nullable MatViewRefreshState refreshState, @NotNull AppendableBlock block) {
+    public static void append(@Nullable ReadableMatViewState refreshState, @NotNull AppendableBlock block) {
         if (refreshState == null) {
             block.putBool(false);
-            block.putLong(-1);
+            block.putLong(-1L);
             block.putStr(null);
             return;
         }
         block.putBool(refreshState.isInvalid());
-        block.putLong(refreshState.lastRefreshBaseTxn);
+        block.putLong(refreshState.getLastRefreshBaseTxn());
         block.putStr(refreshState.getInvalidationReason());
     }
 
-    public static void readFrom(@NotNull BlockFileReader reader, @NotNull MatViewRefreshState refreshState) {
-        final BlockFileReader.BlockCursor cursor = reader.getCursor();
-        // Iterate through the block until we find the one we recognize.
-        while (cursor.hasNext()) {
-            final ReadableBlock block = cursor.next();
-            if (block.type() != MAT_VIEW_STATE_FORMAT_MSG_TYPE) {
-                // Unknown block, skip.
-                continue;
-            }
-            refreshState.invalid = block.getBool(0);
-            refreshState.lastRefreshBaseTxn = block.getLong(Byte.BYTES);
-            refreshState.invalidationReason = Chars.toString(block.getStr(Long.BYTES + Byte.BYTES));
+    public static void appendTs(@Nullable ReadableMatViewState refreshState, @NotNull AppendableBlock block) {
+        if (refreshState == null) {
+            block.putLong(Numbers.LONG_NULL);
             return;
         }
-        final TableToken matViewToken = refreshState.getViewDefinition().getMatViewToken();
-        throw CairoException.critical(0).put("cannot read materialized view state, block not found [view=")
-                .put(matViewToken.getTableName())
-                .put(']');
+        block.putLong(refreshState.getLastRefreshTimestamp());
+    }
+
+    public static void readFrom(@NotNull BlockFileReader reader, @NotNull MatViewState refreshState) {
+        boolean matViewStateBlockFound = false;
+        final BlockFileReader.BlockCursor cursor = reader.getCursor();
+        while (cursor.hasNext()) {
+            final ReadableBlock block = cursor.next();
+            if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_MSG_TYPE) {
+                matViewStateBlockFound = true;
+                refreshState.invalid = block.getBool(0);
+                refreshState.lastRefreshBaseTxn = block.getLong(Byte.BYTES);
+                refreshState.invalidationReason = Chars.toString(block.getStr(Long.BYTES + Byte.BYTES));
+                refreshState.lastRefreshTimestamp = Numbers.LONG_NULL;
+                // keep going, because V2 block might follow
+                continue;
+            }
+            if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE) {
+                refreshState.lastRefreshTimestamp = block.getLong(0);
+                return;
+            }
+        }
+        if (!matViewStateBlockFound) {
+            final TableToken matViewToken = refreshState.getViewDefinition().getMatViewToken();
+            throw CairoException.critical(0).put("cannot read materialized view state, block not found [view=")
+                    .put(matViewToken.getTableName())
+                    .put(']');
+        }
     }
 
     public RecordCursorFactory acquireRecordFactory() {
@@ -125,14 +145,17 @@ public class MatViewRefreshState implements QuietCloseable {
     }
 
     @Nullable
+    @Override
     public String getInvalidationReason() {
         return invalidationReason;
     }
 
+    @Override
     public long getLastRefreshBaseTxn() {
         return lastRefreshBaseTxn;
     }
 
+    @Override
     public long getLastRefreshTimestamp() {
         return lastRefreshTimestamp;
     }
@@ -157,6 +180,7 @@ public class MatViewRefreshState implements QuietCloseable {
         return dropped;
     }
 
+    @Override
     public boolean isInvalid() {
         return invalid;
     }
@@ -174,7 +198,7 @@ public class MatViewRefreshState implements QuietCloseable {
         telemetryFacade.store(MAT_VIEW_DROP, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, null, 0);
     }
 
-    public void markAsInvalid(@NotNull BlockFileWriter blockFileWriter, @NotNull Path dbRoot, @Nullable String invalidationReason) {
+    public void markAsInvalid(@Nullable String invalidationReason) {
         final boolean wasValid = !invalid;
         final boolean invalidationReasonChanged = Chars.compare(this.invalidationReason, invalidationReason) != 0;
         if (invalidationReasonChanged) {
@@ -182,7 +206,6 @@ public class MatViewRefreshState implements QuietCloseable {
         }
         this.invalid = true;
         if (wasValid || invalidationReasonChanged) {
-            updateInvalidationStatus(blockFileWriter, dbRoot);
             telemetryFacade.store(MAT_VIEW_INVALIDATE, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, invalidationReason, 0);
         }
     }
@@ -191,20 +214,16 @@ public class MatViewRefreshState implements QuietCloseable {
         pendingInvalidation = true;
     }
 
-    public void markAsValid(@NotNull BlockFileWriter blockFileWriter, @NotNull Path dbRoot) {
-        boolean wasInvalid = invalid;
+    public void markAsValid() {
         this.invalid = false;
         this.pendingInvalidation = false;
         this.invalidationReason = null;
-        if (wasInvalid) {
-            updateInvalidationStatus(blockFileWriter, dbRoot);
-        }
     }
 
-    public void refreshFail(@NotNull BlockFileWriter blockFileWriter, @NotNull Path dbRoot, long refreshTimestamp, String errorMessage) {
+    public void refreshFail(long refreshTimestamp, String errorMessage) {
         assert latch.get();
-        markAsInvalid(blockFileWriter, dbRoot, errorMessage);
         this.lastRefreshTimestamp = refreshTimestamp;
+        markAsInvalid(errorMessage);
         telemetryFacade.store(MAT_VIEW_REFRESH_FAIL, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, errorMessage, 0);
     }
 
@@ -255,26 +274,7 @@ public class MatViewRefreshState implements QuietCloseable {
         }
     }
 
-    public void writeLastRefreshBaseTableTxn(@NotNull BlockFileWriter blockFileWriter, @NotNull Path dbRoot, long txn) {
-        if (lastRefreshBaseTxn != txn) {
-            lastRefreshBaseTxn = txn;
-            dbRoot
-                    .concat(getViewDefinition().getMatViewToken())
-                    .concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
-            try (blockFileWriter) {
-                blockFileWriter.of(dbRoot.$());
-                MatViewRefreshState.append(this, blockFileWriter);
-            }
-        }
-    }
-
-    private void updateInvalidationStatus(@NotNull BlockFileWriter blockFileWriter, @NotNull Path dbRoot) {
-        dbRoot
-                .concat(getViewDefinition().getMatViewToken())
-                .concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
-        try (blockFileWriter) {
-            blockFileWriter.of(dbRoot.$());
-            MatViewRefreshState.append(this, blockFileWriter);
-        }
+    public void setLastRefreshBaseTableTxn(long txn) {
+        lastRefreshBaseTxn = txn;
     }
 }

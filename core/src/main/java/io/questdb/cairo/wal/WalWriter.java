@@ -413,9 +413,14 @@ public class WalWriter implements TableWriterAPI {
         return segmentRowCount > currentTxnStartRowNum;
     }
 
-    public void invalidate(boolean invalid, @Nullable CharSequence invalidationReason) {
+    public void invalidate(
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            boolean invalid,
+            @Nullable CharSequence invalidationReason
+    ) {
         try {
-            lastSegmentTxn = events.invalidate(invalid, invalidationReason);
+            lastSegmentTxn = events.invalidate(lastRefreshBaseTxn, lastRefreshTimestamp, invalid, invalidationReason);
             getSequencerTxn();
         } catch (Throwable th) {
             rollback();

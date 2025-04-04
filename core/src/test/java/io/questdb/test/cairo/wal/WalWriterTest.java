@@ -43,6 +43,7 @@ import io.questdb.cairo.wal.WalEventCursor;
 import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalTxnType;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlCompiler;
@@ -1593,41 +1594,159 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExtractLastRefreshBaseTableTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testExtractLastRefreshBaseTableTxn";
+            TableToken tableToken;
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("a", ColumnType.BYTE)
+                    .col("b", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal();
+            tableToken = createTable(model);
+
+            long maxTxn = 3;
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                for (int i = 0; i < maxTxn; i++) {
+                    TableWriter.Row row = walWriter.newRow(0);
+                    row.putByte(0, (byte) i);
+                    row.putSym(1, "sym" + i);
+                    row.append();
+                    walWriter.commit();
+                }
+            }
+
+            try (Path path = new Path();
+                 TransactionLogCursor transactionLogCursor = engine.getTableSequencerAPI().getCursor(tableToken, maxTxn - 1);
+                 WalEventReader walEventReader = new WalEventReader(configuration.getFilesFacade())
+            ) {
+
+                path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+                long txn = WalUtils.getMatViewLastRefreshBaseTxn(path, transactionLogCursor, walEventReader);
+                assertEquals(-1, txn); // incomplete refresh, no commitWithExtra
+            }
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                for (int i = 0; i < maxTxn; i++) {
+                    TableWriter.Row row = walWriter.newRow(0);
+                    row.putByte(0, (byte) i);
+                    row.putSym(1, "sym" + i);
+                    row.append();
+                    walWriter.commitWithExtra(42, 42);
+                }
+            }
+
+            try (Path path = new Path();
+                 TransactionLogCursor transactionLogCursor = engine.getTableSequencerAPI().getCursor(tableToken, 2 * maxTxn - 1);
+                 WalEventReader walEventReader = new WalEventReader(configuration.getFilesFacade())
+            ) {
+
+                path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+                long txn = WalUtils.getMatViewLastRefreshBaseTxn(path, transactionLogCursor, walEventReader);
+                assertEquals(42, txn); // refresh commit
+            }
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                walWriter.invalidate(45, 45, false, "test_invalidate");
+            }
+
+            try (Path path = new Path();
+                 TransactionLogCursor transactionLogCursor = engine.getTableSequencerAPI().getCursor(tableToken, (2 * maxTxn + 1) - 1);
+                 WalEventReader walEventReader = new WalEventReader(configuration.getFilesFacade())
+            ) {
+
+                path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+                long txn = WalUtils.getMatViewLastRefreshBaseTxn(path, transactionLogCursor, walEventReader);
+                assertEquals(-2, txn); // invalidate commit
+            }
+        });
+    }
+
+    @Test
     public void testExtractNewWalEvents() throws Exception {
         assertMemoryLeak(() -> {
-            String expected = "a\tb\n" +
-                    "0\tsym0\n" +
-                    "1\tsym1\n" +
-                    "2\tsym2\n" +
-                    "3\tsym3\n" +
-                    "4\tsym4\n" +
-                    "5\tsym5\n" +
-                    "6\tsym6\n" +
-                    "7\tsym7\n" +
-                    "8\tsym8\n" +
-                    "9\tsym9\n";
-            // old format only
-            final String tableName = "testExtractNoNewWalEvents";
+            final String tableName = "testExtractNewWalEvents";
+            TableToken tableToken;
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("a", ColumnType.BYTE)
+                    .col("b", ColumnType.SYMBOL)
+                    .timestamp("ts")
+                    .wal();
+            tableToken = createTable(model);
             final long refreshTxn = 42;
-            TableToken tableToken = createPopulateTable(tableName, refreshTxn, false);
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                walWriter.invalidate(0, 0, true, "test_invalidate0");
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row row = walWriter.newRow(0);
+                    row.putByte(0, (byte) i);
+                    row.putSym(1, "sym" + i);
+                    row.append();
+                    if (i % 2 == 0) {
+                        walWriter.commit();
+                    } else {
+                        walWriter.commitWithExtra(refreshTxn + i, i);
+                    }
+                }
+                walWriter.invalidate(1, 1, false, "test_invalidate1");
+            }
 
-            checkWalEvents(tableToken, refreshTxn, false);
+            try (Path path = new Path();
+                 WalEventReader walEventReader = new WalEventReader(configuration.getFilesFacade());
+                 TransactionLogCursor transactionLogCursor = engine.getTableSequencerAPI().getCursor(tableToken, 0)) {
+                path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+                int pathLen = path.size();
+                int i = 0;
+                while (transactionLogCursor.hasNext()) {
+                    final int walId = transactionLogCursor.getWalId();
+                    final int segmentId = transactionLogCursor.getSegmentId();
+                    final int segmentTxn = transactionLogCursor.getSegmentTxn();
+                    path.trimTo(pathLen).concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+                    WalEventCursor walEventCursor = walEventReader.of(path, segmentTxn);
+                    if (walEventCursor.getType() == WalTxnType.MAT_VIEW_INVALIDATE) {
+                        WalEventCursor.InvalidationInfo info = walEventCursor.getInvalidationInfo();
+                        if (i == 0) {
+                            assertTrue(info.isInvalid());
+                            assertEquals("test_invalidate0", info.getInvalidationReason().toString());
+                            assertEquals(0, info.getLastRefreshBaseTableTxn());
+                            assertEquals(0, info.getLastRefreshTimestamp());
+                        } else {
+                            assertFalse(info.isInvalid());
+                            assertEquals("test_invalidate1", info.getInvalidationReason().toString());
+                            assertEquals(1, info.getLastRefreshBaseTableTxn());
+                            assertEquals(1, info.getLastRefreshTimestamp());
+                        }
+                    }
+                    if (WalTxnType.isDataType(walEventCursor.getType())) {
+                        WalEventCursor.DataInfo info = walEventCursor.getDataInfo();
+                        assertEquals(segmentTxn - 1, info.getStartRowID());
+                        assertEquals(segmentTxn, info.getEndRowID());
+                    }
+                    if (walEventCursor.getType() == WalTxnType.MAT_VIEW_DATA) {
+                        WalEventCursor.DataInfoExt info = walEventCursor.getDataInfoExt();
+                        assertEquals(segmentTxn - 1, info.getStartRowID());
+                        assertEquals(segmentTxn, info.getEndRowID());
+                        assertEquals(refreshTxn + segmentTxn - 1, info.getLastRefreshBaseTableTxn());
+                        assertEquals(segmentTxn - 1, info.getLastRefreshTimestamp());
+                    }
+                    i++;
+                }
+            }
 
             drainWalQueue();
-
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertSql(expected, "select a,b from " + tableName);
-
-            // mix with new format
-            final String tableName1 = "testExtractNewWalEvents";
-            TableToken tableToken1 = createPopulateTable(tableName1, refreshTxn, true);
-
-            checkWalEvents(tableToken1, refreshTxn, true);
-
-            drainWalQueue();
-
-            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken1));
-            assertSql(expected, "select a,b from " + tableName1);
+            assertSql(
+                    "a\tb\n" +
+                            "0\tsym0\n" +
+                            "1\tsym1\n" +
+                            "2\tsym2\n" +
+                            "3\tsym3\n" +
+                            "4\tsym4\n" +
+                            "5\tsym5\n" +
+                            "6\tsym6\n" +
+                            "7\tsym7\n" +
+                            "8\tsym8\n" +
+                            "9\tsym9\n", "select a,b from " + tableName
+            );
         });
     }
 
@@ -1666,19 +1785,19 @@ public class WalWriterTest extends AbstractCairoTest {
                     .col("b", ColumnType.SYMBOL)
                     .timestamp("ts").noWal();
             TableToken tableToken = createTable(model);
-            TableToken _unused = createTable(copyModel);
+            createTable(copyModel);
 
             final int rowsToInsertTotal = 100;
             Rnd rnd = new Rnd();
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
                     WalWriter walWriter = engine.getWalWriter(tableToken);
-                    TableWriter copyWriter = getWriter(tableCopyName);
+                    TableWriter copyWriter = getWriter(tableCopyName)
             ) {
                 for (int i = 0; i < rowsToInsertTotal; i++) {
                     boolean invalidate = rnd.nextBoolean();
                     if (invalidate) {
-                        walWriter.invalidate(invalidate, "Invalidating " + i);
+                        walWriter.invalidate(i, i, invalidate, "Invalidating " + i);
                     }
                     String symbol = rnd.nextInt(10) == 5 ? null : rnd.nextString(rnd.nextInt(9) + 1);
                     int v = rnd.nextInt(rowsToInsertTotal);
@@ -3737,38 +3856,6 @@ public class WalWriterTest extends AbstractCairoTest {
         }
     }
 
-    private TableToken createPopulateTable(String tableName, long refreshTxn, boolean newFormat) {
-        TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
-                .col("a", ColumnType.BYTE)
-                .col("b", ColumnType.SYMBOL)
-                .timestamp("ts")
-                .wal();
-
-        TableToken tableToken = createTable(model);
-        try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
-            for (int i = 0; i < 10; i++) {
-                TableWriter.Row row = walWriter.newRow(0);
-                row.putByte(0, (byte) i);
-                row.putSym(1, "sym" + i);
-                row.append();
-
-                if (i % 2 == 0) {
-                    walWriter.commit();
-                } else {
-                    if (newFormat) {
-                        walWriter.commitWithExtra(refreshTxn + i, i);
-                    } else {
-                        walWriter.commit();
-                    }
-                }
-            }
-            if (newFormat) {
-                walWriter.invalidate(true, "test_invalidate");
-            }
-        }
-        return tableToken;
-    }
-
     private void generateRow(WalWriter writer, Rnd threadRnd, long timestamp) {
         var row = writer.newRow(timestamp);
         var meta = writer.getMetadata();
@@ -3861,8 +3948,10 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertSql("count\tmin\tmax\n" +
-                    totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - tsStep) + "\n", "select count(*), min(ts), max(ts) from sm");
+            assertSql(
+                    "count\tmin\tmax\n" +
+                            totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - tsStep) + "\n", "select count(*), min(ts), max(ts) from sm"
+            );
             assertSqlCursors("sm", "select * from sm order by id");
             assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(s as int)");
             assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(v as int)");
