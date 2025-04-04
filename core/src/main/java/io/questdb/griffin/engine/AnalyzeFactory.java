@@ -337,6 +337,7 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
         public AnalyzeRecordCursor() {
         }
 
+        //
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
             baseCursor.calculateSize(circuitBreaker, counter);
