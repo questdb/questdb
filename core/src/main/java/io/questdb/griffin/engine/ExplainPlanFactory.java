@@ -152,12 +152,11 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
             }
 
             planSink.of(base, executionContext);
-
             rowCount = planSink.getLineCount();
+
             if (baseCursor != null) {
                 baseCursor.close();
             }
-           
             toTop();
         }
 
