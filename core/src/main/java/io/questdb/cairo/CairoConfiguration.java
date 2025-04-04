@@ -721,6 +721,8 @@ public interface CairoConfiguration {
      */
     boolean mangleTableDirNames();
 
+    int maxArrayElementCount();
+
     default void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
     }
 

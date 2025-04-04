@@ -94,7 +94,11 @@ public class TableStructureAdapter implements TableStructure {
         if (columnIndex == getTimestampIndex()) {
             return ColumnType.TIMESTAMP;
         }
-        return defaultColumnTypes.DEFAULT_COLUMN_TYPES[entities.get(columnIndex).getType()];
+        int columnType = defaultColumnTypes.DEFAULT_COLUMN_TYPES[entities.get(columnIndex).getType()];
+        if (columnType == ColumnType.ARRAY) {
+            columnType = entities.get(columnIndex).getArray().getType();
+        }
+        return columnType;
     }
 
     @Override

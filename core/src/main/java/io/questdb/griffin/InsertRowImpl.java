@@ -31,9 +31,11 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 
-public final class InsertRowImpl {
+public final class InsertRowImpl implements QuietCloseable {
     private final RecordToRowCopier copier;
     private final RowFactory rowFactory;
     private final Function timestampFunction;
@@ -71,6 +73,12 @@ public final class InsertRowImpl {
             row.cancel();
             throw e;
         }
+    }
+
+    @Override
+    public void close() {
+        Misc.free(timestampFunction);
+        Misc.free(virtualRecord);
     }
 
     public void initContext(SqlExecutionContext executionContext) throws SqlException {

@@ -84,6 +84,7 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
                     || i == ColumnType.REGPROCEDURE
                     || i == ColumnType.ARRAY_STRING
                     || i == ColumnType.PARAMETER
+                    || i == ColumnType.ARRAY
             ) {
                 continue;
             }

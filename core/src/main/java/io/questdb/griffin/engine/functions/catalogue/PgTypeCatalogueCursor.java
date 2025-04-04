@@ -31,6 +31,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.std.Numbers;
 
 import static io.questdb.cutlass.pgwire.PGOids.*;
@@ -59,9 +60,14 @@ class PgTypeCatalogueCursor implements NoRandomAccessRecordCursor {
     @Override
     public boolean hasNext() {
         if (++row < rowCount) {
-            intValues[0] = PG_TYPE_OIDS.get(row);
+            int pgOid = PG_TYPE_OIDS.get(row);
+            int arrayOid = PGOids.pgToArrayOid(pgOid);
+            int elemOid = PGOids.pgArrayToElementType(pgOid);
+
+            intValues[0] = pgOid;
+            intValues[3] = arrayOid;
             intValues[9] = Numbers.INT_NULL;
-            intValues[10] = 0;
+            intValues[10] = elemOid;
             intValues[11] = 0;
             intValues[12] = 0;
             intValues[13] = 0;
@@ -142,30 +148,30 @@ class PgTypeCatalogueCursor implements NoRandomAccessRecordCursor {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("oid", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("typname", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("typbasetype", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("typarray", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("typnamespace", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("typnotnull", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("typtypmod", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("typtype", ColumnType.CHAR));
-        metadata.add(new TableColumnMetadata("typcategory", ColumnType.CHAR));
-        metadata.add(new TableColumnMetadata("typrelid", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("typelem", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("typreceive", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("typdelim", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("typinput", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("typowner", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("typlen", ColumnType.SHORT));
-        metadata.add(new TableColumnMetadata("typbyval", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("typispreferred", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("typisdefined", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("typalign", ColumnType.CHAR));
-        metadata.add(new TableColumnMetadata("typstorage", ColumnType.CHAR));
-        metadata.add(new TableColumnMetadata("typndims", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("typcollation", ColumnType.INT));
-        metadata.add(new TableColumnMetadata("typdefault", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("oid", ColumnType.INT));  // 0
+        metadata.add(new TableColumnMetadata("typname", ColumnType.STRING));  // 1
+        metadata.add(new TableColumnMetadata("typbasetype", ColumnType.INT)); // 2
+        metadata.add(new TableColumnMetadata("typarray", ColumnType.INT)); // 3
+        metadata.add(new TableColumnMetadata("typnamespace", ColumnType.INT)); // 4
+        metadata.add(new TableColumnMetadata("typnotnull", ColumnType.BOOLEAN)); // 5
+        metadata.add(new TableColumnMetadata("typtypmod", ColumnType.INT)); // 6
+        metadata.add(new TableColumnMetadata("typtype", ColumnType.CHAR)); // 7
+        metadata.add(new TableColumnMetadata("typcategory", ColumnType.CHAR)); // 8
+        metadata.add(new TableColumnMetadata("typrelid", ColumnType.INT)); // 9
+        metadata.add(new TableColumnMetadata("typelem", ColumnType.INT)); // 10
+        metadata.add(new TableColumnMetadata("typreceive", ColumnType.INT)); // 11
+        metadata.add(new TableColumnMetadata("typdelim", ColumnType.INT)); // 12
+        metadata.add(new TableColumnMetadata("typinput", ColumnType.INT)); // 13
+        metadata.add(new TableColumnMetadata("typowner", ColumnType.INT)); // 14
+        metadata.add(new TableColumnMetadata("typlen", ColumnType.SHORT)); // 15
+        metadata.add(new TableColumnMetadata("typbyval", ColumnType.BOOLEAN)); // 16
+        metadata.add(new TableColumnMetadata("typispreferred", ColumnType.BOOLEAN)); // 17
+        metadata.add(new TableColumnMetadata("typisdefined", ColumnType.BOOLEAN)); // 18
+        metadata.add(new TableColumnMetadata("typalign", ColumnType.CHAR)); // 19
+        metadata.add(new TableColumnMetadata("typstorage", ColumnType.CHAR)); // 20
+        metadata.add(new TableColumnMetadata("typndims", ColumnType.INT)); // 21
+        metadata.add(new TableColumnMetadata("typcollation", ColumnType.INT)); // 22
+        metadata.add(new TableColumnMetadata("typdefault", ColumnType.STRING)); // 23
 
         METADATA = metadata;
     }

@@ -486,6 +486,55 @@ inline int64_t merge_shuffle_string_column_from_many_addresses(
     return dstVarOffset;
 }
 
+inline int64_t merge_shuffle_array_column_from_many_addresses(
+        const char **src_primary,
+        const int64_t **src_secondary,
+        char *dst_primary,
+        int64_t *dst_secondary,
+        const index_l *merge_index,
+        int64_t row_count,
+        int64_t dst_var_offset,
+        uint16_t segment_bits,
+        int64_t dst_data_size
+) {
+    // mask to extract segment ID from merge index
+    const uint64_t segment_mask = (1ULL << segment_bits) - 1;
+    // mask for the 48-bit offset portion of the first 64 bits
+    constexpr uint64_t offset_mask = (1ULL << 48) - 1;
+    // mask for the size bits in second word (lower 32 bits)
+    const uint64_t size_mask = 0xFFFFFFFF;
+
+    for (int64_t l = 0; l < row_count; l++) {
+        auto index = merge_index[l].i;
+        auto row_index = index >> segment_bits;
+        auto src_index = index & segment_mask;
+
+        // Arrays have 2 aux words per row:
+        // 1st words = 48 offset bits + 16 reserved bits
+        // 2nd words = 32 size bits + 32 reserved bits
+        // NOTE: We do not preserve reserved bits!
+        // If you're adding functionality that uses these bits, you have to update this code
+        // to handle them appropriately!
+
+        const int64_t src_offset_word = src_secondary[src_index][row_index * 2];
+        const int64_t src_size_word = src_secondary[src_index][row_index * 2 + 1];
+
+        auto src_offset = src_offset_word & offset_mask;
+        auto src_size = src_size_word & size_mask;
+
+        dst_secondary[l * 2] = dst_var_offset;
+        dst_secondary[l * 2 + 1] = src_size;
+
+        // only copy data if the array is not NULL (size > 0)
+        if (src_size > 0) {
+            assertm(dst_var_offset + src_size <= dst_data_size, "destination array buffer is too small");
+            __MEMCPY(dst_primary + dst_var_offset, src_primary[src_index] + src_offset, src_size);
+            dst_var_offset += src_size;
+        }
+    }
+    return dst_var_offset;
+}
+
 int64_t merge_shuffle_varchar_column_from_many_addresses(
         const char **src_primary,
         const int64_t **src_secondary,

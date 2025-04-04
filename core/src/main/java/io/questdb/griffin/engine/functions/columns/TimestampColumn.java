@@ -25,18 +25,18 @@
 package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
-public class TimestampColumn extends TimestampFunction implements ScalarFunction {
+public class TimestampColumn extends TimestampFunction implements Function {
     private static final ObjList<TimestampColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
 
-    public TimestampColumn(int columnIndex) {
+    private TimestampColumn(int columnIndex) {
         this.columnIndex = columnIndex;
     }
 
