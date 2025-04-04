@@ -33,7 +33,7 @@ use crate::error::{CoreErrorExt, CoreResult};
 ///
 /// The `varchar` column type is implemented using two files:
 /// - **Aux file:** Contains fixed-size records—one per row—that store metadata about each UTF-8 string.
-///    Strings up to 9 bytes are also inlined.
+///   Strings up to 9 bytes are also inlined.
 /// - **Data file:** Stores the actual UTF-8 string bytes for values that are too long to be stored directly in the aux record
 ///   for any strings larger than 9 bytes.
 ///
