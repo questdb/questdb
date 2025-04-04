@@ -6496,33 +6496,34 @@ public class SqlOptimiser implements Mutable {
 
     /**
      * Rewrite PIVOT statements.
-     * SELECT *
-     * FROM cities
-     * PIVOT (
-     * sum(population)
-     * FOR
-     * year IN (2000, 2010, 2020)
-     * GROUP BY country
-     * );
-     * -- becomes
+     * <p>
+     * PIVOT is a GROUP BY followed by a transposition, shifting the rows into columns.
+     * For a query like this:
+     * <pre>
+     * cities PIVOT ( sum(population) FOR year IN (2000, 2010, 2020) GROUP BY country );
+     * </pre>
+     * We will produce a rewrite similar to:
+     * <pre>
      * SELECT
-     * country,
-     * SUM(CASE WHEN year = 2000 THEN population ELSE 0 END) AS 2000
-     * SUM(CASE WHEN year = 2010 THEN population ELSE 0 END) AS 2010
-     * SUM(CASE WHEN year = 2020 THEN population ELSE 0 END) AS 2020
-     * FROM cities
+     *     country,
+     *     SUM(CASE WHEN year = 2000 THEN sum END) AS "2000"
+     *     SUM(CASE WHEN year = 2010 THEN sum END) AS "2010"
+     *     SUM(CASE WHEN year = 2020 THEN sum END) AS "2020"
+     * FROM (
+     *     SELECT country, year, sum(population)
+     *     FROM cities
+     *     WHERE year IN (2000, 2010, 2020)
+     *     GROUP BY country, year
+     * )
      * GROUP BY country;
+     * </pre>
+     * The reason for the inner group by is that aggregates such as `first` and `last` return their values for
+     * any given row. Therefore, if you just have the outer query, the `CASE` will give the first row value,
+     * whether it matches the filter or not, which will mean nulls.
+     * <p>
+     * By using the subquery, we ensure that the data is correctly filtered and grouped before transposition.
      */
-    // target:
-    // select-choose country, SUM(switch(year,2000,population,0)) population_2000, SUM(switch(year,2010,population,0)) population_2010, SUM(switch(year,2020,population,0)) population_2020 from (cities group by country)
-    // ast -> sum (function), paramCount 1
-    // rhs is -> switch, (function), paramCount 4
-    // arg0 -> '0', type 2
-    // arg1 -> 'population', type 4
-    // arg2 -> '2000', type 2
-    // arg3 -> 'year', type 4
     QueryModel rewritePivot(QueryModel model) throws SqlException {
-
         if (model == null) {
             return null;
         }
