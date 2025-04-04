@@ -45,7 +45,7 @@ pub const AUX_FILE_EXTENSION: &str = "i";
 pub trait ColumnDriver {
     /// Returns the data and aux file sizes for the given row count.
     /// If a column is a simple type such as `INT` or `DOUBLE`, the aux size will be `None`.
-    fn col_sizes_for_size(
+    fn col_sizes_for_row_count(
         &self,
         col: &MappedColumn,
         row_count: u64,

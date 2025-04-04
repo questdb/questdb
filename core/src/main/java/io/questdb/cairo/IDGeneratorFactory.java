@@ -69,6 +69,12 @@ public class IDGeneratorFactory {
         }
 
         @Override
+        public long getCurrentId() {
+            assert uniqueIdMem != 0;
+            return Unsafe.getUnsafe().getLong(uniqueIdMem);
+        }
+
+        @Override
         public void open(Path path) {
             close();
             if (path == null) {
@@ -94,11 +100,6 @@ public class IDGeneratorFactory {
         public void reset() {
             Unsafe.getUnsafe().putLong(uniqueIdMem, 0);
         }
-
-        long getCurrentId() {
-            assert uniqueIdMem != 0;
-            return Unsafe.getUnsafe().getLong(uniqueIdMem);
-        }
     }
 
     static class NoSyncIDGenerator extends AbstractIDGenerator {
@@ -119,9 +120,9 @@ public class IDGeneratorFactory {
     }
 
     static class SyncIDGenerator extends AbstractIDGenerator {
+        private final int step;
         private AtomicLong base;
         private long end;
-        private final int step;
 
         public SyncIDGenerator(CairoConfiguration configuration, String uniqueIdFileName, int step) {
             super(configuration, uniqueIdFileName);
@@ -129,10 +130,8 @@ public class IDGeneratorFactory {
         }
 
         @Override
-        public void open(Path path) {
-            super.open(path);
-            end = getCurrentId();
-            base = new AtomicLong(end);
+        public long getCurrentId() {
+            return base.get();
         }
 
         @Override
@@ -156,6 +155,13 @@ public class IDGeneratorFactory {
                     }
                 }
             }
+        }
+
+        @Override
+        public void open(Path path) {
+            super.open(path);
+            end = super.getCurrentId();
+            base = new AtomicLong(end);
         }
     }
 }
