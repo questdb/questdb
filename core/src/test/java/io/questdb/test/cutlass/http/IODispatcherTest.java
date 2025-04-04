@@ -6159,12 +6159,14 @@ public class IODispatcherTest extends AbstractTest {
                                 executionContext
                         );
 
+                        testHttpClient.setKeepConnection(true);
                         testHttpClient.assertGet(
                                 "{\"query\":\"SELECT timestamp, price, lag('timestamp') OVER (ORDER BY timestamp) AS previous_price FROM trades LIMIT 10;\",\"error\":\"inconvertible value: `timestamp` [STRING -> DOUBLE]\",\"position\":0}",
                                 "SELECT timestamp, price, lag('timestamp') OVER (ORDER BY timestamp) AS previous_price FROM trades LIMIT 10;"
                         );
 
-                        // verify that HTTP server is healthy
+                        // verify that HTTP server is healthy, use the same connection
+                        testHttpClient.setKeepConnection(false);
                         testHttpClient.assertGet(
                                 "{\"query\":\"SELECT count() FROM trades;\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
                                 "SELECT count() FROM trades;"
@@ -7523,13 +7525,15 @@ public class IODispatcherTest extends AbstractTest {
                                 executionContext
                         );
 
+                        testHttpClient.setKeepConnection(true);
                         testHttpClient.assertGet(
                                 "/exp",
                                 "{\"query\":\"SELECT timestamp, price, lag('timestamp') OVER (ORDER BY timestamp) AS previous_price FROM trades LIMIT 10;\",\"error\":\"inconvertible value: `timestamp` [STRING -> DOUBLE]\",\"position\":0}",
                                 "SELECT timestamp, price, lag('timestamp') OVER (ORDER BY timestamp) AS previous_price FROM trades LIMIT 10;"
                         );
 
-                        // verify that HTTP server is healthy
+                        // verify that HTTP server is healthy, use the same connection
+                        testHttpClient.setKeepConnection(false);
                         testHttpClient.assertGet(
                                 "/exp",
                                 "\"count\"\r\n" +
