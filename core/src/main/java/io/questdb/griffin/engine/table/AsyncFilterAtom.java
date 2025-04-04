@@ -104,6 +104,12 @@ public class AsyncFilterAtom implements StatefulAtom, Plannable {
         preTouchEnabledOverride = executionContext.isColumnPreTouchEnabledOverride();
     }
 
+    /**
+     * Attempts to acquire a slot for the given worker thread.
+     * On success, a {@link #releaseFilter(int)} call must follow.
+     *
+     * @throws io.questdb.cairo.CairoException when circuit breaker has tripped
+     */
     public int maybeAcquireFilter(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
         if (perWorkerLocks == null) {
             return -1;
