@@ -48,6 +48,7 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 public class SampleByIntervalIteratorBenchmark {
+    private static final int STEP = 1;
     private final FixedOffsetIntervalIterator fixedOffsetIterator = new FixedOffsetIntervalIterator();
     private final TimeZoneIntervalIterator tzIterator = new TimeZoneIntervalIterator();
 
@@ -64,7 +65,7 @@ public class SampleByIntervalIteratorBenchmark {
                     2 * Timestamps.HOUR_MICROS,
                     minTs,
                     maxTs,
-                    1
+                    STEP
             );
             tzIterator.of(
                     sampler,
@@ -72,7 +73,7 @@ public class SampleByIntervalIteratorBenchmark {
                     0,
                     minTs,
                     maxTs,
-                    1
+                    STEP
             );
         } catch (Exception e) {
             throw new RuntimeException(e);
@@ -92,7 +93,7 @@ public class SampleByIntervalIteratorBenchmark {
 
     @Benchmark
     public long testFixedOffsetIterator() {
-        fixedOffsetIterator.toTop(1);
+        fixedOffsetIterator.toTop(STEP);
         long s = 0;
         while (fixedOffsetIterator.next()) {
             s += fixedOffsetIterator.getTimestampLo();
@@ -103,7 +104,7 @@ public class SampleByIntervalIteratorBenchmark {
 
     @Benchmark
     public long testTimeZoneIterator() {
-        tzIterator.toTop(1);
+        tzIterator.toTop(STEP);
         long s = 0;
         while (tzIterator.next()) {
             s += tzIterator.getTimestampLo();
