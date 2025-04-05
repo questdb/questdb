@@ -32,7 +32,9 @@ import org.junit.Test;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -59,7 +61,6 @@ public class TimeZoneRulesMillisTest {
 
         while (epoch < epochDeadline) {
             int y = Dates.getYear(epoch);
-            boolean leap = Dates.isLeapYear(y);
             Instant dt = Instant.ofEpochMilli(epoch);
 
             for (int i = 0, n = zones.size(); i < n; i++) {
@@ -70,7 +71,7 @@ public class TimeZoneRulesMillisTest {
 
                 long expected = zdt.getOffset().getTotalSeconds();
                 // find out how much algo added to datetime itself
-                long offset = rules.getOffset(epoch, y, leap);
+                long offset = rules.getOffset(epoch, y);
 
                 try {
                     Assert.assertEquals(expected, offset / Dates.SECOND_MILLIS);
@@ -135,13 +136,59 @@ public class TimeZoneRulesMillisTest {
         long changed = Dates.toMillis(zdt.getYear(), zdt.getMonthValue(), zdt.getDayOfMonth(), zdt.getHour(), zdt.getMinute()) + zdt.getSecond() * 1000L;
         // add any extra time
         expected += (changed - millis) / 1000;
-        long offset = rules.getOffset(millis, y, Dates.isLeapYear(y));
+        long offset = rules.getOffset(millis, y);
 
         try {
             Assert.assertEquals(expected, offset / 1000);
         } catch (Throwable e) {
             System.out.println(zone.getId() + "; " + zdt + "; " + Dates.toString(millis + offset));
             throw e;
+        }
+    }
+
+    @Test
+    public void testToUtcCompatibility() {
+        Set<String> allZones = ZoneId.getAvailableZoneIds();
+        List<String> zoneList = new ArrayList<>(allZones);
+        Collections.sort(zoneList);
+        List<ZoneId> zones = new ArrayList<>(zoneList.size());
+        List<TimeZoneRulesMillis> zoneRules = new ArrayList<>(zoneList.size());
+
+        for (String z : zoneList) {
+            ZoneId zone = ZoneId.of(z);
+            zones.add(zone);
+            zoneRules.add(new TimeZoneRulesMillis(zone.getRules()));
+        }
+
+        DateTimeFormatter localDateTimeFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'.000Z'");
+        long millis = Dates.toMillis(1900, 1, 1, 0, 0);
+        long epochDeadline = Dates.toMillis(2115, 12, 31, 0, 0);
+
+        while (millis < epochDeadline) {
+            LocalDateTime dt = LocalDateTime.parse(Dates.toString(millis), localDateTimeFormat);
+
+            for (int i = 0, n = zones.size(); i < n; i++) {
+                ZoneId zone = zones.get(i);
+                TimeZoneRulesMillis rules = zoneRules.get(i);
+
+                ZonedDateTime zdt = dt.atZone(zone);
+
+                long expected = zdt.toInstant().toEpochMilli();
+                // find out how much algo added to datetime itself
+                long offset = rules.getLocalOffset(dt.toInstant(ZoneOffset.UTC).toEpochMilli());
+                long actual = millis - offset;
+
+                try {
+                    Assert.assertEquals(expected, actual);
+                } catch (Throwable e) {
+                    System.out.println(zone.getId() + "; " + zdt + "; " + Dates.toString(actual));
+                    System.out.println("e: " + expected + "; a: " + actual);
+                    System.out.println(dt);
+                    System.out.println(Dates.toString(millis));
+                    throw e;
+                }
+            }
+            millis += Dates.DAY_MILLIS;
         }
     }
 }

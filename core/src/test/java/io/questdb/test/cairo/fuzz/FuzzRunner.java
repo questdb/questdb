@@ -494,6 +494,11 @@ public class FuzzRunner {
         return generateTransactions(tableName, rnd, start, end);
     }
 
+    public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd, long start) throws NumericException {
+        long end = start + partitionCount * Timestamps.DAY_MICROS;
+        return generateTransactions(tableName, rnd, start, end);
+    }
+
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd, long start, long end) {
         TableToken tableToken = engine.verifyTableName(tableName);
         try (TableRecordMetadata sequencerMetadata = engine.getLegacyMetadata(tableToken);

@@ -29,6 +29,7 @@ import io.questdb.std.datetime.AbstractTimeZoneRules;
 import java.time.zone.ZoneRules;
 
 public class TimeZoneRulesMillis extends AbstractTimeZoneRules {
+
     public TimeZoneRulesMillis(ZoneRules rules) {
         super(rules, Dates.SECOND_MILLIS);
     }

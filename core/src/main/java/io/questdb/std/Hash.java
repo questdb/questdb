@@ -50,6 +50,10 @@ public final class Hash {
         return seq == null ? -1 : (Chars.hashCode(seq) & 0xFFFFFFF) & max;
     }
 
+    public static int hashInt32(int k) {
+        return (int) hashInt64(k);
+    }
+
     public static long hashInt64(int k) {
         return fmix64(Integer.toUnsignedLong(k));
     }

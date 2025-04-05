@@ -66,12 +66,12 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final Log LOG = LogFactory.getLog(FillRangeRecordCursorFactory.class);
     private final RecordCursorFactory base;
     private final FillRangeRecordCursor cursor;
+    private final ObjList<Function> fillValues;
     private final Function fromFunc;
     private final long samplingInterval;
     private final char samplingIntervalUnit;
     private final int timestampIndex;
     private final Function toFunc;
-    private final ObjList<Function> fillValues;
 
     public FillRangeRecordCursorFactory(
             RecordMetadata metadata,
@@ -138,23 +138,20 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             sink.attr("range").val('(').val(fromFunc).val(',').val(toFunc).val(')');
         }
         sink.attr("stride").val('\'').val(samplingInterval).val(samplingIntervalUnit).val('\'');
-
         // print values omitting the timestamp column
         // since we added an extra artificial null
         sink.attr("values").val('[');
+        final int commaStartIndex = timestampIndex == 0 ? 2 : 1;
         for (int i = 0; i < fillValues.size(); i++) {
             if (i == timestampIndex) {
                 continue;
             }
-
-            sink.val(fillValues.getQuick(i));
-
-            if (i != 0 && i != fillValues.size() - 1) {
+            if (i >= commaStartIndex) {
                 sink.val(',');
             }
+            sink.val(fillValues.getQuick(i));
         }
         sink.val(']');
-
         sink.child(base);
     }
 
@@ -177,13 +174,13 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     private static class FillRangeRecordCursor implements NoRandomAccessRecordCursor {
+        private final ObjList<Function> fillValues;
         private final FillRangeRecord fillingRecord = new FillRangeRecord();
         private final FillRangeTimestampConstant fillingTimestampFunc = new FillRangeTimestampConstant();
         private final Function fromFunc;
         private final int timestampIndex;
         private final TimestampSampler timestampSampler;
         private final Function toFunc;
-        private final ObjList<Function> fillValues;
         private RecordCursor baseCursor;
         private Record baseRecord;
         private boolean gapFilling;

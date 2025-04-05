@@ -2028,7 +2028,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(startPos, "SELECT query expected");
             }
             final QueryModel queryModel = optimiser.optimise((QueryModel) executionModel, executionContext, this);
-            createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser, queryModel);
+            createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
             queryModel.setIsMatView(true);
             compiledQuery.ofSelect(
                     generateSelectWithRetries(queryModel, executionContext, false)
@@ -2506,7 +2506,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
-        long deadline = batchSize;
+        long commitTarget = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
@@ -2514,9 +2514,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
             copier.copy(record, row);
             row.append();
-            if (++rowCount >= deadline) {
+            if (++rowCount >= commitTarget) {
                 writer.ic(o3MaxLag);
-                deadline = rowCount + batchSize;
+                commitTarget = rowCount + batchSize;
             }
         }
         return rowCount;
@@ -2532,7 +2532,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
-        long deadline = batchSize;
+        long commitTarget = batchSize;
         long rowCount = 0;
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {
@@ -2542,9 +2542,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableWriter.Row row = writer.newRow(SqlUtil.parseFloorPartialTimestamp(str, -1, ColumnType.STRING, ColumnType.TIMESTAMP));
             copier.copy(record, row);
             row.append();
-            if (++rowCount >= deadline) {
+            if (++rowCount >= commitTarget) {
                 writer.ic(o3MaxLag);
-                deadline = rowCount + batchSize;
+                commitTarget = rowCount + batchSize;
             }
         }
 

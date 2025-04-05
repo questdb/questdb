@@ -138,6 +138,24 @@ public final class IntervalUtils {
         apply(intervals, lo, hi, period, periodType, count);
     }
 
+    public static int findInterval(LongList intervals, long timestamp) {
+        int left = 0;
+        int right = intervals.size() / 2 - 1;
+        while (left <= right) {
+            int mid = (left + right) >>> 1;
+            long lo = getEncodedPeriodLo(intervals, mid << 1);
+            long hi = getEncodedPeriodHi(intervals, mid << 1);
+            if (lo > timestamp) {
+                right = mid - 1;
+            } else if (hi < timestamp) {
+                left = mid + 1;
+            } else {
+                return mid;
+            }
+        }
+        return -1;
+    }
+
     public static short getEncodedAdjustment(LongList intervals, int index) {
         return Numbers.decodeLowShort(Numbers.decodeHighInt(
                 intervals.getQuick(index + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX)));
@@ -300,8 +318,8 @@ public final class IntervalUtils {
         int right = intervals.size() / 2 - 1;
         while (left <= right) {
             int mid = (left + right) >>> 1;
-            long lo = getEncodedPeriodLo(intervals, mid * 2);
-            long hi = getEncodedPeriodHi(intervals, mid * 2);
+            long lo = getEncodedPeriodLo(intervals, mid << 1);
+            long hi = getEncodedPeriodHi(intervals, mid << 1);
             if (lo > timestamp) {
                 right = mid - 1;
             } else if (hi < timestamp) {
