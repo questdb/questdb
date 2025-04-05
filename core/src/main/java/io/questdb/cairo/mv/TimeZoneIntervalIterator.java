@@ -64,15 +64,19 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
     private TimestampSampler sampler;
     private int step;
     private TimeZoneRules tzRules;
+    private long utcMaxTimestamp; // computed from localMaxTimestamp
+    private long utcMinTimestamp; // computed from localMinTimestamp
+    private long utcTimestampHi; // computed from localTimestampHi
+    private long utcTimestampLo; // computed from localTimestampLo
 
     @Override
     public long getMaxTimestamp() {
-        return Timestamps.toUTC(localMaxTimestamp, tzRules);
+        return utcMaxTimestamp;
     }
 
     @Override
     public long getMinTimestamp() {
-        return Timestamps.toUTC(localMinTimestamp, tzRules);
+        return utcMinTimestamp;
     }
 
     @Override
@@ -82,27 +86,30 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
 
     @Override
     public long getTimestampHi() {
-        return Timestamps.toUTC(localTimestampHi, tzRules);
+        return utcTimestampHi;
     }
 
     @Override
     public long getTimestampLo() {
-        return Timestamps.toUTC(localTimestampLo, tzRules);
+        return utcTimestampLo;
     }
 
     @Override
     public boolean next() {
         if (localTimestampHi != localMaxTimestamp) {
             localTimestampLo = localTimestampHi;
+            utcTimestampLo = utcTimestampHi;
             for (int i = 0; i < step; i++) {
                 localTimestampHi = sampler.nextTimestamp(localTimestampHi);
                 if (localTimestampHi == localMaxTimestamp) {
+                    utcTimestampHi = utcMaxTimestamp;
                     return true;
                 }
             }
             // Make sure to adjust the right boundary in case if we ended up
             // in a gap or a backward shift interval.
             localTimestampHi = adjustHiBoundary(localTimestampHi);
+            utcTimestampHi = Timestamps.toUTC(localTimestampHi, tzRules);
             return true;
         }
         return false;
@@ -149,6 +156,9 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
         localMinTimestamp = adjustLoBoundary(localMinTimestamp);
         localMaxTimestamp = adjustHiBoundary(localMaxTimestamp);
 
+        utcMinTimestamp = Timestamps.toUTC(localMinTimestamp, tzRules);
+        utcMaxTimestamp = Timestamps.toUTC(localMaxTimestamp, tzRules);
+
         toTop(step);
         return this;
     }
@@ -156,7 +166,9 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
     @Override
     public void toTop(int step) {
         this.localTimestampLo = Numbers.LONG_NULL;
+        this.utcTimestampLo = Numbers.LONG_NULL;
         this.localTimestampHi = localMinTimestamp;
+        this.utcTimestampHi = utcMinTimestamp;
         this.step = step;
     }
 
