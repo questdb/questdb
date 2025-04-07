@@ -167,7 +167,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
 
             try {
                 path.of(checkpointRoot).concat(configuration.getDbDirectory());
-                final int checkpointDbLen = path.size();
+                int checkpointDbLen = path.size();
                 // delete contents of the checkpoint's "db" dir.
                 if (ff.exists(path.slash$())) {
                     path.trimTo(checkpointDbLen).$();
@@ -220,7 +220,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                             LOG.info().$("creating table checkpoint [table=").$(tableToken).I$();
 
                             path.trimTo(checkpointDbLen).concat(tableToken);
-                            final int rootLen = path.size();
+                            int rootLen = path.size();
                             if (isWalTable) {
                                 path.concat(WalUtils.SEQ_DIR);
                             }
@@ -241,6 +241,9 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     final MatViewGraph graph = engine.getMatViewGraph();
                                     final MatViewDefinition matViewDefinition = graph.getViewDefinition(tableToken);
                                     if (matViewDefinition != null) {
+                                        matViewFileWriter.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                                        MatViewDefinition.append(matViewDefinition, matViewFileWriter);
+                                        LOG.info().$("materialized view definition included in the checkpoint [view=").$(tableToken).I$();
                                         // the following call overwrites the path
                                         final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, tableToken.getDirName());
                                         if (isMatViewStateExists) {
@@ -249,13 +252,16 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                                 matViewStateReader = new MatViewStateReader();
                                             }
                                             matViewStateReader.of(matViewFileReader, tableToken);
-                                            path.trimTo(checkpointDbLen).concat(tableToken); // restore the path
-                                            matViewFileWriter.of(path.trimTo(rootLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
-                                            MatViewState.append(matViewStateReader, matViewFileWriter);
-                                            matViewFileWriter.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
-                                            MatViewDefinition.append(matViewDefinition, matViewFileWriter);
+                                            // restore the path
+                                            path.of(checkpointRoot).concat(configuration.getDbDirectory());
+                                            checkpointDbLen = path.size();
+                                            path.concat(tableToken);
+                                            rootLen = path.size();
 
-                                            LOG.info().$("materialized view definition and state included in the checkpoint [view=").$(tableToken).I$();
+                                            matViewFileWriter.of(path.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                                            MatViewState.append(matViewStateReader, matViewFileWriter);
+
+                                            LOG.info().$("materialized view state included in the checkpoint [view=").$(tableToken).I$();
                                         } else {
                                             LOG.info().$("materialized view state not found [view=").$(tableToken).I$();
                                         }
