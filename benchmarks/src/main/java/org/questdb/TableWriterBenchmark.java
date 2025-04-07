@@ -61,7 +61,6 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 public class TableWriterBenchmark {
-
     // Should be set close enough to the cairo.max.uncommitted.rows default value.
     private static final int ROWS_PER_ITERATION = 1;
     private static final CairoConfiguration configuration = new DefaultCairoConfiguration(System.getProperty("java.io.tmpdir"));
