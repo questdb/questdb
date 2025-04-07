@@ -51,10 +51,10 @@ public interface ArraySender<T> {
      * Adds a column containing a multidimensional array of {@code double} values.
      *
      * @param name   Column name identifier (non-null)
-     * @param values N-dimensional array to be added. Supported dimensionality: 1D to 32D
+     * @param array N-dimensional array to be added. Supported dimensionality: 1D to 32D
      * @return this instance, to support method chaining
      */
-    T doubleArray(CharSequence name, DoubleArray values);
+    T doubleArray(CharSequence name, DoubleArray array);
 
     /**
      * Convenience method to insert a 1D {@code long} array. Same semantics as

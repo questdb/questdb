@@ -55,7 +55,7 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class LineHttpSenderMockServerTest extends AbstractTest {
     public static final Function<Integer, Sender.LineSenderBuilder> DEFAULT_FACTORY =
-            port -> Sender.builder(Sender.Transport.HTTP).address("localhost:" + port);
+            port -> Sender.builder(Sender.Transport.HTTP).address("localhost:" + port).protocolVersion(Sender.PROTOCOL_VERSION_V1);
 
     private static final CharSequence QUESTDB_VERSION = new BuildInformationHolder().getSwVersion();
 
@@ -67,7 +67,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
             for (int i = 0; i < 20; i++) {
                 sender.table("test")
                         .symbol("sym", "bol")
-                        .longColumn("x", 1L)
+                        .doubleColumn("x", 1.0)
                         .atNow();
                 Os.sleep(1);
             }
@@ -77,30 +77,32 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     @Test
     public void testAutoFlushRows() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
-                .withExpectedContent("test x=1i\n")
+                .withExpectedContent("test x=1.0\n")
                 .replyWithStatus(204)
-                .withExpectedContent("test x=2i\ntest x=3i\n")
+                .withExpectedContent("test x=2.0\n" +
+                        "test x=3.0\n")
                 .replyWithStatus(204)
-                .withExpectedContent("test x=4i\ntest x=5i\n")
+                .withExpectedContent("test x=4.0\n" +
+                        "test x=5.0\n")
                 .replyWithStatus(204)
-                .withExpectedContent("test x=6i\n")
+                .withExpectedContent("test x=6.0\n")
                 .replyWithStatus(204);
 
         testWithMock(mockHttpProcessor, sender -> {
             // first row to be flushed explicitly
-            sender.table("test").longColumn("x", 1L).atNow();
+            sender.table("test").doubleColumn("x", 1.0).atNow();
             sender.flush();
 
             // 1st implicit batch sent due to autoFlushRows
-            sender.table("test").longColumn("x", 2L).atNow();
-            sender.table("test").longColumn("x", 3L).atNow();
+            sender.table("test").doubleColumn("x", 2.0).atNow();
+            sender.table("test").doubleColumn("x", 3.0).atNow();
 
             // 2nd implicit batch sent due to autoFlushRows
-            sender.table("test").longColumn("x", 4L).atNow();
-            sender.table("test").longColumn("x", 5L).atNow();
+            sender.table("test").doubleColumn("x", 4.0).atNow();
+            sender.table("test").doubleColumn("x", 5.0).atNow();
 
             // the last row is flushed on close()
-            sender.table("test").longColumn("x", 6L).atNow();
+            sender.table("test").doubleColumn("x", 6.0).atNow();
         }, DEFAULT_FACTORY.andThen(b -> b.autoFlushRows(2)));
     }
 
@@ -109,7 +111,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         String badJsonResponse = "{\"foo\": \"bar\"}";
 
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
-                .withExpectedContent("test,sym=bol x=1i\n")
+                .withExpectedContent("test,sym=bol x=1.0\n")
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
                 .replyWithContent(400, badJsonResponse, HttpConstants.CONTENT_TYPE_JSON);
 
@@ -119,38 +121,38 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     @Test
     public void testBasicAuth() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
-                .withExpectedContent("test,sym=bol x=1i\n")
+                .withExpectedContent("test,sym=bol x=1.0\n")
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
                 .withExpectedHeader("Authorization", "Basic QWxhZGRpbjpPcGVuU2VzYW1l")
                 .replyWithStatus(204);
         testWithMock(mockHttpProcessor, sender -> sender.table("test")
                 .symbol("sym", "bol")
-                .longColumn("x", 1L)
+                .doubleColumn("x", 1.0)
                 .atNow(), DEFAULT_FACTORY.andThen(b -> b.httpUsernamePassword("Aladdin", "OpenSesame")));
     }
 
     @Test
     public void testConnectWithConfigString() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
-                .withExpectedContent("test,sym=bol x=1i\n")
+                .withExpectedContent("test,sym=bol x=1.0\n")
                 .withExpectedHeader("Authorization", "Basic QWxhZGRpbjo7T3BlbjtTZXNhbWU7Ow==")
                 .replyWithStatus(204);
         testWithMock(mockHttpProcessor, sender -> sender.table("test")
                 .symbol("sym", "bol")
-                .longColumn("x", 1L)
-                .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";username=Aladdin;password=;;Open;;Sesame;;;;;")); // escaped semicolons in password
+                .doubleColumn("x", 1.0)
+                .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";protocol_version=1;username=Aladdin;password=;;Open;;Sesame;;;;;")); // escaped semicolons in password
     }
 
     @Test
     public void testConnectWithConfigString_deprecatedAuth() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
-                .withExpectedContent("test,sym=bol x=1i\n")
+                .withExpectedContent("test,sym=bol x=1.0\n")
                 .withExpectedHeader("Authorization", "Basic QWxhZGRpbjo7T3BlbjtTZXNhbWU7Ow==")
                 .replyWithStatus(204);
         testWithMock(mockHttpProcessor, sender -> sender.table("test")
                 .symbol("sym", "bol")
-                .longColumn("x", 1L)
-                .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";user=Aladdin;pass=;;Open;;Sesame;;;;;")); // escaped semicolons in password
+                .doubleColumn("x", 1.0)
+                .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";protocol_version=1;user=Aladdin;pass=;;Open;;Sesame;;;;;")); // escaped semicolons in password
     }
 
     @Test
@@ -160,7 +162,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
             for (int i = 0; i < 1_000_000; i++) { // sufficient large number of rows to trigger auto-flush unless it is disabled
                 sender.table("test")
                         .symbol("sym", "bol")
-                        .longColumn("x", 1L)
+                        .doubleColumn("x", 1.0)
                         .atNow();
             }
         }, port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush=off;"));
@@ -174,7 +176,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                     for (int i = 0; i < 200; i++) {
                         sender.table("test")
                                 .symbol("sym", "bol")
-                                .longColumn("x", 1L)
+                                .doubleColumn("x", 1.0)
                                 .atNow();
                         Os.sleep(10);
                     }
@@ -187,18 +189,18 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         int rows = 10;
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor();
         for (int i = 0; i < rows; i++) {
-            mockHttpProcessor.withExpectedContent("test,sym=bol x=1i\n").replyWithStatus(204);
+            mockHttpProcessor.withExpectedContent("test,sym=bol x=1.0\n").replyWithStatus(204);
         }
 
         testWithMock(mockHttpProcessor, sender -> {
                     for (int i = 0; i < 10; i++) {
                         sender.table("test")
                                 .symbol("sym", "bol")
-                                .longColumn("x", 1L)
+                                .doubleColumn("x", 1.0)
                                 .atNow();
                     }
                 },
-                port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush_interval=off;auto_flush_rows=1;"));
+                port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush_interval=off;auto_flush_rows=1;protocol_version=1;"));
     }
 
     @Test
@@ -209,7 +211,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                     for (int i = 0; i < 80000; i++) {
                         sender.table("test")
                                 .symbol("sym", "bol")
-                                .longColumn("x", 1L)
+                                .doubleColumn("x", 1.0)
                                 .atNow();
                     }
                 },
@@ -240,7 +242,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
             for (int i = 0; i < 100000; i++) {
                 sender.table("test")
                         .symbol("sym", "bol")
-                        .longColumn("x", 1L)
+                        .doubleColumn("x", 1.0)
                         .atNow();
             }
             Assert.fail();
@@ -257,7 +259,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         testWithMock(mock, sender -> {
                     sender.table("test")
                             .symbol("sym", "bol")
-                            .longColumn("x", 1L)
+                            .doubleColumn("x", 1.0)
                             .atNow();
 
                     sender.flush();
@@ -273,7 +275,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         testWithMock(mock, sender -> {
                     sender.table("test")
                             .symbol("sym", "bol")
-                            .longColumn("x", 1L)
+                            .doubleColumn("x", 1.0)
                             .atNow();
 
                     sender.flush();
@@ -289,7 +291,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .build()) {
             sender.table("test")
                     .symbol("sym", "bol")
-                    .longColumn("x", 1L)
+                    .doubleColumn("x", 1.0)
                     .atNow();
             try {
                 sender.flush();
@@ -317,22 +319,22 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
 
         testWithMock(mockHttpProcessor, sender -> sender.table("test")
                 .symbol("sym", "bol")
-                .longColumn("x", 1L)
+                .doubleColumn("x", 1.0)
                 .atNow());
     }
 
     @Test
     public void testRetryOn500() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
-                .withExpectedContent("test,sym=bol x=1i\n")
+                .withExpectedContent("test,sym=bol x=1.0\n")
                 .replyWithContent(500, "Internal Server Error", HttpConstants.CONTENT_TYPE_JSON)
-                .withExpectedContent("test,sym=bol x=1i\n")
+                .withExpectedContent("test,sym=bol x=1.0\n")
                 .replyWithStatus(204);
 
         testWithMock(mockHttpProcessor, sender -> {
             sender.table("test")
                     .symbol("sym", "bol")
-                    .longColumn("x", 1L)
+                    .doubleColumn("x", 1.0)
                     .atNow();
             sender.flush();
         });
@@ -341,13 +343,13 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     @Test
     public void testRetryOn500_exceeded() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
-                .withExpectedContent("test,sym=bol x=1i\n")
+                .withExpectedContent("test,sym=bol x=1.0\n")
                 .keepReplyingWithContent(500, "Internal Server Error", HttpConstants.CONTENT_TYPE_JSON);
 
         testWithMock(mockHttpProcessor, sender -> {
             sender.table("test")
                     .symbol("sym", "bol")
-                    .longColumn("x", 1L)
+                    .doubleColumn("x", 1.0)
                     .atNow();
             try {
                 sender.flush();
@@ -361,7 +363,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     @Test
     public void testRetryingDisabled() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
-                .withExpectedContent("test,sym=bol x=1i\n")
+                .withExpectedContent("test,sym=bol x=1.0\n")
                 .replyWithContent(500, "do not dare to retry", "plain/text");
 
         testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: do not dare to retry [http-status=500]"),
@@ -387,7 +389,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         testWithMock(mock, sender -> {
                     sender.table("test")
                             .symbol("sym", "bol")
-                            .longColumn("x", 1L)
+                            .doubleColumn("x", 1.0)
                             .atNow();
                     try {
                         sender.flush();
@@ -413,7 +415,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         testWithMock(mock, sender -> {
                     sender.table("test")
                             .symbol("sym", "bol")
-                            .longColumn("x", 1L)
+                            .doubleColumn("x", 1.0)
                             .atNow();
                     try {
                         sender.flush();
@@ -433,32 +435,33 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     @Test
     public void testTokenAuth() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
-                .withExpectedContent("test,sym=bol x=1i\n")
+                .withExpectedContent("test,sym=bol x=1.0\n")
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
                 .withExpectedHeader("Authorization", "Bearer 0123456789")
                 .replyWithStatus(204);
 
         testWithMock(mockHttpProcessor, sender -> sender.table("test")
                 .symbol("sym", "bol")
-                .longColumn("x", 1L)
+                .doubleColumn("x", 1.0)
                 .atNow(), DEFAULT_FACTORY.andThen(b -> b.httpToken("0123456789")));
     }
 
     @Test
     public void testTwoLines() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
-                .withExpectedContent("test,sym=bol x=1i\ntest,sym=bol x=2i\n")
+                .withExpectedContent("test,sym=bol x=1.0\n" +
+                        "test,sym=bol x=2.0\n")
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
                 .replyWithStatus(204);
 
         testWithMock(mockHttpProcessor, sender -> {
             sender.table("test")
                     .symbol("sym", "bol")
-                    .longColumn("x", 1L)
+                    .doubleColumn("x", 1.0)
                     .atNow();
             sender.table("test")
                     .symbol("sym", "bol")
-                    .longColumn("x", 2L)
+                    .doubleColumn("x", 2.0)
                     .atNow();
         });
     }
@@ -491,7 +494,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
             try {
                 sender.table("test")
                         .symbol("sym", "bol")
-                        .longColumn("x", 1L)
+                        .doubleColumn("x", 1.0)
                         .atNow();
                 sender.flush();
                 Assert.fail("Exception expected");

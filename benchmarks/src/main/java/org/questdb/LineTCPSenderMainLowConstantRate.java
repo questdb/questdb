@@ -24,7 +24,8 @@
 
 package org.questdb;
 
-import io.questdb.cutlass.line.LineTcpSender;
+import io.questdb.cutlass.line.AbstractLineTcpSender;
+import io.questdb.cutlass.line.LineTcpSenderV2;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.network.Net;
 import io.questdb.std.Os;
@@ -52,7 +53,7 @@ public class LineTCPSenderMainLowConstantRate {
         final Rnd rnd = new Rnd();
         MicrosecondClock clock = new MicrosecondClockImpl();
         String tab = "weather";
-        try (LineTcpSender sender = LineTcpSender.newSender(Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
+        try (AbstractLineTcpSender sender = LineTcpSenderV2.newSender(Net.parseIPv4(hostIPv4), port, bufferCapacity)) {
             while (true) {
                 sender.metric(tab);
                 sender
