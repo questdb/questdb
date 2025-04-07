@@ -276,18 +276,6 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
         return base.supportsUpdateRowId(tableName);
     }
 
-    public void toJson(PlanSink sink) {
-        sink.type("Analyze");
-        sink.meta("time");
-        formatTiming(sink, cursor.executionTimeNanos);
-        sink.meta("first");
-        formatTiming(sink, cursor.firstTimeNanos);
-        sink.meta("rows");
-        formatRowCount(sink, cursor.numberOfRecords);
-        sink.meta("cols");
-        sink.val(base.getMetadata().getColumnCount());
-    }
-
     @Override
     public void toPlan(PlanSink sink) {
         switch (sink.getPlanSinkType()) {
@@ -296,8 +284,6 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
                 break;
             case ExplainModel.FORMAT_JSON:
                 throw CairoException.nonCritical().put("JSON plan output is not supported for `EXPLAIN ANALYZE`");
-//                toJson(sink);
-//                sink.child(base);
             default:
                 throw new UnsupportedOperationException();
         }

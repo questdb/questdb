@@ -246,7 +246,6 @@ public class TextPlanSink extends BasePlanSink {
         }
     }
 
-
     private void newLineAnalyze(AnalyzeFactory factory) {
         if (sink.length() == 0) {
             factory.toSink(this);
