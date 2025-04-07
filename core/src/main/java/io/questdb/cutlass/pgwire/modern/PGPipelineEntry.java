@@ -1242,10 +1242,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             // so the binding process can cast the string as required
                             setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, utf8String);
                             break;
+                    }
+                } else {
+                    // read as a string
+                    setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, utf8String);
                 }
-            } else {
-                // read as a string
-                setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, utf8String);}
             }
             lo += valueSize;
         }
