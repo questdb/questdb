@@ -296,7 +296,7 @@ public class PivotTest extends AbstractSqlParserTest {
 
             assertPlanNoLeakCheck(pivotQuery, "GroupBy vectorized: false\n" +
                     "  keys: [side]\n" +
-                    "  values: [first(case([open,NaN,symbol])),max(case([high,NaN,symbol])),min(case([low,NaN,symbol])),last(case([close,NaN,symbol]))]\n" +
+                    "  values: [first_not_null(case([open,NaN,symbol])),max(case([high,NaN,symbol])),min(case([low,NaN,symbol])),last_not_null(case([close,NaN,symbol]))]\n" +
                     "    Async JIT Group By workers: 1\n" +
                     "      keys: [side,symbol]\n" +
                     "      values: [first(price),max(price),min(price),last(price)]\n" +
@@ -478,6 +478,43 @@ public class PivotTest extends AbstractSqlParserTest {
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: cities\n");
+    }
+
+    @Test
+    public void testPivotWithLatestOnGroupBy() throws Exception {
+        assertQueryAndPlan(
+                "side\tETH-USDT\tBTC-USDT\tDOGE-USDT\n",
+                "(select side, symbol, last(price) as price from trades group by side, symbol)\n" +
+                        "  pivot (\n" +
+                        "    last(price)\n" +
+                        "    FOR \"symbol\" IN ('ETH-USDT', 'BTC-USDT', 'DOGE-USDT')\n" +
+                        "    GROUP BY side\n" +
+                        "    ORDER BY side\n" +
+                        "  );",
+                ddlTrades,
+                null,
+                dmlTrades,
+                "side\tETH-USDT\tBTC-USDT\tDOGE-USDT\n" +
+                        "buy\t3678.01\t101497.6\t0.36047\n" +
+                        "sell\t3678.0\t101497.0\t0.36041\n",
+                true,
+                true,
+                false,
+                "Sort light\n" +
+                        "  keys: [side]\n" +
+                        "    GroupBy vectorized: false\n" +
+                        "      keys: [side]\n" +
+                        "      values: [last_not_null(case([last,NaN,symbol])),last_not_null(case([last,NaN,symbol])),last_not_null(case([last,NaN,symbol]))]\n" +
+                        "        GroupBy vectorized: false\n" +
+                        "          keys: [side,symbol]\n" +
+                        "          values: [last(price)]\n" +
+                        "            Async JIT Group By workers: 1\n" +
+                        "              keys: [side,symbol]\n" +
+                        "              values: [last(price)]\n" +
+                        "              filter: symbol in [ETH-USDT,BTC-USDT,DOGE-USDT]\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: trades\n");
     }
 
     @Test

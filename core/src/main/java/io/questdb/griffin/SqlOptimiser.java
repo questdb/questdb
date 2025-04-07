@@ -6585,10 +6585,7 @@ public class SqlOptimiser implements Mutable {
                 ExpressionNode forExpr = nested.getPivotFor().getQuick(i);
                 ExpressionNode groupByName = rewritePivotGetAppropriateNameFromInExpr(forExpr);
 
-                if (groupByModel.getSampleBy() == null) {
-                    // add to group by
-                    groupByModel.addGroupBy(groupByName);
-                }
+                groupByModel.addGroupBy(groupByName);
 
                 assert groupByName != null;
 
@@ -6711,8 +6708,15 @@ public class SqlOptimiser implements Mutable {
                         nameSink.clear(nameSink.length() - 1);
                     }
 
+                    CharSequence aggExprName = pivotColumnName;
+                    if (Chars.equalsIgnoreCase(pivotColumnName, "first")) {
+                        aggExprName = "first_not_null";
+                    } else if (Chars.equalsIgnoreCase(pivotColumnName, "last")) {
+                        aggExprName = "last_not_null";
+                    }
+
                     // SUM(_)
-                    ExpressionNode aggExpr = expressionNodePool.next().of(FUNCTION, pivotColumnName, Integer.MIN_VALUE, 0);
+                    ExpressionNode aggExpr = expressionNodePool.next().of(FUNCTION, aggExprName, Integer.MIN_VALUE, 0);
                     aggExpr.paramCount = 1;
 
                     // CASE(_)
