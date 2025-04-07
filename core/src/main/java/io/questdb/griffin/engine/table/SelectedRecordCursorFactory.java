@@ -162,10 +162,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         return base.implementsLimit();
     }
 
-    public boolean isCrossedIndex() {
-        return crossedIndex;
-    }
-
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
