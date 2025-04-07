@@ -95,7 +95,7 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
                 .setLabels(labelName0, labelValues0[i1], labelName1, labelValues1[i2]);
     }
 
-    @Overridea
+    @Override
     public int scrapeIntoRecord(PrometheusMetricsRecord record) {
         scrapeIntoRecord(record, 0);
         return counters.length;
