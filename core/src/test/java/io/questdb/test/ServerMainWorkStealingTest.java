@@ -73,7 +73,7 @@ public class ServerMainWorkStealingTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testServerMainParallelFilterLoadTest() throws Exception {
+    public void testWorkStealing() throws Exception {
         try (ServerMain serverMain = new ServerMain(getServerMainArgs())) {
             serverMain.start();
 

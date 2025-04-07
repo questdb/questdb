@@ -7,7 +7,7 @@ use crate::error::{CoreResult, fmt_err};
 pub struct DesignatedTimestampDriver;
 
 impl ColumnDriver for DesignatedTimestampDriver {
-    fn col_sizes_for_size(
+    fn col_sizes_for_row_count(
         &self,
         col: &MappedColumn,
         row_count: u64,
