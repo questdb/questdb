@@ -55,8 +55,11 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 
-// wraps another factory and records runtime information about it
-
+/**
+ * Wraps another factory to give runtime information.
+ * In general, counts number of `hasNext()` calls, and sums how long they took to execute.
+ * Will slow down the query execution.
+ */
 public class AnalyzeFactory extends AbstractRecordCursorFactory {
     public final RecordCursorFactory base;
     private final AnalyzeRecordCursor cursor;

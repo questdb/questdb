@@ -49,7 +49,6 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
         this.base = base;
     }
 
-
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
