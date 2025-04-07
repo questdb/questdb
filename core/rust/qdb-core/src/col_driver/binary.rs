@@ -82,7 +82,7 @@ use crate::error::{CoreErrorExt, CoreResult};
 pub struct BinaryDriver;
 
 impl ColumnDriver for BinaryDriver {
-    fn col_sizes_for_size(
+    fn col_sizes_for_row_count(
         &self,
         col: &MappedColumn,
         row_count: u64,
@@ -166,37 +166,37 @@ mod tests {
     fn test_b1() {
         let col = map_col("b1");
 
-        let (data_size, aux_size) = BinaryDriver.col_sizes_for_size(&col, 0).unwrap();
+        let (data_size, aux_size) = BinaryDriver.col_sizes_for_row_count(&col, 0).unwrap();
         assert_eq!(data_size, 0);
         assert_eq!(aux_size, Some(8));
 
         // index 0 is null binary
-        let (data_size, aux_size) = BinaryDriver.col_sizes_for_size(&col, 1).unwrap();
+        let (data_size, aux_size) = BinaryDriver.col_sizes_for_row_count(&col, 1).unwrap();
         assert_eq!(data_size, 8);
         assert_eq!(aux_size, Some(16));
 
         // index 1 is empty binary
-        let (data_size, aux_size) = BinaryDriver.col_sizes_for_size(&col, 2).unwrap();
+        let (data_size, aux_size) = BinaryDriver.col_sizes_for_row_count(&col, 2).unwrap();
         assert_eq!(data_size, 16);
         assert_eq!(aux_size, Some(24));
 
         // index 2 is a 3-byte binary
-        let (data_size, aux_size) = BinaryDriver.col_sizes_for_size(&col, 3).unwrap();
+        let (data_size, aux_size) = BinaryDriver.col_sizes_for_row_count(&col, 3).unwrap();
         assert_eq!(data_size, 27);
         assert_eq!(aux_size, Some(32));
 
         // index 3 is a 50-byte binary
-        let (data_size, aux_size) = BinaryDriver.col_sizes_for_size(&col, 4).unwrap();
+        let (data_size, aux_size) = BinaryDriver.col_sizes_for_row_count(&col, 4).unwrap();
         assert_eq!(data_size, 85);
         assert_eq!(aux_size, Some(40));
 
         // index 4 is a null binary
-        let (data_size, aux_size) = BinaryDriver.col_sizes_for_size(&col, 5).unwrap();
+        let (data_size, aux_size) = BinaryDriver.col_sizes_for_row_count(&col, 5).unwrap();
         assert_eq!(data_size, 93);
         assert_eq!(aux_size, Some(48));
 
         // out of range
-        let err = BinaryDriver.col_sizes_for_size(&col, 6).unwrap_err();
+        let err = BinaryDriver.col_sizes_for_row_count(&col, 6).unwrap_err();
         let msg = format!("{:#}", err);
         // eprintln!("{}", &msg);
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
@@ -207,12 +207,12 @@ mod tests {
     fn test_bempty() {
         let col = map_col("bempty");
 
-        let (data_size, aux_size) = BinaryDriver.col_sizes_for_size(&col, 0).unwrap();
+        let (data_size, aux_size) = BinaryDriver.col_sizes_for_row_count(&col, 0).unwrap();
         assert_eq!(data_size, 0);
         assert_eq!(aux_size, Some(8));
 
         // out of range
-        let err = BinaryDriver.col_sizes_for_size(&col, 1).unwrap_err();
+        let err = BinaryDriver.col_sizes_for_row_count(&col, 1).unwrap_err();
         let msg = format!("{:#}", err);
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         // eprintln!("{msg}");
