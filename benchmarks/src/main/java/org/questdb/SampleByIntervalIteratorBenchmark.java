@@ -35,6 +35,7 @@ import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Mode;
 import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Param;
 import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.runner.Runner;
@@ -48,9 +49,10 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 public class SampleByIntervalIteratorBenchmark {
-    private static final int STEP = 1;
     private final FixedOffsetIntervalIterator fixedOffsetIterator = new FixedOffsetIntervalIterator();
     private final TimeZoneIntervalIterator tzIterator = new TimeZoneIntervalIterator();
+    @Param({"1", "15", "30", "60"})
+    private int step;
 
     public SampleByIntervalIteratorBenchmark() {
         try {
@@ -65,7 +67,7 @@ public class SampleByIntervalIteratorBenchmark {
                     2 * Timestamps.HOUR_MICROS,
                     minTs,
                     maxTs,
-                    STEP
+                    step
             );
             tzIterator.of(
                     sampler,
@@ -73,7 +75,7 @@ public class SampleByIntervalIteratorBenchmark {
                     0,
                     minTs,
                     maxTs,
-                    STEP
+                    step
             );
         } catch (Exception e) {
             throw new RuntimeException(e);
@@ -93,7 +95,7 @@ public class SampleByIntervalIteratorBenchmark {
 
     @Benchmark
     public long testFixedOffsetIterator() {
-        fixedOffsetIterator.toTop(STEP);
+        fixedOffsetIterator.toTop(step);
         long s = 0;
         while (fixedOffsetIterator.next()) {
             s += fixedOffsetIterator.getTimestampLo();
@@ -104,7 +106,7 @@ public class SampleByIntervalIteratorBenchmark {
 
     @Benchmark
     public long testTimeZoneIterator() {
-        tzIterator.toTop(STEP);
+        tzIterator.toTop(step);
         long s = 0;
         while (tzIterator.next()) {
             s += tzIterator.getTimestampLo();
