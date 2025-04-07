@@ -80,7 +80,11 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     }
 
     @Override
-    public CreateTableOperationImpl build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sqlText) throws SqlException {
+    public CreateTableOperationImpl build(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sqlText
+    ) throws SqlException {
         if (selectText != null) {
             return new CreateTableOperationImpl(
                     Chars.toString(sqlText),
@@ -192,6 +196,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         return tableNameExpr.token;
     }
 
+    @Override
     public ExpressionNode getTableNameExpr() {
         return tableNameExpr;
     }

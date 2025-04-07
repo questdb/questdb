@@ -687,7 +687,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createX();
 
-            execute("alter table x add column arr int[]");
+            execute("alter table x add column arr double[]");
 
             assertSql("ddl\n" +
                             "CREATE TABLE 'x' ( \n" +
@@ -707,7 +707,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                             "\tl BYTE,\n" +
                             "\tm BINARY,\n" +
                             "\tn STRING,\n" +
-                            "\tarr INT[]\n" + // <-- array should be present
+                            "\tarr DOUBLE[]\n" + // <-- array should be present
                             ") timestamp(timestamp) PARTITION BY NONE BYPASS WAL\n" +
                             "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
                     "show create table x;");
@@ -718,7 +718,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     public void testAlterTableAddArrayColumnWithInvalidArrayType() throws Exception {
         assertMemoryLeak(() -> {
             createX();
-            assertException("alter table x add column arr varchar[];", 29, "VARCHAR is not supported as an array element type");
+            assertException("alter table x add column arr varchar[];", 29, "unsupported array element type [type=VARCHAR]");
         });
     }
 
@@ -726,10 +726,10 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     public void testAlterTableAddArrayColumnWithMismatchedBrackets() throws Exception {
         assertMemoryLeak(() -> {
             createX();
-            assertException("alter table x add column arr int[;", 33, "']' expected");
-            assertException("alter table x add column arr int[][;", 35, "']' expected");
-            assertException("alter table x add column arr int];", 29, "arr has an unmatched `]` - were you trying to define an array?");
-            assertException("alter table x add column arr int[]];", 29, "arr has an unmatched `]` - were you trying to define an array?");
+            assertException("alter table x add column arr double[;", 36, "']' expected");
+            assertException("alter table x add column arr double[][;", 38, "']' expected");
+            assertException("alter table x add column arr double];", 29, "arr has an unmatched `]` - were you trying to define an array?");
+            assertException("alter table x add column arr double[]];", 29, "arr has an unmatched `]` - were you trying to define an array?");
         });
     }
 

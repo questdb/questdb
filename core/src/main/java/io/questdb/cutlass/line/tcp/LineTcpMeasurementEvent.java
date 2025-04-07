@@ -327,7 +327,7 @@ class LineTcpMeasurementEvent implements Closeable {
                 if (autoCreateNewColumns && TableUtils.isValidColumnName(colNameUtf16, maxColumnNameLength)) {
                     securityContext.authorizeAlterTableAddColumn(tud.getTableToken());
                     offset = buffer.addColumnName(offset, colNameUtf16, securityContext.getPrincipal());
-                    colType = localDetails.getColumnType(localDetails.getColNameUtf8(), entityType);
+                    colType = localDetails.getColumnType(localDetails.getColNameUtf8(), entity);
                 } else if (!autoCreateNewColumns) {
                     throw newColumnsNotAllowed(colNameUtf16, tableUpdateDetails.getTableNameUtf16());
                 } else {

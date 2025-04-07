@@ -40,6 +40,7 @@ import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.cast.CastCharToSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntervalToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastStrToDoubleArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToUuidFunctionFactory;
@@ -646,18 +647,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
 
         // type constant for 'CAST' operation
-
-        final short columnType = ColumnType.tagOf(tok);
+        final int columnType = ColumnType.typeOf(tok);
+        final short columnTag = ColumnType.tagOf(columnType);
         if (
-                (columnType >= ColumnType.BOOLEAN && columnType <= ColumnType.BINARY)
-                        || columnType == ColumnType.REGCLASS
-                        || columnType == ColumnType.REGPROCEDURE
-                        || columnType == ColumnType.ARRAY_STRING
-                        || columnType == ColumnType.UUID
-                        || columnType == ColumnType.IPv4
-                        || columnType == ColumnType.VARCHAR
-                        || columnType == ColumnType.INTERVAL
-                        || ColumnType.tagOf(columnType) == ColumnType.ARRAY // todo: this is not great, we should be more specific
+                (columnTag >= ColumnType.BOOLEAN && columnTag <= ColumnType.BINARY)
+                        || columnTag == ColumnType.REGCLASS
+                        || columnTag == ColumnType.REGPROCEDURE
+                        || columnTag == ColumnType.ARRAY_STRING
+                        || columnTag == ColumnType.UUID
+                        || columnTag == ColumnType.IPv4
+                        || columnTag == ColumnType.VARCHAR
+                        || columnTag == ColumnType.INTERVAL
+                        || columnTag == ColumnType.ARRAY
         ) {
             return Constants.getTypeConstant(columnType);
         }
@@ -735,11 +736,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             // whatever happens to be the first cast function in the traversal order, and force
             // the bind variable to that type. This will then fail when an actual value is bound
             // to the variable, and it's most likely not that arbitrary type.
-            if (args.getQuick(0).isUndefined()) {
-                final Function undefinedArg = args.getQuick(0);
+            Function arg0 = args.getQuick(0);
+            if (ColumnType.isUnderdefined(arg0.getType())) {
                 final int castToType = args.getQuick(1).getType();
+                short castToTypeTag = ColumnType.tagOf(castToType);
                 final int assignType;
-                switch (castToType) {
+                switch (castToTypeTag) {
                     case ColumnType.VARCHAR:
                     case ColumnType.STRING:
                     case ColumnType.CHAR:
@@ -753,13 +755,16 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     case ColumnType.DOUBLE:
                         assignType = ColumnType.DOUBLE;
                         break;
+                    case ColumnType.ARRAY:
+                        assignType = castToType;
+                        break;
                     default:
                         break skipAssigningType;
                 }
-                undefinedArg.assignType(assignType, sqlExecutionContext.getBindVariableService());
+                arg0.assignType(assignType, sqlExecutionContext.getBindVariableService());
                 if (assignType == castToType) {
                     // Now that that type is assigned, we can return the first argument, no additional cast needed
-                    return undefinedArg;
+                    return arg0;
                 }
             }
         }
@@ -1018,11 +1023,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.SYMBOL:
                 if (toType == ColumnType.UUID) {
                     return new CastStrToUuidFunctionFactory.Func(function);
-                }
-                if (toType == ColumnType.TIMESTAMP) {
+                } else if (toType == ColumnType.TIMESTAMP) {
                     return new CastStrToTimestampFunctionFactory.Func(function);
-                }
-                if (ColumnType.isGeoHash(toType)) {
+                } else if (ColumnType.isArray(toType)) {
+                    assert ColumnType.decodeArrayElementType(toType) == ColumnType.DOUBLE;
+                    return new CastStrToDoubleArrayFunctionFactory.Func(function, toType);
+                } else if (ColumnType.isGeoHash(toType)) {
                     return CastStrToGeoHashFunctionFactory.newInstance(position, toType, function);
                 }
                 break;

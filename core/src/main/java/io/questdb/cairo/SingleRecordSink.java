@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.*;
@@ -63,6 +65,14 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
             return false;
         }
         return Vect.memeq(heapStart, other.heapStart, thisSize);
+    }
+
+    @Override
+    public void putArray(ArrayView value) {
+        int byteCount = ArrayTypeDriver.getSingleMemValueByteCount(value);
+        checkCapacity(byteCount);
+        ArrayTypeDriver.appendPlainValue(appendAddress, value);
+        appendAddress += byteCount;
     }
 
     @Override

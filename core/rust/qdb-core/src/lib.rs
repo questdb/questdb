@@ -21,13 +21,7 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-
-package io.questdb.cairo;
-
-import io.questdb.cairo.sql.Record;
-
-public class Bl {
-    public static void func(Record record, TableWriter.Row row) {
-        row.putInt(10, record.getInt(10));
-    }
-}
+pub mod byte_util;
+pub mod col_driver;
+pub mod col_type;
+pub mod error;

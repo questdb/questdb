@@ -53,17 +53,12 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
     }
 
     @Override
-    public short elemType() {
-        return ColumnType.DOUBLE;
-    }
-
-    @Override
-    public double getDoubleAtAbsoluteIndex(int elemIndex) {
+    public double getDoubleAtAbsIndex(int elemIndex) {
         return values.getQuick(elemIndex);
     }
 
     @Override
-    public long getLongAtAbsoluteIndex(int elemIndex) {
+    public long getLongAtAbsIndex(int elemIndex) {
         throw new UnsupportedOperationException();
     }
 
@@ -137,10 +132,14 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
             }
 
             switch (c) {
+                case '[':
+                    // fallthrough
                 case '{': {
                     currentDimSizes.add(0);
                     break;
                 }
+                case ']':
+                    // fallthrough
                 case '}': {
                     if (state == STATE_IN_NUMBER) {
                         parseAndAddNumber(input, numberStart, position, currentDimSizes);
@@ -186,7 +185,7 @@ public final class DoubleArrayParser extends MutableArray implements FlatArrayVi
                 && (input.charAt(numberStart + 1) | 32) == 'u'
                 && (input.charAt(numberStart + 2) | 32) == 'l'
                 && (input.charAt(numberStart + 3) | 32) == 'l') {
-            values.add(Double.NaN);
+            throw new IllegalArgumentException("NULL is not supported in arrays");
         } else {
             try {
                 values.add(Numbers.parseDouble(input, numberStart, len));

@@ -111,7 +111,6 @@ import org.junit.Assume;
 import org.junit.Test;
 
 import static io.questdb.cairo.ColumnType.OVERLOAD_NONE;
-import static io.questdb.cairo.ColumnType.decodeArrayElementType;
 import static org.junit.Assert.*;
 
 public class FunctionParserTest extends BaseFunctionFactoryTest {
@@ -202,23 +201,23 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         functions.add(new ArrayCreateFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         FunctionParser functionParser = createFunctionParser();
-        try (Function f = parseFunction("ARRAY[[1], 2]", metadata, functionParser)) {
+        try (Function f = parseFunction("ARRAY[[1.0], 2]", metadata, functionParser)) {
+            f.getArray(null);
+            fail();
+        } catch (SqlException e) {
+            assertEquals("[13] mixed array and non-array elements", e.getMessage());
+        }
+        try (Function f = parseFunction("ARRAY[1.0, [2.0]]", metadata, functionParser)) {
             f.getArray(null);
             fail();
         } catch (SqlException e) {
             assertEquals("[11] mixed array and non-array elements", e.getMessage());
         }
-        try (Function f = parseFunction("ARRAY[1, [2]]", metadata, functionParser)) {
+        try (Function f = parseFunction("ARRAY[[1.0], [[2.0]]]", metadata, functionParser)) {
             f.getArray(null);
             fail();
         } catch (SqlException e) {
-            assertEquals("[9] mixed array and non-array elements", e.getMessage());
-        }
-        try (Function f = parseFunction("ARRAY[[1], [[2]]]", metadata, functionParser)) {
-            f.getArray(null);
-            fail();
-        } catch (SqlException e) {
-            assertEquals("[11] sub-arrays don't match in number of dimensions", e.getMessage());
+            assertEquals("[13] sub-arrays don't match in number of dimensions", e.getMessage());
         }
     }
 
@@ -228,17 +227,17 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         FunctionParser functionParser = createFunctionParser();
         //TODO: Add more types as we support them
-        try (Function f = parseFunction("ARRAY[1, 2.0]", metadata, functionParser)) {
+        try (Function f = parseFunction("ARRAY[1.0, 2]", metadata, functionParser)) {
             ArrayView array = f.getArray(null);
-            assertEquals(ColumnType.DOUBLE, decodeArrayElementType(array.getType()));
+            assertEquals(ColumnType.DOUBLE, array.getElemType());
             assertEquals(2, array.getFlatViewLength());
             assertEquals(1, array.getDimCount());
             assertEquals(1.0, array.getDouble(0), 0.0001);
             assertEquals(2.0, array.getDouble(1), 0.0001);
         }
-        try (Function f = parseFunction("ARRAY[[1], [2.0]]", metadata, functionParser)) {
+        try (Function f = parseFunction("ARRAY[[1.0], [2.0]]", metadata, functionParser)) {
             ArrayView array = f.getArray(null);
-            assertEquals(ColumnType.DOUBLE, decodeArrayElementType(array.getType()));
+            assertEquals(ColumnType.DOUBLE, array.getElemType());
             assertEquals(2, array.getDimLen(0));
             assertEquals(1, array.getDimLen(1));
             assertEquals(2, array.getFlatViewLength());
@@ -253,28 +252,28 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         final Record record = new Record() {
             @Override
-            public long getLong(int col) {
+            public double getDouble(int col) {
                 return col + 1;
             }
         };
 
-        metadata.add(new TableColumnMetadata("a", ColumnType.LONG));
-        metadata.add(new TableColumnMetadata("b", ColumnType.LONG));
-        metadata.add(new TableColumnMetadata("c", ColumnType.LONG));
-        metadata.add(new TableColumnMetadata("d", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("a", ColumnType.DOUBLE));
+        metadata.add(new TableColumnMetadata("b", ColumnType.DOUBLE));
+        metadata.add(new TableColumnMetadata("c", ColumnType.DOUBLE));
+        metadata.add(new TableColumnMetadata("d", ColumnType.DOUBLE));
         FunctionParser functionParser = createFunctionParser();
         try (Function f = parseFunction("ARRAY[a]", metadata, functionParser)) {
             ArrayView array = f.getArray(record);
             assertEquals(1, array.getDimCount());
             assertEquals(1, array.getFlatViewLength());
-            assertEquals(1, array.getLong(0));
+            assertEquals(1.0, array.getDouble(0), 1e-11);
         }
         try (Function f = parseFunction("ARRAY[a, b]", metadata, functionParser)) {
             ArrayView array = f.getArray(record);
             assertEquals(2, array.getFlatViewLength());
             assertEquals(1, array.getDimCount());
-            assertEquals(1, array.getLong(0));
-            assertEquals(2, array.getLong(1));
+            assertEquals(1.0, array.getDouble(0), 1e-11);
+            assertEquals(2.0, array.getDouble(1), 1e-11);
         }
         try (Function f = parseFunction("ARRAY[[a]]", metadata, functionParser)) {
             ArrayView array = f.getArray(record);
@@ -282,25 +281,25 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             assertEquals(1, array.getDimLen(0));
             assertEquals(1, array.getDimLen(1));
             assertEquals(1, array.getFlatViewLength());
-            assertEquals(1, array.getLong(0));
+            assertEquals(1.0, array.getDouble(0), 1e-11);
         }
         try (Function f = parseFunction("ARRAY[[a], [b]]", metadata, functionParser)) {
             ArrayView array = f.getArray(record);
             assertEquals(2, array.getDimLen(0));
             assertEquals(1, array.getDimLen(1));
             assertEquals(2, array.getFlatViewLength());
-            assertEquals(1, array.getLong(0));
-            assertEquals(2, array.getLong(1));
+            assertEquals(1.0, array.getDouble(0), 1e-11);
+            assertEquals(2.0, array.getDouble(1), 1e-11);
         }
         try (Function f = parseFunction("ARRAY[[a, b], [c, d]]", metadata, functionParser)) {
             ArrayView array = f.getArray(record);
             assertEquals(2, array.getDimLen(0));
             assertEquals(2, array.getDimLen(1));
             assertEquals(4, array.getFlatViewLength());
-            assertEquals(1, array.getLong(0));
-            assertEquals(2, array.getLong(1));
-            assertEquals(3, array.getLong(2));
-            assertEquals(4, array.getLong(3));
+            assertEquals(1.0, array.getDouble(0), 1e-11);
+            assertEquals(2.0, array.getDouble(1), 1e-11);
+            assertEquals(3.0, array.getDouble(2), 1e-11);
+            assertEquals(4.0, array.getDouble(3), 1e-11);
         }
     }
 

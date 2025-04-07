@@ -82,6 +82,10 @@ import io.questdb.griffin.engine.functions.cast.CastByteToVarcharFunctionFactory
 import io.questdb.griffin.engine.functions.cast.CastDateToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDateToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDateToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastDoubleArrayToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastDoubleArrayToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastDoubleArraytoDoubleArrayFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastDoubleToDoubleArray;
 import io.questdb.griffin.engine.functions.cast.CastDoubleToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastDoubleToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastFloatToStrFunctionFactory;
@@ -470,16 +474,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final boolean aIsArray = tagA == ColumnType.ARRAY;
         final boolean bIsArray = tagB == ColumnType.ARRAY;
         if (aIsArray && bIsArray) {
-            if (decodeArrayElementType(typeA) == decodeArrayElementType(typeB) &&
-                    decodeArrayDimensionality(typeA) == decodeArrayDimensionality(typeB)
-            ) {
+            short elementTypeA = decodeArrayElementType(typeA);
+            if (elementTypeA != decodeArrayElementType(typeB)) {
+                return VARCHAR;
+            }
+            return ColumnType.encodeArrayType(elementTypeA, Math.max(decodeArrayDimensionality(typeA), decodeArrayDimensionality(typeB)));
+        } else if (aIsArray) {
+            if (tagB == DOUBLE) {
+                // if b is scalar then we coarse it to array of the same dimensionality as a is
                 return typeA;
             }
-            // array widening is unsupported for now
-            return -1;
-        } else if (aIsArray || bIsArray) {
-            // scalar to array widening is unsupported for now
-            return -1;
+            return (tagB == STRING) ? STRING : VARCHAR;
+        } else if (bIsArray) {
+            if (tagA == DOUBLE) {
+                return typeB;
+            }
+            return (tagA == STRING ? STRING : VARCHAR);
         }
 
         int geoBitsA = getGeoHashBits(typeA);
@@ -1690,6 +1700,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         fromType,
                                         toType
                                 );
+                            case ColumnType.ARRAY:
+                                int arrayType = ColumnType.decodeArrayElementType(fromType);
+                                if (arrayType != DOUBLE) {
+                                    throw SqlException.unsupportedCast(
+                                            modelPosition,
+                                            castFromMetadata.getColumnName(i),
+                                            fromType,
+                                            toType
+                                    );
+                                }
+                                castFunctions.add(new CastDoubleArrayToStrFunctionFactory.Func(ArrayColumn.newInstance(i, fromType)));
+                                break;
                             case ColumnType.IPv4:
                                 castFunctions.add(new CastIPv4ToStrFunctionFactory.Func(new IPv4Column(i)));
                                 break;
@@ -2002,6 +2024,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         fromType,
                                         toType
                                 );
+                            case ColumnType.ARRAY:
+                                int arrayType = ColumnType.decodeArrayElementType(fromType);
+                                if (arrayType != DOUBLE) {
+                                    throw SqlException.unsupportedCast(
+                                            modelPosition,
+                                            castFromMetadata.getColumnName(i),
+                                            fromType,
+                                            toType
+                                    );
+                                }
+                                castFunctions.add(new CastDoubleArrayToVarcharFunctionFactory.Func(ArrayColumn.newInstance(i, fromType)));
+                                break;
                             default:
                                 assert false;
                         }
@@ -2010,9 +2044,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         castFunctions.add(IntervalColumn.newInstance(i));
                         break;
                     case ColumnType.ARRAY:
-                        // there is no cast, entity function
-                        castFunctions.add(ArrayColumn.newInstance(i, fromType));
-                        break;
+                        switch (fromTag) {
+                            case ARRAY:
+                                assert ColumnType.decodeArrayElementType(fromType) == DOUBLE;
+                                assert ColumnType.decodeArrayElementType(toType) == DOUBLE;
+                                int fromDims = ColumnType.decodeArrayDimensionality(fromType);
+                                int toDims = ColumnType.decodeArrayDimensionality(toType);
+                                if (fromDims == toDims) {
+                                    castFunctions.add(ArrayColumn.newInstance(i, fromType));
+                                } else {
+                                    assert fromDims < toDims; // can cast to higher dimensionality only
+                                    castFunctions.add(new CastDoubleArraytoDoubleArrayFunctionFactory.Func(ArrayColumn.newInstance(i, toType), toType, toDims - fromDims));
+                                }
+                                break;
+                            case DOUBLE:
+                                assert ColumnType.decodeArrayElementType(toType) == DOUBLE;
+                                castFunctions.add(new CastDoubleToDoubleArray.Func(DoubleColumn.newInstance(i), toType));
+                                break;
+                            default:
+                                assert false;
+
+                        }
                 }
             }
         }
@@ -2171,7 +2223,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         final boolean enableParallelFilter = executionContext.isParallelFilterEnabled();
-        final boolean preTouchColumns = configuration.isSqlParallelFilterPreTouchEnabled();
         if (enableParallelFilter && factory.supportsPageFrameCursor()) {
             final boolean useJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED
                     && (!model.isUpdate() || executionContext.isWalApplication());
@@ -2214,7 +2265,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ),
                             limitLoFunction,
                             limitLoPos,
-                            preTouchColumns,
                             executionContext.getSharedWorkerCount()
                     );
                 } catch (SqlException | LimitOverflowException ex) {
@@ -2249,7 +2299,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         ),
                         limitLoFunction,
                         limitLoPos,
-                        preTouchColumns,
                         executionContext.getSharedWorkerCount()
                 );
             } catch (Throwable e) {
@@ -2645,7 +2694,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 ),
                                 null,
                                 0,
-                                false,
                                 executionContext.getSharedWorkerCount()
                         );
                     } else {
@@ -2696,7 +2744,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 ),
                                 null,
                                 0,
-                                false,
                                 executionContext.getSharedWorkerCount()
                         );
                     } else {
@@ -3131,9 +3178,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             listColumnFilterA.add(-index - 1);
                         } else {
                             listColumnFilterA.add(index + 1);
-                            if (i == 0 && metadata.getColumnType(index) == ColumnType.TIMESTAMP) {
-                                orderedByTimestampIndex = index;
-                            }
+                        }
+                        if (i == 0 && metadata.getColumnType(index) == ColumnType.TIMESTAMP) {
+                            orderedByTimestampIndex = index;
                         }
                     }
                 }
@@ -3210,9 +3257,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         );
                     } else {
                         final int columnType = orderedMetadata.getColumnType(firstOrderByColumnIndex);
-                        if (configuration.isSqlOrderBySortEnabled()
-                                && orderByColumnNames.size() == 1
-                                && LongSortedLightRecordCursorFactory.isSupportedColumnType(columnType)) {
+                        if (
+                                configuration.isSqlOrderBySortEnabled()
+                                        && orderByColumnNames.size() == 1
+                                        && LongSortedLightRecordCursorFactory.isSupportedColumnType(columnType)
+                        ) {
                             return new LongSortedLightRecordCursorFactory(
                                     configuration,
                                     orderedMetadata,
@@ -4446,13 +4495,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 // define "undefined" functions as string unless it's update.
-                if (function.isUndefined()) {
-                    if (!model.isUpdate()) {
-                        function.assignType(ColumnType.STRING, executionContext.getBindVariableService());
-                    } else {
-                        // Set bind variable the type of the column
+                if (model.isUpdate()) {
+                    if (ColumnType.isUnderdefined(function.getType())) {
                         function.assignType(targetColumnType, executionContext.getBindVariableService());
                     }
+                } else if (function.isUndefined()) {
+                    function.assignType(ColumnType.STRING, executionContext.getBindVariableService());
                 }
 
                 int columnType = function.getType();

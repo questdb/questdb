@@ -25,20 +25,12 @@
 package io.questdb.griffin.engine.functions.array;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.DirectArray;
-import io.questdb.cairo.sql.ArrayFunction;
+import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
@@ -55,106 +47,39 @@ public class DoubleArrayMultiplyFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new MultiplyDoubleArrayFunction(configuration,
-                args.getQuick(0), args.getQuick(1),
-                argPositions.getQuick(0), argPositions.getQuick(1));
+        return new DoubleArrayMultiplyOperator(
+                configuration,
+                args.getQuick(0),
+                args.getQuick(1),
+                argPositions.getQuick(0),
+                argPositions.getQuick(1)
+        );
     }
 
-    private static class MultiplyDoubleArrayFunction extends ArrayFunction implements BinaryFunction {
+    private static class DoubleArrayMultiplyOperator extends DoubleArrayBinaryOperator {
 
-        private final int leftArgPos;
-        private DirectArray arrayOut;
-        private Function leftFn;
-        private Function rightFn;
-
-        public MultiplyDoubleArrayFunction(
+        DoubleArrayMultiplyOperator(
                 CairoConfiguration configuration,
-                Function leftFn,
-                Function rightFn,
+                Function leftArg,
+                Function rightArg,
                 int leftArgPos,
                 int rightArgPos
         ) throws SqlException {
-            this.leftFn = leftFn;
-            this.rightFn = rightFn;
-            this.arrayOut = new DirectArray(configuration);
-            this.leftArgPos = leftArgPos;
-            int nDimsLeft = ColumnType.decodeArrayDimensionality(leftFn.getType());
-            int nDimsRight = ColumnType.decodeArrayDimensionality(rightFn.getType());
-            if (nDimsLeft != 2) {
-                throw SqlException.position(leftArgPos).put("left array is not two-dimensional");
+            super("*", configuration, leftArg, rightArg, leftArgPos, rightArgPos);
+        }
+
+        @Override
+        protected double applyOperation(double leftVal, double rightVal) {
+            return leftVal * rightVal;
+        }
+
+        @Override
+        protected void bulkApplyOperation(FlatArrayView leftFlatView, FlatArrayView rightFlatView) {
+            for (int n = leftFlatView.length(), i = 0; i < n; i++) {
+                double leftVal = leftFlatView.getDoubleAtAbsIndex(i);
+                double rightVal = rightFlatView.getDoubleAtAbsIndex(i);
+                arrayOut.putDouble(i, leftVal * rightVal);
             }
-            if (nDimsRight != 2) {
-                throw SqlException.position(rightArgPos).put("right array is not two-dimensional");
-            }
-            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
-        }
-
-        @Override
-        public void close() {
-            this.leftFn = Misc.free(this.leftFn);
-            this.rightFn = Misc.free(this.rightFn);
-            this.arrayOut = Misc.free(this.arrayOut);
-        }
-
-        @Override
-        public ArrayView getArray(Record rec) {
-            ArrayView left = leftFn.getArray(rec);
-            ArrayView right = rightFn.getArray(rec);
-            if (left.isNull() || right.isNull()) {
-                arrayOut.ofNull();
-                return arrayOut;
-            }
-            int commonDimLen = left.getDimLen(1);
-            if (right.getDimLen(0) != commonDimLen) {
-                throw CairoException.nonCritical().position(leftArgPos)
-                        .put("left array row length doesn't match right array column length ")
-                        .put("[leftRowLen=").put(commonDimLen)
-                        .put(", rightColLen=").put(right.getDimLen(0))
-                        .put(']');
-            }
-            int outRowCount = left.getDimLen(0);
-            int outColCount = right.getDimLen(1);
-            int leftStride0 = left.getStride(0);
-            int leftStride1 = left.getStride(1);
-            int rightStride0 = right.getStride(0);
-            int rightStride1 = right.getStride(1);
-            arrayOut.setType(type);
-            arrayOut.setDimLen(0, outRowCount);
-            arrayOut.setDimLen(1, outColCount);
-            arrayOut.applyShape(leftArgPos);
-            MemoryA memOut = arrayOut.startMemoryA();
-            for (int rowOut = 0; rowOut < outRowCount; rowOut++) {
-                for (int colOut = 0; colOut < outColCount; colOut++) {
-                    double sum = 0;
-                    for (int commonDim = 0; commonDim < commonDimLen; commonDim++) {
-                        int leftFlatIndex = leftStride0 * rowOut + leftStride1 * commonDim;
-                        int rightFlatIndex = rightStride0 * commonDim + rightStride1 * colOut;
-                        sum += left.getDouble(leftFlatIndex) * right.getDouble(rightFlatIndex);
-                    }
-                    memOut.putDouble(sum);
-                }
-            }
-            return arrayOut;
-        }
-
-        @Override
-        public Function getLeft() {
-            return leftFn;
-        }
-
-        @Override
-        public String getName() {
-            return "*";
-        }
-
-        @Override
-        public Function getRight() {
-            return rightFn;
-        }
-
-        @Override
-        public boolean isOperator() {
-            return true;
         }
     }
 }

@@ -35,7 +35,6 @@ import io.questdb.std.Unsafe;
  * length of the array it represents -- it depends on the assumed element type.
  */
 public final class BorrowedFlatArrayView implements FlatArrayView {
-    private short elemType = ColumnType.UNDEFINED;
     private int length;
     private long ptr;
     private int size;
@@ -47,12 +46,7 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
     }
 
     @Override
-    public short elemType() {
-        return elemType;
-    }
-
-    @Override
-    public double getDoubleAtAbsoluteIndex(int elemIndex) {
+    public double getDoubleAtAbsIndex(int elemIndex) {
         assert ptr != 0;
         assert elemIndex >= 0 && elemIndex < length;
         final long addr = ptr + ((long) elemIndex * Double.BYTES);
@@ -60,7 +54,7 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
     }
 
     @Override
-    public long getLongAtAbsoluteIndex(int elemIndex) {
+    public long getLongAtAbsIndex(int elemIndex) {
         assert ptr != 0;
         assert elemIndex >= 0 && elemIndex < length;
         final long addr = ptr + ((long) elemIndex * Long.BYTES);
@@ -74,7 +68,6 @@ public final class BorrowedFlatArrayView implements FlatArrayView {
 
     public BorrowedFlatArrayView of(long ptr, short elemType, int length) {
         assert ptr > 0 || length == 0 : "ptr <= 0 && length > 0";
-        this.elemType = elemType;
         this.ptr = ptr;
         this.length = length;
         this.size = length * ColumnType.sizeOf(elemType);

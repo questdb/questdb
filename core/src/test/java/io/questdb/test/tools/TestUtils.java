@@ -194,6 +194,21 @@ public final class TestUtils {
         assertContains(null, sequence, term);
     }
 
+    public static void assertContainsEither(CharSequence sequence, CharSequence term1, CharSequence term2) {
+        // Assume that "" is contained in any string.
+        if (term1.length() == 0 || term2.length() == 0) {
+            return;
+        }
+
+        if (Chars.contains(sequence, term1)) {
+            return;
+        }
+        if (Chars.contains(sequence, term2)) {
+            return;
+        }
+        Assert.fail("'" + sequence + "' does not contain either: " + term1 + " or " + term2);
+    }
+
     public static void assertCursor(
             CharSequence expected,
             RecordCursor cursor,
@@ -648,11 +663,15 @@ public final class TestUtils {
         }
     }
 
-    public static void assertEventually(Runnable assertion) {
+    public static void assertEventually(EventualCode assertion) throws Exception {
         assertEventually(assertion, 30);
     }
 
-    public static void assertEventually(Runnable assertion, int timeoutSeconds) {
+    public interface EventualCode {
+        void run() throws Exception;
+    }
+
+    public static void assertEventually(EventualCode assertion, int timeoutSeconds) throws Exception {
         long maxSleepingTimeMillis = 1000;
         long nextSleepingTimeMillis = 10;
         long startTime = System.nanoTime();

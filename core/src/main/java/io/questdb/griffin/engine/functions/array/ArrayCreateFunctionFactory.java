@@ -31,6 +31,7 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.FunctionArray;
 import io.questdb.cairo.sql.ArrayFunction;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.api.MemoryA;
@@ -38,6 +39,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.ArrayConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -47,6 +49,7 @@ import static io.questdb.cairo.ColumnType.commonWideningType;
 import static io.questdb.cairo.ColumnType.decodeArrayElementType;
 
 public class ArrayCreateFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "array(V)";
@@ -60,11 +63,14 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        int outerDimLen = args.size();
+        int outerDimLen = args == null ? 0 : args.size();
+        if (outerDimLen == 0) {
+            return ArrayConstant.emptyUntyped(1);
+        }
         Function arg0 = args.getQuick(0);
         int arg0Pos = argPositions.getQuick(0);
-        short type0 = (short) arg0.getType();
-        short commonElemType = type0;
+        int type0 = arg0.getType();
+        short commonElemType = (short) type0;
         boolean isConstant = arg0.isConstant();
         if (!ColumnType.isArray(type0)) {
             for (int i = 1; i < outerDimLen; i++) {
@@ -75,6 +81,12 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                 }
                 isConstant &= argI.isConstant();
                 commonElemType = commonWideningType(commonElemType, typeI);
+            }
+            if (!ColumnType.isSupportedArrayElementType(commonElemType)) {
+                throw SqlException.position(arg0Pos)
+                        .put("unsupported array element type [type=")
+                        .put(ColumnType.nameOf(commonElemType))
+                        .put(']');
             }
             FunctionArray array = new FunctionArray(commonElemType, 1);
             array.setDimLen(0, outerDimLen);
@@ -105,11 +117,11 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
             isConstant &= argI.isConstant();
         }
 
-        FUNCTION_ARRAY:
+        function_array:
         if (arg0 instanceof FunctionArrayFunction) {
             for (int i = 1; i < outerDimLen; i++) {
                 if (!(args.getQuick(i) instanceof FunctionArrayFunction)) {
-                    break FUNCTION_ARRAY;
+                    break function_array;
                 }
             }
             // All arguments are of type FunctionArrayFunction, we can gather all their
@@ -141,7 +153,7 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         return new ArrayFunctionArrayFunction(
                 configuration,
                 new ObjList<>(args),
-                argPositions,
+                new IntList(argPositions),
                 commonElemType,
                 nestedNDims,
                 isConstant
@@ -176,6 +188,12 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void assignType(int type, BindVariableService bindVariableService) {
+            this.type = type;
+            arrayOut.setType(type);
+        }
+
+        @Override
         public void close() {
             this.arrayOut = Misc.free(this.arrayOut);
             Misc.freeObjList(args);
@@ -184,6 +202,13 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         @Override
         public ArrayView getArray(Record rec) {
             ArrayView array0 = args.getQuick(0).getArray(rec);
+            short type0 = array0.getElemType();
+            short outType = arrayOut.getElemType();
+            if (type0 != ColumnType.UNDEFINED && type0 != outType) {
+                throw CairoException.nonCritical().position(argPositions.getQuick(0))
+                        .put("sub-array has different type [subArrayType=").put(type0)
+                        .put(", thisArrayType=").put(outType);
+            }
             int nDims = array0.getDimCount();
             arrayOut.clear();
             arrayOut.setDimLen(0, args.size());
@@ -233,6 +258,13 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
             this.array = array;
             this.isConstant = isConstant;
             this.type = array.getType();
+        }
+
+        @Override
+        public void assignType(int type, BindVariableService bindVariableService) {
+            assert array.isEmpty() : "array is not empty";
+            this.type = type;
+            array.setType(type);
         }
 
         @Override

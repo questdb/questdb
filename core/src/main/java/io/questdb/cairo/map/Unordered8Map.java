@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
@@ -542,6 +543,11 @@ public class Unordered8Map implements Map, Reopenable {
         @Override
         public void put(Record record, RecordSink sink) {
             sink.copy(record, this);
+        }
+
+        @Override
+        public void putArray(ArrayView view) {
+            throw new UnsupportedOperationException();
         }
 
         @Override

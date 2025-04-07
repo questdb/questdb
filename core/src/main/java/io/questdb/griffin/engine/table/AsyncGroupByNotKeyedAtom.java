@@ -222,7 +222,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
             final boolean current = executionContext.getCloneSymbolTables();
             executionContext.setCloneSymbolTables(true);
             try {
-                Function.init(perWorkerFilters, symbolTableSource, executionContext);
+                Function.init(perWorkerFilters, symbolTableSource, executionContext, ownerFilter);
             } finally {
                 executionContext.setCloneSymbolTables(current);
             }
@@ -233,7 +233,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
             executionContext.setCloneSymbolTables(true);
             try {
                 for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                    Function.init(perWorkerGroupByFunctions.getQuick(i), symbolTableSource, executionContext);
+                    Function.init(perWorkerGroupByFunctions.getQuick(i), symbolTableSource, executionContext, null);
                 }
             } finally {
                 executionContext.setCloneSymbolTables(current);
@@ -241,23 +241,17 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
         }
 
         if (bindVarFunctions != null) {
-            Function.init(bindVarFunctions, symbolTableSource, executionContext);
+            Function.init(bindVarFunctions, symbolTableSource, executionContext, null);
             prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
         }
     }
 
-    @Override
-    public void initCursor() {
-        if (ownerFilter != null) {
-            ownerFilter.initCursor();
-        }
-        if (perWorkerFilters != null) {
-            // Initialize all per-worker filters on the query owner thread to avoid
-            // DataUnavailableException thrown on worker threads when filtering.
-            Function.initCursor(perWorkerFilters);
-        }
-    }
-
+    /**
+     * Attempts to acquire a slot for the given worker thread.
+     * On success, a {@link #release(int)} call must follow.
+     *
+     * @throws io.questdb.cairo.CairoException when circuit breaker has tripped
+     */
     public int maybeAcquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
         if (workerId == -1 && owner) {
             // Owner thread is free to use its own private filter, function updaters, etc. anytime.

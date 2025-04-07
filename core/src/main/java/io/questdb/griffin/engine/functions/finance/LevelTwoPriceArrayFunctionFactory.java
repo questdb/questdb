@@ -75,15 +75,15 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
 
     private static class LevelTwoPriceArrayFunction extends DoubleFunction {
 
-        private final int pricesArgPos;
+        private final int sizesArgPos;
         private Function pricesArg;
         private Function sizesArg;
         private Function targetArg;
 
-        public LevelTwoPriceArrayFunction(Function targetArg, Function pricesArg, int pricesArgPos, Function sizesArg) {
+        public LevelTwoPriceArrayFunction(Function targetArg, Function sizesArg, int sizesArgPos, Function pricesArg) {
             this.targetArg = targetArg;
             this.pricesArg = pricesArg;
-            this.pricesArgPos = pricesArgPos;
+            this.sizesArgPos = sizesArgPos;
             this.sizesArg = sizesArg;
         }
 
@@ -104,19 +104,14 @@ public class LevelTwoPriceArrayFunctionFactory implements FunctionFactory {
             }
             final int len = pricesArr.getDimLen(0);
             if (sizesArr.getDimLen(0) != len) {
-                throw CairoException.nonCritical().position(pricesArgPos)
-                        .put("sizes array length doesn't match prices array length");
+                throw CairoException.nonCritical().position(sizesArgPos)
+                        .put("prices array length doesn't match sizes array length");
             }
             double ta = 0; // target accumulator
             double pa = 0; // price accumulator
             double rt = t; // reduced target
             double pp; // partial price
 
-            // expect (size, value) pairs
-            // equation is
-            // ((size[0] * price[0]) + (size[n] * price[n]) + ((target - size[0] - size[n]) * price[n+1])) / target
-            // ((ra)             + (rt * price[n+1])) / t
-            // get final price by partially filling against the last bin
             for (int i = 0; i < len; i++) {
                 final double size = sizesArr.getDouble(i);
                 final double price = pricesArr.getDouble(i);

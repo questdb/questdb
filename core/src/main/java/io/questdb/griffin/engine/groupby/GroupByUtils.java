@@ -189,7 +189,7 @@ public class GroupByUtils {
                         throw SqlException.invalidColumn(node.position, node.token);
                     }
 
-                    if (index != timestampIndex) {
+                    if (index != timestampIndex || timestampUnimportant) {
                         // when we have same column several times in a row
                         // we only add it once to map keys
                         if (lastIndex != index) {

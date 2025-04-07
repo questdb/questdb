@@ -77,11 +77,25 @@ public class DoubleArrayParserTest extends AbstractTest {
     @Test
     public void testSmoke() {
         String input = "{{\"1\",\"2.0\"},{\"3.1\",\"0.4\"}}";
-        int expectedType = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
 
+        int expectedType = ColumnType.encodeArrayType(ColumnType.DOUBLE, 2);
         try (DoubleArrayParser parser = new DoubleArrayParser()) {
             parser.of(input);
+            Assert.assertEquals(4, parser.getFlatViewLength());
+            Assert.assertEquals(0, parser.getFlatViewOffset());
+            Assert.assertEquals(2, parser.getStride(0));
+            Assert.assertEquals(1, parser.getStride(1));
+            Assert.assertEquals(expectedType, parser.getType());
+            Assert.assertEquals(2, parser.getDimCount());
+            Assert.assertEquals(1, parser.getDouble(0), 0.0001);
+            Assert.assertEquals(2, parser.getDouble(1), 0.0001);
+            Assert.assertEquals(3.1, parser.getDouble(2), 0.0001);
+            Assert.assertEquals(0.4, parser.getDouble(3), 0.0001);
+        }
 
+        input = "[[\"1\",\"2.0\"],[\"3.1\",\"0.4\"]]";
+        try (DoubleArrayParser parser = new DoubleArrayParser()) {
+            parser.of(input);
             Assert.assertEquals(4, parser.getFlatViewLength());
             Assert.assertEquals(0, parser.getFlatViewOffset());
             Assert.assertEquals(2, parser.getStride(0));

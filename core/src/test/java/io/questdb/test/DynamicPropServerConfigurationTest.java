@@ -43,6 +43,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cutlass.http.TestHttpClient;
 import io.questdb.test.tools.TestUtils;
@@ -591,7 +592,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
                     int sleepMillis = 100;
                     while (true) {
-                        Thread.sleep(sleepMillis);
+                        Os.sleep(sleepMillis);
                         try (ResultSet rs = queryTraceStmt.executeQuery()) {
                             Assert.assertTrue(rs.next());
                             break;

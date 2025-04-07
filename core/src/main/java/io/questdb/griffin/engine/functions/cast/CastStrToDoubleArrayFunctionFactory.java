@@ -52,7 +52,7 @@ public class CastStrToDoubleArrayFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0), type);
     }
 
-    private static class Func extends ArrayFunction implements UnaryFunction {
+    public static class Func extends ArrayFunction implements UnaryFunction {
         private final int dims;
         private final Function function;
         private final DoubleArrayParser parser = new DoubleArrayParser();
@@ -85,7 +85,10 @@ public class CastStrToDoubleArrayFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(getArg()).val("::double[]");
+            sink.val(getArg()).val("::double");
+            for (int i = 0; i < dims; i++) {
+                sink.val("[]");
+            }
         }
     }
 }

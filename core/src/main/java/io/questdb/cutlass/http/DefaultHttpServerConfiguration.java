@@ -27,6 +27,8 @@ package io.questdb.cutlass.http;
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
@@ -40,6 +42,7 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.NanosecondClock;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
@@ -241,7 +244,7 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         }
     }
 
-    public class DefaultLineHttpProcessorConfiguration implements LineHttpProcessorConfiguration {
+    public static class DefaultLineHttpProcessorConfiguration implements LineHttpProcessorConfiguration {
         private final CairoConfiguration cairoConfiguration;
 
         public DefaultLineHttpProcessorConfiguration(CairoConfiguration cairoConfiguration) {
@@ -250,12 +253,12 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
 
         @Override
         public boolean autoCreateNewColumns() {
-            return lineHttpProcessorConfiguration.autoCreateNewColumns();
+            return true;
         }
 
         @Override
         public boolean autoCreateNewTables() {
-            return lineHttpProcessorConfiguration.autoCreateNewTables();
+            return true;
         }
 
         @Override
@@ -265,17 +268,17 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
 
         @Override
         public short getDefaultColumnTypeForFloat() {
-            return lineHttpProcessorConfiguration.getDefaultColumnTypeForInteger();
+            return ColumnType.DOUBLE;
         }
 
         @Override
         public short getDefaultColumnTypeForInteger() {
-            return lineHttpProcessorConfiguration.getDefaultColumnTypeForInteger();
+            return ColumnType.LONG;
         }
 
         @Override
         public int getDefaultPartitionBy() {
-            return lineHttpProcessorConfiguration.getDefaultPartitionBy();
+            return PartitionBy.DAY;
         }
 
         @Override
@@ -285,22 +288,22 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
 
         @Override
         public long getMaxRecvBufferSize() {
-            return lineHttpProcessorConfiguration.getMaxRecvBufferSize();
+            return Numbers.SIZE_1GB;
         }
 
         @Override
         public MicrosecondClock getMicrosecondClock() {
-            return lineHttpProcessorConfiguration.getMicrosecondClock();
+            return MicrosecondClockImpl.INSTANCE;
         }
 
         @Override
         public long getSymbolCacheWaitUsBeforeReload() {
-            return lineHttpProcessorConfiguration.getSymbolCacheWaitUsBeforeReload();
+            return 500_000;
         }
 
         @Override
         public LineTcpTimestampAdapter getTimestampAdapter() {
-            return lineHttpProcessorConfiguration.getTimestampAdapter();
+            return LineTcpTimestampAdapter.DEFAULT_TS_INSTANCE;
         }
 
         @Override
@@ -310,7 +313,7 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
 
         @Override
         public boolean isStringToCharCastAllowed() {
-            return lineHttpProcessorConfiguration.isStringToCharCastAllowed();
+            return false;
         }
 
         @Override

@@ -43,6 +43,8 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
 
     boolean getAutoCreateNewTables();
 
+    CairoConfiguration getCairoConfiguration();
+
     long getCommitInterval();
 
     long getCommitIntervalDefault();
@@ -77,6 +79,8 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
 
     int getMaxMeasurementSize();
 
+    long getMaxRecvBufferSize();
+
     Metrics getMetrics();
 
     MicrosecondClock getMicrosecondClock();
@@ -102,6 +106,4 @@ public interface LineTcpReceiverConfiguration extends IODispatcherConfiguration 
     boolean isUseLegacyStringDefault();
 
     boolean logMessageOnError();
-
-    CairoConfiguration getCairoConfiguration();
 }

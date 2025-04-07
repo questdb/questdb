@@ -31,12 +31,15 @@ import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.arr.FunctionArray;
 import io.questdb.cairo.arr.NoopArrayState;
 import io.questdb.cairo.sql.ArrayFunction;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.str.StringSink;
 
 public final class ArrayConstant extends ArrayFunction implements ConstantFunction {
+    public static final DirectArray NULL = new DirectArray();
     private final DirectArray array = new DirectArray();
 
     public ArrayConstant(FunctionArray arrayIn) {
@@ -50,15 +53,21 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
         for (int dim = 0; dim < nDims; dim++) {
             array.setDimLen(dim, arrayIn.getDimLen(dim));
         }
-        array.applyShape(-1);
+        array.applyShape();
         arrayIn.appendToMemFlat(array.startMemoryA());
+    }
+
+    private ArrayConstant(int nDims) {
+        array.setType(ColumnType.encodeArrayType(ColumnType.UNDEFINED, nDims));
+        array.applyShape();
+        this.type = array.getType();
     }
 
     public ArrayConstant(double[] vals) {
         this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
         array.setType(type);
         array.setDimLen(0, vals.length);
-        array.applyShape(-1);
+        array.applyShape();
         MemoryA memA = array.startMemoryA();
         for (int n = vals.length, i = 0; i < n; i++) {
             memA.putDouble(vals[i]);
@@ -70,13 +79,23 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
         array.setType(type);
         array.setDimLen(0, vals.length);
         array.setDimLen(1, vals[0].length);
-        array.applyShape(-1);
+        array.applyShape();
         MemoryA memA = array.startMemoryA();
         for (int n = vals.length, i = 0; i < n; i++) {
             for (int m = vals[0].length, j = 0; j < m; j++) {
                 memA.putDouble(vals[i][j]);
             }
         }
+    }
+
+    public static ArrayConstant emptyUntyped(int nDims) {
+        return new ArrayConstant(nDims);
+    }
+
+    @Override
+    public void assignType(int type, BindVariableService bindVariableService) throws SqlException {
+        this.type = type;
+        array.setType(type);
     }
 
     @Override
@@ -94,5 +113,9 @@ public final class ArrayConstant extends ArrayFunction implements ConstantFuncti
         StringSink strSink = new StringSink();
         ArrayTypeDriver.arrayToJson(array, strSink, NoopArrayState.INSTANCE);
         sink.val("ARRAY" + strSink);
+    }
+
+    static {
+        NULL.ofNull();
     }
 }

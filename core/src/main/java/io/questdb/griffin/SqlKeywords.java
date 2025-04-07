@@ -1502,13 +1502,19 @@ public class SqlKeywords {
     }
 
     public static boolean isPublicKeyword(CharSequence tok, int len) {
+        return isPublicKeyword(tok, 0, len);
+    }
+
+    public static boolean isPublicKeyword(CharSequence tok, int lo, int hi) {
+        int len = hi - lo;
+
         return len == 6
-                && (tok.charAt(0) | 32) == 'p'
-                && (tok.charAt(1) | 32) == 'u'
-                && (tok.charAt(2) | 32) == 'b'
-                && (tok.charAt(3) | 32) == 'l'
-                && (tok.charAt(4) | 32) == 'i'
-                && (tok.charAt(5) | 32) == 'c';
+                && (tok.charAt(lo) | 32) == 'p'
+                && (tok.charAt(lo + 1) | 32) == 'u'
+                && (tok.charAt(lo + 2) | 32) == 'b'
+                && (tok.charAt(lo + 3) | 32) == 'l'
+                && (tok.charAt(lo + 4) | 32) == 'i'
+                && (tok.charAt(lo + 5) | 32) == 'c';
     }
 
     public static boolean isQuarterKeyword(CharSequence tok) {
@@ -2128,7 +2134,7 @@ public class SqlKeywords {
                 && (tok.charAt(6) | 32) == 'h';
     }
 
-    static void assertTableNameIsQuotedOrNotAKeyword(CharSequence keyword, int position) throws SqlException {
+    static void assertNameIsQuotedOrNotAKeyword(CharSequence keyword, int position) throws SqlException {
         final boolean quoted = Chars.isQuoted(keyword);
         if (!quoted && SqlKeywords.isKeyword(keyword)) {
             throw SqlException.$(position, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"").put(keyword).put('"');

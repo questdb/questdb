@@ -74,6 +74,7 @@ public class LineTcpEventBuffer {
         // |    1 byte   |   4 bytes   |  4 bytes    |     $dims * 4 bytes    |                    |
         // +-------------+-------------+-------------+------------------------+--------------------+
         int totalLength = Integer.BYTES + Integer.BYTES + dims * Integer.BYTES + values.size();
+        // non-wal tables do not support large array ingestion.
         checkCapacity(address, totalLength + Byte.BYTES);
         Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_ARRAY);
         address += Byte.BYTES;

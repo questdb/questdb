@@ -46,7 +46,7 @@ public class FunctionArray extends MutableArray implements FlatArrayView {
 
     @Override
     public void appendToMemFlat(MemoryA mem) {
-        final short elemType = elemType();
+        final short elemType = getElemType();
         final Function[] functions = functions();
         int elemCount = getFlatViewLength();
         switch (elemType) {
@@ -127,12 +127,7 @@ public class FunctionArray extends MutableArray implements FlatArrayView {
     }
 
     @Override
-    public short elemType() {
-        return ColumnType.decodeArrayElementType(this.type);
-    }
-
-    @Override
-    public double getDoubleAtAbsoluteIndex(int flatIndex) {
+    public double getDoubleAtAbsIndex(int flatIndex) {
         validateFlatIndex(flatIndex);
         return functions[flatIndex].getDouble(record);
     }
@@ -142,7 +137,7 @@ public class FunctionArray extends MutableArray implements FlatArrayView {
     }
 
     @Override
-    public long getLongAtAbsoluteIndex(int flatIndex) {
+    public long getLongAtAbsIndex(int flatIndex) {
         validateFlatIndex(flatIndex);
         return functions()[flatIndex].getLong(record);
     }

@@ -24,9 +24,11 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.client.Sender;
@@ -36,7 +38,6 @@ import io.questdb.cutlass.line.LineChannel;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.LineTcpSenderV2;
 import io.questdb.cutlass.line.array.DoubleArray;
-import io.questdb.cutlass.line.array.LongArray;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.network.Net;
 import io.questdb.std.Chars;
@@ -47,19 +48,26 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assume;
+import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.security.PrivateKey;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.concurrent.CountDownLatch;
 import java.util.function.Consumer;
 
 import static io.questdb.test.cutlass.http.line.LineHttpSenderTest.createDoubleArray;
-import static io.questdb.test.cutlass.http.line.LineHttpSenderTest.createLongArray;
 import static io.questdb.test.tools.TestUtils.assertContains;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.Assert.*;
 
+@RunWith(Parameterized.class)
 public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     private final static String AUTH_KEY_ID1 = "testUser1";
@@ -68,6 +76,25 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     private static final Consumer<Sender> SET_TABLE_NAME_ACTION = s -> s.table("mytable");
     private final static String TOKEN = "UvuVb1USHGRRT08gEnwN2zGZrvM4MsLQ5brgF6SVkAw=";
     private final static PrivateKey AUTH_PRIVATE_KEY1 = AuthUtils.toPrivateKey(TOKEN);
+    private final boolean walEnabled;
+
+    public LineTcpSenderTest(WalMode walMode) {
+        this.walEnabled = (walMode == WalMode.WITH_WAL);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
+        });
+    }
+
+    @Before
+    @Override
+    public void setUp() {
+        super.setUp();
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
+    }
 
     @Test
     public void testArrayDouble() throws Exception {
@@ -81,6 +108,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                  DoubleArray a6 = new DoubleArray(1, 3, 4, 2, 1, 1).setAll(6);
             ) {
                 String table = "array_test";
+                CountDownLatch released = createTableCommitNotifier(table);
                 long ts = IntervalUtils.parseFloorPartialTimestamp("2025-02-22");
                 double[] arr1d = createDoubleArray(5);
                 double[][] arr2d = createDoubleArray(2, 3);
@@ -97,47 +125,9 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         .doubleArray("a6", a6)
                         .at(ts, ChronoUnit.MICROS);
                 sender.flush();
-
+                waitTableWriterFinish(released);
                 assertTableSizeEventually(engine, table, 1);
-                // @todo getArray support in TestTableReadCursor
-/*                try (TableReader reader = getReader(table)) {
-                    TestUtils.assertReader("", reader, new StringSink());
-                }*/
-            }
-        });
-    }
-
-    @Test
-    public void testArrayLong() throws Exception {
-        runInContext(r -> {
-            try (Sender sender = Sender.builder(Sender.Transport.TCP)
-                    .address("127.0.0.1")
-                    .port(bindPort)
-                    .build();
-                 LongArray a4 = new LongArray(1, 2, 1, 1).setAll(4);
-                 LongArray a5 = new LongArray(3, 2, 1, 4, 1).setAll(5);
-                 LongArray a6 = new LongArray(1, 3, 4, 2, 1, 1).setAll(6);
-            ) {
-                String table = "nd_test";
-                long ts = IntervalUtils.parseFloorPartialTimestamp("2025-02-22");
-                long[] arr1d = createLongArray(5);
-                long[][] arr2d = createLongArray(2, 3);
-                long[][][] arr3d = createLongArray(1, 2, 3);
-                sender.table(table)
-                        .symbol("x", "42i")
-                        .symbol("y", "[6f1.0,2.5,3.0,4.5,5.0]")  // ensuring no array parsing for symbol
-                        .longColumn("l1", 23452345)
-                        .longArray("a1", arr1d)
-                        .longArray("a2", arr2d)
-                        .longArray("a3", arr3d)
-                        .longArray("a4", a4)
-                        .longArray("a5", a5)
-                        .longArray("a6", a6)
-                        .at(ts, ChronoUnit.MICROS);
-                sender.flush();
-
-                assertTableSizeEventually(engine, table, 1);
-                // @todo getArray support in TestTableReadCursor
+                // @todo assert table contents, needs getArray support in TestTableReadCursor
             }
         });
     }
@@ -300,6 +290,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             String confString = "tcp::addr=127.0.0.1:" + bindPort + ";user=" + AUTH_KEY_ID1 + ";token=" + TOKEN + ";";
             try (Sender sender = Sender.fromConfig(confString)) {
                 long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
+                CountDownLatch released = createTableCommitNotifier("mytable");
                 sender.table("mytable")
                         .longColumn("int_field", 42)
                         .boolColumn("bool_field", true)
@@ -308,6 +299,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         .timestampColumn("ts_field", tsMicros, ChronoUnit.MICROS)
                         .at(tsMicros, ChronoUnit.MICROS);
                 sender.flush();
+                waitTableWriterFinish(released);
             }
 
             assertTableSizeEventually(engine, "mytable", 1);
@@ -353,6 +345,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .port(bindPort)
                     .build()) {
 
+                CountDownLatch released = createTableCommitNotifier("mytable");
                 long ts = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
                 sender.table("mytable")
                         .doubleColumn("negative_inf", Double.NEGATIVE_INFINITY)
@@ -362,7 +355,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         .doubleColumn("min_value", Double.MIN_VALUE)
                         .at(ts, ChronoUnit.MICROS);
                 sender.flush();
-
+                waitTableWriterFinish(released);
                 assertTableSizeEventually(engine, "mytable", 1);
                 try (TableReader reader = getReader("mytable")) {
                     TestUtils.assertReader("negative_inf\tpositive_inf\tnan\tmax_value\tmin_value\ttimestamp\n" +
@@ -380,6 +373,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .port(bindPort)
                     .build()) {
 
+                CountDownLatch released = createTableCommitNotifier("poison");
                 long ts = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
                 // the poison table sets the timestamp column index explicitly
                 sender.table("poison")
@@ -390,13 +384,16 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         .timestampColumn("timestamp", ts, ChronoUnit.MICROS)
                         .at(ts, ChronoUnit.MICROS);
                 sender.flush();
+                waitTableWriterFinish(released);
                 assertTableSizeEventually(engine, "poison", 1);
-
+                CountDownLatch released2 = createTableCommitNotifier("victim");
                 // the victim table does not set the timestamp column index explicitly
                 sender.table("victim")
                         .stringColumn("str_col1", "str_col1")
                         .at(ts, ChronoUnit.MICROS);
                 sender.flush();
+                waitTableWriterFinish(released2);
+
                 assertTableSizeEventually(engine, "victim", 1);
             }
         });
@@ -405,6 +402,29 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testInsertBadStringIntoUuidColumn() throws Exception {
         testValueCannotBeInsertedToUuidColumn("totally not a uuid");
+    }
+
+    @Test
+    public void testInsertLargeArray() throws Exception {
+        Assume.assumeTrue(walEnabled);
+        String tableName = "arr_large_test";
+        runInContext(r -> {
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()
+            ) {
+                CountDownLatch released = createTableCommitNotifier(tableName);
+                double[] arr = createDoubleArray(100_000_000);
+                sender.table(tableName)
+                        .doubleArray("arr", arr)
+                        .at(100000000000L, ChronoUnit.MICROS);
+                sender.flush();
+                waitTableWriterFinish(released);
+            }
+            drainWalQueue();
+            assertTableSizeEventually(engine, tableName, 1);
+        });
     }
 
     @Test
@@ -417,6 +437,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .col("u", ColumnType.UUID)
                     .timestamp();
             AbstractCairoTest.create(model);
+            CountDownLatch released = createTableCommitNotifier("mytable");
 
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
@@ -431,6 +452,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 sender.flush();
             }
 
+            waitTableWriterFinish(released);
             assertTableSizeEventually(engine, "mytable", 1);
             try (TableReader reader = getReader("mytable")) {
                 TestUtils.assertReader("s\tu\ttimestamp\n" +
@@ -456,6 +478,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .timestamp();
             AbstractCairoTest.create(model);
 
+            CountDownLatch released = createTableCommitNotifier("mytable");
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
@@ -470,6 +493,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 sender.flush();
             }
 
+            waitTableWriterFinish(released);
             assertTableSizeEventually(engine, "mytable", 1);
             try (TableReader reader = getReader("mytable")) {
                 TestUtils.assertReader("u1\tu2\tu3\ttimestamp\n" +
@@ -485,7 +509,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .col("ts_col", ColumnType.TIMESTAMP)
                     .timestamp();
             AbstractCairoTest.create(model);
-
+            CountDownLatch released = createTableCommitNotifier("mytable");
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
@@ -497,6 +521,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 sender.flush();
             }
 
+            waitTableWriterFinish(released);
             assertTableSizeEventually(engine, "mytable", 1);
             try (TableReader reader = getReader("mytable")) {
                 TestUtils.assertReader("ts_col\ttimestamp\n" +
@@ -513,7 +538,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .col("ts", ColumnType.TIMESTAMP)
                     .timestamp();
             AbstractCairoTest.create(model);
-
+            CountDownLatch released = createTableCommitNotifier("mytable");
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
@@ -543,6 +568,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 sender.flush();
             }
 
+            waitTableWriterFinish(released);
             assertTableSizeEventually(engine, "mytable", 5);
             try (TableReader reader = getReader("mytable")) {
                 TestUtils.assertReader(
@@ -575,6 +601,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testServerIgnoresUnfinishedRows() throws Exception {
+        Assume.assumeTrue(!walEnabled);
         String tableName = "myTable";
         runInContext(r -> {
             send(tableName, WAIT_ENGINE_TABLE_RELEASE, () -> {
@@ -704,12 +731,14 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .build()
             ) {
                 String table = "string_table";
+                CountDownLatch released = createTableCommitNotifier(table);
                 long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2024-02-27");
                 String expectedValue = "čćžšđçğéíáýůř";
                 sender.table(table)
                         .stringColumn("string1", expectedValue)
                         .at(tsMicros, ChronoUnit.MICROS);
                 sender.flush();
+                waitTableWriterFinish(released);
                 assertTableSizeEventually(engine, table, 1);
                 try (RecordCursorFactory fac = engine.select(table, sqlExecutionContext);
                      RecordCursor cursor = fac.getCursor(sqlExecutionContext)
@@ -729,7 +758,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .address("127.0.0.1")
                     .port(bindPort)
                     .build()) {
-
+                CountDownLatch released = createTableCommitNotifier("mytable");
                 long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2022-02-25");
                 sender.table("mytable")
                         .longColumn("int_field", 42)
@@ -739,6 +768,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         .timestampColumn("ts_field", tsMicros, ChronoUnit.MICROS)
                         .at(tsMicros, ChronoUnit.MICROS);
                 sender.flush();
+                waitTableWriterFinish(released);
             }
 
             assertTableSizeEventually(engine, "mytable", 1);
@@ -753,6 +783,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     public void testWriteLongMinMax() throws Exception {
         runInContext(r -> {
             String table = "table";
+            CountDownLatch released = createTableCommitNotifier("table");
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
                     .address("127.0.0.1")
                     .port(bindPort)
@@ -766,6 +797,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 sender.flush();
             }
 
+            waitTableWriterFinish(released);
             assertTableSizeEventually(engine, table, 1);
             try (TableReader reader = getReader(table)) {
                 TestUtils.assertReader("max\tmin\ttimestamp\n" +
@@ -787,11 +819,6 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         }
     }
 
-    private static void assertExceptionOnClosedSender() {
-        assertExceptionOnClosedSender(s -> {
-        }, LineTcpSenderTest.SET_TABLE_NAME_ACTION);
-    }
-
     private static void assertExceptionOnClosedSender(Consumer<Sender> beforeCloseAction, Consumer<Sender> afterCloseAction) {
         DummyLineChannel channel = new DummyLineChannel();
         Sender sender = new LineTcpSenderV2(channel, 1000);
@@ -805,10 +832,27 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
         }
     }
 
+    private static void assertExceptionOnClosedSender() {
+        assertExceptionOnClosedSender(s -> {
+        }, LineTcpSenderTest.SET_TABLE_NAME_ACTION);
+    }
+
     private static void assertNoControlCharacter(CharSequence m) {
         for (int i = 0, n = m.length(); i < n; i++) {
             assertFalse(Character.isISOControl(m.charAt(i)));
         }
+    }
+
+    private static CountDownLatch createTableCommitNotifier(String tableName) {
+        CountDownLatch released = new CountDownLatch(1);
+        engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+            if (name != null && Chars.equalsNc(name.getTableName(), tableName)) {
+                if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
+                    released.countDown();
+                }
+            }
+        });
+        return released;
     }
 
     private void assertSymbolsCannotBeWrittenAfterOtherType(Consumer<Sender> otherTypeWriter) throws Exception {
@@ -837,6 +881,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .col("u1", ColumnType.UUID)
                     .timestamp();
             AbstractCairoTest.create(model);
+            CountDownLatch released = createTableCommitNotifier("mytable");
 
             // this sender fails as the string is not UUID
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
@@ -863,7 +908,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         .at(tsMicros, ChronoUnit.MICROS);
                 sender.flush();
             }
-
+            waitTableWriterFinish(released);
 
             assertTableSizeEventually(engine, "mytable", 1);
             try (TableReader reader = getReader("mytable")) {
@@ -871,6 +916,13 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                         "11111111-1111-1111-1111-111111111111\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
             }
         });
+    }
+
+    private void waitTableWriterFinish(CountDownLatch latch) throws InterruptedException {
+        latch.await();
+        if (walEnabled) {
+            drainWalQueue();
+        }
     }
 
     private static class DummyLineChannel implements LineChannel {

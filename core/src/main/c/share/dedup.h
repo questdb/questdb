@@ -25,11 +25,21 @@
 #ifndef QUESTDB_DEDUP_H
 #define QUESTDB_DEDUP_H
 
+// This struct represents repated pointers in dedup_column
+// Sometimes it's better to view dedup_column struct as if it has an array of 2 column_pointer(s)
 #pragma pack (push, 1)
+struct column_pointer {
+    uint8_t *aux_data;
+    uint8_t *var_data;
+    int64_t var_data_len;
+};
+
 // Should match data structure described in DedupColumnCommitAddresses.java
 struct dedup_column {
+public:
     int32_t column_type;
     int32_t value_size_bytes;
+private:
     int64_t column_top;
     void *column_data;
     void *column_var_data;
@@ -37,13 +47,69 @@ struct dedup_column {
     void *o3_data;
     void *o3_var_data;
     int64_t o3_var_data_len;
-    int64_t java_reserved_1;
-    int64_t java_reserved_2;
-    int64_t java_reserved_3;
-    int64_t java_reserved_4;
-    int64_t java_reserved_5;
+    [[maybe_unused]] int64_t java_reserved_1;
+    [[maybe_unused]] int64_t java_reserved_2;
+    [[maybe_unused]] int64_t java_reserved_3;
+    [[maybe_unused]] int64_t java_reserved_4;
+    [[maybe_unused]] int64_t java_reserved_5;
     uint8_t null_value[32];
+
+public:
+    template<typename T>
+    inline const T *get_column_data() const{
+        return reinterpret_cast<const T *>(column_data);
+    }
+
+    [[nodiscard]] inline const column_pointer *get_column_data_pointers() const {
+        return reinterpret_cast<const column_pointer *>(&column_data);
+    }
+
+    template<typename T>
+    inline const T *get_o3_data() const {
+        return reinterpret_cast<const T *>(o3_data);
+    }
+
+    template<typename T>
+    inline const T *get_o3_var_data() const {
+        return reinterpret_cast<const T *>(o3_var_data);
+    }
+
+    template<typename T>
+    inline const T **get_column_data_2d() const {
+        return reinterpret_cast<const T **>(column_data);
+    }
+
+    template<typename T>
+    inline const T *get_column_var_data() const {
+        return reinterpret_cast<const T *>(column_var_data);
+    }
+
+    template<typename T>
+    inline const T **get_column_var_data_2d() const {
+        return reinterpret_cast<const T **>(column_var_data);
+    }
+
+    template<typename T>
+    inline const T& get_null_value() const{
+        return *reinterpret_cast<const T *>(&null_value);
+    }
+
+    [[nodiscard]]
+    inline int64_t get_column_top() const {
+        return column_top;
+    }
+
+    [[nodiscard]]
+    inline int64_t get_column_var_data_len() const {
+        return column_var_data_len;
+    }
+
+    [[nodiscard]]
+    inline int64_t get_o3_var_data_len() const {
+        return o3_var_data_len;
+    }
 };
+
 #pragma pack(pop)
 
 struct int256 {
@@ -74,6 +140,5 @@ inline bool operator<(const int256 &a, const int256 &b) {
     // If the high parts are equal, compare the low 128-bit parts
     return a.lo < b.lo;
 }
-
 
 #endif //QUESTDB_DEDUP_H

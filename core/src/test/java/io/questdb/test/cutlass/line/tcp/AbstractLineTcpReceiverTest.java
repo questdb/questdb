@@ -213,11 +213,11 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
     }
 
-    public static void assertTableExistsEventually(CairoEngine engine, CharSequence tableName) {
+    public static void assertTableExistsEventually(CairoEngine engine, CharSequence tableName) throws Exception {
         assertEventually(() -> assertTableExists(engine, tableName));
     }
 
-    public static void assertTableSizeEventually(CairoEngine engine, CharSequence tableName, long expectedSize) {
+    public static void assertTableSizeEventually(CairoEngine engine, CharSequence tableName, long expectedSize) throws Exception {
         TestUtils.assertEventually(() -> {
             assertTableExists(engine, tableName);
 

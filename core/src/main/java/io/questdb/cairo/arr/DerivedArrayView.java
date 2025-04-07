@@ -25,6 +25,7 @@
 package io.questdb.cairo.arr;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.Numbers;
 
 /**
@@ -34,13 +35,48 @@ import io.questdb.std.Numbers;
  */
 public class DerivedArrayView extends ArrayView {
 
+    /**
+     * Adds extra dimensions to the array view.
+     * For example, a 1D array [1, 2, 3] with one dimension added becomes a 2D array [[1, 2, 3]].
+     * New dimensions are added at the beginning with length 1.
+     *
+     * @param count Number of dimensions to add
+     */
+    public void addDimensions(int count) {
+        if (count == 0) {
+            return;
+        }
+
+        if (count + getDimCount() > ColumnType.ARRAY_NDIMS_LIMIT) {
+            throw CairoException.nonCritical()
+                    .put("cannot add ")
+                    .put(count)
+                    .put(" dimensions, would exceed maximum array dimensions (")
+                    .put(ColumnType.ARRAY_NDIMS_LIMIT)
+                    .put(")");
+        }
+
+        // new stride is the same as the outermost current stride
+        int newStride = getStride(0);
+
+        shape.rshift(count);
+        strides.rshift(count);
+        for (int i = 0; i < count; i++) {
+            shape.setQuick(i, 1); // new dimensions have all length 1
+            strides.add(newStride); // new dimensions have the same stride as the outermost existing dimension
+        }
+
+        // Update the type to reflect the new dimension count
+        type = ColumnType.encodeArrayType(getElemType(), getDimCount() + count);
+    }
+
     public final void flattenDim(int dim, int argPos) {
         final int nDims = getDimCount();
         assert dim >= 0 && dim < nDims : "dim out of range: " + dim + ", nDims: " + nDims;
         if (getStride(dim) == 1 && getDimLen(dim) > 1) {
             throw CairoException.nonCritical()
                     .position(argPos)
-                    .put("cannot flatten dim with stride = 1 and length > 1 [dim=").put(dim)
+                    .put("cannot flatten dim with stride = 1 and length > 1 [dim=").put(dim + 1)
                     .put(", dimLen=").put(getDimLen(dim))
                     .put(", nDims=").put(nDims).put(']');
         }
@@ -77,6 +113,7 @@ public class DerivedArrayView extends ArrayView {
         isVanilla = false;
         shape.removeIndex(dim);
         strides.removeIndex(dim);
+        type = ColumnType.encodeArrayType(getElemType(), getDimCount() - 1);
     }
 
     public void slice(int dim, int lo, int hi, int argPos) {

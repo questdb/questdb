@@ -197,6 +197,7 @@ public final class ColumnType {
      * | Reserved |  nDims   | elemType  | ColumnType.ARRAY |
      * +----------+----------+-----------+------------------+
      * |          |  5 bits  |  6 bits   |      8 bits      |
+     * +----------+----------+-----------+------------------+
      * </pre>
      *
      * @param elemType one of the supported array element type tags.
@@ -204,7 +205,8 @@ public final class ColumnType {
      */
     public static int encodeArrayType(short elemType, int nDims) {
         assert nDims >= 1 && nDims <= ARRAY_NDIMS_LIMIT : "nDims out of range: " + nDims;
-        assert isSupportedArrayElementType(elemType) : "not supported as array element type: " + elemType;
+        assert isSupportedArrayElementType(elemType) || elemType == UNDEFINED
+                : "not supported as array element type: " + nameOf(elemType);
 
         nDims--; // 0 == one dimension
         return (nDims & ARRAY_NDIMS_FIELD_MASK) << ARRAY_NDIMS_FIELD_POS
@@ -251,10 +253,6 @@ public final class ColumnType {
         return ColumnType.tagOf(columnType) == ColumnType.ARRAY;
     }
 
-    public static boolean isArrayUnknown(int columnType) {
-        return tagOf(columnType) == ARRAY && decodeArrayElementType(columnType) == UNDEFINED;
-    }
-
     public static boolean isAssignableFrom(int fromType, int toType) {
         return isToSameOrWider(fromType, toType) || isNarrowingCast(fromType, toType);
     }
@@ -294,7 +292,8 @@ public final class ColumnType {
     }
 
     public static boolean isComparable(int columnType) {
-        return columnType != BINARY && columnType != INTERVAL;
+        short typeTag = tagOf(columnType);
+        return typeTag != BINARY && typeTag != INTERVAL && typeTag != ARRAY;
     }
 
     public static boolean isCursor(int columnType) {
@@ -407,6 +406,10 @@ public final class ColumnType {
         return columnType == UNDEFINED;
     }
 
+    public static boolean isUnderdefined(int columnType) {
+        return columnType == UNDEFINED || isUnderdefinedArray(columnType);
+    }
+
     public static boolean isVarSize(int columnType) {
         return columnType == STRING ||
                 columnType == BINARY ||
@@ -487,11 +490,14 @@ public final class ColumnType {
     }
 
     public static short tagOf(int type) {
+        if (type == -1) {
+            return (short) type;
+        }
         return (short) (type & 0xFF);
     }
 
     public static short tagOf(CharSequence name) {
-        return (short) nameTypeMap.get(name);
+        return tagOf(nameTypeMap.get(name));
     }
 
     public static int typeOf(CharSequence name) {
@@ -573,6 +579,10 @@ public final class ColumnType {
                 || (fromType == CHAR && toType == SYMBOL)
                 || (fromType == CHAR && toType == STRING)
                 || (fromType == UUID && toType == STRING);
+    }
+
+    private static boolean isUnderdefinedArray(int columnType) {
+        return tagOf(columnType) == ARRAY && decodeArrayElementType(columnType) == UNDEFINED;
     }
 
     private static boolean isVarcharCast(int fromType, int toType) {
@@ -685,24 +695,25 @@ public final class ColumnType {
         typeNameMap.put(INTERVAL, "INTERVAL");
         typeNameMap.put(NULL, "NULL");
 
-        arrayTypeSet.add(BOOLEAN);
-        arrayTypeSet.add(BYTE);
-        arrayTypeSet.add(SHORT);
-        arrayTypeSet.add(INT);
-        arrayTypeSet.add(LONG);
-        arrayTypeSet.add(DATE);
-        arrayTypeSet.add(TIMESTAMP);
-        arrayTypeSet.add(FLOAT);
+//        arrayTypeSet.add(BOOLEAN);
+//        arrayTypeSet.add(BYTE);
+//        arrayTypeSet.add(SHORT);
+//        arrayTypeSet.add(INT);
+//        arrayTypeSet.add(LONG);
+//        arrayTypeSet.add(DATE);
+//        arrayTypeSet.add(TIMESTAMP);
+//        arrayTypeSet.add(FLOAT);
         arrayTypeSet.add(DOUBLE);
-        arrayTypeSet.add(LONG256);
-        arrayTypeSet.add(UUID);
-        arrayTypeSet.add(IPv4);
+//        arrayTypeSet.add(LONG256);
+//        arrayTypeSet.add(UUID);
+//        arrayTypeSet.add(IPv4);
 
         nameTypeMap.put("boolean", BOOLEAN);
         nameTypeMap.put("byte", BYTE);
         nameTypeMap.put("double", DOUBLE);
         nameTypeMap.put("float", FLOAT);
         nameTypeMap.put("int", INT);
+        nameTypeMap.put("integer", INT);
         nameTypeMap.put("long", LONG);
         nameTypeMap.put("short", SHORT);
         nameTypeMap.put("char", CHAR);

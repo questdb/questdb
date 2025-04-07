@@ -48,6 +48,11 @@ public class IntList implements Mutable, Sinkable {
         this.data = capacity == 0 ? EMPTY_ARRAY : new int[initialCapacity];
     }
 
+    public IntList(IntList source) {
+        this(source.size());
+        addAll(source);
+    }
+
     public void add(int value) {
         checkCapacity(pos + 1);
         data[pos++] = value;
@@ -151,7 +156,8 @@ public class IntList implements Mutable, Sinkable {
      * @return element at the specified position.
      */
     public int getQuick(int index) {
-        assert index < pos;
+        assert index >= 0 : "negative index";
+        assert index < pos : String.format("index %,d out of bounds for list size %,d", index, pos);
         return data[index];
     }
 
@@ -237,6 +243,34 @@ public class IntList implements Mutable, Sinkable {
         }
     }
 
+    /**
+     * Shifts all elements in the list to the right by the specified number of positions.
+     * This creates empty spaces at the beginning of the list which are filled with {@link #NO_ENTRY_VALUE}.
+     * The size of the list is increased by the shift amount.
+     *
+     * <p>For example, if the list contains [1,2,3] and rshift(2) is called, the result would be
+     * [-1,-1,1,2,3] (assuming NO_ENTRY_VALUE is -1).</p>
+     *
+     * @param level the number of positions to shift elements to the right
+     */
+    public void rshift(int level) {
+        if (level == 0) {
+            return;
+        }
+        assert level > 0;
+
+        int newCapacityRequired = pos + level;
+        if (newCapacityRequired > data.length) {
+            int[] buf = new int[newCapacityRequired];
+            System.arraycopy(data, 0, buf, level, pos);
+            data = buf;
+        } else {
+            System.arraycopy(data, 0, data, level, pos);
+        }
+        Arrays.fill(data, 0, level, NO_ENTRY_VALUE);
+        pos += level;
+    }
+
     public void set(int index, int element) {
         if (index < pos) {
             data[index] = element;
@@ -268,7 +302,7 @@ public class IntList implements Mutable, Sinkable {
     /**
      * Sorts groups of N elements. The size of the group is specified by {@code groupSize}.
      * Comparison between groups is done by comparing the first element of each group, then
-     * if the first elements are equial the second elements are compared and so on.
+     * if the first elements are equal the second elements are compared and so on.
      *
      * @param groupSize size of the group
      */

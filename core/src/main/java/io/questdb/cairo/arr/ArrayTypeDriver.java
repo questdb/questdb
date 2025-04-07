@@ -118,20 +118,69 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     public static final ArrayTypeDriver INSTANCE = new ArrayTypeDriver();
     public static final long OFFSET_MAX = (1L << 48) - 1L;
     private static final ArrayValueAppender VALUE_APPENDER_DOUBLE = ArrayTypeDriver::appendDoubleFromArrayToSink;
+    private static final ArrayValueAppender VALUE_APPENDER_DOUBLE_FINITE = ArrayTypeDriver::appendDoubleFromArrayToSinkFiniteOnly;
     private static final ArrayValueAppender VALUE_APPENDER_LONG = ArrayTypeDriver::appendLongFromArrayToSink;
 
     public static void appendDoubleFromArrayToSink(
             @NotNull ArrayView array,
             int index,
-            @NotNull CharSink<?> sink,
-            @NotNull String nullLiteral
+            @NotNull CharSink<?> sink
     ) {
         double d = array.getDouble(index);
-        if (!Numbers.isNull(d)) {
-            sink.put(d);
+        sink.put(d);
+    }
+
+    public static void appendDoubleFromArrayToSinkFiniteOnly(
+            @NotNull ArrayView array,
+            int index,
+            @NotNull CharSink<?> sink
+    ) {
+        double d = array.getDouble(index);
+        if (Numbers.isNull(d)) {
+            sink.putAscii("null");
         } else {
-            sink.putAscii(nullLiteral);
+            sink.put(d);
         }
+    }
+
+    public static int appendPlainValue(long appendAddress, @NotNull ArrayView value) {
+        final long origAddress = appendAddress;
+        if (value.isNull()) {
+            Unsafe.getUnsafe().putShort(appendAddress, ColumnType.NULL);
+            return Short.BYTES;
+        }
+        short elemType = value.getElemType();
+        Unsafe.getUnsafe().putShort(appendAddress, elemType);
+        appendAddress += Short.BYTES;
+
+        int dimCount = value.getDimCount();
+        Unsafe.getUnsafe().putInt(appendAddress, dimCount);
+        appendAddress += Integer.BYTES;
+
+        int cardinality = value.getCardinality();
+        Unsafe.getUnsafe().putInt(appendAddress, cardinality);
+        appendAddress += Integer.BYTES;
+
+        for (int i = 0; i < dimCount; i++) {
+            Unsafe.getUnsafe().putInt(appendAddress, value.getDimLen(i));
+            appendAddress += Integer.BYTES;
+        }
+
+        // todo: we only support vanilla arrays for now
+        assert value.isVanilla();
+        for (int i = 0, n = value.getFlatViewLength(); i < n; i++) {
+            switch (elemType) {
+                case ColumnType.DOUBLE:
+                    Unsafe.getUnsafe().putDouble(appendAddress, value.getDouble(i));
+                    appendAddress += Double.BYTES;
+                    break;
+                default:
+                    throw new UnsupportedOperationException("Unsupported array element type: " + elemType);
+            }
+        }
+        long bytesWritten = appendAddress - origAddress;
+        assert bytesWritten > 0 && bytesWritten <= Integer.MAX_VALUE;
+        return (int) bytesWritten;
     }
 
     public static void appendValue(
@@ -171,7 +220,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         if (arrayView == null) {
             sink.put("null");
         } else {
-            arrayToJson(arrayView, sink, resolveAppender(arrayView), arrayState);
+            arrayToJson(arrayView, sink, resolveAppender(arrayView, true), arrayState);
         }
     }
 
@@ -185,7 +234,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         arrayToText(
                 arrayView,
                 sink,
-                resolveAppender(arrayView),
+                resolveAppender(arrayView, false),
                 '{',
                 '}',
                 "NULL",
@@ -213,7 +262,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             @NotNull String nullLiteral,
             ArrayState arrayState
     ) {
-        if (ColumnType.isNull(array.getType())) {
+        if (array.isNull()) {
             sink.putAscii(nullLiteral);
             return;
         }
@@ -223,7 +272,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             sink.put(openChar).put(closeChar);
             return;
         }
-        arrayToText(array, 0, 0, sink, appender, openChar, closeChar, nullLiteral, arrayState);
+        arrayToText(array, 0, 0, sink, appender, openChar, closeChar, arrayState);
     }
 
     /**
@@ -241,6 +290,37 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
 
     public static long getAuxVectorOffsetStatic(long row) {
         return ARRAY_AUX_WIDTH_BYTES * row;
+    }
+
+    public static BorrowedArray getPlainValue(long dataMemAddr, @NotNull BorrowedArray value) {
+        short elementType = Unsafe.getUnsafe().getShort(dataMemAddr);
+        if (elementType == ColumnType.NULL) {
+            value.ofNull();
+            return value;
+        }
+        dataMemAddr += Short.BYTES;
+
+        int nDim = Unsafe.getUnsafe().getInt(dataMemAddr);
+        dataMemAddr += Integer.BYTES;
+
+        int cardinality = Unsafe.getUnsafe().getInt(dataMemAddr);
+        dataMemAddr += Integer.BYTES;
+
+        int type = ColumnType.encodeArrayType(elementType, nDim);
+        long valuePtr = dataMemAddr + (long) nDim * Integer.BYTES;
+        value.of(type, nDim, dataMemAddr, valuePtr, cardinality * ColumnType.sizeOf(elementType));
+        return value;
+    }
+
+    public static int getSingleMemValueByteCount(@NotNull ArrayView value) {
+        if (value.isNull()) {
+            return Short.BYTES;
+        }
+        return Short.BYTES // element type
+                + Integer.BYTES // number of dimensions
+                + value.getDimCount() * Integer.BYTES // dimension sizes
+                + Integer.BYTES // size of the data vector
+                + ColumnType.sizeOf(value.getElemType()) * value.getCardinality();
     }
 
     @Override
@@ -411,6 +491,20 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public long mergeShuffleColumnFromManyAddresses(long indexFormat, long primaryAddressList, long secondaryAddressList, long outPrimaryAddress, long outSecondaryAddress, long mergeIndex, long destDataOffset, long destDataSize) {
+        return Vect.mergeShuffleArrayColumnFromManyAddresses(
+                indexFormat,
+                primaryAddressList,
+                secondaryAddressList,
+                outPrimaryAddress,
+                outSecondaryAddress,
+                mergeIndex,
+                destDataOffset,
+                destDataSize
+        );
+    }
+
+    @Override
     public void o3ColumnMerge(
             long timestampMergeIndexAddr,
             long timestampMergeIndexCount,
@@ -573,7 +667,6 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
             @NotNull ArrayValueAppender appender,
             char openChar,
             char closeChar,
-            @NotNull String nullLiteral,
             ArrayState arrayState
     ) {
         final int count = array.getDimLen(dim);
@@ -589,7 +682,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
                     arrayState.putAsciiIfNotRecorded(ArrayState.STATE_COMMA_VALUES, ++elementCommaCount, sink, ',');
                 }
                 if (arrayState.notRecorded(flatIndex)) {
-                    appender.appendFromFlatIndex(array, flatIndex, sink, nullLiteral);
+                    appender.appendFromFlatIndex(array, flatIndex, sink);
                     flatIndex += stride;
                     arrayState.record(flatIndex);
                 } else {
@@ -602,7 +695,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
                 if (i != 0) {
                     arrayState.putAsciiIfNotRecorded(ArrayState.STATE_COMMA_DIMS, ++dimCommaCount, sink, ',');
                 }
-                arrayToText(array, dim + 1, flatIndex, sink, appender, openChar, closeChar, nullLiteral, arrayState);
+                arrayToText(array, dim + 1, flatIndex, sink, appender, openChar, closeChar, arrayState);
                 flatIndex += stride;
             }
         }
@@ -650,11 +743,11 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         return res;
     }
 
-    private static @NotNull ArrayValueAppender resolveAppender(@NotNull ArrayView array) {
-        int elemType = ColumnType.decodeArrayElementType(array.getType());
+    private static @NotNull ArrayValueAppender resolveAppender(@NotNull ArrayView array, boolean convertNonFiniteToNull) {
+        int elemType = array.getElemType();
         switch (elemType) {
             case ColumnType.DOUBLE:
-                return VALUE_APPENDER_DOUBLE;
+                return convertNonFiniteToNull ? VALUE_APPENDER_DOUBLE_FINITE : VALUE_APPENDER_DOUBLE;
             case ColumnType.LONG:
             case ColumnType.NULL:
                 return VALUE_APPENDER_LONG;
@@ -679,7 +772,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         // We could be storing values of different datatypes.
         // We thus need to align accordingly. I.e., if we store doubles, we need to align on an 8-byte boundary.
         // for shorts, it's on a 2-byte boundary. For booleans, we align to the byte.
-        final int requiredByteAlignment = ColumnType.sizeOf(ColumnType.decodeArrayElementType(array.getType()));
+        final int requiredByteAlignment = ColumnType.sizeOf(array.getElemType());
         padTo(dataMem, requiredByteAlignment);
         array.appendToMem(dataMem);
         // We pad at the end, ready for the next entry that starts with an int.
@@ -718,15 +811,10 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     static void appendLongFromArrayToSink(
             @NotNull ArrayView array,
             int index,
-            @NotNull CharSink<?> sink,
-            @NotNull String nullLiteral
+            @NotNull CharSink<?> sink
     ) {
         long d = array.getLong(index);
-        if (d != Numbers.LONG_NULL) {
-            sink.put(d);
-        } else {
-            sink.putAscii(nullLiteral);
-        }
+        sink.put(d);
     }
 
     @FunctionalInterface
@@ -734,8 +822,7 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         void appendFromFlatIndex(
                 @NotNull ArrayView array,
                 int index,
-                @NotNull CharSink<?> sink,
-                @NotNull String nulLiteral
+                @NotNull CharSink<?> sink
         );
     }
 }

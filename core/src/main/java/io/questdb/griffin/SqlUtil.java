@@ -794,7 +794,7 @@ public class SqlUtil {
         return pool.next().of(exprNodeType, token, 0, position);
     }
 
-    public static int parseArrayDimensions(GenericLexer lexer) throws SqlException {
+    public static int parseArrayDimensionality(GenericLexer lexer) throws SqlException {
         int dim = 0;
         do {
             CharSequence tok = fetchNext(lexer);
@@ -881,6 +881,14 @@ public class SqlUtil {
             throw ImplicitCastException.inconvertibleValue(value, columnType, ColumnType.TIMESTAMP);
         }
         return Numbers.LONG_NULL;
+    }
+
+    public static boolean isNotPlainSelectModel(QueryModel model) {
+        return model.getTableName() != null
+                || model.getGroupBy().size() > 0
+                || model.getJoinModels().size() > 1
+                || model.getLatestByType() != QueryModel.LATEST_BY_NONE
+                || model.getUnionModel() != null;
     }
 
     static CharSequence createColumnAlias(

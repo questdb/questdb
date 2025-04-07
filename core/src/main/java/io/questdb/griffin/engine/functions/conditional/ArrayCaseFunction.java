@@ -22,15 +22,32 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire.modern;
+package io.questdb.griffin.engine.functions.conditional;
 
-import io.questdb.cairo.arr.MutableArray;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.ArrayFunction;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.std.ObjList;
 
-abstract class PGWireArrayView extends MutableArray {
-    void addDimLen(int dimLen) {
-        shape.add(dimLen);
-        flatViewLength *= dimLen;
+public final class ArrayCaseFunction extends ArrayFunction implements CaseFunction {
+
+    private final ObjList<Function> args;
+    private final CaseFunctionPicker picker;
+
+    public ArrayCaseFunction(int type, CaseFunctionPicker picker, ObjList<Function> args) {
+        super.type = type;
+        this.picker = picker;
+        this.args = args;
     }
 
-    abstract void setPtrAndCalculateStrides(long lo, long hi, int componentOid);
+    @Override
+    public ObjList<Function> getArgs() {
+        return args;
+    }
+
+    @Override
+    public ArrayView getArray(Record rec) {
+        return picker.pick(rec).getArray(rec);
+    }
 }

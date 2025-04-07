@@ -34,6 +34,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -45,8 +46,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
-import io.questdb.cairo.vm.MemoryCARWImpl;
-import io.questdb.cairo.vm.api.MemoryAR;
 import io.questdb.cutlass.pgwire.BadProtocolException;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.cutlass.pgwire.PGResponseSink;
@@ -125,6 +124,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private static final int SYNC_DESCRIBE = 2;
     private static final int SYNC_DONE = 5;
     private static final int SYNC_PARSE = 0;
+    private final ObjectPool<PgNonNullBinaryArrayView> arrayViewPool = new ObjectPool<>(PgNonNullBinaryArrayView::new, 1);
     private final CompiledQueryImpl compiledQueryCopy;
     private final CairoEngine engine;
     private final StringSink errorMessageSink = new StringSink();
@@ -147,14 +147,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     //    and we have to respect this. Thus, if a PARSE message contains a type VARCHAR then
     //    we need to read it from wire as VARCHAR even we use e.g. INT internally. So we need both native and wire types.
     private final LongList outParameterTypeDescriptionTypes;
-    private final ObjectPool<PgNonNullBinaryArrayView> pgNonNullBinaryArrayViewPool = new ObjectPool<>(PgNonNullBinaryArrayView::new, 1);
     private final ObjList<String> pgResultSetColumnNames;
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private final IntList pgResultSetColumnTypes;
     private final ObjList<CharSequence> portalNames = new ObjList<>();
-    // todo: configurable maxPageSize
-    private final MemoryAR transcodedArrayMemory = new MemoryCARWImpl(4096, 10000, MemoryTag.NATIVE_PGW_PIPELINE);
-    private final ObjectPool<TranscodingBinaryArrayView> transcodingBinaryArrayViews = new ObjectPool<>(() -> new TranscodingBinaryArrayView(transcodedArrayMemory), 1);
     boolean isCopy;
     private boolean cacheHit = false;    // extended protocol cursor resume callback
     private CompiledQueryImpl compiledQuery;
@@ -193,7 +189,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private long sqlReturnRowCount = 0;
     // The row count sent to us by the client. This is the size of the batch the client wants to
     // receive from us.
-    // todo: rename to batch size perhaps or client fetch size
     private long sqlReturnRowCountLimit = 0;
     private long sqlReturnRowCountToBeSent = 0;
     private String sqlTag = null;
@@ -338,9 +333,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateSync = SYNC_PARSE;
         tai = null;
         tas = null;
-        pgNonNullBinaryArrayViewPool.clear();
-        transcodedArrayMemory.close();
-        transcodingBinaryArrayViews.clear();
+        arrayViewPool.clear();
     }
 
     public void commit(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) throws BadProtocolException {
@@ -716,6 +709,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     getErrorMessageSink().putAscii("Internal error. Exception type: ").putAscii(th.getClass().getSimpleName());
                 }
             }
+            LOG.error().$(getErrorMessageSink()).$();
         }
         return transactionState;
     }
@@ -1192,59 +1186,67 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         .put(", valueSize=").put(valueSize).put(']');
             }
 
-            // read the pgwire protocol types
-            if (msgBindParameterFormatCodes.get(i)) {
-                // beware, pgwire type is encoded as big endian
-                // that's why we use X_PG_INT4 and not just PG_INT4
-                int pgWireType = Numbers.decodeHighInt(encodedType);
-                switch (pgWireType) {
-                    case X_PG_INT4:
-                        setBindVariableAsInt(i, lo, valueSize, bindVariableService);
-                        break;
-                    case X_PG_INT8:
-                        setBindVariableAsLong(i, lo, valueSize, bindVariableService);
-                        break;
-                    case X_PG_TIMESTAMP:
-                    case X_PG_TIMESTAMP_TZ:
-                        setBindVariableAsTimestamp(i, lo, valueSize, bindVariableService);
-                        break;
-                    case X_PG_INT2:
-                        setBindVariableAsShort(i, lo, valueSize, bindVariableService);
-                        break;
-                    case X_PG_FLOAT8:
-                        setBindVariableAsDouble(i, lo, valueSize, bindVariableService);
-                        break;
-                    case X_PG_FLOAT4:
-                        setBindVariableAsFloat(i, lo, valueSize, bindVariableService);
-                        break;
-                    case X_PG_CHAR:
-                        setBindVariableAsChar(i, lo, valueSize, bindVariableService, characterStore);
-                        break;
-                    case X_PG_DATE:
-                        setBindVariableAsDate(i, lo, valueSize, bindVariableService);
-                        break;
-                    case X_PG_BOOL:
-                        setBindVariableAsBoolean(i, lo, valueSize, bindVariableService);
-                        break;
-                    case X_PG_BYTEA:
-                        setBindVariableAsBin(i, lo, valueSize, bindVariableService, binarySequenceParamsPool);
-                        break;
-                    case X_PG_UUID:
-                        setUuidBindVariable(i, lo, valueSize, bindVariableService);
-                        break;
-                    case X_PG_ARR_INT8:
-                    case X_PG_ARR_FLOAT8:
-                        setBindVariableAsArray(i, lo, valueSize, msgLimit, bindVariableService);
-                        break;
-                    default:
-                        // before we bind a string, we need to define the type of the variable
-                        // so the binding process can cast the string as required
-                        setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, utf8String);
-                        break;
+            // when type is unspecified, we are assuming that bind variable has not been used in the SQL
+            // e.g. something like this "select * from tab where a = $1 and b = $5". E.g.  there is a gap
+            // in the bind variable sequence. Because of the gap, our compiler could not define types - there is
+            // no usage in SQL, bing variables are left out to be NULL.
+            // Now the client is sending values in those bind variables - we can ignore them, provided variables
+            // are unused.
+            if (encodedType != PG_UNSPECIFIED) {
+                // read the pgwire protocol types
+                if (msgBindParameterFormatCodes.get(i)) {
+                    // beware, pgwire type is encoded as big endian
+                    // that's why we use X_PG_INT4 and not just PG_INT4
+                    int pgWireType = Numbers.decodeHighInt(encodedType);
+                    switch (pgWireType) {
+                        case X_PG_INT4:
+                            setBindVariableAsInt(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_INT8:
+                            setBindVariableAsLong(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_TIMESTAMP:
+                        case X_PG_TIMESTAMP_TZ:
+                            setBindVariableAsTimestamp(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_INT2:
+                            setBindVariableAsShort(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_FLOAT8:
+                            setBindVariableAsDouble(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_FLOAT4:
+                            setBindVariableAsFloat(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_CHAR:
+                            setBindVariableAsChar(i, lo, valueSize, bindVariableService, characterStore);
+                            break;
+                        case X_PG_DATE:
+                            setBindVariableAsDate(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_BOOL:
+                            setBindVariableAsBoolean(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_BYTEA:
+                            setBindVariableAsBin(i, lo, valueSize, bindVariableService, binarySequenceParamsPool);
+                            break;
+                        case X_PG_UUID:
+                            setUuidBindVariable(i, lo, valueSize, bindVariableService);
+                            break;
+                        case X_PG_ARR_INT8:
+                        case X_PG_ARR_FLOAT8:
+                            setBindVariableAsArray(i, lo, valueSize, msgLimit, bindVariableService);
+                            break;
+                        default:
+                            // before we bind a string, we need to define the type of the variable
+                            // so the binding process can cast the string as required
+                            setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, utf8String);
+                            break;
+                    }
+                } else {
+                    // read as a string
+                    setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, utf8String);
                 }
-            } else {
-                // read as a string
-                setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, utf8String);
             }
             lo += valueSize;
         }
@@ -1483,7 +1485,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                                     cacheIfPossible(null, taiCache);
                                 }
                             } catch (Throwable e) {
-                                Misc.free(m);
+                                TableWriterAPI w = m.popWriter();
+                                pendingWriters.remove(w.getTableToken());
+                                Misc.free(w);
                                 throw e;
                             }
                             break;
@@ -1658,14 +1662,17 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 //    if the client include types in a PARSE message and a subsequent DESCRIBE sends back different types
                 //    the client will error out. e.g. PG JDBC is very strict about this.
                 final Function f = bindVariableService.getFunction(i);
-                int nativeType = f.getType();
-                assert nativeType != ColumnType.UNDEFINED : "function type is undefined";
-                if (oid == PG_UNSPECIFIED || oid == X_PG_VOID) {
-                    // oid is stored as Big Endian
-                    // since that's what clients expects - pgwire is big endian
-                    oid = Numbers.bswap(PGOids.getTypeOid(nativeType));
+                int nativeType;
+                if (f != null) {
+                    nativeType = f.getType();
+                    if (oid == PG_UNSPECIFIED || oid == X_PG_VOID) {
+                        // oid is stored as Big Endian
+                        // since that's what clients expects - pgwire is big endian
+                        oid = Numbers.bswap(PGOids.getTypeOid(nativeType));
+                    }
+                } else {
+                    nativeType = ColumnType.UNDEFINED;
                 }
-
                 outParameterTypeDescriptionTypes.setQuick(i, Numbers.encodeLowHighInts(nativeType, oid));
             }
         }
@@ -1689,13 +1696,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
 
         int nDims = array.getDimCount();
-        short elemType = ColumnType.decodeArrayElementType(columnType);
+        short elemType = array.getElemType();
         int componentTypeOid = getTypeOid(elemType);
 
         // array header
         long sizePtr = utf8Sink.skipInt();
         utf8Sink.putNetworkInt(nDims);
-        long hasNullPtr = utf8Sink.skipInt();
+
+        utf8Sink.putIntDirect(0); // null flag: questdb does not support null elements in arrays so we always set this to 0
         utf8Sink.putNetworkInt(componentTypeOid);
 
         // Write dimension information
@@ -1704,55 +1712,60 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             utf8Sink.putNetworkInt(1); // lower bound, always 1 in PostgreSQL
         }
 
-        // todo: optimize for vanilla arrays, vanilla arrays do not require recursive processing
-        boolean hasNulls = outColBinArrRecursive(utf8Sink, array, elemType, 0, 0);
-        Unsafe.getUnsafe().putInt(hasNullPtr, Numbers.bswap(hasNulls ? 1 : 0));
+        if (array.isVanilla()) {
+            FlatArrayView flatView = array.flatView();
+            int len = flatView.length();
+            // Note that we rely on a HotSpot optimization: Loop-invariant code motion
+            // it moves the switch outside the loop.
+            for (int i = 0; i < len; i++) {
+                switch (elemType) {
+                    case ColumnType.LONG:
+                        utf8Sink.putNetworkInt(Long.BYTES);
+                        utf8Sink.putNetworkLong(flatView.getLongAtAbsIndex(i));
+                        break;
+                    case ColumnType.DOUBLE:
+                        utf8Sink.putNetworkInt(Double.BYTES);
+                        utf8Sink.putNetworkDouble(flatView.getDoubleAtAbsIndex(i));
+                        break;
+                }
+            }
+        } else {
+            outColBinArrRecursive(utf8Sink, array, elemType, 0, 0);
+        }
         utf8Sink.putLenEx(sizePtr);
     }
 
-    private boolean outColBinArrRecursive(
+    private void outColBinArrRecursive(
             PGResponseSink utf8Sink, ArrayView array, short elemType, int dim, int flatIndex
     ) {
         final int count = array.getDimLen(dim);
         final int stride = array.getStride(dim);
-        boolean hasNulls = false;
         final boolean atDeepestDim = dim == array.getDimCount() - 1;
         if (atDeepestDim) {
             switch (elemType) {
                 case ColumnType.LONG:
                     for (int i = 0; i < count; i++) {
                         long val = array.getLong(flatIndex);
-                        if (val == Numbers.LONG_NULL) {
-                            hasNulls = true;
-                            utf8Sink.setNullValue();
-                        } else {
-                            utf8Sink.putNetworkInt(Long.BYTES);
-                            utf8Sink.putNetworkLong(val);
-                        }
+                        utf8Sink.putNetworkInt(Long.BYTES);
+                        utf8Sink.putNetworkLong(val);
                         flatIndex += stride;
                     }
                     break;
                 case ColumnType.DOUBLE:
                     for (int i = 0; i < count; i++) {
                         double val = array.getDouble(flatIndex);
-                        if (Double.isNaN(val)) {
-                            hasNulls = true;
-                            utf8Sink.setNullValue();
-                        } else {
-                            utf8Sink.putNetworkInt(Double.BYTES);
-                            utf8Sink.putNetworkDouble(val);
-                        }
+                        utf8Sink.putNetworkInt(Double.BYTES);
+                        utf8Sink.putNetworkDouble(val);
                         flatIndex += stride;
                     }
                     break;
             }
         } else {
             for (int i = 0; i < count; i++) {
-                hasNulls |= outColBinArrRecursive(utf8Sink, array, elemType, dim + 1, flatIndex);
+                outColBinArrRecursive(utf8Sink, array, elemType, dim + 1, flatIndex);
                 flatIndex += stride;
             }
         }
-        return hasNulls;
     }
 
     private void outColBinBool(PGResponseSink utf8Sink, Record record, int columnIndex) {
@@ -2114,12 +2127,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 stateSync = SYNC_DATA;
             case SYNC_DATA:
                 utf8Sink.bookmark();
-                outCursor(
-                        sqlExecutionContext,
-                        utf8Sink,
-                        cursor.getRecord(),
-                        factory.getMetadata().getColumnCount()
-                );
+                outCursor(sqlExecutionContext, utf8Sink, factory.getMetadata().getColumnCount());
                 break;
             default:
                 assert false;
@@ -2129,7 +2137,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private void outCursor(
             SqlExecutionContext sqlExecutionContext,
             PGResponseSink utf8Sink,
-            Record record,
             int columnCount
     ) throws QueryPausedException {
         if (!sqlExecutionContext.getCircuitBreaker().isTimerSet()) {
@@ -2138,6 +2145,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
         long recordStartAddress = utf8Sink.getSendBufferPtr();
         try {
+            final Record record = cursor.getRecord();
             if (outResendCursorRecord) {
                 outRecord(utf8Sink, record, columnCount);
                 recordStartAddress = utf8Sink.getSendBufferPtr();
@@ -2524,20 +2532,19 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void setBindVariableAsArray(int i, long lo, int valueSize, long msgLimit, BindVariableService bindVariableService) throws SqlException, BadProtocolException {
-        PGWireArrayView arrayView;
-
         int dimensions = getInt(lo, msgLimit, "malformed array dimensions");
         lo += Integer.BYTES;
         valueSize -= Integer.BYTES;
+        if (dimensions == 0) {
+            throw kaput().put("array dimensions cannot be zero");
+        }
+        if (dimensions > ColumnType.ARRAY_NDIMS_LIMIT) {
+            throw kaput().put("array dimensions cannot be greater than maximum array dimensions [dimensions=").put(dimensions).put(", max=").put(ColumnType.ARRAY_NDIMS_LIMIT).put(']');
+        }
 
         int hasNull = getInt(lo, msgLimit, "malformed array null flag");
-        // todo: clarify the exact semantic of this flag; apparently python asyncpg client sends it as 0,
-        // even when there are NULL elements in the array
-//        if (hasNull == 1) {
-        arrayView = transcodingBinaryArrayViews.next();
-//        } else {
-//            arrayView = pgNonNullBinaryArrayViewPool.next();
-//        }
+        // hasNull flag is not a reliable indicator of a null element, since some clients
+        // send it as 0 even if the array element is null. we need to manually check for null
         lo += Integer.BYTES;
         valueSize -= Integer.BYTES;
 
@@ -2545,18 +2552,17 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         lo += Integer.BYTES;
         valueSize -= Integer.BYTES;
 
-        IntList dimensionSizes = new IntList();
+        PgNonNullBinaryArrayView arrayView = arrayViewPool.next();
         for (int j = 0; j < dimensions; j++) {
             int dimensionSize = getInt(lo, msgLimit, "malformed array dimension size");
             arrayView.addDimLen(dimensionSize);
-            dimensionSizes.add(dimensionSize);
             lo += Integer.BYTES;
             valueSize -= Integer.BYTES;
 
             lo += Integer.BYTES; // skip lower bound, it's always 1
             valueSize -= Integer.BYTES;
         }
-        arrayView.setPtrAndCalculateStrides(lo, lo + valueSize, componentOid);
+        arrayView.setPtrAndCalculateStrides(lo, lo + valueSize, componentOid, this);
         bindVariableService.setArray(i, arrayView);
     }
 
@@ -2690,6 +2696,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     throw kaput().put("invalid UTF8 encoding for string value [variableIndex=").put(variableIndex).put(']');
                 }
             }
+        } catch (BadProtocolException ex) {
+            throw ex;
         } catch (Throwable ex) {
             throw kaput().put(ex);
         }
@@ -2853,7 +2861,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // this is the first time we are setting up the result set
             // we can just copy the column types and names from factory, no need to validate
             assert pgResultSetColumnTypes.size() == 0;
-
             copyPgResultSetColumnTypesAndNames();
             return;
         }
@@ -2905,6 +2912,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateDesc = SYNC_DESC_NONE;
         stateExec = false;
         stateClosed = false;
+        arrayViewPool.clear();
     }
 
     void copyStateFrom(PGPipelineEntry that) {

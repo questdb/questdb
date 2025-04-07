@@ -33,6 +33,31 @@ import java.util.Arrays;
 public class GroupByTest extends AbstractCairoTest {
 
     @Test
+    public void testGroupByWithTimestampKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (\n" +
+                    "  timestamp TIMESTAMP,\n" +
+                    "  bar INT\n" +
+                    ") TIMESTAMP (timestamp)\n" +
+                    "PARTITION BY DAY;");
+            execute("INSERT INTO foo VALUES ('2020', 0);");
+            String query = "SELECT\n" +
+                    "  timestamp AS time,\n" +
+                    "  TO_STR(timestamp, 'yyyy-MM-dd'),\n" +
+                    "  SUM(1) \n" +
+                    "FROM foo;";
+            assertQueryNoLeakCheck(
+                    "time\tTO_STR\tSUM\n" +
+                            "2020-01-01T00:00:00.000000Z\t2020-01-01\t1\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void test1GroupByWithoutAggregateFunctionsReturnsUniqueKeys() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t as (" +
@@ -2157,7 +2182,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "      values: [sum(case([seller='sf',-1.0*volume_mw,buyer='sf',1.0*volume_mw,0.0]))]\n" +
                             "        SelectedRecord\n" +
                             "            Async JIT Filter workers: 1\n" +
-                            "              filter: (seller='sf' or buyer='sf')\n" +
+                            "              filter: (seller='sf' or buyer='sf') [pre-touch]\n" +
                             "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: trades\n"
@@ -2549,16 +2574,14 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     "Radix sort light\n" +
                             "  keys: [ref0]\n" +
-                            "    Distinct\n" +
-                            "      keys: ref0\n" +
-                            "        VirtualRecord\n" +
-                            "          functions: [created]\n" +
-                            "            Async JIT Group By workers: 1\n" +
-                            "              keys: [created]\n" +
-                            "              filter: null!=created\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tab\n"
+                            "    VirtualRecord\n" +
+                            "      functions: [created]\n" +
+                            "        Async JIT Group By workers: 1\n" +
+                            "          keys: [created]\n" +
+                            "          filter: null!=created\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n"
             );
 
             assertQueryNoLeakCheck(
@@ -2569,7 +2592,7 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     "ref0",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -2587,20 +2610,19 @@ public class GroupByTest extends AbstractCairoTest {
                     "GROUP BY tab.created " +
                     "ORDER BY dateadd('h', 1, tab.created)";
 
+
             assertPlanNoLeakCheck(
                     query,
                     "Radix sort light\n" +
                             "  keys: [ref0]\n" +
-                            "    Distinct\n" +
-                            "      keys: ref0\n" +
-                            "        VirtualRecord\n" +
-                            "          functions: [dateadd('h',1,created)]\n" +
-                            "            Async JIT Group By workers: 1\n" +
-                            "              keys: [created]\n" +
-                            "              filter: null!=created\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tab\n"
+                            "    VirtualRecord\n" +
+                            "      functions: [dateadd('h',1,created)]\n" +
+                            "        Async JIT Group By workers: 1\n" +
+                            "          keys: [created]\n" +
+                            "          filter: null!=created\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n"
             );
 
             assertQueryNoLeakCheck(
@@ -2611,7 +2633,7 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     "ref0",
                     true,
-                    false
+                    true
             );
         });
     }
@@ -2633,14 +2655,12 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     "Radix sort light\n" +
                             "  keys: [created]\n" +
-                            "    Distinct\n" +
-                            "      keys: created\n" +
-                            "        Async JIT Group By workers: 1\n" +
-                            "          keys: [created]\n" +
-                            "          filter: null!=created\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: tab\n"
+                            "    Async JIT Group By workers: 1\n" +
+                            "      keys: [created]\n" +
+                            "      filter: null!=created\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tab\n"
             );
 
             assertQueryNoLeakCheck(
@@ -2651,7 +2671,7 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     "created",
                     true,
-                    false
+                    true
             );
         });
     }

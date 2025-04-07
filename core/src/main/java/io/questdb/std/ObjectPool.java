@@ -76,6 +76,18 @@ public class ObjectPool<T extends Mutable> implements Mutable {
     }
 
     /**
+     * Gives access to an object in the pool without incrementing the position.
+     * This method does not validate the position, it's only safe to use it if you know that the position is valid
+     * (i.e. it's less than the number of objects in the pool).
+     *
+     * @param pos position of the object in the pool
+     * @return object at the specified position
+     */
+    public T peekQuick(int pos) {
+        return list.getQuick(pos);
+    }
+
+    /**
      * Return an individual object to the pool.
      * <p>
      * This method has complexity O(n) where n is the number of objects in the pool thus should be used with care.
