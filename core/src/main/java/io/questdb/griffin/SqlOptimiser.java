@@ -6614,7 +6614,6 @@ public class SqlOptimiser implements Mutable {
                 ));
             }
 
-
             // need to permute all of the FOR exprs
             // FOR year in (2000, 2010, 2020)
             //     country in ('NL, 'US')
@@ -6708,6 +6707,7 @@ public class SqlOptimiser implements Mutable {
                         nameSink.clear(nameSink.length() - 1);
                     }
 
+                    // fix null handling behaviour for first/last when combined with case
                     CharSequence aggExprName = pivotColumnName;
                     if (Chars.equalsIgnoreCase(pivotColumnName, "first")) {
                         aggExprName = "first_not_null";
@@ -6746,7 +6746,7 @@ public class SqlOptimiser implements Mutable {
                         caseExpr.args.add(inValue);
                         caseExpr.args.add(rewritePivotGetAppropriateNameFromInExpr(forInExpr));
                     } else {
-//                     A == B AND C == D etc.
+                        // A == B AND C == D etc.
                         caseExpr.args.add(caseValue);
                     }
 
@@ -6776,14 +6776,17 @@ public class SqlOptimiser implements Mutable {
                 }
             }
 
+            // build the tree - model -> bonusModel -> groupByModel -> nested
             model.getNestedModel().clearPivot();
             groupByModel.setNestedModel(model.getNestedModel());
             bonusModel.setNestedModel(groupByModel);
             model.setNestedModel(bonusModel);
         } else {
+            // Only allow wildcard or subqueries
             if (model.getPivotColumns() != null || model.getPivotFor() != null) {
                 throw SqlException.$(model.getModelPosition(), "PIVOT queries must use SELECT '*'");
             }
+            // recurse
             model.setNestedModel(rewritePivot(model.getNestedModel()));
         }
 
