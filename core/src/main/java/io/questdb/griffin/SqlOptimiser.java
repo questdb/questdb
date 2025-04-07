@@ -5380,7 +5380,6 @@ public class SqlOptimiser implements Mutable {
         if (sampleBy != null) {
             // move sample by to group by model
             groupByModel.moveSampleByFrom(baseModel);
-            groupByModel.setTimestamp(baseModel.getTimestamp());
         }
 
         if (baseModel.getGroupBy().size() > 0) {
