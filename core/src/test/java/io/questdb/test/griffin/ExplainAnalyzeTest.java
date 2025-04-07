@@ -835,9 +835,7 @@ public class ExplainAnalyzeTest extends AbstractCairoTest {
 
     @Test
     public void testAnalyzeExplainPlanNoTrailingQuote() throws Exception {
-        selectLeakCheck(
-                "(format json) select * from long_sequence(1)"
-        );
+        assertException("EXPLAIN ANALYZE (format json) select * from long_sequence(1);", 0, "JSON plan output is not supported for `EXPLAIN ANALYZE");
     }
 
     @Test
