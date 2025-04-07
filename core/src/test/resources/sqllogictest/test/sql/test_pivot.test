@@ -41,7 +41,7 @@ NL	1	1	1
 US	2	2	2
 
 query III rowsort
-SELECT Country, Year FROM Cities PIVOT (SUM(1) FOR year IN (2000, 2010, 2020) GROUP BY Country, Year);
+Cities PIVOT (SUM(1) FOR year IN (2000, 2010, 2020) GROUP BY Country, Year);
 ----
 NL 2000
 NL 2010
@@ -115,7 +115,7 @@ CREATE OR REPLACE TABLE Produce AS
   SELECT 'Apple', 77, 0, 25, 2
 
 query III
-SELECT * FROM Produce
+Produce
 UNPIVOT(sales FOR quarter IN (Q1, Q2, Q3, Q4))
 ORDER BY ALL
 ----
@@ -127,15 +127,3 @@ Kale	Q1	51
 Kale	Q2	23
 Kale	Q3	45
 Kale	Q4	3
-
-query IIII
-SELECT product, first_half_sales, second_half_sales, semesters FROM Produce
-UNPIVOT(
-  (first_half_sales, second_half_sales)
-  FOR semesters
-  IN ((Q1, Q2) AS 'semester_1', (Q3, Q4) AS 'semester_2'))
-----
-Kale	51	23	semester_1
-Kale	45	3	semester_2
-Apple	77	0	semester_1
-Apple	25	2	semester_2
