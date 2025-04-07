@@ -2481,36 +2481,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                                             if (!created && slave instanceof SelectedRecordCursorFactory) {
                                                 SelectedRecordCursorFactory selectedRecordCursorFactory = (SelectedRecordCursorFactory) slave;
-                                                if (!selectedRecordCursorFactory.isCrossedIndex()) {
-                                                    // not a crossed index -> it means the SelectedRecordCursorFactory is used
-                                                    // only to reduce the number of columns, without renaming or changing column positions.
-                                                    // this means we can use the base factory directly, as long as we use the reduced metadata from the
-                                                    // SelectedRecordCursorFactory
-                                                    RecordCursorFactory selectedRecordCursorFactoryBase = selectedRecordCursorFactory.getBaseFactory();
-                                                    // We know selectedRecordCursorFactoryBase does not support supportsTimeFrameCursor, because
-                                                    // SelectedRecordCursorFactory forwards this call to its base factory and if we are in this branch
-                                                    // then slave.supportsTimeFrameCursor() returned false in one the previous branches.
-                                                    // there is still chance that selectedRecordCursorFactoryBase is just a filter
-                                                    // and its own base supports timeFrameCursor. let's see.
-                                                    if (selectedRecordCursorFactoryBase.supportsFilterStealing()) {
-                                                        // ok, cool, is used only as a filter.
-                                                        RecordCursorFactory filterStealingBase = selectedRecordCursorFactoryBase.getBaseFactory();
-                                                        if (filterStealingBase.supportsTimeFrameCursor()) {
-                                                            Function stolenFilter = selectedRecordCursorFactory.getFilter();
-                                                            selectedRecordCursorFactory.halfClose();
+                                                RecordCursorFactory selectedRecordCursorFactoryBase = selectedRecordCursorFactory.getBaseFactory();
+                                                // We know selectedRecordCursorFactoryBase does not support supportsTimeFrameCursor, because
+                                                // SelectedRecordCursorFactory forwards this call to its base factory and if we are in this branch
+                                                // then slave.supportsTimeFrameCursor() returned false in one the previous branches.
+                                                // there is still chance that selectedRecordCursorFactoryBase is just a filter
+                                                // and its own base supports timeFrameCursor. let's see.
+                                                if (selectedRecordCursorFactoryBase.supportsFilterStealing()) {
+                                                    // ok, cool, is used only as a filter.
+                                                    RecordCursorFactory filterStealingBase = selectedRecordCursorFactoryBase.getBaseFactory();
+                                                    if (filterStealingBase.supportsTimeFrameCursor()) {
+                                                        Function stolenFilter = selectedRecordCursorFactoryBase.getFilter();
+                                                        selectedRecordCursorFactoryBase.halfClose();
+                                                        selectedRecordCursorFactory.replaceBaseFactory(filterStealingBase);
 
-                                                            master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
-                                                                    configuration,
-                                                                    // note: we use the original slaveMetadata here, so if the SelectedRecordCursorFactory
-                                                                    // renamed a column it's still propagated to the join metadata.
-                                                                    createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                                                    master,
-                                                                    filterStealingBase,
-                                                                    stolenFilter,
-                                                                    masterMetadata.getColumnCount()
-                                                            );
-                                                            created = true;
-                                                        }
+                                                        master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
+                                                                configuration,
+                                                                // note: we use the original slaveMetadata here, so if the SelectedRecordCursorFactory
+                                                                // renamed a column it's still propagated to the join metadata.
+                                                                createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                                master,
+                                                                selectedRecordCursorFactory,
+                                                                stolenFilter,
+                                                                masterMetadata.getColumnCount()
+                                                        );
+                                                        created = true;
                                                     }
                                                 }
                                             }

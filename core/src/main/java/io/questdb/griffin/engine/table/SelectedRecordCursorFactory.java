@@ -51,9 +51,9 @@ import org.jetbrains.annotations.Nullable;
 
 public final class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
 
-    private final RecordCursorFactory base;
     private final IntList columnCrossIndex;
     private final SelectedRecordCursor cursor;
+    private RecordCursorFactory base;
     private boolean crossedIndex = false;
     private SelectedPageFrameCursor pageFrameCursor;
     private SelectedTimeFrameCursor timeFrameCursor;
@@ -169,6 +169,10 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
+    }
+
+    public void replaceBaseFactory(RecordCursorFactory base) {
+        this.base = base;
     }
 
     @Override

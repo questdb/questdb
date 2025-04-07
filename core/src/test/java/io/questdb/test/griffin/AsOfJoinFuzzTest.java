@@ -36,46 +36,34 @@ import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.List;
 
 @RunWith(Parameterized.class)
 public class AsOfJoinFuzzTest extends AbstractCairoTest {
+    private final boolean exerciseFilters;
     private final boolean exerciseIntervals;
     private final JoinType joinType;
     private final LimitType limitType;
+    private final ProjectionType projectionType;
 
-    public AsOfJoinFuzzTest(JoinType joinType, boolean exerciseIntervals, LimitType limitType) {
+    public AsOfJoinFuzzTest(JoinType joinType, boolean exerciseIntervals, LimitType limitType, boolean exerciseFilters, ProjectionType projectionType) {
         this.joinType = joinType;
         this.exerciseIntervals = exerciseIntervals;
         this.limitType = limitType;
+        this.exerciseFilters = exerciseFilters;
+        this.projectionType = projectionType;
     }
 
-    @Parameterized.Parameters(name = "join type: {0}, intervals: {1}, limit: {2}")
+    @Parameterized.Parameters(name = "join type: {0}, intervals: {1}, limit: {2}, filters: {3}, projection: {4}")
     public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {JoinType.ASOF, true, LimitType.NO_LIMIT},
-                {JoinType.ASOF, true, LimitType.POSITIVE_LIMIT},
-                {JoinType.ASOF, true, LimitType.NEGATIVE_LIMIT},
-
-                {JoinType.ASOF, false, LimitType.NO_LIMIT},
-                {JoinType.ASOF, false, LimitType.POSITIVE_LIMIT},
-                {JoinType.ASOF, false, LimitType.NEGATIVE_LIMIT},
-
-                {JoinType.LT_NONKEYD, true, LimitType.NO_LIMIT},
-                {JoinType.LT_NONKEYD, true, LimitType.POSITIVE_LIMIT},
-                {JoinType.LT_NONKEYD, true, LimitType.NEGATIVE_LIMIT},
-
-                {JoinType.LT_NONKEYD, false, LimitType.NO_LIMIT},
-                {JoinType.LT_NONKEYD, false, LimitType.POSITIVE_LIMIT},
-                {JoinType.LT_NONKEYD, false, LimitType.NEGATIVE_LIMIT},
-
-                {JoinType.ASOF_NONKEYD, true, LimitType.NO_LIMIT},
-                {JoinType.ASOF_NONKEYD, true, LimitType.POSITIVE_LIMIT},
-                {JoinType.ASOF_NONKEYD, true, LimitType.NEGATIVE_LIMIT},
-
-                {JoinType.ASOF_NONKEYD, false, LimitType.NO_LIMIT},
-                {JoinType.ASOF_NONKEYD, false, LimitType.POSITIVE_LIMIT},
-                {JoinType.ASOF_NONKEYD, false, LimitType.NEGATIVE_LIMIT},
+        Object[][] objects = TestUtils.cartesianProduct(new Object[][]{
+                JoinType.values(),
+                {true, false}, // exercise interval intrinsics
+                LimitType.values(),
+                {true, false}, // exercise filters
+                ProjectionType.values(),
         });
+        return Arrays.asList(objects);
     }
 
     @Test
@@ -114,7 +102,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         switch (joinType) {
             case ASOF:
                 join = " ASOF";
-                onSuffix = " on s";
+                onSuffix = (projectionType == ProjectionType.RENAME_COLUMN) ? " on t1.s = t2.s2 " : " on s ";
                 break;
             case ASOF_NONKEYD:
                 join = " ASOF";
@@ -142,8 +130,36 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 timeFilter.put("'");
             }
         }
+        if (exerciseFilters) {
+            int n = rnd.nextInt(5) + 1;
+            for (int i = 0; i < n; i++) {
+                if (i == 0 && !exerciseIntervals) {
+                    timeFilter.put("where i != ");
+                } else {
+                    timeFilter.put(" and i != ");
+                }
+                int toBeExcluded = rnd.nextInt(100);
+                timeFilter.put(toBeExcluded);
+            }
+        }
 
-        String query = "select * from " + "t1" + join + " JOIN " + "(t2 " + timeFilter + ")" + onSuffix;
+        String projection = "";
+        // (ts TIMESTAMP, i INT, s SYMBOL)
+        switch (projectionType) {
+            case NONE:
+                projection = "*";
+            case CROSS_COLUMN:
+                projection = "s, ts, i";
+                break;
+            case RENAME_COLUMN:
+                projection = "s as s2, ts as ts2, i as i2";
+                break;
+            case ADD_COLUMN:
+                projection = "*, i as i2";
+                break;
+        }
+
+        String query = "select * from " + "t1" + join + " JOIN " + "(select " + projection + " from t2 " + timeFilter + ") t2" + onSuffix;
         switch (limitType) {
             case POSITIVE_LIMIT:
                 int limit = rnd.nextInt(100);
@@ -161,6 +177,13 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         sink.clear();
         printSql(query, true);
         expectedSink.put(sink);
+
+        // sanity check: make sure non-keyd ASOF join use the Fast-path
+        if (joinType == JoinType.ASOF_NONKEYD) {
+            sink.clear();
+            printSql("EXPLAIN " + query, false);
+            TestUtils.assertContains(sink, "AsOf Join Fast Scan");
+        }
 
         final StringSink actualSink = new StringSink();
         sink.clear();
@@ -242,5 +265,12 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         NO_LIMIT,
         POSITIVE_LIMIT,
         NEGATIVE_LIMIT
+    }
+
+    public enum ProjectionType {
+        NONE,
+        CROSS_COLUMN,
+        RENAME_COLUMN,
+        ADD_COLUMN,
     }
 }
