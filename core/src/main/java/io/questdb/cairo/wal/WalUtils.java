@@ -24,6 +24,11 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
@@ -105,41 +110,68 @@ public class WalUtils {
     /**
      * Retrieves the last refresh base transaction for a materialized view.
      *
-     * @param tablePath      the path to the table
-     * @param ff             the FilesFacade instance for file operations
-     * @param txnLogMemory   the memory to iterate over transaction logs
-     * @param walEventReader the reader to read WAL events
-     * @return -1 if the transaction could not be extracted or the last WAL-E entry is not a refresh commit (MAT_VIEW_DATA)
+     * @param tablePath          the path to the table
+     * @param tableToken         the table token
+     * @param configuration      the Cairo configuration
+     * @param txnLogMemory       the memory to iterate over transaction logs
+     * @param walEventReader     the reader to read WAL events
+     * @param blockFileReader    the reader to read state file
+     * @param matViewStateReader the POD to read materialized view state into
+     * @return -1 if the transaction could not be extracted or the last WAL-E entry is not a refresh commit (MAT_VIEW_DATA),
      * or a transaction number greater than -1 if it is a valid last refresh transaction
      */
-    public static long getMatViewLastRefreshBaseTxn(Path tablePath, FilesFacade ff, MemoryCMR txnLogMemory, WalEventReader walEventReader) {
+    public static long getMatViewLastRefreshBaseTxn(
+            Path tablePath,
+            TableToken tableToken,
+            CairoConfiguration configuration,
+            MemoryCMR txnLogMemory,
+            WalEventReader walEventReader,
+            BlockFileReader blockFileReader,
+            MatViewStateReader matViewStateReader
+    ) {
+        long txnNotFound = -1;
         try (MemoryCMR mem = txnLogMemory) {
-            int pathLen = tablePath.size();
-            mem.smallFile(ff, tablePath.concat(SEQ_DIR).concat(TXNLOG_FILE_NAME).$(), MemoryTag.MMAP_TX_LOG);
+            int tablePathLen = tablePath.size();
+            mem.smallFile(configuration.getFilesFacade(), tablePath.concat(SEQ_DIR).concat(TXNLOG_FILE_NAME).$(), MemoryTag.MMAP_TX_LOG);
             long txnCount = mem.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
             if (txnCount > 0) {
                 long fileSize = TableTransactionLogFile.HEADER_SIZE + txnCount * TableTransactionLogV1.RECORD_SIZE;
                 if (mem.size() >= fileSize) {
                     for (long txn = txnCount - 1; txn >= 0; txn--) {
-                        tablePath.trimTo(pathLen);
+                        tablePath.trimTo(tablePathLen);
                         long offset = TableTransactionLogFile.HEADER_SIZE + txn * TableTransactionLogV1.RECORD_SIZE;
                         final int walId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_WAL_ID_OFFSET);
                         final int segmentId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_OFFSET);
                         final int segmentTxn = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_TXN_OFFSET);
                         if (walId > 0) {
                             tablePath.concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
-                            WalEventCursor walEventCursor = walEventReader.of(tablePath, segmentTxn);
-                            if (walEventCursor.getType() == MAT_VIEW_DATA) {
-                                return walEventCursor.getDataInfoExt().getLastRefreshBaseTableTxn();
-                            }
-                            if (walEventCursor.getType() == MAT_VIEW_INVALIDATE) {
-                                return -1;
+                            try {
+                                WalEventCursor walEventCursor = walEventReader.of(tablePath, segmentTxn);
+                                if (walEventCursor.getType() == MAT_VIEW_DATA) {
+                                    return walEventCursor.getDataInfoExt().getLastRefreshBaseTableTxn();
+                                }
+                                if (walEventCursor.getType() == MAT_VIEW_INVALIDATE) {
+                                    return txnNotFound;
+                                }
+                            } catch (Throwable th) {
+                                // walEventReader may not be able to find/open the WAL-e files
+                                try (BlockFileReader blockReader = blockFileReader) {
+                                    tablePath.trimTo(tablePathLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
+                                    blockReader.of(tablePath.$());
+                                    matViewStateReader.of(blockReader, tableToken);
+                                    // read from state file if exists
+                                    if (!matViewStateReader.isInvalid()) {
+                                        return matViewStateReader.getLastRefreshBaseTxn();
+                                    }
+                                } catch (Throwable th2) {
+                                }
+                                return txnNotFound;
                             }
                         }
                     }
                 }
             }
         }
-        return -1;
+        return txnNotFound;
     }
 }

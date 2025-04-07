@@ -33,6 +33,9 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.Vm;
@@ -1607,12 +1610,16 @@ public class WalWriterTest extends AbstractCairoTest {
                     .wal();
             tableToken = createTable(model);
 
+            FilesFacade ff = configuration.getFilesFacade();
             try (Path path = new Path();
                  MemoryCMR txnMem = Vm.getCMRInstance();
-                 WalEventReader walEventReader = new WalEventReader(configuration.getFilesFacade())
+                 BlockFileReader reader = new BlockFileReader(configuration);
+                 WalEventReader walEventReader = new WalEventReader(ff)
             ) {
+                MatViewStateReader matViewStateReader = new MatViewStateReader();
                 path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-                long txn = WalUtils.getMatViewLastRefreshBaseTxn(path, configuration.getFilesFacade(), txnMem, walEventReader);
+                int tableLen = path.size();
+                long txn = WalUtils.getMatViewLastRefreshBaseTxn(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
                 assertEquals(-1, txn); // no transactions
 
                 long maxTxn = 3;
@@ -1627,8 +1634,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 }
 
 
-                path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-                txn = WalUtils.getMatViewLastRefreshBaseTxn(path, configuration.getFilesFacade(), txnMem, walEventReader);
+                txn = WalUtils.getMatViewLastRefreshBaseTxn(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
                 assertEquals(-1, txn); // incomplete refresh, no commitWithExtra
 
                 try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
@@ -1646,18 +1652,34 @@ public class WalWriterTest extends AbstractCairoTest {
                 }
 
 
-                path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-                txn = WalUtils.getMatViewLastRefreshBaseTxn(path, configuration.getFilesFacade(), txnMem, walEventReader);
+                txn = WalUtils.getMatViewLastRefreshBaseTxn(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
                 assertEquals(42, txn); // refresh commit
 
                 try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
-                    walWriter.invalidate(45, 45, false, "test_invalidate");
+                    walWriter.invalidate(45, 45, true, "test_invalidate");
                 }
 
 
-                path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-                txn = WalUtils.getMatViewLastRefreshBaseTxn(path, configuration.getFilesFacade(), txnMem, walEventReader);
+                txn = WalUtils.getMatViewLastRefreshBaseTxn(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
                 assertEquals(-1, txn); // invalidate commit
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    // reset invalidation
+                    walWriter.invalidate(43, 43, false, "test_invalidate");
+                }
+
+                drainWalQueue();
+                path.trimTo(tableLen).concat(WAL_NAME_BASE).put(1).slash().put(0).concat(EVENT_FILE_NAME);
+                ff.remove(path.$());
+                Assert.assertFalse(ff.exists(path.$()));
+                txn = WalUtils.getMatViewLastRefreshBaseTxn(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
+                assertEquals(43, txn); // no _event file, state file
+
+                path.trimTo(tableLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
+                ff.remove(path.$());
+                Assert.assertFalse(ff.exists(path.$()));
+                txn = WalUtils.getMatViewLastRefreshBaseTxn(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
+                assertEquals(-1, txn); // no _event file, no state file
             }
         });
     }

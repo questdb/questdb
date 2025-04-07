@@ -36,6 +36,7 @@ import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
 import io.questdb.cairo.mv.NoOpMatViewStateStore;
@@ -352,7 +353,7 @@ public class CairoEngine implements Closeable, WriterSource {
         ) {
             path.of(configuration.getDbRoot());
             final int pathLen = path.size();
-
+            MatViewStateReader matViewStateReader = new MatViewStateReader();
             for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
                 final TableToken tableToken = tableTokenBucket.get(i);
                 if (tableToken.isMatView() && TableUtils.isMatViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
@@ -397,7 +398,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             }
 
                             path.trimTo(pathLen).concat(tableToken);
-                            long refreshTxn = WalUtils.getMatViewLastRefreshBaseTxn(path, configuration.getFilesFacade(), txnMem, walEventReader);
+                            long refreshTxn = WalUtils.getMatViewLastRefreshBaseTxn(path, tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
                             long baseTableLastTxn = getTableSequencerAPI().lastTxn(baseTableToken);
                             state.setLastRefreshBaseTableTxn(refreshTxn);
                             if (refreshTxn == -1 || refreshTxn > baseTableLastTxn) {
