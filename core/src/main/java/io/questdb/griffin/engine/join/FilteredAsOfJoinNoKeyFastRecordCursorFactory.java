@@ -158,11 +158,9 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             boolean hasSlave = record.hasSlave();
             origHasSlave = hasSlave;
             if (!hasSlave) {
-                // the non-keyd algo did not find a matching record in the slave table.
+                // the non-filtering algo did not find a matching record in the slave table.
                 // this means the slave table does not have a single record with a timestamp that is less than or equal
                 // to the master record's timestamp.
-                // thus it cannot possibly have a record with a matching key. since matching timestamps is a prerequisite
-                // before we even try to match keys -> we can safely skip the key matching part and report no match.
                 return true;
             }
 
