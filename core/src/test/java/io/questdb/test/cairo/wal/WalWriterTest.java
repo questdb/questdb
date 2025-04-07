@@ -1657,7 +1657,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
                 long txn = WalUtils.getMatViewLastRefreshBaseTxn(path, transactionLogCursor, walEventReader);
-                assertEquals(-2, txn); // invalidate commit
+                assertEquals(-1, txn); // invalidate commit
             }
         });
     }

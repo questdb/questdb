@@ -32,7 +32,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_DATA;
-import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
 
 public class WalUtils {
     public static final String CONVERT_FILE_NAME = "_convert";
@@ -107,7 +106,7 @@ public class WalUtils {
      * @param tablePath            the path to the table
      * @param transactionLogCursor the cursor to iterate over transaction logs
      * @param walEventReader       the reader to read WAL events
-     * @return -2 if the last WAL-E entry is invalidation, -1 if the transaction could not be extracted,
+     * @return -1 if the transaction could not be extracted or the last WAL-E entry is not a refresh commit (MAT_VIEW_DATA)
      * or a transaction number greater than -1 if it is a valid last refresh transaction
      */
     public static long getMatViewLastRefreshBaseTxn(Path tablePath, TransactionLogCursor transactionLogCursor, WalEventReader walEventReader) {
@@ -120,9 +119,6 @@ public class WalUtils {
                 WalEventCursor walEventCursor = walEventReader.of(tablePath, segmentTxn);
                 if (walEventCursor.getType() == MAT_VIEW_DATA) {
                     return walEventCursor.getDataInfoExt().getLastRefreshBaseTableTxn();
-                }
-                if (walEventCursor.getType() == MAT_VIEW_INVALIDATE) {
-                    return -2;
                 }
             }
         }
