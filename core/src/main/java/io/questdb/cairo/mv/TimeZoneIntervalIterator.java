@@ -59,9 +59,12 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
     private final LongList localShifts = new LongList();
     private long localMaxTimestamp;
     private long localMinTimestamp;
-    private int localShiftIndex;
     private long localTimestampHi;
     private TimestampSampler sampler;
+    // index of next shift interval to check against
+    private int shiftIndex;
+    // time zone offset active up to the shiftIndex interval
+    private long shiftOffset;
     private int step;
     private TimeZoneRules tzRules;
     private long utcMaxTimestamp; // computed from localMaxTimestamp
@@ -107,8 +110,8 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
             }
             // Make sure to adjust the right boundary in case if we ended up
             // in a gap or a backward shift interval.
-            for (int n = localShifts.size() / 2; localShiftIndex < n; localShiftIndex++) {
-                final int idx = localShiftIndex << 1;
+            for (int n = localShifts.size() / 2; shiftIndex < n; shiftIndex++) {
+                final int idx = shiftIndex << 1;
                 final long shiftLo = IntervalUtils.getEncodedPeriodLo(localShifts, idx);
                 if (localTimestampHi < shiftLo) {
                     break;
@@ -116,11 +119,13 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
                 final long shiftHi = IntervalUtils.getEncodedPeriodHi(localShifts, idx);
                 if (localTimestampHi <= shiftHi) { // localTimestampHi >= shiftLo is already true
                     localTimestampHi = sampler.nextTimestamp(sampler.round(shiftHi));
-                    localShiftIndex++;
+                    shiftOffset = tzRules.getLocalOffset(shiftHi);
+                    shiftIndex++;
                     break;
                 }
+                shiftOffset = tzRules.getLocalOffset(shiftHi);
             }
-            utcTimestampHi = Timestamps.toUTC(localTimestampHi, tzRules);
+            utcTimestampHi = localTimestampHi - shiftOffset;
             return true;
         }
         return false;
@@ -179,7 +184,8 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
         this.utcTimestampLo = Numbers.LONG_NULL;
         this.localTimestampHi = localMinTimestamp;
         this.utcTimestampHi = utcMinTimestamp;
-        this.localShiftIndex = 0;
+        this.shiftIndex = 0;
+        this.shiftOffset = tzRules.getLocalOffset(localMinTimestamp);
         this.step = step;
     }
 

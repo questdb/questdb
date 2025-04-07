@@ -44,5 +44,5 @@ public interface TimeZoneRules {
 
     long getOffset(long utcEpoch, int year);
 
-    boolean isFixedOffset();
+    boolean hasFixedOffset();
 }

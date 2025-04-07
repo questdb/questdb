@@ -62,7 +62,7 @@ public class FixedTimeZoneRule implements TimeZoneRules {
     }
 
     @Override
-    public boolean isFixedOffset() {
+    public boolean hasFixedOffset() {
         return true;
     }
 }

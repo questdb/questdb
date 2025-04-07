@@ -206,7 +206,7 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     }
 
     @Override
-    public boolean isFixedOffset() {
+    public boolean hasFixedOffset() {
         return false;
     }
 

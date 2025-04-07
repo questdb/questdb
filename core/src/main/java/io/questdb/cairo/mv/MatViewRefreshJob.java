@@ -351,7 +351,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             long maxTs,
             int step
     ) {
-        if (tzRules == null || tzRules.isFixedOffset()) {
+        if (tzRules == null || tzRules.hasFixedOffset()) {
             long fixedTzOffset = tzRules != null ? tzRules.getOffset(0) : 0;
             return fixedOffsetIterator.of(
                     sampler,
