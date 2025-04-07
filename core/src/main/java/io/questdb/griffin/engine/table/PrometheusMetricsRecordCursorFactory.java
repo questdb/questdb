@@ -58,6 +58,11 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
     }
 
     @Override
+    public void _close() {
+        prometheusMetricsCursor.close();
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext sqlExecutionContext) {
         prometheusMetricsCursor.of(sqlExecutionContext.getCairoEngine().getMetrics());
         prometheusMetricsCursor.toTop();
@@ -158,7 +163,7 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
             subLimit = -1;
             if (record.isClosed) {
                 record.sink = new DirectUtf8Sink(255);
-                record.isClosed = true;
+                record.isClosed = false;
             }
         }
 
