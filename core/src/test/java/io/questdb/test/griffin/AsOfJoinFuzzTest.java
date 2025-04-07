@@ -31,41 +31,8 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
 
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.List;
-
-@RunWith(Parameterized.class)
 public class AsOfJoinFuzzTest extends AbstractCairoTest {
-    private final boolean exerciseFilters;
-    private final boolean exerciseIntervals;
-    private final JoinType joinType;
-    private final LimitType limitType;
-    private final ProjectionType projectionType;
-
-    public AsOfJoinFuzzTest(JoinType joinType, boolean exerciseIntervals, LimitType limitType, boolean exerciseFilters, ProjectionType projectionType) {
-        this.joinType = joinType;
-        this.exerciseIntervals = exerciseIntervals;
-        this.limitType = limitType;
-        this.exerciseFilters = exerciseFilters;
-        this.projectionType = projectionType;
-    }
-
-    @Parameterized.Parameters(name = "join type: {0}, intervals: {1}, limit: {2}, filters: {3}, projection: {4}")
-    public static Collection<Object[]> data() {
-        Object[][] objects = TestUtils.cartesianProduct(new Object[][]{
-                JoinType.values(),
-                {true, false}, // exercise interval intrinsics
-                LimitType.values(),
-                {true, false}, // exercise filters
-                ProjectionType.values(),
-        });
-        return Arrays.asList(objects);
-    }
-
     @Test
     public void testFuzzManyDuplicates() throws Exception {
         testFuzz(50);
@@ -96,7 +63,35 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         testFuzz(10);
     }
 
-    private void assertResultSetsMatch(Rnd rnd) throws Exception {
+    private void assertResultSetsMatch0(Rnd rnd) throws Exception {
+        Object[][] allParameterPermutations = TestUtils.cartesianProduct(new Object[][]{
+                JoinType.values(),
+                {true, false}, // exercise interval intrinsics
+                LimitType.values(),
+                {true, false}, // exercise filters
+                ProjectionType.values(),
+        });
+        try {
+            for (int i = 0; i < allParameterPermutations.length; i++) {
+                Object[] params = allParameterPermutations[i];
+                JoinType joinType = (JoinType) params[0];
+                boolean exerciseIntervals = (boolean) params[1];
+                LimitType limitType = (LimitType) params[2];
+                boolean exerciseFilters = (boolean) params[3];
+                ProjectionType projectionType = (ProjectionType) params[4];
+                assertResultSetsMatch0(joinType, exerciseIntervals, limitType, exerciseFilters, projectionType, rnd);
+            }
+        } catch (AssertionError e) {
+            throw new AssertionError("Failed with parameters: " +
+                    "joinType=" + allParameterPermutations[0][0] +
+                    ", exerciseIntervals=" + allParameterPermutations[0][1] +
+                    ", limitType=" + allParameterPermutations[0][2] +
+                    ", exerciseFilters=" + allParameterPermutations[0][3] +
+                    ", projectionType=" + allParameterPermutations[0][4], e);
+        }
+    }
+
+    private void assertResultSetsMatch0(JoinType joinType, boolean exerciseIntervals, LimitType limitType, boolean exerciseFilters, ProjectionType projectionType, Rnd rnd) throws Exception {
         String join;
         String onSuffix = "";
         switch (joinType) {
@@ -189,7 +184,6 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         sink.clear();
         printSql(query, false);
         actualSink.put(sink);
-
         TestUtils.assertEquals(expectedSink, actualSink);
     }
 
@@ -221,7 +215,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 execute("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "');");
             }
 
-            assertResultSetsMatch(rnd);
+            assertResultSetsMatch0(rnd);
         });
     }
 
@@ -253,7 +247,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 execute("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "');");
             }
 
-            assertResultSetsMatch(rnd);
+            assertResultSetsMatch0(rnd);
         });
     }
 
