@@ -85,7 +85,7 @@ use crate::error::{CoreErrorExt, CoreResult};
 pub struct VarcharDriver;
 
 impl ColumnDriver for VarcharDriver {
-    fn col_sizes_for_size(
+    fn col_sizes_for_row_count(
         &self,
         col: &MappedColumn,
         row_count: u64,
@@ -212,37 +212,37 @@ mod tests {
     fn test_v1() {
         let col = map_col("v1");
 
-        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 0).unwrap();
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_row_count(&col, 0).unwrap();
         assert_eq!(data_size, 0);
         assert_eq!(aux_size, Some(0));
 
         // index 0 is null string
-        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 1).unwrap();
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_row_count(&col, 1).unwrap();
         assert_eq!(data_size, 0);
         assert_eq!(aux_size, Some(16));
 
         // index 1 is empty string
-        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 2).unwrap();
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_row_count(&col, 2).unwrap();
         assert_eq!(data_size, 0);
         assert_eq!(aux_size, Some(32));
 
         // index 2 is a short inlined string
-        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 3).unwrap();
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_row_count(&col, 3).unwrap();
         assert_eq!(data_size, 0);
         assert_eq!(aux_size, Some(48));
 
         // index 3 is a 50-byte non-inlined string
-        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 4).unwrap();
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_row_count(&col, 4).unwrap();
         assert_eq!(data_size, 50);
         assert_eq!(aux_size, Some(64));
 
         // index 4 is a null string
-        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 5).unwrap();
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_row_count(&col, 5).unwrap();
         assert_eq!(data_size, 50);
         assert_eq!(aux_size, Some(80));
 
         // out of range
-        let err = VarcharDriver.col_sizes_for_size(&col, 6).unwrap_err();
+        let err = VarcharDriver.col_sizes_for_row_count(&col, 6).unwrap_err();
         let msg = format!("{:#}", err);
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         assert!(msg.contains("varchar entry index 5 not found in aux for column v1 in"));
@@ -252,37 +252,37 @@ mod tests {
     fn test_v2() {
         let col = map_col("v2");
 
-        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 0).unwrap();
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_row_count(&col, 0).unwrap();
         assert_eq!(data_size, 0);
         assert_eq!(aux_size, Some(0));
 
         // index 0 is empty string
-        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 1).unwrap();
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_row_count(&col, 1).unwrap();
         assert_eq!(data_size, 0);
         assert_eq!(aux_size, Some(16));
 
         // index 1 is a short inlined string
-        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 2).unwrap();
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_row_count(&col, 2).unwrap();
         assert_eq!(data_size, 0);
         assert_eq!(aux_size, Some(32));
 
         // index 2 is a 50-byte non-inlined string
-        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 3).unwrap();
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_row_count(&col, 3).unwrap();
         assert_eq!(data_size, 50);
         assert_eq!(aux_size, Some(48));
 
         // index 3 is a null string
-        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 4).unwrap();
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_row_count(&col, 4).unwrap();
         assert_eq!(data_size, 50);
         assert_eq!(aux_size, Some(64));
 
         // index 4 is empty string
-        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 5).unwrap();
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_row_count(&col, 5).unwrap();
         assert_eq!(data_size, 50);
         assert_eq!(aux_size, Some(80));
 
         // out of range
-        let err = VarcharDriver.col_sizes_for_size(&col, 6).unwrap_err();
+        let err = VarcharDriver.col_sizes_for_row_count(&col, 6).unwrap_err();
         let msg = format!("{:#}", err);
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         assert!(msg.contains("varchar entry index 5 not found in aux for column v2 in"));
@@ -292,37 +292,37 @@ mod tests {
     fn test_v3() {
         let col = map_col("v3");
 
-        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 0).unwrap();
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_row_count(&col, 0).unwrap();
         assert_eq!(data_size, 0);
         assert_eq!(aux_size, Some(0));
 
         // index 0 is a short inlined string
-        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 1).unwrap();
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_row_count(&col, 1).unwrap();
         assert_eq!(data_size, 0);
         assert_eq!(aux_size, Some(16));
 
         // index 1 is a 50-byte non-inlined string
-        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 2).unwrap();
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_row_count(&col, 2).unwrap();
         assert_eq!(data_size, 50);
         assert_eq!(aux_size, Some(32));
 
         // index 2 is a null string
-        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 3).unwrap();
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_row_count(&col, 3).unwrap();
         assert_eq!(data_size, 50);
         assert_eq!(aux_size, Some(48));
 
         // index 3 is empty string
-        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 4).unwrap();
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_row_count(&col, 4).unwrap();
         assert_eq!(data_size, 50);
         assert_eq!(aux_size, Some(64));
 
         // index 4 is a short inlined string
-        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 5).unwrap();
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_row_count(&col, 5).unwrap();
         assert_eq!(data_size, 50);
         assert_eq!(aux_size, Some(80));
 
         // out of range
-        let err = VarcharDriver.col_sizes_for_size(&col, 6).unwrap_err();
+        let err = VarcharDriver.col_sizes_for_row_count(&col, 6).unwrap_err();
         let msg = format!("{:#}", err);
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         assert!(msg.contains("varchar entry index 5 not found in aux for column v3 in"));
@@ -332,37 +332,37 @@ mod tests {
     fn test_v4() {
         let col = map_col("v4");
 
-        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 0).unwrap();
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_row_count(&col, 0).unwrap();
         assert_eq!(data_size, 0);
         assert_eq!(aux_size, Some(0));
 
         // index 0 is a 50-byte non-inlined string
-        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 1).unwrap();
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_row_count(&col, 1).unwrap();
         assert_eq!(data_size, 50);
         assert_eq!(aux_size, Some(16));
 
         // index 1 is a null string
-        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 2).unwrap();
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_row_count(&col, 2).unwrap();
         assert_eq!(data_size, 50);
         assert_eq!(aux_size, Some(32));
 
         // index 2 is empty string
-        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 3).unwrap();
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_row_count(&col, 3).unwrap();
         assert_eq!(data_size, 50);
         assert_eq!(aux_size, Some(48));
 
         // index 3 is a 50-byte non-inlined string
-        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 4).unwrap();
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_row_count(&col, 4).unwrap();
         assert_eq!(data_size, 100);
         assert_eq!(aux_size, Some(64));
 
         // index 4 is a 50-byte non-inlined string
-        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 5).unwrap();
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_row_count(&col, 5).unwrap();
         assert_eq!(data_size, 150);
         assert_eq!(aux_size, Some(80));
 
         // out of range
-        let err = VarcharDriver.col_sizes_for_size(&col, 6).unwrap_err();
+        let err = VarcharDriver.col_sizes_for_row_count(&col, 6).unwrap_err();
         let msg = format!("{:#}", err);
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         assert!(msg.contains("varchar entry index 5 not found in aux for column v4 in"));
@@ -372,12 +372,12 @@ mod tests {
     fn test_vempty() {
         let col = map_col("vempty");
 
-        let (data_size, aux_size) = VarcharDriver.col_sizes_for_size(&col, 0).unwrap();
+        let (data_size, aux_size) = VarcharDriver.col_sizes_for_row_count(&col, 0).unwrap();
         assert_eq!(data_size, 0);
         assert_eq!(aux_size, Some(0));
 
         // out of range
-        let err = VarcharDriver.col_sizes_for_size(&col, 1).unwrap_err();
+        let err = VarcharDriver.col_sizes_for_row_count(&col, 1).unwrap_err();
         let msg = format!("{:#}", err);
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         assert!(msg.contains("varchar entry index 0 not found in aux for column vempty in"));
