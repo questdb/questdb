@@ -35,6 +35,8 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.wal.SymbolMapDiff;
 import io.questdb.cairo.wal.SymbolMapDiffEntry;
 import io.questdb.cairo.wal.WalDataRecord;
@@ -1605,58 +1607,56 @@ public class WalWriterTest extends AbstractCairoTest {
                     .wal();
             tableToken = createTable(model);
 
-            long maxTxn = 3;
-            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
-                for (int i = 0; i < maxTxn; i++) {
-                    TableWriter.Row row = walWriter.newRow(0);
-                    row.putByte(0, (byte) i);
-                    row.putSym(1, "sym" + i);
-                    row.append();
-                    walWriter.commit();
-                }
-            }
-
             try (Path path = new Path();
-                 TransactionLogCursor transactionLogCursor = engine.getTableSequencerAPI().getCursor(tableToken, maxTxn - 1);
+                 MemoryCMR txnMem = Vm.getCMRInstance();
                  WalEventReader walEventReader = new WalEventReader(configuration.getFilesFacade())
             ) {
+                path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+                long txn = WalUtils.getMatViewLastRefreshBaseTxn(path, configuration.getFilesFacade(), txnMem, walEventReader);
+                assertEquals(-1, txn); // no transactions
+
+                long maxTxn = 3;
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    for (int i = 0; i < maxTxn; i++) {
+                        TableWriter.Row row = walWriter.newRow(0);
+                        row.putByte(0, (byte) i);
+                        row.putSym(1, "sym" + i);
+                        row.append();
+                        walWriter.commit();
+                    }
+                }
+
 
                 path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-                long txn = WalUtils.getMatViewLastRefreshBaseTxn(path, transactionLogCursor, walEventReader);
+                txn = WalUtils.getMatViewLastRefreshBaseTxn(path, configuration.getFilesFacade(), txnMem, walEventReader);
                 assertEquals(-1, txn); // incomplete refresh, no commitWithExtra
-            }
 
-            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
-                for (int i = 0; i < maxTxn; i++) {
-                    TableWriter.Row row = walWriter.newRow(0);
-                    row.putByte(0, (byte) i);
-                    row.putSym(1, "sym" + i);
-                    row.append();
-                    walWriter.commitWithExtra(42, 42);
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    for (int i = 0; i < maxTxn; i++) {
+                        TableWriter.Row row = walWriter.newRow(0);
+                        row.putByte(0, (byte) i);
+                        row.putSym(1, "sym" + i);
+                        row.append();
+                        if (i == 1) {
+                            walWriter.commitWithExtra(42, 42);
+                        } else {
+                            walWriter.commit();
+                        }
+                    }
                 }
-            }
 
-            try (Path path = new Path();
-                 TransactionLogCursor transactionLogCursor = engine.getTableSequencerAPI().getCursor(tableToken, 2 * maxTxn - 1);
-                 WalEventReader walEventReader = new WalEventReader(configuration.getFilesFacade())
-            ) {
 
                 path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-                long txn = WalUtils.getMatViewLastRefreshBaseTxn(path, transactionLogCursor, walEventReader);
+                txn = WalUtils.getMatViewLastRefreshBaseTxn(path, configuration.getFilesFacade(), txnMem, walEventReader);
                 assertEquals(42, txn); // refresh commit
-            }
 
-            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
-                walWriter.invalidate(45, 45, false, "test_invalidate");
-            }
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    walWriter.invalidate(45, 45, false, "test_invalidate");
+                }
 
-            try (Path path = new Path();
-                 TransactionLogCursor transactionLogCursor = engine.getTableSequencerAPI().getCursor(tableToken, (2 * maxTxn + 1) - 1);
-                 WalEventReader walEventReader = new WalEventReader(configuration.getFilesFacade())
-            ) {
 
                 path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-                long txn = WalUtils.getMatViewLastRefreshBaseTxn(path, transactionLogCursor, walEventReader);
+                txn = WalUtils.getMatViewLastRefreshBaseTxn(path, configuration.getFilesFacade(), txnMem, walEventReader);
                 assertEquals(-1, txn); // invalidate commit
             }
         });

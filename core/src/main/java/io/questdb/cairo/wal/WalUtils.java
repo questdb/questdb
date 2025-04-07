@@ -24,14 +24,16 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
-import io.questdb.cairo.wal.seq.TransactionLogCursor;
+import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_DATA;
+import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
 
 public class WalUtils {
     public static final String CONVERT_FILE_NAME = "_convert";
@@ -103,22 +105,38 @@ public class WalUtils {
     /**
      * Retrieves the last refresh base transaction for a materialized view.
      *
-     * @param tablePath            the path to the table
-     * @param transactionLogCursor the cursor to iterate over transaction logs
-     * @param walEventReader       the reader to read WAL events
+     * @param tablePath      the path to the table
+     * @param ff             the FilesFacade instance for file operations
+     * @param txnLogMemory   the memory to iterate over transaction logs
+     * @param walEventReader the reader to read WAL events
      * @return -1 if the transaction could not be extracted or the last WAL-E entry is not a refresh commit (MAT_VIEW_DATA)
      * or a transaction number greater than -1 if it is a valid last refresh transaction
      */
-    public static long getMatViewLastRefreshBaseTxn(Path tablePath, TransactionLogCursor transactionLogCursor, WalEventReader walEventReader) {
-        if (transactionLogCursor.hasNext()) {
-            final int walId = transactionLogCursor.getWalId();
-            final int segmentId = transactionLogCursor.getSegmentId();
-            final int segmentTxn = transactionLogCursor.getSegmentTxn();
-            if (walId > 0) {
-                tablePath.concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
-                WalEventCursor walEventCursor = walEventReader.of(tablePath, segmentTxn);
-                if (walEventCursor.getType() == MAT_VIEW_DATA) {
-                    return walEventCursor.getDataInfoExt().getLastRefreshBaseTableTxn();
+    public static long getMatViewLastRefreshBaseTxn(Path tablePath, FilesFacade ff, MemoryCMR txnLogMemory, WalEventReader walEventReader) {
+        try (MemoryCMR mem = txnLogMemory) {
+            int pathLen = tablePath.size();
+            mem.smallFile(ff, tablePath.concat(SEQ_DIR).concat(TXNLOG_FILE_NAME).$(), MemoryTag.MMAP_TX_LOG);
+            long txnCount = mem.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
+            if (txnCount > 0) {
+                long fileSize = TableTransactionLogFile.HEADER_SIZE + txnCount * TableTransactionLogV1.RECORD_SIZE;
+                if (mem.size() >= fileSize) {
+                    for (long txn = txnCount - 1; txn >= 0; txn--) {
+                        tablePath.trimTo(pathLen);
+                        long offset = TableTransactionLogFile.HEADER_SIZE + txn * TableTransactionLogV1.RECORD_SIZE;
+                        final int walId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_WAL_ID_OFFSET);
+                        final int segmentId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_OFFSET);
+                        final int segmentTxn = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_TXN_OFFSET);
+                        if (walId > 0) {
+                            tablePath.concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+                            WalEventCursor walEventCursor = walEventReader.of(tablePath, segmentTxn);
+                            if (walEventCursor.getType() == MAT_VIEW_DATA) {
+                                return walEventCursor.getDataInfoExt().getLastRefreshBaseTableTxn();
+                            }
+                            if (walEventCursor.getType() == MAT_VIEW_INVALIDATE) {
+                                return -1;
+                            }
+                        }
+                    }
                 }
             }
         }

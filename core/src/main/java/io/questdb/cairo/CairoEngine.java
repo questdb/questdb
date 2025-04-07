@@ -59,6 +59,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.DefaultWalListener;
@@ -71,7 +73,6 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
-import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.cutlass.text.CopyContext;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.FunctionFactory;
@@ -347,6 +348,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 Path path = new Path();
                 BlockFileReader reader = new BlockFileReader(configuration);
                 WalEventReader walEventReader = new WalEventReader(configuration.getFilesFacade());
+                MemoryCMR txnMem = Vm.getCMRInstance();
         ) {
             path.of(configuration.getDbRoot());
             final int pathLen = path.size();
@@ -394,22 +396,19 @@ public class CairoEngine implements Closeable, WriterSource {
                                 continue;
                             }
 
-                            long seqTxn = this.getTableSequencerAPI().lastTxn(tableToken);
-                            try (TransactionLogCursor cursor = this.getTableSequencerAPI().getCursor(tableToken, seqTxn - 1)) {
-                                path.trimTo(pathLen).concat(tableToken);
-                                long refreshTxn = WalUtils.getMatViewLastRefreshBaseTxn(path, cursor, walEventReader);
-                                long baseTableLastTxn = getTableSequencerAPI().lastTxn(baseTableToken);
-                                state.setLastRefreshBaseTableTxn(refreshTxn);
-                                if (refreshTxn == -1 || refreshTxn > baseTableLastTxn) {
-                                    LOG.info().$("materialized view is out of sync with base table [table=").utf8(matViewDefinition.getBaseTableName())
-                                            .$(", view=").utf8(tableToken.getTableName())
-                                            .$(", lastRefreshBaseTxn=").$(state.getLastRefreshBaseTxn())
-                                            .$(", baseTableLastTxn=").$(baseTableLastTxn)
-                                            .I$();
-                                    matViewStateStore.enqueueInvalidate(tableToken, "out of sync with base table");
-                                } else {
-                                    matViewStateStore.enqueueIncrementalRefresh(tableToken);
-                                }
+                            path.trimTo(pathLen).concat(tableToken);
+                            long refreshTxn = WalUtils.getMatViewLastRefreshBaseTxn(path, configuration.getFilesFacade(), txnMem, walEventReader);
+                            long baseTableLastTxn = getTableSequencerAPI().lastTxn(baseTableToken);
+                            state.setLastRefreshBaseTableTxn(refreshTxn);
+                            if (refreshTxn == -1 || refreshTxn > baseTableLastTxn) {
+                                LOG.info().$("materialized view is out of sync with base table [table=").utf8(matViewDefinition.getBaseTableName())
+                                        .$(", view=").utf8(tableToken.getTableName())
+                                        .$(", lastRefreshBaseTxn=").$(state.getLastRefreshBaseTxn())
+                                        .$(", baseTableLastTxn=").$(baseTableLastTxn)
+                                        .I$();
+                                matViewStateStore.enqueueInvalidate(tableToken, "out of sync with base table");
+                            } else {
+                                matViewStateStore.enqueueIncrementalRefresh(tableToken);
                             }
                         }
                     } catch (Throwable th) {
