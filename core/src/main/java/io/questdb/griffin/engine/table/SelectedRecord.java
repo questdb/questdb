@@ -43,7 +43,7 @@ class SelectedRecord implements Record {
 
     @Override
     public ArrayView getArray(int col, int columnType) {
-        return base.getArray(col, columnType);
+        return base.getArray(getColumnIndex(col), columnType);
     }
 
     @Override

@@ -1108,6 +1108,23 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (a DOUBLE[], b DOUBLE[])");
+            execute("INSERT INTO tango VALUES " +
+                    "(ARRAY[2.0, 3.0], ARRAY[4.0, 5]), " +
+                    "(ARRAY[6.0, 7], ARRAY[8.0, 9])");
+
+            assertQuery("a1\tb1\ta2\tb2\n" +
+                            "[2.0,3.0]\t[4.0,5.0]\t[2.0,3.0]\t[4.0,5.0]\n" +
+                            "[6.0,7.0]\t[8.0,9.0]\t[6.0,7.0]\t[8.0,9.0]\n",
+                    "select a as a1, b as b1, a as a2, b as b2 from 'tango' ",
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testRndDoubleFunctionEdgeCases() throws Exception {
         assertMemoryLeak(() -> {
             assertExceptionNoLeakCheck(
