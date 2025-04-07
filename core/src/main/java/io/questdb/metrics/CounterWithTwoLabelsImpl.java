@@ -24,11 +24,8 @@
 
 package io.questdb.metrics;
 
-import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory;
 import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor.PrometheusMetricsRecord;
-import io.questdb.std.Numbers;
 import io.questdb.std.str.BorrowableUtf8Sink;
-import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.LongAdder;
@@ -70,23 +67,6 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
     }
 
     @Override
-    public int scrapeIntoRecord(PrometheusMetricsRecord record) {
-        scrapeIntoRecord(record, 0);
-        return counters.length;
-    }
-
-    @Override
-    public void scrapeIntoRecord(PrometheusMetricsRecord record, int label) {
-        int i1 = label / labelValues0.length;
-        int i2 = label % labelValues0.length;
-        record
-                .setCounterName(getName())
-                .setType("counter")
-                .setValue(counters[label].longValue())
-                .setKind("LONG")
-                .setLabels(labelName0, labelValues0[i1], labelName1, labelValues1[i2]);
-    }
-    @Override
     public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
         PrometheusFormatUtils.appendCounterType(name, sink);
         for (int i = 0, n = labelValues0.length; i < n; i++) {
@@ -101,5 +81,23 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
             }
         }
         PrometheusFormatUtils.appendNewLine(sink);
+    }
+
+    @Override
+    public void scrapeIntoRecord(PrometheusMetricsRecord record, int label) {
+        int i1 = label / labelValues0.length;
+        int i2 = label % labelValues0.length;
+        record
+                .setCounterName(getName())
+                .setType("counter")
+                .setValue(counters[label].longValue())
+                .setKind("LONG")
+                .setLabels(labelName0, labelValues0[i1], labelName1, labelValues1[i2]);
+    }
+
+    @Override
+    public int scrapeIntoRecord(PrometheusMetricsRecord record) {
+        scrapeIntoRecord(record, 0);
+        return counters.length;
     }
 }

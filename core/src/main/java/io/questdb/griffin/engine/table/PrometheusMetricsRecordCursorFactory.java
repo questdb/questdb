@@ -91,9 +91,7 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
 
         @Override
         public void close() {
-            record.sink.clear();
-            record.values.clear();
-            record.value.clear();
+            record.close();
         }
 
         @Override
@@ -108,7 +106,6 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
 
         @Override
         public boolean hasNext() throws DataUnavailableException {
-
             if (subPos > -1 && subPos < subLimit - 1) {
                 subPos++;
                 record.of(registry.getTarget(pos), subPos);
@@ -159,6 +156,10 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
             pos = -1;
             subPos = -1;
             subLimit = -1;
+            if (record.isClosed) {
+                record.sink = new DirectUtf8Sink(255);
+                record.isClosed = true;
+            }
         }
 
         public class PrometheusMetricsRecord implements Record {
@@ -168,6 +169,7 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
             public static final int KIND = VALUE + 1;
             public static final int LABELS = KIND + 1;
             public DirectUtf8Sink sink;
+            boolean isClosed;
             Target target;
             DirectUtf8String value;
             LongList values;
@@ -176,6 +178,15 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
                 this.sink = sink;
                 this.values = values;
                 this.value = value;
+                isClosed = false;
+            }
+
+            public void close() {
+                record.sink.clear();
+                record.values.clear();
+                record.value.clear();
+                record.sink.close();
+                isClosed = true;
             }
 
             public Utf8Sequence getProp(int slot) {

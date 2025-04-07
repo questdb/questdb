@@ -24,7 +24,6 @@
 
 package io.questdb.metrics;
 
-import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory;
 import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor.PrometheusMetricsRecord;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import org.jetbrains.annotations.NotNull;
@@ -32,12 +31,12 @@ import org.jetbrains.annotations.NotNull;
 public class NullMetricsRegistry implements MetricsRegistry {
 
     @Override
-    public int getSize() {
-        return 0;
+    public void addTarget(Target target) {
     }
 
     @Override
-    public void addTarget(Target target) {
+    public int getSize() {
+        return 0;
     }
 
     @Override
@@ -91,8 +90,7 @@ public class NullMetricsRegistry implements MetricsRegistry {
     }
 
     @Override
-    public int scrapeIntoRecord(PrometheusMetricsRecord record)
-    {
+    public int scrapeIntoRecord(PrometheusMetricsRecord record) {
         return -1;
     }
 }

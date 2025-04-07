@@ -111,13 +111,13 @@ public class PrometheusMetricsTest extends AbstractCairoTest {
         gauge.inc();
 
         assertPrometheusMetrics("name\ttype\tvalue\tkind\tlabels\n" +
-                        "gauge\tgauge\t2\tLONG\t\n",
+                        "questdb_gauge\tgauge\t2\tLONG\t\n",
                 metricsRegistry);
 
         gauge.dec();
 
         assertPrometheusMetrics("name\ttype\tvalue\tkind\tlabels\n" +
-                        "gauge\tgauge\t1\tLONG\t\n",
+                        "questdb_gauge\tgauge\t1\tLONG\t\n",
                 metricsRegistry);
     }
 
