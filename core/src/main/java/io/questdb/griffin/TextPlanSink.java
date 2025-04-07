@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.AnalyzeFactory;
+import io.questdb.griffin.model.ExplainModel;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.Uuid;
@@ -70,7 +71,6 @@ public class TextPlanSink extends BasePlanSink {
         return this;
     }
 
-
     public PlanSink child(Plannable p) {
         depth++;
         if (p instanceof AnalyzeFactory) {
@@ -113,6 +113,11 @@ public class TextPlanSink extends BasePlanSink {
 
     public int getLineCount() {
         return eolIndexes.size() - 1;
+    }
+
+    @Override
+    public int getPlanSinkType() {
+        return ExplainModel.FORMAT_TEXT;
     }
 
     public PlanSink meta(CharSequence name) {

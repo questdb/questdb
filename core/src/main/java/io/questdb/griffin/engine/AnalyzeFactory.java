@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
@@ -41,6 +42,7 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.ExplainModel;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.DirectLongLongHeap;
@@ -88,36 +90,28 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
     }
 
     public void formatRowCount(PlanSink sink, long rowCount) {
-//        sink.val(String.format("%,d", rowCount));
         sink.val(rowCount);
     }
 
     public void formatRowCount(StringSink sink, long rowCount) {
-//        sink.put(String.format("%,d", rowCount));
         sink.put(rowCount);
     }
 
     public void formatTiming(PlanSink sink, long nanos) {
         if (nanos > 1e9) {
-            sink.val(roundTiming(nanos / 1e9));
-            sink.val("s");
+            sink.val(roundTiming(nanos / 1e9) + "s");
             return;
         }
 
         if (nanos > 1e6) {
-            sink.val(roundTiming(nanos / 1e6));
-            sink.val("ms");
+            sink.val(roundTiming(nanos / 1e6) + "ms");
             return;
         }
 
         if (nanos > 1e3) {
-            sink.val(roundTiming(nanos / 1e3));
-            sink.val("μs");
+            sink.val(roundTiming(nanos / 1e3) + "μs");
         } else {
-            sink.val(nanos);
-            if (nanos != 0) {
-                sink.val("ns");
-            }
+            sink.val(nanos + (nanos != 0 ? "ns" : ""));
         }
     }
 
@@ -282,9 +276,31 @@ public class AnalyzeFactory extends AbstractRecordCursorFactory {
         return base.supportsUpdateRowId(tableName);
     }
 
+    public void toJson(PlanSink sink) {
+        sink.type("Analyze");
+        sink.meta("time");
+        formatTiming(sink, cursor.executionTimeNanos);
+        sink.meta("first");
+        formatTiming(sink, cursor.firstTimeNanos);
+        sink.meta("rows");
+        formatRowCount(sink, cursor.numberOfRecords);
+        sink.meta("cols");
+        sink.val(base.getMetadata().getColumnCount());
+    }
+
     @Override
     public void toPlan(PlanSink sink) {
-        sink.child(this);
+        switch (sink.getPlanSinkType()) {
+            case ExplainModel.FORMAT_TEXT:
+                sink.child(this);
+                break;
+            case ExplainModel.FORMAT_JSON:
+                throw CairoException.nonCritical().put("JSON plan output is not supported for `EXPLAIN ANALYZE`");
+//                toJson(sink);
+//                sink.child(base);
+            default:
+                throw new UnsupportedOperationException();
+        }
     }
 
     public void toSink(PlanSink sink) {

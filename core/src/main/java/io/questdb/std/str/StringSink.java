@@ -191,4 +191,5 @@ public class StringSink implements MutableUtf16Sink, CharSequence, CloneableMuta
         System.arraycopy(buffer, 0, n, 0, pos);
         buffer = n;
     }
+
 }

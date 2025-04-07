@@ -96,13 +96,21 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         Function loFunc = cursor.loFunction;
         Function hiFunc = cursor.hiFunction;
         if (loFunc != null) {
-            sink.meta("lo").val(loFunc);
+            if (loFunc.isConstant()) {
+                sink.meta("lo").val(loFunc.getLong(null));
+            } else {
+                sink.meta("lo").val(loFunc);
+            }
             if (loFunc.isRuntimeConstant()) {
                 sink.val('[').val(loFunc.getLong(null)).val(']');
             }
         }
         if (hiFunc != null) {
-            sink.meta("hi").val(hiFunc);
+            if (hiFunc.isConstant()) {
+                sink.meta("hi").val(hiFunc.getLong(null));
+            } else {
+                sink.meta("hi").val(hiFunc);
+            }
             if (hiFunc.isRuntimeConstant()) {
                 sink.val('[').val(hiFunc.getLong(null)).val(']');
             }
