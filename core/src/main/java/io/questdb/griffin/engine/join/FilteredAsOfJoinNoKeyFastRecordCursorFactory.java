@@ -134,13 +134,18 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 return false;
             }
 
-            if (unfilteredRecordRowId != -1) {
-                slaveCursor.recordAt(slaveRecB, unfilteredRecordRowId);
-            }
             record.hasSlave(unfilteredRecordHasSlave);
             final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
+            TimeFrame timeFrame = slaveCursor.getTimeFrame();
             if (masterTimestamp >= lookaheadTimestamp) {
+                if (unfilteredRecordRowId != -1 && slaveRecB.getRowId() != unfilteredRecordRowId) {
+                    slaveCursor.recordAt(slaveRecB, unfilteredRecordRowId);
+                }
+
                 nextSlave(masterTimestamp);
+                if (record.hasSlave()) {
+                    unfilteredRecordRowId = slaveRecB.getRowId();
+                }
             }
 
             // we have to set the `isMasterHasNextPending` only now since `nextSlave()` may throw DataUnavailableException
@@ -158,9 +163,12 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             }
 
             // make sure the cursor points to the right frame - since `nextSlave()` might have moved it under our feet
-            TimeFrame timeFrame = slaveCursor.getTimeFrame();
             long rowId = slaveRecB.getRowId();
-            unfilteredRecordRowId = rowId;
+            if (slaveRecordFilter.getBool(slaveRecB)) {
+                // we have a match, that's awesome, no need to traverse the slave cursor!
+                return true;
+            }
+
             int slaveFrameIndex = Rows.toPartitionIndex(rowId);
             int cursorFrameIndex = timeFrame.getFrameIndex();
             slaveCursor.jumpTo(slaveFrameIndex);
@@ -170,11 +178,6 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             long keyedRowId = Rows.toLocalRowID(rowId);
             int keyedFrameIndex = timeFrame.getFrameIndex();
             for (; ; ) {
-                if (slaveRecordFilter.getBool(slaveRecB)) {
-                    // we have a match, that's awesome, no need to traverse the slave cursor!
-                    break;
-                }
-
                 // let's try to move backwards in the slave cursor until we have a match
                 keyedRowId--;
                 if (keyedRowId < rowLo) {
@@ -193,6 +196,10 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                     rowLo = timeFrame.getRowLo();
                 }
                 slaveCursor.recordAt(slaveRecB, Rows.toRowID(keyedFrameIndex, keyedRowId));
+                if (slaveRecordFilter.getBool(slaveRecB)) {
+                    // we have a match, that's awesome, no need to traverse the slave cursor!
+                    break;
+                }
                 circuitBreaker.statefulThrowExceptionIfTripped();
             }
 
