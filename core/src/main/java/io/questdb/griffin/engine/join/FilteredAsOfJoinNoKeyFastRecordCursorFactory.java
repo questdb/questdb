@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -112,9 +111,8 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
 
     private class FilteredAsOfJoinKeyedFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {
         private SqlExecutionCircuitBreaker circuitBreaker;
-        private boolean origHasSlave;
-        private int origSlaveFrameIndex = -1;
-        private long origSlaveRowId = -1;
+        private boolean unfilteredRecordHasSlave;
+        private long unfilteredRecordRowId = -1;
 
         public FilteredAsOfJoinKeyedFastRecordCursor(
                 int columnSplit,
@@ -127,11 +125,6 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
         }
 
         @Override
-        public void close() {
-            super.close();
-        }
-
-        @Override
         public boolean hasNext() {
             if (isMasterHasNextPending) {
                 masterHasNext = masterCursor.hasNext();
@@ -141,10 +134,10 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 return false;
             }
 
-            if (origSlaveRowId != -1) {
-                slaveCursor.recordAt(slaveRecB, Rows.toRowID(origSlaveFrameIndex, origSlaveRowId));
+            if (unfilteredRecordRowId != -1) {
+                slaveCursor.recordAt(slaveRecB, unfilteredRecordRowId);
             }
-            record.hasSlave(origHasSlave);
+            record.hasSlave(unfilteredRecordHasSlave);
             final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
             if (masterTimestamp >= lookaheadTimestamp) {
                 nextSlave(masterTimestamp);
@@ -156,7 +149,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             isMasterHasNextPending = true;
 
             boolean hasSlave = record.hasSlave();
-            origHasSlave = hasSlave;
+            unfilteredRecordHasSlave = hasSlave;
             if (!hasSlave) {
                 // the non-filtering algo did not find a matching record in the slave table.
                 // this means the slave table does not have a single record with a timestamp that is less than or equal
@@ -167,15 +160,14 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             // make sure the cursor points to the right frame - since `nextSlave()` might have moved it under our feet
             TimeFrame timeFrame = slaveCursor.getTimeFrame();
             long rowId = slaveRecB.getRowId();
+            unfilteredRecordRowId = rowId;
             int slaveFrameIndex = Rows.toPartitionIndex(rowId);
-            origSlaveFrameIndex = slaveFrameIndex;
             int cursorFrameIndex = timeFrame.getFrameIndex();
             slaveCursor.jumpTo(slaveFrameIndex);
             slaveCursor.open();
 
             long rowLo = timeFrame.getRowLo();
             long keyedRowId = Rows.toLocalRowID(rowId);
-            origSlaveRowId = keyedRowId;
             int keyedFrameIndex = timeFrame.getFrameIndex();
             for (; ; ) {
                 if (slaveRecordFilter.getBool(slaveRecB)) {
@@ -219,9 +211,8 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
         @Override
         public void toTop() {
             super.toTop();
-            origSlaveFrameIndex = -1;
-            origSlaveRowId = -1;
-            origHasSlave = false;
+            unfilteredRecordRowId = -1;
+            unfilteredRecordHasSlave = false;
         }
     }
 }
