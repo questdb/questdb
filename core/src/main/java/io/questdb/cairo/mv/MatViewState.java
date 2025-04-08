@@ -24,12 +24,8 @@
 
 package io.questdb.cairo.mv;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.AppendableBlock;
-import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
-import io.questdb.cairo.file.ReadableBlock;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.std.Chars;
@@ -49,9 +45,8 @@ import static io.questdb.TelemetrySystemEvent.*;
  */
 public class MatViewState implements ReadableMatViewState, QuietCloseable {
     public static final String MAT_VIEW_STATE_FILE_NAME = "_mv.s";
-    public static final int MAT_VIEW_STATE_FORMAT_MSG_TYPE = 0;
     public static final int MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE = 1;
-
+    public static final int MAT_VIEW_STATE_FORMAT_MSG_TYPE = 0;
     // used to avoid concurrent refresh runs
     private final AtomicBoolean latch = new AtomicBoolean(false);
     private final MatViewTelemetryFacade telemetryFacade;
@@ -103,33 +98,6 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
             return;
         }
         block.putLong(refreshState.getLastRefreshTimestamp());
-    }
-
-    public static void readFrom(@NotNull BlockFileReader reader, @NotNull MatViewState refreshState) {
-        boolean matViewStateBlockFound = false;
-        final BlockFileReader.BlockCursor cursor = reader.getCursor();
-        while (cursor.hasNext()) {
-            final ReadableBlock block = cursor.next();
-            if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_MSG_TYPE) {
-                matViewStateBlockFound = true;
-                refreshState.invalid = block.getBool(0);
-                refreshState.lastRefreshBaseTxn = block.getLong(Byte.BYTES);
-                refreshState.invalidationReason = Chars.toString(block.getStr(Long.BYTES + Byte.BYTES));
-                refreshState.lastRefreshTimestamp = Numbers.LONG_NULL;
-                // keep going, because V2 block might follow
-                continue;
-            }
-            if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE) {
-                refreshState.lastRefreshTimestamp = block.getLong(0);
-                return;
-            }
-        }
-        if (!matViewStateBlockFound) {
-            final TableToken matViewToken = refreshState.getViewDefinition().getMatViewToken();
-            throw CairoException.critical(0).put("cannot read materialized view state, block not found [view=")
-                    .put(matViewToken.getTableName())
-                    .put(']');
-        }
     }
 
     public RecordCursorFactory acquireRecordFactory() {
@@ -249,6 +217,10 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
         );
     }
 
+    public void setLastRefreshBaseTableTxn(long txn) {
+        lastRefreshBaseTxn = txn;
+    }
+
     public void tryCloseIfDropped() {
         if (dropped && tryLock()) {
             try {
@@ -272,9 +244,5 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
         if (!latch.compareAndSet(true, false)) {
             throw new IllegalStateException("cannot unlock, not locked");
         }
-    }
-
-    public void setLastRefreshBaseTableTxn(long txn) {
-        lastRefreshBaseTxn = txn;
     }
 }
