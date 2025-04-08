@@ -547,8 +547,6 @@ public final class TableUtils {
                 try (BlockFileWriter writer = blockFileWriter) {
                     writer.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                     MatViewDefinition.append(structure.getMatViewDefinition(), writer);
-                    writer.of(path.trimTo(rootLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
-                    MatViewState.append(null, writer);
                 }
             }
 

@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GenericRecordMetadata;
@@ -112,6 +111,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
         private static class ViewsListCursor implements NoRandomAccessRecordCursor {
             private final MatViewsRecord record = new MatViewsRecord();
+            private final MatViewStateReader viewStateReader = new MatViewStateReader();
             private final ObjList<TableToken> viewTokens = new ObjList<>();
             private CairoEngine engine;
             private int viewIndex = 0;
@@ -142,13 +142,12 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                             final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(viewToken);
                             assert matViewDefinition != null : "materialized view definition not found: " + viewToken;
 
-                            final MatViewStateReader viewStateReader;
                             final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, viewToken.getDirName());
                             if (isMatViewStateExists) {
                                 reader.of(path.trimTo(pathLen).concat(viewToken.getDirName()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
-                                viewStateReader = new MatViewStateReader().of(reader, viewToken);
+                                viewStateReader.of(reader, viewToken);
                             } else {
-                                throw new CairoException().put("materialized view state not found [").put(viewToken).put("]");
+                                viewStateReader.clear();
                             }
 
                             TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());

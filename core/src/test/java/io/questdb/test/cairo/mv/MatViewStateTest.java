@@ -22,6 +22,7 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 
 public class MatViewStateTest extends AbstractCairoTest {
 
@@ -39,6 +40,35 @@ public class MatViewStateTest extends AbstractCairoTest {
         super.setUp();
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+    }
+
+    @Test
+    public void testMatViewNoStateFile() throws Exception {
+        assertMemoryLeak(() -> {
+                    execute(
+                            "create table base_price (" +
+                                    "  sym string, price double, ts timestamp" +
+                                    ") timestamp(ts) partition by DAY WAL"
+                    );
+
+                    final String viewSql = "select sym0, last(price0) price, ts0 " +
+                            "from (select ts as ts0, sym as sym0, price as price0 from base_price) " +
+                            "sample by 1h";
+
+                    execute("create materialized view price_1h as (" + viewSql + ") partition by DAY");
+                    drainWalQueue();
+                    TableToken tableToken = engine.verifyTableName("price_1h");
+                    try (Path path = new Path()) {
+                        path.of(configuration.getDbRoot()).concat(tableToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
+                        assertFalse(configuration.getFilesFacade().exists(path.$()));
+                        assertSql(
+                                "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
+                                        "price_1h\tincremental\tbase_price\t\tselect sym0, last(price0) price, ts0 from (select ts as ts0, sym as sym0, price as price0 from base_price) sample by 1h\tprice_1h~2\t\tvalid\t-1\t0\n",
+                                "select * from materialized_views()"
+                        );
+                    }
+                }
+        );
     }
 
     @Test
