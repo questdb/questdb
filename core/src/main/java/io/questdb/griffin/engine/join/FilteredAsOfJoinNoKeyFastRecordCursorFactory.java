@@ -143,7 +143,8 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 }
 
                 nextSlave(masterTimestamp);
-                if (record.hasSlave()) {
+                unfilteredRecordHasSlave = record.hasSlave();
+                if (unfilteredRecordHasSlave) {
                     unfilteredRecordRowId = slaveRecB.getRowId();
                 }
             }
@@ -154,7 +155,6 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             isMasterHasNextPending = true;
 
             boolean hasSlave = record.hasSlave();
-            unfilteredRecordHasSlave = hasSlave;
             if (!hasSlave) {
                 // the non-filtering algo did not find a matching record in the slave table.
                 // this means the slave table does not have a single record with a timestamp that is less than or equal
@@ -162,13 +162,15 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 return true;
             }
 
-            // make sure the cursor points to the right frame - since `nextSlave()` might have moved it under our feet
-            long rowId = slaveRecB.getRowId();
             if (slaveRecordFilter.getBool(slaveRecB)) {
                 // we have a match, that's awesome, no need to traverse the slave cursor!
                 return true;
             }
 
+            // ok, the current record in the slave cursor does not match the filter, let's try to find a match
+            // first, we have to set the time frame cursor to the record found by the non-filtering algo
+            // and then we have to traverse the slave cursor backwards until we find a match
+            long rowId = slaveRecB.getRowId();
             int slaveFrameIndex = Rows.toPartitionIndex(rowId);
             int cursorFrameIndex = timeFrame.getFrameIndex();
             slaveCursor.jumpTo(slaveFrameIndex);
