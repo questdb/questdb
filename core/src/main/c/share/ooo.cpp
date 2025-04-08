@@ -657,6 +657,16 @@ Java_io_questdb_std_Vect_radixSortABLongIndexAsc(JNIEnv *env, jclass cl, jlong p
     auto minTs = __JLONG_REINTERPRET_CAST__(int64_t, minTimestamp);
     auto maxTs = __JLONG_REINTERPRET_CAST__(int64_t, maxTimestamp);
 
+    if (minTs > maxTs) {
+        // invalid min/max timestamp
+        return -1;
+    }
+
+    if (minTs < 0 && maxTs > INT64_MAX + minTs) {
+        // difference overflows 64 bits
+        return -2;
+    }
+
     auto ts_range_bytes = range_bytes(maxTs - minTs + 1);
 
     auto *a = reinterpret_cast<int64_t *>(pDataA);
@@ -700,7 +710,7 @@ Java_io_questdb_std_Vect_radixSortABLongIndexAsc(JNIEnv *env, jclass cl, jlong p
             radix_sort_ab_long_index_asc<8>(a, countA, b, countB, out, cpy, minTs);
             break;
         default:
-            return -1;
+            return -3;
     }
 
     return countA + countB;

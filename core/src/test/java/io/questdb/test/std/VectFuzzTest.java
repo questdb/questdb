@@ -1347,7 +1347,9 @@ public class VectFuzzTest {
                     10_000_000 - split,
                     split,
                     -rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10),
-                    rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10));
+                    rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10),
+                    0
+            );
         });
     }
 
@@ -1362,7 +1364,38 @@ public class VectFuzzTest {
                     split,
                     min,
                     // Set min == max, e.g. all timestamp to be equal
-                    min
+                    min,
+                    0
+            );
+        });
+    }
+
+    @Test
+    public void testSortABMinGreaterThanMax() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            rnd = TestUtils.generateRandom(null);
+            int split = 10;
+            testSortAB(
+                    50 - split,
+                    split,
+                    101,
+                    100,
+                    -1
+            );
+        });
+    }
+
+    @Test
+    public void testSortABMinMaxDifferenceOverflow() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            rnd = TestUtils.generateRandom(null);
+            int split = 10;
+            testSortAB(
+                    50 - split,
+                    split,
+                    -100,
+                    Long.MAX_VALUE - 80,
+                    -2
             );
         });
     }
@@ -1378,7 +1411,8 @@ public class VectFuzzTest {
                     100 - split,
                     split,
                     min,
-                    max
+                    max,
+                    0
             );
         });
     }
@@ -1390,7 +1424,8 @@ public class VectFuzzTest {
                         10_000,
                         0,
                         -rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10),
-                        rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10)
+                        rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10),
+                        0
                 )
         );
     }
@@ -1401,7 +1436,9 @@ public class VectFuzzTest {
                 testSortAB(
                         1_000,
                         0,
-                        -rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10), rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10)
+                        -rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10),
+                        rnd.nextLong(Timestamps.DAY_MICROS * 365 * 10),
+                        0
                 )
         );
     }
@@ -1648,7 +1685,7 @@ public class VectFuzzTest {
         }
     }
 
-    private void testSortAB(int aCount, int bCount, long min, long max) {
+    private void testSortAB(int aCount, int bCount, long min, long max, long errorResult) {
         final int sizeA = aCount * 2 * Long.BYTES;
         final int sizeB = bCount * 2 * Long.BYTES;
 
@@ -1667,7 +1704,14 @@ public class VectFuzzTest {
             Vect.memcpy(aAddrCopy, aAddr, sizeA);
             Vect.memcpy(bAddrCopy, bAddr, sizeB);
 
-            Vect.radixSortABLongIndexAsc(aAddr, aCount, bAddr, bCount, aAddr, cpyAddr, min, max);
+            long rowCount = Vect.radixSortABLongIndexAsc(aAddr, aCount, bAddr, bCount, aAddr, cpyAddr, min, max);
+            if (errorResult < 0) {
+                // The test expects an error
+                Assert.assertEquals(errorResult, rowCount);
+                return;
+            }
+
+            Assert.assertEquals(aCount + bCount, rowCount);
             assertIndexAsc(aCount + bCount, aAddr, aAddrCopy, bAddrCopy, min, max);
         } finally {
             Unsafe.free(aAddr, resultSize, MemoryTag.NATIVE_DEFAULT);
