@@ -57,7 +57,7 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
         microSecondTicks = -1;
         recvBuffer = null;
         disconnected = true;
-        recvBufferSize.set(1024);
+        maxRecvBufferSize.set(1024);
         maxSendBytes = 1024;
         floatDefaultColumnType = ColumnType.DOUBLE;
         integerDefaultColumnType = ColumnType.LONG;
@@ -352,7 +352,7 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
 
     @Test
     public void testIncorrectConfig() throws Exception {
-        recvBufferSize.set(200);
+        maxRecvBufferSize.set(200);
         try {
             runInAuthContext(() -> {
                 recvBuffer = "weather,location=us-midwest temperature=82 1465839830100400200\n";
@@ -371,7 +371,7 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
     public void testInvalidKeyId() throws Exception {
         runInAuthContext(() -> {
             StringBuilder token = new StringBuilder("xxxxxxxx");
-            while (token.length() < recvBufferSize.get()) {
+            while (token.length() < maxRecvBufferSize.get()) {
                 token.append(token);
             }
             boolean authSequenceCompleted = authenticate(token.toString(), AUTH_PRIVATE_KEY1);
