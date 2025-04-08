@@ -282,6 +282,13 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    public @Nullable ExpressionNode rewritePivotGetAppropriateNameFromInExpr(ExpressionNode forInExpr) {
+        if (forInExpr.paramCount == 2) {
+            return forInExpr.lhs;
+        }
+        return forInExpr.args.getLast();
+    }
+
     private static boolean isOrderedByDesignatedTimestamp(QueryModel model) {
         return model.getTimestamp() != null
                 && model.getOrderBy().size() == 1
@@ -4805,13 +4812,6 @@ public class SqlOptimiser implements Mutable {
         return forInExpr.args.getQuick(slot);
     }
 
-    private @Nullable ExpressionNode rewritePivotGetAppropriateNameFromInExpr(ExpressionNode forInExpr) {
-        if (forInExpr.paramCount == 2) {
-            return forInExpr.lhs;
-        }
-        return forInExpr.args.getLast();
-    }
-
     private ExpressionNode rewritePivotMakeBinaryExpression(ExpressionNode lhs, ExpressionNode rhs, CharSequence token, OperatorExpression operator) {
         ExpressionNode op = expressionNodePool.next().of(OPERATION, token, operator.precedence, 0);
         op.paramCount = 2;
@@ -6658,8 +6658,9 @@ public class SqlOptimiser implements Mutable {
                 // for each aggregate we want to generate
                 for (int j = 0, n = nested.getPivotColumns().size(); j < n; j++) {
                     QueryColumn pivotColumn = nested.getPivotColumns().get(j);
-                    CharSequence pivotColumnName = pivotColumn.getAst().token;
-                    CharSequence pivotColumnParamToken = pivotColumn.getAst().rhs.token;
+                    ExpressionNode pivotColumnAst = pivotColumn.getAst();
+                    CharSequence pivotColumnName = pivotColumnAst.token;
+                    CharSequence pivotColumnParamToken = pivotColumnAst.rhs != null ? pivotColumnAst.rhs.token : null;
                     CharSequence pivotColumnAlias = pivotColumn.getAlias();
                     CharSequence pivotDefaultValue = "null";
 
@@ -6707,12 +6708,19 @@ public class SqlOptimiser implements Mutable {
                         nameSink.clear(nameSink.length() - 1);
                     }
 
-                    // fix null handling behaviour for first/last when combined with case
+                    // Since we use two group by factories (one parallel for main aggregation, the second for pivoting)
+                    // We cannot directly translate some aggregates
+                    // First/Last need to support skipping nulls
+                    // Count needs to be a sum, since the final row will always be single.
+                    ExpressionNode coalesceExpr = null;
                     CharSequence aggExprName = pivotColumnName;
-                    if (Chars.equalsIgnoreCase(pivotColumnName, "first")) {
+                    if (isFirstKeyword(pivotColumnName)) {
                         aggExprName = "first_not_null";
-                    } else if (Chars.equalsIgnoreCase(pivotColumnName, "last")) {
+                    } else if (isLastKeyword(pivotColumnName)) {
                         aggExprName = "last_not_null";
+                    } else if (isCountKeyword(pivotColumnName)) {
+                        aggExprName = "sum";
+                        pivotDefaultValue = "0";
                     }
 
                     // SUM(_)
@@ -6734,12 +6742,16 @@ public class SqlOptimiser implements Mutable {
                     caseExpr.args.add(defaultValueExpr);
 
                     // population
-                    caseExpr.args.add(expressionNodePool.next().of(
-                            LITERAL,
-                            pivotColumnAlias == null ? pivotColumn.getAst().token : pivotColumnAlias,
-                            0,
-                            0
-                    ));
+                    if (coalesceExpr != null) {
+                        caseExpr.args.add(coalesceExpr);
+                    } else {
+                        caseExpr.args.add(expressionNodePool.next().of(
+                                LITERAL,
+                                pivotColumnAlias == null ? pivotColumn.getAst().token : pivotColumnAlias,
+                                0,
+                                0
+                        ));
+                    }
 
                     // case
                     if (pivotForSize == 1) {

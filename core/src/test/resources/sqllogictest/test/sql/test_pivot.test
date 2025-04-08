@@ -28,20 +28,30 @@ INSERT INTO Cities VALUES ('US', 'New York City', 2010, 8175);
 statement ok
 INSERT INTO Cities VALUES ('US', 'New York City', 2020, 8772);
 
-query I rowsort
+query IIII rowsort
 Cities PIVOT (SUM(Population) FOR year IN (2000, 2010, 2020) GROUP BY Country);
 ----
 NL 1005 1065 1158
 US 8579 8783 9510
 
-query II rowsort
+query IIII rowsort
 Cities PIVOT (SUM(1) FOR year IN (2000, 2010, 2020) GROUP BY Country);
 ----
 NL	1	1	1
 US	2	2	2
 
-query III rowsort
+query IIII rowsort
 Cities PIVOT (SUM(1) FOR year IN (2000, 2010, 2020) GROUP BY Country, Year);
+----
+NL 2000 1 NULL NULL
+NL 2010 NULL 1 NULL
+NL 2020 NULL NULL 1
+US 2000 2 NULL NULL
+US 2010 NULL 2 NULL
+US 2020 NULL NULL 2
+
+query II rowsort
+SELECT DISTINCT country, year FROM Cities;
 ----
 NL 2000
 NL 2010
@@ -64,10 +74,11 @@ CREATE TABLE Produce AS (
   SELECT 'Apple', 1, 'Q1', 2021
 )
 
-query IIII
-SELECT * FROM Produce
+query IIIIII
+Produce
 PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3', 'Q4'))
-ORDER BY ALL
+GROUP BY product, year
+ORDER BY product, year;
 ----
 Apple	2020	77	0	NULL	NULL
 Apple	2021	1	NULL	NULL	NULL
@@ -75,49 +86,49 @@ Kale	2020	51	23	45	3
 Kale	2021	70	85	NULL	NULL
 
 query IIIII
-SELECT * FROM
-  (SELECT product, sales, quarter FROM Produce)
-  PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3', 'Q4'))
-ORDER BY ALL
+(SELECT product, sales, quarter FROM Produce)
+PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3', 'Q4') GROUP BY product ORDER BY product);
 ----
 Apple	78	0	NULL	NULL
 Kale	121	108	45	3
 
 query IIII
-SELECT * FROM
-  (SELECT product, sales, quarter FROM Produce)
-  PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3'))
-  ORDER BY ALL
+(SELECT product, sales, quarter FROM Produce)
+PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3') GROUP BY product ORDER BY product);
 ----
 Apple	78	0	NULL
 Kale	121	108	45
 
 query III
-SELECT * FROM
-  (SELECT sales, quarter FROM Produce)
-  PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3'))
-  ORDER BY ALL
+(SELECT sales, quarter FROM Produce)
+PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2', 'Q3'))
 ----
 199	108	45
 
 query IIIII
-SELECT * FROM
-  (SELECT product, sales, quarter FROM Produce)
-  PIVOT(SUM(sales) total_sales, COUNT(*) num_records FOR quarter IN ('Q1', 'Q2'))
-ORDER BY ALL
+(SELECT product, sales, quarter FROM Produce)
+PIVOT(SUM(sales) as total_sales, COUNT(*) as num_records FOR quarter IN ('Q1', 'Q2')
+GROUP BY product
+ORDER BY product);
 ----
-Apple	78	2	0	1
-Kale	121	2	108	2
+Apple 78 2 0 1
+Kale 121 2 108 2
 
 statement ok
-CREATE OR REPLACE TABLE Produce AS
+DROP TABLE Produce;
+
+statement ok
+CREATE TABLE Produce AS (
   SELECT 'Kale' as product, 51 as Q1, 23 as Q2, 45 as Q3, 3 as Q4 UNION ALL
   SELECT 'Apple', 77, 0, 25, 2
+);
 
 query III
+(
 Produce
-UNPIVOT(sales FOR quarter IN (Q1, Q2, Q3, Q4))
-ORDER BY ALL
+UNPIVOT(sales FOR quarter IN ('Q1', 'Q2', 'Q3', 'Q4'))
+)
+ORDER BY product;
 ----
 Apple	Q1	77
 Apple	Q2	0

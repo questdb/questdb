@@ -576,7 +576,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 false,
                 "GroupBy vectorized: false\n" +
                         "  keys: [name]\n" +
-                        "  values: [sum(case([(year=2000 and country='NL'),total,null])),count(case([(year=2000 and country='NL'),count,null])),sum(case([(year=2000 and country='US'),total,null])),count(case([(year=2000 and country='US'),count,null])),sum(case([(year=2010 and country='NL'),total,null])),count(case([(year=2010 and country='NL'),count,null])),sum(case([(year=2010 and country='US'),total,null])),count(case([(year=2010 and country='US'),count,null]))]\n" +
+                        "  values: [sum(case([(year=2000 and country='NL'),total,null])),sum(case([(year=2000 and country='NL'),count,0])),sum(case([(year=2000 and country='US'),total,null])),sum(case([(year=2000 and country='US'),count,0])),sum(case([(year=2010 and country='NL'),total,null])),sum(case([(year=2010 and country='NL'),count,0])),sum(case([(year=2010 and country='US'),total,null])),sum(case([(year=2010 and country='US'),count,0]))]\n" +
                         "    Async JIT Group By workers: 1\n" +
                         "      keys: [name,year,country]\n" +
                         "      values: [sum(population),count(population)]\n" +
@@ -590,7 +590,7 @@ public class PivotTest extends AbstractSqlParserTest {
     public void testPivotWithMultipleAliasedAggregatesImplicitGroupBy() throws Exception {
         assertQueryAndPlan(
                 "2000_NL_total\t2000_NL_count\t2000_US_total\t2000_US_count\t2010_NL_total\t2010_NL_count\t2010_US_total\t2010_US_count\n" +
-                        "null\t0\tnull\t0\tnull\t0\tnull\t0\n",
+                        "null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n",
                 "cities\n" +
                         "PIVOT (\n" +
                         "    SUM(population) as total,\n" +
@@ -603,12 +603,12 @@ public class PivotTest extends AbstractSqlParserTest {
                 null,
                 dmlCities,
                 "2000_NL_total\t2000_NL_count\t2000_US_total\t2000_US_count\t2010_NL_total\t2010_NL_count\t2010_US_total\t2010_US_count\n" +
-                        "1005\t1\t8579\t1\t1065\t1\t8783\t1\n",
+                        "1005\t1\t8579\t2\t1065\t1\t8783\t2\n",
                 false,
                 true,
                 false,
                 "GroupBy vectorized: false\n" +
-                        "  values: [sum(case([(year=2000 and country='NL'),total,null])),count(case([(year=2000 and country='NL'),count,null])),sum(case([(year=2000 and country='US'),total,null])),count(case([(year=2000 and country='US'),count,null])),sum(case([(year=2010 and country='NL'),total,null])),count(case([(year=2010 and country='NL'),count,null])),sum(case([(year=2010 and country='US'),total,null])),count(case([(year=2010 and country='US'),count,null]))]\n" +
+                        "  values: [sum(case([(year=2000 and country='NL'),total,null])),sum(case([(year=2000 and country='NL'),count,0])),sum(case([(year=2000 and country='US'),total,null])),sum(case([(year=2000 and country='US'),count,0])),sum(case([(year=2010 and country='NL'),total,null])),sum(case([(year=2010 and country='NL'),count,0])),sum(case([(year=2010 and country='US'),total,null])),sum(case([(year=2010 and country='US'),count,0]))]\n" +
                         "    Async JIT Group By workers: 1\n" +
                         "      keys: [year,country]\n" +
                         "      values: [sum(population),count(population)]\n" +
@@ -656,7 +656,7 @@ public class PivotTest extends AbstractSqlParserTest {
     public void testPivotWithMultipleForExprsAndMultipleAggregates() throws Exception {
         assertQueryAndPlan(
                 "2000_Amsterdam_NL_SUM\t2000_Amsterdam_NL_COUNT\t2000_Amsterdam_US_SUM\t2000_Amsterdam_US_COUNT\t2000_Seattle_NL_SUM\t2000_Seattle_NL_COUNT\t2000_Seattle_US_SUM\t2000_Seattle_US_COUNT\t2000_New York City_NL_SUM\t2000_New York City_NL_COUNT\t2000_New York City_US_SUM\t2000_New York City_US_COUNT\t2010_Amsterdam_NL_SUM\t2010_Amsterdam_NL_COUNT\t2010_Amsterdam_US_SUM\t2010_Amsterdam_US_COUNT\t2010_Seattle_NL_SUM\t2010_Seattle_NL_COUNT\t2010_Seattle_US_SUM\t2010_Seattle_US_COUNT\t2010_New York City_NL_SUM\t2010_New York City_NL_COUNT\t2010_New York City_US_SUM\t2010_New York City_US_COUNT\t2020_Amsterdam_NL_SUM\t2020_Amsterdam_NL_COUNT\t2020_Amsterdam_US_SUM\t2020_Amsterdam_US_COUNT\t2020_Seattle_NL_SUM\t2020_Seattle_NL_COUNT\t2020_Seattle_US_SUM\t2020_Seattle_US_COUNT\t2020_New York City_NL_SUM\t2020_New York City_NL_COUNT\t2020_New York City_US_SUM\t2020_New York City_US_COUNT\n" +
-                        "null\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\tnull\t0\n",
+                        "null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n",
                 "cities\n" +
                         "PIVOT (\n" +
                         "    SUM(population),\n" +
@@ -675,7 +675,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 true,
                 false,
                 "GroupBy vectorized: false\n" +
-                        "  values: [sum(case([(year=2000 and name='Amsterdam' and country='NL'),SUM,null])),count(case([(year=2000 and name='Amsterdam' and country='NL'),COUNT,null])),sum(case([(year=2000 and name='Amsterdam' and country='US'),SUM,null])),count(case([(year=2000 and name='Amsterdam' and country='US'),COUNT,null])),sum(case([(year=2000 and name='Seattle' and country='NL'),SUM,null])),count(case([(year=2000 and name='Seattle' and country='NL'),COUNT,null])),sum(case([(year=2000 and name='Seattle' and country='US'),SUM,null])),count(case([(year=2000 and name='Seattle' and country='US'),COUNT,null])),sum(case([(year=2000 and name='New York City' and country='NL'),SUM,null])),count(case([(year=2000 and name='New York City' and country='NL'),COUNT,null])),sum(case([(year=2000 and name='New York City' and country='US'),SUM,null])),count(case([(year=2000 and name='New York City' and country='US'),COUNT,null])),sum(case([(year=2010 and name='Amsterdam' and country='NL'),SUM,null])),count(case([(year=2010 and name='Amsterdam' and country='NL'),COUNT,null])),sum(case([(year=2010 and name='Amsterdam' and country='US'),SUM,null])),count(case([(year=2010 and name='Amsterdam' and country='US'),COUNT,null])),sum(case([(year=2010 and name='Seattle' and country='NL'),SUM,null])),count(case([(year=2010 and name='Seattle' and country='NL'),COUNT,null])),sum(case([(year=2010 and name='Seattle' and country='US'),SUM,null])),count(case([(year=2010 and name='Seattle' and country='US'),COUNT,null])),sum(case([(year=2010 and name='New York City' and country='NL'),SUM,null])),count(case([(year=2010 and name='New York City' and country='NL'),COUNT,null])),sum(case([(year=2010 and name='New York City' and country='US'),SUM,null])),count(case([(year=2010 and name='New York City' and country='US'),COUNT,null])),sum(case([(year=2020 and name='Amsterdam' and country='NL'),SUM,null])),count(case([(year=2020 and name='Amsterdam' and country='NL'),COUNT,null])),sum(case([(year=2020 and name='Amsterdam' and country='US'),SUM,null])),count(case([(year=2020 and name='Amsterdam' and country='US'),COUNT,null])),sum(case([(year=2020 and name='Seattle' and country='NL'),SUM,null])),count(case([(year=2020 and name='Seattle' and country='NL'),COUNT,null])),sum(case([(year=2020 and name='Seattle' and country='US'),SUM,null])),count(case([(year=2020 and name='Seattle' and country='US'),COUNT,null])),sum(case([(year=2020 and name='New York City' and country='NL'),SUM,null])),count(case([(year=2020 and name='New York City' and country='NL'),COUNT,null])),sum(case([(year=2020 and name='New York City' and country='US'),SUM,null])),count(case([(year=2020 and name='New York City' and country='US'),COUNT,null]))]\n" +
+                        "  values: [sum(case([(year=2000 and name='Amsterdam' and country='NL'),SUM,null])),sum(case([(year=2000 and name='Amsterdam' and country='NL'),COUNT,0])),sum(case([(year=2000 and name='Amsterdam' and country='US'),SUM,null])),sum(case([(year=2000 and name='Amsterdam' and country='US'),COUNT,0])),sum(case([(year=2000 and name='Seattle' and country='NL'),SUM,null])),sum(case([(year=2000 and name='Seattle' and country='NL'),COUNT,0])),sum(case([(year=2000 and name='Seattle' and country='US'),SUM,null])),sum(case([(year=2000 and name='Seattle' and country='US'),COUNT,0])),sum(case([(year=2000 and name='New York City' and country='NL'),SUM,null])),sum(case([(year=2000 and name='New York City' and country='NL'),COUNT,0])),sum(case([(year=2000 and name='New York City' and country='US'),SUM,null])),sum(case([(year=2000 and name='New York City' and country='US'),COUNT,0])),sum(case([(year=2010 and name='Amsterdam' and country='NL'),SUM,null])),sum(case([(year=2010 and name='Amsterdam' and country='NL'),COUNT,0])),sum(case([(year=2010 and name='Amsterdam' and country='US'),SUM,null])),sum(case([(year=2010 and name='Amsterdam' and country='US'),COUNT,0])),sum(case([(year=2010 and name='Seattle' and country='NL'),SUM,null])),sum(case([(year=2010 and name='Seattle' and country='NL'),COUNT,0])),sum(case([(year=2010 and name='Seattle' and country='US'),SUM,null])),sum(case([(year=2010 and name='Seattle' and country='US'),COUNT,0])),sum(case([(year=2010 and name='New York City' and country='NL'),SUM,null])),sum(case([(year=2010 and name='New York City' and country='NL'),COUNT,0])),sum(case([(year=2010 and name='New York City' and country='US'),SUM,null])),sum(case([(year=2010 and name='New York City' and country='US'),COUNT,0])),sum(case([(year=2020 and name='Amsterdam' and country='NL'),SUM,null])),sum(case([(year=2020 and name='Amsterdam' and country='NL'),COUNT,0])),sum(case([(year=2020 and name='Amsterdam' and country='US'),SUM,null])),sum(case([(year=2020 and name='Amsterdam' and country='US'),COUNT,0])),sum(case([(year=2020 and name='Seattle' and country='NL'),SUM,null])),sum(case([(year=2020 and name='Seattle' and country='NL'),COUNT,0])),sum(case([(year=2020 and name='Seattle' and country='US'),SUM,null])),sum(case([(year=2020 and name='Seattle' and country='US'),COUNT,0])),sum(case([(year=2020 and name='New York City' and country='NL'),SUM,null])),sum(case([(year=2020 and name='New York City' and country='NL'),COUNT,0])),sum(case([(year=2020 and name='New York City' and country='US'),SUM,null])),sum(case([(year=2020 and name='New York City' and country='US'),COUNT,0]))]\n" +
                         "    Async JIT Group By workers: 1\n" +
                         "      keys: [year,name,country]\n" +
                         "      values: [sum(population),count(population)]\n" +
@@ -1031,7 +1031,7 @@ public class PivotTest extends AbstractSqlParserTest {
                         "    sum(price)\n" +
                         "    FOR symbol IN ('BTC-USD')\n" +
                         "        side IN ('buy', 'sell')\n" +
-                        "    GROUP BY  timestamp\n" +
+                        "    GROUP BY timestamp\n" +
                         ") \n" +
                         ");",
                 ddlTrades,
