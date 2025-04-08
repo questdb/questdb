@@ -9145,7 +9145,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .I$();
 
         if (configuration.getDebugWalApplyBlockFailureNoRetry()) {
-            throw CairoException.critical(10000).put("wal block apply failed [table=").put(tableToken.getDirName()).put(']');
+            // This exception is thrown to indicate that the apply block failed,
+            // and it is not of CairoException type so that it is not intercepted and re-tried in tests.
+            // The purpose is to have the special debug test mode where this exception
+            // suspends the table and fails the testing code instead of switching to 1 by 1 commit mode.
+            throw new IllegalStateException("apply block failed");
         }
         throw CairoException.txnApplyBlockError(tableToken);
     }
