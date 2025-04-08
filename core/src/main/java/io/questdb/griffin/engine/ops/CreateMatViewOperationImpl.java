@@ -37,7 +37,6 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlOptimiser;
-import io.questdb.griffin.SqlParser;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
@@ -85,13 +84,12 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private CreateTableOperationImpl createTableOperation;
     private long samplingInterval;
     private char samplingIntervalUnit;
-    private CharSequenceHashSet tableNames;
 
     public CreateMatViewOperationImpl(
             @NotNull String sqlText,
             @NotNull CreateTableOperationImpl createTableOperation,
             int refreshType,
-            @Nullable String baseTableName,
+            @NotNull String baseTableName,
             int baseTableNamePosition,
             @Nullable String timeZone,
             @Nullable String timeZoneOffset
@@ -314,22 +312,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 throw SqlException.position(timestampPos).put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampType)).put(']');
             }
             timestampModel.setIsDedupKey(); // set dedup for timestamp column
-        }
-
-        // Find base table name if not set explicitly.
-        if (baseTableName == null) {
-            if (tableNames == null) {
-                tableNames = new CharSequenceHashSet();
-            }
-            tableNames.clear();
-            SqlParser.collectTables(queryModel, tableNames);
-            if (tableNames.size() < 1) {
-                throw SqlException.$(0, "missing base table, materialized views have to be based on a table");
-            }
-            if (tableNames.size() > 1) {
-                throw SqlException.$(0, "more than one table used in query, base table has to be set using 'WITH BASE'");
-            }
-            baseTableName = Chars.toString(tableNames.get(0));
         }
 
         final TableToken baseTableToken = sqlExecutionContext.getTableTokenIfExists(baseTableName);

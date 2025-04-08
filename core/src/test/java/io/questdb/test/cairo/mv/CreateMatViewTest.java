@@ -368,7 +368,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertEquals(ExecutionModel.CREATE_MAT_VIEW, model.getModelType());
                 ((Sinkable) model).toSink(sink);
                 TestUtils.assertEquals(
-                        "create materialized view test as (" +
+                        "create materialized view test with base " + TABLE1 + " as (" +
                                 "select-choose ts, k, avg(v) avg from (table1 sample by 30s align to calendar with offset '00:00')" +
                                 "), index(k capacity 1024) partition by DAY TTL 3 DAYS" +
                                 (Os.isWindows() ? "" : " in volume 'vol1'"),
@@ -580,13 +580,37 @@ public class CreateMatViewTest extends AbstractCairoTest {
     @Test
     public void testCreateMatViewSampleByFill() throws Exception {
         assertMemoryLeak(() -> {
+            createTable(TABLE1);
             createTable(TABLE2);
-            final String fill = "select ts, avg(v) from " + TABLE2 + " where ts in '2024' sample by 1d fill(null)";
+
             try {
-                execute("create materialized view test as (" + fill + ") partition by day");
+                execute(
+                        "create materialized view test as (" +
+                                "  select ts, avg(v) from " + TABLE1 + " where ts in '2024' sample by 1d fill(null)" +
+                                ") partition by day"
+                );
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "FILL is not supported for materialized views");
+                TestUtils.assertContains(e.getFlyweightMessage(), "FILL on base table is not supported for materialized views: " + TABLE1);
+                Assert.assertEquals(103, e.getPosition());
+            }
+
+            try {
+                execute(
+                        "create materialized view test as (" +
+                                "  with b as (" +
+                                "    select ts, avg(v) from " + TABLE1 + " sample by 1d fill(null)" +
+                                "  )" +
+                                "  select a.ts, avg(a.v)" +
+                                "  from " + TABLE1 + " a " +
+                                "  left outer join b on a.ts = b.ts" +
+                                "  sample by 1d" +
+                                ") partition by day"
+                );
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "FILL on base table is not supported for materialized views: " + TABLE1);
+                Assert.assertEquals(99, e.getPosition());
             }
         });
     }
@@ -601,13 +625,33 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (" + from + ") partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "FROM-TO is not supported for materialized views");
+                TestUtils.assertContains(e.getFlyweightMessage(), "FROM-TO on base table is not supported for materialized views: " + TABLE2);
+                Assert.assertEquals(101, e.getPosition());
             }
             try {
                 execute("create materialized view test as (" + to + ") partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "FROM-TO is not supported for materialized views");
+                TestUtils.assertContains(e.getFlyweightMessage(), "FROM-TO on base table is not supported for materialized views: " + TABLE2);
+                Assert.assertEquals(99, e.getPosition());
+            }
+
+            try {
+                execute(
+                        "create materialized view test as (" +
+                                "  with b as (" +
+                                "    select ts, avg(v) from " + TABLE2 + " sample by 1d from '2024-03-01' to '2024-06-30'" +
+                                "  )" +
+                                "  select a.ts, avg(a.v)" +
+                                "  from " + TABLE2 + " a " +
+                                "  left outer join b on a.ts = b.ts" +
+                                "  sample by 1d" +
+                                ") partition by day"
+                );
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "FROM-TO on base table is not supported for materialized views: " + TABLE2);
+                Assert.assertEquals(99, e.getPosition());
             }
         });
     }
@@ -621,7 +665,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (" + fill + ") partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "FILL is not supported for materialized views");
+                TestUtils.assertContains(e.getFlyweightMessage(), "FILL on base table is not supported for materialized views: " + TABLE2);
+                Assert.assertEquals(94, e.getPosition());
             }
         });
     }
@@ -636,13 +681,15 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 execute("create materialized view test as (" + from + ") partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "FROM-TO is not supported for materialized views");
+                TestUtils.assertContains(e.getFlyweightMessage(), "FROM-TO on base table is not supported for materialized views: " + TABLE2);
+                Assert.assertEquals(93, e.getPosition());
             }
             try {
                 execute("create materialized view test as (" + to + ") partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "FROM-TO is not supported for materialized views");
+                TestUtils.assertContains(e.getFlyweightMessage(), "FROM-TO on base table is not supported for materialized views: " + TABLE2);
+                Assert.assertEquals(91, e.getPosition());
             }
         });
     }
@@ -751,15 +798,63 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewUnion() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createTable(TABLE2);
+
+            try {
+                execute(
+                        "create materialized view test with base " + TABLE1 + " as (" +
+                                "  with b as (" +
+                                "    select ts, v from " + TABLE2 +
+                                "    union all" +
+                                "    select ts, v from " + TABLE1 +
+                                "  )" +
+                                "  select a.ts, avg(a.v)" +
+                                "  from " + TABLE1 + " a " +
+                                "  left outer join b on a.ts = b.ts" +
+                                "  sample by 1d" +
+                                ") partition by day"
+                );
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "union on base table is not supported for materialized views: " + TABLE1);
+                Assert.assertEquals(106, e.getPosition());
+            }
+        });
+    }
+
+    @Test
     public void testCreateMatViewWindowFunctions() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
+
             try {
                 final String query = "select ts, max(v) over (order by ts) as v_max from " + TABLE1 + " sample by 30s";
                 execute("create materialized view test as (" + query + ") partition by week");
                 fail("Expected SqlException missing for " + query);
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "window function is not supported for materialized views");
+                TestUtils.assertContains(e.getFlyweightMessage(), "window function on base table is not supported for materialized views: " + TABLE1);
+                Assert.assertEquals(45, e.getPosition());
+            }
+
+            try {
+                execute(
+                        "create materialized view test as (" +
+                                "  with b as (" +
+                                "    select ts, avg(v) over (order by ts) as v_max from " + TABLE1 + " sample by 30s" +
+                                "  )" +
+                                "  select a.ts, avg(a.v)" +
+                                "  from " + TABLE1 + " a " +
+                                "  left outer join b on a.ts = b.ts" +
+                                "  sample by 1d" +
+                                ") partition by day"
+                );
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "window function on base table is not supported for materialized views: " + TABLE1);
+                Assert.assertEquals(62, e.getPosition());
             }
         });
     }
@@ -790,6 +885,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "table with the requested name already exists");
+                Assert.assertEquals(25, e.getPosition());
             }
 
             try {
@@ -797,6 +893,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "table with the requested name already exists");
+                Assert.assertEquals(39, e.getPosition());
             }
 
             final String query = "select ts, avg(v) from " + TABLE2 + " sample by 4h";
@@ -808,6 +905,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "view already exists");
+                Assert.assertEquals(25, e.getPosition());
             }
 
             // with IF NOT EXISTS
@@ -820,6 +918,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "materialized view with the requested name already exists");
+                Assert.assertEquals(13, e.getPosition());
             }
         });
     }
@@ -1294,6 +1393,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "'view' expected");
+                Assert.assertEquals(25, e.getPosition());
             }
         });
     }
