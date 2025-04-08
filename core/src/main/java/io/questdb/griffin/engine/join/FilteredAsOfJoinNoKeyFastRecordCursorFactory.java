@@ -111,6 +111,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
 
     private class FilteredAsOfJoinKeyedFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private int unfilteredCursorFrameIndex = -1;
         private boolean unfilteredRecordHasSlave;
         private long unfilteredRecordRowId = -1;
 
@@ -141,12 +142,16 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 if (unfilteredRecordRowId != -1 && slaveRecB.getRowId() != unfilteredRecordRowId) {
                     slaveCursor.recordAt(slaveRecB, unfilteredRecordRowId);
                 }
+                if (unfilteredCursorFrameIndex != -1 && timeFrame.getFrameIndex() != unfilteredCursorFrameIndex) {
+                    slaveCursor.jumpTo(unfilteredCursorFrameIndex);
+                    slaveCursor.open();
+                }
 
                 nextSlave(masterTimestamp);
+
                 unfilteredRecordHasSlave = record.hasSlave();
-                if (unfilteredRecordHasSlave) {
-                    unfilteredRecordRowId = slaveRecB.getRowId();
-                }
+                unfilteredRecordRowId = slaveRecB.getRowId();
+                unfilteredCursorFrameIndex = timeFrame.getFrameIndex();
             }
 
             // we have to set the `isMasterHasNextPending` only now since `nextSlave()` may throw DataUnavailableException
@@ -172,7 +177,6 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             // and then we have to traverse the slave cursor backwards until we find a match
             long rowId = slaveRecB.getRowId();
             int slaveFrameIndex = Rows.toPartitionIndex(rowId);
-            int cursorFrameIndex = timeFrame.getFrameIndex();
             slaveCursor.jumpTo(slaveFrameIndex);
             slaveCursor.open();
 
@@ -206,9 +210,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             }
 
             // rewind the slave cursor to the original position so the next call to `nextSlave()` will not be affected
-            slaveCursor.jumpTo(cursorFrameIndex);
-            assert slaveFrameIndex == timeFrame.getFrameIndex();
-            slaveCursor.open();
+
             return true;
         }
 
@@ -221,6 +223,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
         public void toTop() {
             super.toTop();
             unfilteredRecordRowId = -1;
+            unfilteredCursorFrameIndex = -1;
             unfilteredRecordHasSlave = false;
         }
     }
