@@ -2689,7 +2689,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         final long tsLagBufferAddr = mapAppendColumnBuffer(timestampColumn, tsLagOffset, tsLagSize, false);
                         try {
-                            Vect.radixSortABLongIndexAsc(
+                            long rowCount = Vect.radixSortABLongIndexAsc(
                                     Math.abs(tsLagBufferAddr),
                                     walLagRowCount,
                                     mappedTimestampIndexAddr,
@@ -2699,6 +2699,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     txWriter.getLagMinTimestamp(),
                                     txWriter.getLagMaxTimestamp()
                             );
+                            assert rowCount == totalUncommitted : "radix sort error, result: " + rowCount + " expected " + totalUncommitted;
                         } finally {
                             mapAppendColumnBufferRelease(tsLagBufferAddr, tsLagOffset, tsLagSize);
                         }
@@ -5114,7 +5115,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", totalRows=").$(longIndexLength)
                     .$(", lagRows=").$(lagRows)
                     .$(", dups=")
-                    .$(longIndexLength + lagRows - deduplicatedRowCount)
+                    .$(deduplicatedRowCount > 0 ? longIndexLength - deduplicatedRowCount : 0)
                     .I$();
             return deduplicatedRowCount;
         } finally {
