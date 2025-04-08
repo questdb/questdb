@@ -178,10 +178,11 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             long rowId = slaveRecB.getRowId();
             final int initialFilteredFrameIndex = Rows.toPartitionIndex(rowId);
             final long initialFilteredRowId = Rows.toLocalRowID(rowId);
+
             slaveCursor.jumpTo(initialFilteredFrameIndex);
             slaveCursor.open();
 
-            long rowLo = timeFrame.getRowLo();
+            long currentFrameLo = timeFrame.getRowLo();
             long filteredRowId = initialFilteredRowId;
             int filteredFrameIndex = initialFilteredFrameIndex;
 
@@ -193,16 +194,16 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 // let's try to move backwards in the slave cursor until we have a match
                 filteredRowId--;
 
-                if (filteredRowId < rowLo) {
+                if (filteredRowId < currentFrameLo) {
                     // ops, we exhausted this frame, let's try the previous one
                     if (!slaveCursor.prev()) {
                         // there is no previous frame, we are done, no match :(
                         // if we are here, chances are we are also pretty slow because we are scanning the entire slave cursor
-                        // until we either exhaust the cursor or find a matching key.
+                        // until we either exhaust the cursor or find a matching record
                         record.hasSlave(false);
 
-                        // remember that there is no matching slave record so the next time we are here we can abort
-                        // the slave cursor traversal
+                        // remember that there is no matching slave record for a given initial rowsId.
+                        // so the next time we can abort the slave cursor traversal before we reach the end of the cursor
                         highestKnownSlaveRowIdWithNoMatch = Rows.toRowID(initialFilteredFrameIndex, initialFilteredRowId);
                         break;
                     }
@@ -210,7 +211,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                     slaveCursor.open();
                     filteredFrameIndex = timeFrame.getFrameIndex();
                     filteredRowId = timeFrame.getRowHi() - 1;
-                    rowLo = timeFrame.getRowLo();
+                    currentFrameLo = timeFrame.getRowLo();
                     stopAtRowId = (stopAtFrameIndex == initialFilteredFrameIndex) ? Rows.toLocalRowID(highestKnownSlaveRowIdWithNoMatch) : 0;
                 }
 
