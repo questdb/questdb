@@ -323,7 +323,6 @@ public abstract class AbstractLineHttpSender implements Sender {
     }
 
 
-
     private int backoff(int retryBackoff) {
         int jitter = rnd.nextInt(RETRY_MAX_JITTER_MS);
         int backoff = retryBackoff + jitter;

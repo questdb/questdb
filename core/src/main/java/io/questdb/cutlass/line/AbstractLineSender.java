@@ -354,7 +354,6 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
     }
 
 
-
     private byte[] receiveChallengeBytes() {
         int n = 0;
         for (; ; ) {
