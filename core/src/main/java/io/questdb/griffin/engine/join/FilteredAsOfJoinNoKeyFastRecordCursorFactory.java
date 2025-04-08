@@ -111,6 +111,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
 
     private class FilteredAsOfJoinKeyedFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private long highestKnownSlaveRowIdWithNoMatch = 0;
         private int unfilteredCursorFrameIndex = -1;
         private boolean unfilteredRecordHasSlave;
         private long unfilteredRecordRowId = -1;
@@ -175,40 +176,57 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             // first, we have to set the time frame cursor to the record found by the non-filtering algo
             // and then we have to traverse the slave cursor backwards until we find a match
             long rowId = slaveRecB.getRowId();
-            int slaveFrameIndex = Rows.toPartitionIndex(rowId);
-            slaveCursor.jumpTo(slaveFrameIndex);
+            final int initialFilteredFrameIndex = Rows.toPartitionIndex(rowId);
+            final long initialFilteredRowId = Rows.toLocalRowID(rowId);
+            slaveCursor.jumpTo(initialFilteredFrameIndex);
             slaveCursor.open();
 
             long rowLo = timeFrame.getRowLo();
-            long keyedRowId = Rows.toLocalRowID(rowId);
-            int keyedFrameIndex = timeFrame.getFrameIndex();
+            long filteredRowId = initialFilteredRowId;
+            int filteredFrameIndex = initialFilteredFrameIndex;
+
+
+            int stopAtFrameIndex = Rows.toPartitionIndex(highestKnownSlaveRowIdWithNoMatch);
+            long stopAtRowId = (stopAtFrameIndex == slaveFrameIndex) ? Rows.toLocalRowID(highestKnownSlaveRowIdWithNoMatch) : 0;
+
             for (; ; ) {
                 // let's try to move backwards in the slave cursor until we have a match
-                keyedRowId--;
-                if (keyedRowId < rowLo) {
+                filteredRowId--;
+
+                if (filteredRowId < rowLo) {
                     // ops, we exhausted this frame, let's try the previous one
                     if (!slaveCursor.prev()) {
                         // there is no previous frame, we are done, no match :(
                         // if we are here, chances are we are also pretty slow because we are scanning the entire slave cursor
                         // until we either exhaust the cursor or find a matching key.
                         record.hasSlave(false);
+
+                        // remember that there is no matching slave record so the next time we are here we can abort
+                        // the slave cursor traversal
+                        highestKnownSlaveRowIdWithNoMatch = Rows.toRowID(initialFilteredFrameIndex, initialFilteredRowId);
                         break;
                     }
-                    slaveCursor.open();
 
-                    keyedFrameIndex = timeFrame.getFrameIndex();
-                    keyedRowId = timeFrame.getRowHi() - 1;
+                    slaveCursor.open();
+                    filteredFrameIndex = timeFrame.getFrameIndex();
+                    filteredRowId = timeFrame.getRowHi() - 1;
                     rowLo = timeFrame.getRowLo();
+                    stopAtRowId = (stopAtFrameIndex == initialFilteredFrameIndex) ? Rows.toLocalRowID(highestKnownSlaveRowIdWithNoMatch) : 0;
                 }
-                slaveCursor.recordAt(slaveRecB, Rows.toRowID(keyedFrameIndex, keyedRowId));
+
+                if (filteredRowId < stopAtRowId) {
+                    record.hasSlave(false);
+                    highestKnownSlaveRowIdWithNoMatch = Rows.toRowID(initialFilteredFrameIndex, initialFilteredRowId);
+                    break;
+                }
+
+                slaveCursor.recordAt(slaveRecB, Rows.toRowID(filteredFrameIndex, filteredRowId));
                 if (slaveRecordFilter.getBool(slaveRecB)) {
                     // we have a match, that's awesome, no need to traverse the slave cursor!
                     break;
                 }
                 circuitBreaker.statefulThrowExceptionIfTripped();
             }
-
-            // rewind the slave cursor to the original position so the next call to `nextSlave()` will not be affected
 
             return true;
         }
@@ -224,6 +242,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             unfilteredRecordRowId = -1;
             unfilteredCursorFrameIndex = -1;
             unfilteredRecordHasSlave = false;
+            highestKnownSlaveRowIdWithNoMatch = 0;
         }
     }
 }
