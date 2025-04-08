@@ -159,8 +159,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             // if we are here then it's clear nextSlave() did not throw DataUnavailableException.
             isMasterHasNextPending = true;
 
-            boolean hasSlave = record.hasSlave();
-            if (!hasSlave) {
+            if (!record.hasSlave()) {
                 // the non-filtering algo did not find a matching record in the slave table.
                 // this means the slave table does not have a single record with a timestamp that is less than or equal
                 // to the master record's timestamp.
