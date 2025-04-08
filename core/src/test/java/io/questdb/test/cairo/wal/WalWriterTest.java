@@ -1669,6 +1669,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 }
 
                 drainWalQueue();
+                engine.clear(); // release Wal writers
                 path.trimTo(tableLen).concat(WAL_NAME_BASE).put(1).slash().put(0).concat(EVENT_FILE_NAME);
                 ff.remove(path.$());
                 Assert.assertFalse(ff.exists(path.$()));
