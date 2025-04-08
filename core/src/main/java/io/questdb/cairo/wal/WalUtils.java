@@ -145,7 +145,7 @@ public class WalUtils {
                         final int segmentTxn = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_TXN_OFFSET);
                         if (walId > 0) {
                             tablePath.concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
-                            try(WalEventReader eventReader = walEventReader) {
+                            try (WalEventReader eventReader = walEventReader) {
                                 WalEventCursor walEventCursor = eventReader.of(tablePath, segmentTxn);
                                 if (walEventCursor.getType() == MAT_VIEW_DATA) {
                                     return walEventCursor.getDataInfoExt().getLastRefreshBaseTableTxn();
