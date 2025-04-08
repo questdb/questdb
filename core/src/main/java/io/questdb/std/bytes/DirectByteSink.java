@@ -144,9 +144,6 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
 
     @Override
     public void clear() {
-        if (impl == 0) {
-            return;
-        }
         setImplPtr(getImplLo());
         setAscii(true);
     }

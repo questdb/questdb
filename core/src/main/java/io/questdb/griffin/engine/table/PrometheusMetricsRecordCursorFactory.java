@@ -39,6 +39,7 @@ import io.questdb.metrics.MetricsRegistry;
 import io.questdb.metrics.PrometheusFormatUtils;
 import io.questdb.metrics.Target;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
@@ -162,6 +163,7 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
             subPos = -1;
             subLimit = -1;
             if (record.isClosed) {
+                Misc.free(record.sink);
                 record.sink = new DirectUtf8Sink(255);
                 record.isClosed = false;
             }
@@ -187,7 +189,6 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
             }
 
             public void close() {
-                record.sink.clear();
                 record.values.clear();
                 record.value.clear();
                 record.sink.close();
