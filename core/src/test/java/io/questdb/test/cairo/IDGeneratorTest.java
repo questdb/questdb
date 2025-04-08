@@ -43,14 +43,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class IDGeneratorTest extends AbstractCairoTest {
 
     @Test
-    public void testNoSyncMode() throws Exception {
-        assertMemoryLeak(() -> {
-            Set<Long> set = testGenerateId(configuration, CommitMode.NOSYNC, 1, 5000);
-            Assert.assertEquals(10000, set.size());
-        });
-    }
-
-    @Test
     public void testASyncMode() throws Exception {
         assertMemoryLeak(() -> {
             Set<Long> set = testGenerateId(configuration, CommitMode.ASYNC, 256, 5000);
@@ -59,9 +51,24 @@ public class IDGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSyncMode() throws Exception {
+    public void testGetCurrentAsync() {
+        testGetCurrent(CommitMode.ASYNC);
+    }
+
+    @Test
+    public void testGetCurrentNosync() {
+        testGetCurrent(CommitMode.NOSYNC);
+    }
+
+    @Test
+    public void testGetCurrentSync() {
+        testGetCurrent(CommitMode.SYNC);
+    }
+
+    @Test
+    public void testNoSyncMode() throws Exception {
         assertMemoryLeak(() -> {
-            Set<Long> set = testGenerateId(configuration, CommitMode.SYNC, 512, 5000);
+            Set<Long> set = testGenerateId(configuration, CommitMode.NOSYNC, 1, 5000);
             Assert.assertEquals(10000, set.size());
         });
     }
@@ -83,14 +90,24 @@ public class IDGeneratorTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSyncMode() throws Exception {
+        assertMemoryLeak(() -> {
+            Set<Long> set = testGenerateId(configuration, CommitMode.SYNC, 512, 5000);
+            Assert.assertEquals(10000, set.size());
+        });
+    }
+
     private Set<Long> testGenerateId(CairoConfiguration configuration, int commitMode, int step, int count) throws Exception {
         try (
-                IDGenerator idGenerator = IDGeneratorFactory.newIDGenerator(new CairoConfigurationWrapper(configuration) {
-                    @Override
-                    public int getCommitMode() {
-                        return commitMode;
-                    }
-                }, "id_generator.test", step);
+                IDGenerator idGenerator = IDGeneratorFactory.newIDGenerator(
+                        new CairoConfigurationWrapper(configuration) {
+                            @Override
+                            public int getCommitMode() {
+                                return commitMode;
+                            }
+                        }, "id_generator.test", step
+                )
         ) {
             idGenerator.open();
             final LongList listA = new LongList();
@@ -131,6 +148,28 @@ public class IDGeneratorTest extends AbstractCairoTest {
                 Assert.assertTrue(set.add(listB.getQuick(i)));
             }
             return set;
+        }
+    }
+
+    private void testGetCurrent(int commitMode) {
+        try (
+                IDGenerator idGenerator = IDGeneratorFactory.newIDGenerator(
+                        new CairoConfigurationWrapper(configuration) {
+                            @Override
+                            public int getCommitMode() {
+                                return commitMode;
+                            }
+                        }, "get_current.test", 7
+                )
+        ) {
+            idGenerator.open();
+            Assert.assertEquals(0, idGenerator.getCurrentId());
+            Assert.assertEquals(1, idGenerator.getNextId());
+            Assert.assertEquals(1, idGenerator.getCurrentId());
+            Assert.assertEquals(2, idGenerator.getNextId());
+            Assert.assertEquals(2, idGenerator.getCurrentId());
+            Assert.assertEquals(3, idGenerator.getNextId());
+            Assert.assertEquals(3, idGenerator.getCurrentId());
         }
     }
 }
