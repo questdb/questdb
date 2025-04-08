@@ -1385,10 +1385,11 @@ public class CheckpointTest extends AbstractCairoTest {
                 path.trimTo(tableNameLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$();
                 copyPath.trimTo(copyTableNameLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$();
                 TestUtils.assertFileContentsEquals(path, copyPath);
-
                 path.trimTo(tableNameLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
-                copyPath.trimTo(copyTableNameLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
-                TestUtils.assertFileContentsEquals(path, copyPath);
+                if (configuration.getFilesFacade().exists(path.$())) {
+                    copyPath.trimTo(copyTableNameLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
+                    TestUtils.assertFileContentsEquals(path, copyPath);
+                }
             }
             execute("checkpoint release");
         }

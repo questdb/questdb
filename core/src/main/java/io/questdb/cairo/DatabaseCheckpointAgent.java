@@ -290,6 +290,12 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         continue;
                                     }
 
+                                    // restore the path
+                                    path.of(checkpointRoot).concat(configuration.getDbDirectory());
+                                    checkpointDbLen = path.size();
+                                    path.concat(tableToken);
+                                    rootLen = path.size();
+
                                     // Copy _meta file.
                                     path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME);
                                     mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
