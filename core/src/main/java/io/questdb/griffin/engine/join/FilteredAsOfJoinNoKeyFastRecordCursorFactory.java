@@ -186,7 +186,6 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             long filteredRowId = initialFilteredRowId;
             int filteredFrameIndex = initialFilteredFrameIndex;
 
-
             int stopAtFrameIndex = Rows.toPartitionIndex(highestKnownSlaveRowIdWithNoMatch);
             long stopAtRowId = (stopAtFrameIndex == slaveFrameIndex) ? Rows.toLocalRowID(highestKnownSlaveRowIdWithNoMatch) : 0;
 
