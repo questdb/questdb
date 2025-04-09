@@ -1150,10 +1150,13 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4BitwiseAndStr() throws Exception {
-        assertMemoryLeak(() -> assertSql(
+        assertMemoryLeak(() -> assertQuery(
                 "column\n" +
                         "0.0.1.1\n",
-                "select '1.1.1.1' & '0.0.1.1'"
+                "select '1.1.1.1' & '0.0.1.1'",
+                null,
+                true,
+                true
         ));
     }
 
@@ -1544,10 +1547,13 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4BitwiseOrStr() throws Exception {
-        assertMemoryLeak(() -> assertSql(
+        assertMemoryLeak(() -> assertQuery(
                 "column\n" +
                         "1.1.1.1\n",
-                "select '1.1.1.1' | '0.0.1.1'"
+                "select '1.1.1.1' | '0.0.1.1'",
+                null,
+                true,
+                true
         ));
     }
 

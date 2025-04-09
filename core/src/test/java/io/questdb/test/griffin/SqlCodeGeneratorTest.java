@@ -2020,21 +2020,33 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("CREATE TABLE t1(c0 INT, c1 SYMBOL, c2 STRING, c3 VARCHAR, c4 LONG, c5 DOUBLE);");
             execute("INSERT INTO t1(c0, c1) VALUES (1, '2012-01-01');");
 
-            assertSql(
+            assertQuery(
                     "c0\tc1\n",
-                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 > t1.c0);"
+                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 > t1.c0);",
+                    null,
+                    true,
+                    false
             );
-            assertSql(
+            assertQuery(
                     "c0\tc1\n",
-                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 > t1.c2);"
+                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 > t1.c2);",
+                    null,
+                    true,
+                    false
             );
-            assertSql(
+            assertQuery(
                     "c0\tc1\n",
-                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 > t1.c3);"
+                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 > t1.c3);",
+                    null,
+                    true,
+                    false
             );
-            assertSql(
+            assertQuery(
                     "c0\tc1\n",
-                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 > t1.c4);"
+                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 > t1.c4);",
+                    null,
+                    true,
+                    false
             );
             assertException(
                     "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 > t1.c5);",
@@ -2047,11 +2059,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("CREATE TABLE uuid_str (c1 uuid, c2 string);");
             execute("INSERT INTO uuid_str VALUES('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')");
 
-            assertSql(
+            assertQuery(
                     "c1\tc2\n" +
                             "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
-                    "SELECT * FROM uuid_str where c1 = c2"
-
+                    "SELECT * FROM uuid_str where c1 = c2",
+                    null,
+                    true,
+                    false
             );
         });
 
@@ -2059,11 +2073,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("CREATE TABLE varchar_date (c1 varchar, c2 date);");
             execute("INSERT INTO varchar_date VALUES('2025-03-28', '2029-03-28')");
 
-            assertSql(
+            assertQuery(
                     "c1\tc2\n" +
                             "2025-03-28\t2029-03-28T00:00:00.000Z\n",
-                    "SELECT * FROM varchar_date where c1 < c2"
-
+                    "SELECT * FROM varchar_date where c1 < c2",
+                    null,
+                    true,
+                    false
             );
         });
 
@@ -2071,10 +2087,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("CREATE TABLE char_cast (c1 char, c2 short, c3 int, c4 long, c5 float, c6 double);");
             execute("INSERT INTO char_cast VALUES('A', 1, 1, 1, 1, 1)");
 
-            assertSql(
+            assertQuery(
                     "c1\n" +
                             "A\n",
-                    "SELECT c1 FROM char_cast where c1 > c2 and c1 > c3 and c1 > c4 and c1 > c5 and c1 > c6"
+                    "SELECT c1 FROM char_cast where c1 > c2 and c1 > c3 and c1 > c4 and c1 > c5 and c1 > c6",
+                    null,
+                    true,
+                    false
             );
         });
 
@@ -2082,10 +2101,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("CREATE TABLE date_double (c1 date, c2 timestamp, c3 double);");
             execute("INSERT INTO date_double VALUES('2025-03-28', '2025-03-29', 100.0)");
 
-            assertSql(
+            assertQuery(
                     "c3\n" +
                             "100.0\n",
-                    "SELECT c3 FROM date_double where c1 < c2 and c2 > c3 and c1 > c3"
+                    "SELECT c3 FROM date_double where c1 < c2 and c2 > c3 and c1 > c3",
+                    null,
+                    true,
+                    false
             );
         });
 
@@ -2093,10 +2115,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             execute("CREATE TABLE ipv4_str (c1 ipv4, c2 varchar);");
             execute("INSERT INTO ipv4_str VALUES('0.0.0.3', '0.0.0.2')");
 
-            assertSql(
+            assertQuery(
                     "count\n" +
                             "1\n",
-                    "SELECT count(c1) FROM ipv4_str"
+                    "SELECT count(c1) FROM ipv4_str",
+                    null,
+                    false,
+                    true
             );
         });
     }
