@@ -245,7 +245,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
             this.metrics = engine.getMetrics();
             this.tasCache = tasCache;
-            this.entryPool = new ObjectStackPool<>(() -> new PGPipelineEntry(engine), 1024);
+            this.entryPool = new ObjectStackPool<>(() -> new PGPipelineEntry(engine), configuration.getPipelineCapacity());
             final boolean enableInsertCache = configuration.isInsertCacheEnabled();
             final int insertBlockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1;
             final int insertRowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1;
