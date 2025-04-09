@@ -73,6 +73,7 @@ import org.jetbrains.annotations.Nullable;
  */
 public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final CharSequenceHashSet baseKeyColumnNames = new CharSequenceHashSet();
+    private final String baseTableName;
     private final int baseTableNamePosition;
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();
     private final MatViewDefinition matViewDefinition = new MatViewDefinition();
@@ -80,7 +81,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final String sqlText;
     private final String timeZone;
     private final String timeZoneOffset;
-    private String baseTableName;
     private CreateTableOperationImpl createTableOperation;
     private long samplingInterval;
     private char samplingIntervalUnit;
@@ -385,7 +385,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             final int ttlHoursOrMonths = createTableOperation.getTtlHoursOrMonths();
             if (ttlHoursOrMonths > 0) {
                 // Don't forget to validate TTL against PARTITION BY.
-                PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, 0);
+                PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, createTableOperation.getTtlPosition());
             }
         }
 

@@ -1007,6 +1007,7 @@ public class SqlParser {
                 PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, ttlValuePos);
             }
             tableOpBuilder.setTtlHoursOrMonths(ttlHoursOrMonths);
+            tableOpBuilder.setTtlPosition(ttlValuePos);
             tok = optTok(lexer);
         }
 

@@ -87,6 +87,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private int timestampColumnNamePosition;
     private int timestampIndex = -1;
     private int ttlHoursOrMonths;
+    private int ttlPosition;
     private boolean walEnabled;
 
     public CreateTableOperationImpl(
@@ -127,6 +128,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             long o3MaxLag,
             int maxUncommittedRows,
             int ttlHoursOrMonths,
+            int ttlPosition,
             boolean walEnabled
     ) {
         this.sqlText = sqlText;
@@ -155,6 +157,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.o3MaxLag = o3MaxLag;
         this.maxUncommittedRows = maxUncommittedRows;
         this.ttlHoursOrMonths = ttlHoursOrMonths;
+        this.ttlPosition = ttlPosition;
         this.walEnabled = walEnabled;
 
         this.selectText = null;
@@ -199,6 +202,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int timestampColumnNamePosition,
             @Nullable String volumeAlias,
             int ttlHoursOrMonths,
+            int ttlPosition,
             boolean walEnabled,
             int defaultSymbolCapacity,
             int maxUncommittedRows,
@@ -217,6 +221,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.timestampColumnName = timestampColumnName;
         this.timestampColumnNamePosition = timestampColumnNamePosition;
         this.ttlHoursOrMonths = ttlHoursOrMonths;
+        this.ttlPosition = ttlPosition;
         this.defaultSymbolCapacity = defaultSymbolCapacity;
         this.batchSize = batchSize;
         this.batchO3MaxLag = batchO3MaxLag;
@@ -356,6 +361,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     @Override
     public int getTtlHoursOrMonths() {
         return ttlHoursOrMonths;
+    }
+
+    public int getTtlPosition() {
+        return ttlPosition;
     }
 
     @Override

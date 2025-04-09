@@ -326,6 +326,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "TTL value must be an integer multiple of partition size");
+                Assert.assertEquals(100, e.getPosition());
             }
             assertNull(getMatViewDefinition("test"));
         });
@@ -417,6 +418,22 @@ public class CreateMatViewTest extends AbstractCairoTest {
     @Test
     public void testCreateMatViewNoPartitionBy() throws Exception {
         testCreateMatViewNoPartitionBy(true);
+    }
+
+    @Test
+    public void testCreateMatViewNoPartitionByInvalidTtl() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            try {
+                execute("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) ttl 12 hours");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "TTL value must be an integer multiple of partition size");
+                Assert.assertEquals(83, e.getPosition());
+            }
+            assertNull(getMatViewDefinition("test"));
+        });
     }
 
     @Test
@@ -1601,6 +1618,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             testCreateMatViewNoPartitionBy(1, 'h', PartitionBy.MONTH, useParentheses);
             testCreateMatViewNoPartitionBy(2, 'h', PartitionBy.YEAR, useParentheses);
             testCreateMatViewNoPartitionBy(70, 'm', PartitionBy.YEAR, useParentheses);
+            testCreateMatViewNoPartitionBy(12, 'M', PartitionBy.YEAR, useParentheses);
+            testCreateMatViewNoPartitionBy(2, 'y', PartitionBy.YEAR, useParentheses);
         });
     }
 
