@@ -29,7 +29,6 @@ import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.OperationFuture;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.WeakSelfReturningObjectPool;
@@ -60,31 +59,27 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
         // `apply()` will use context stored in the operation
         operation.withContext(sqlExecutionContext);
         boolean isDone = false;
-        while (true) {
-            final TableToken tableToken = operation.getTableToken();
-            try (TableWriterAPI writer = !operation.isForceWalBypass() ? engine.getTableWriterAPI(tableToken, lockReason) : engine.getWriter(tableToken, FORCE_OPERATION_APPLY_REASON)) {
-                final long result = apply(operation, writer);
-                isDone = true;
-                return doneFuture.of(result);
-            } catch (TableReferenceOutOfDateException e) {
-                // Retry, table was renamed in the middle of the execution.
-            } catch (EntryUnavailableException busyException) {
-                if (eventSubSeq == null) {
-                    throw busyException;
-                }
-                OperationFutureImpl future = futurePool.pop();
-                future.of(
-                        operation,
-                        sqlExecutionContext,
-                        eventSubSeq,
-                        operation.getTableNamePosition(),
-                        closeOnDone
-                );
-                return future;
-            } finally {
-                if (closeOnDone && isDone) {
-                    operation.close();
-                }
+        final TableToken tableToken = operation.getTableToken();
+        try (TableWriterAPI writer = !operation.isForceWalBypass() ? engine.getTableWriterAPI(tableToken, lockReason) : engine.getWriter(tableToken, FORCE_OPERATION_APPLY_REASON)) {
+            final long result = apply(operation, writer);
+            isDone = true;
+            return doneFuture.of(result);
+        } catch (EntryUnavailableException busyException) {
+            if (eventSubSeq == null) {
+                throw busyException;
+            }
+            OperationFutureImpl future = futurePool.pop();
+            future.of(
+                    operation,
+                    sqlExecutionContext,
+                    eventSubSeq,
+                    operation.getTableNamePosition(),
+                    closeOnDone
+            );
+            return future;
+        } finally {
+            if (closeOnDone && isDone) {
+                operation.close();
             }
         }
     }

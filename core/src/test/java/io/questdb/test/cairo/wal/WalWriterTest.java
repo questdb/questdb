@@ -974,7 +974,6 @@ public class WalWriterTest extends AbstractCairoTest {
                     for (int i = 0; i < 100; i++) {
                         try {
                             execute("alter table alter_rename0 alter column s symbol capacity 1024");
-                            drainWalQueue();
                         } catch (SqlException e) {
                             if (!e.isTableDoesNotExist()) {
                                 throw e;
@@ -986,6 +985,7 @@ public class WalWriterTest extends AbstractCairoTest {
                             }
                             i--;
                         }
+                        drainWalQueue();
                     }
                 } catch (Throwable e) {
                     errors.incrementAndGet();

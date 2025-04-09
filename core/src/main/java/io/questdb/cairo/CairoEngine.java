@@ -484,8 +484,13 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void execute(CharSequence sqlText, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
-        try (SqlCompiler compiler = getSqlCompiler()) {
-            execute(compiler, sqlText, sqlExecutionContext, eventSubSeq);
+        while (true) {
+            try (SqlCompiler compiler = getSqlCompiler()) {
+                execute(compiler, sqlText, sqlExecutionContext, eventSubSeq);
+                return;
+            } catch (TableReferenceOutOfDateException e) {
+                // Retry on this exception, all interfaces like HTTP, Pg wire are supposed to retry too.
+            }
         }
     }
 
