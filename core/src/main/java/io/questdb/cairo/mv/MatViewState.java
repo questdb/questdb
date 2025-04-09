@@ -69,35 +69,58 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
         this.telemetryFacade = telemetryFacade;
     }
 
-    // refreshState can be null, in this case "default" record will be written
-    public static void append(@Nullable ReadableMatViewState refreshState, @NotNull BlockFileWriter writer) {
+    public static void append(
+            long lastRefreshTimestamp,
+            long lastRefreshBaseTxn,
+            boolean invalid,
+            CharSequence invalidationReason,
+            @NotNull BlockFileWriter writer
+    ) {
         final AppendableBlock block = writer.append();
-        append(refreshState, block);
+        appendState(lastRefreshBaseTxn, invalid, invalidationReason, block);
         block.commit(MAT_VIEW_STATE_FORMAT_MSG_TYPE);
         final AppendableBlock blockTs = writer.append();
-        appendTs(refreshState, blockTs);
+        appendTs(lastRefreshTimestamp, blockTs);
         blockTs.commit(MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE);
         writer.commit();
     }
 
-    public static void append(@Nullable ReadableMatViewState refreshState, @NotNull AppendableBlock block) {
-        if (refreshState == null) {
-            block.putBool(false);
-            block.putLong(-1L);
-            block.putStr(null);
-            return;
+    // refreshState can be null, in this case "default" record will be written
+    public static void append(@Nullable ReadableMatViewState refreshState, @NotNull BlockFileWriter writer) {
+        if (refreshState != null) {
+            append(
+                    refreshState.getLastRefreshTimestamp(),
+                    refreshState.getLastRefreshBaseTxn(),
+                    refreshState.isInvalid(),
+                    refreshState.getInvalidationReason(),
+                    writer
+            );
+        } else {
+            append(
+                    Numbers.LONG_NULL,
+                    -1,
+                    false,
+                    null,
+                    writer
+            );
         }
-        block.putBool(refreshState.isInvalid());
-        block.putLong(refreshState.getLastRefreshBaseTxn());
-        block.putStr(refreshState.getInvalidationReason());
     }
 
-    public static void appendTs(@Nullable ReadableMatViewState refreshState, @NotNull AppendableBlock block) {
-        if (refreshState == null) {
-            block.putLong(Numbers.LONG_NULL);
-            return;
-        }
-        block.putLong(refreshState.getLastRefreshTimestamp());
+    // kept public for tests
+    public static void appendState(
+            long lastRefreshBaseTxn,
+            boolean invalid,
+            CharSequence invalidationReason,
+            @NotNull AppendableBlock block
+    ) {
+        block.putBool(invalid);
+        block.putLong(lastRefreshBaseTxn);
+        block.putStr(invalidationReason);
+    }
+
+    // kept public for tests
+    public static void appendTs(long lastRefreshTimestamp, @NotNull AppendableBlock block) {
+        block.putLong(lastRefreshTimestamp);
     }
 
     public RecordCursorFactory acquireRecordFactory() {

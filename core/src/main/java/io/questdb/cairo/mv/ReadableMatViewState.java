@@ -27,7 +27,7 @@ package io.questdb.cairo.mv;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Defines refresh state fields.
+ * Describes materialized view refresh state fields.
  */
 public interface ReadableMatViewState {
 

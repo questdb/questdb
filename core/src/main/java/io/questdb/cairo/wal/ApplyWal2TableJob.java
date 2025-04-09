@@ -36,7 +36,6 @@ import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
@@ -552,6 +551,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     walTelemetryFacade.store(WAL_TXN_DATA_APPLIED, writer.getTableToken(), walId, s, walRowCount, commitPhRowCount, latency);
                     lastCommittedRows += walRowCount;
                 }
+
                 if (walTxnType == MAT_VIEW_DATA) {
                     try (WalEventReader eventReader = walEventReader) {
                         final Path path = Path.PATH2.get();
@@ -572,7 +572,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         LOG.error().$("could not update state for materialized view [table=")
                                 .$(writer.getTableToken())
                                 .$(", error=")
-                                .$(e.getFlyweightMessage()).I$();
+                                .$(e.getFlyweightMessage())
+                                .I$();
                     }
                 }
 
@@ -734,20 +735,16 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             boolean invalid,
             @Nullable CharSequence invalidationReason
     ) {
-        tablePath.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
         try (BlockFileWriter stateWriter = mvStateWriter) {
-            stateWriter.of(tablePath.$());
+            stateWriter.of(tablePath.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
 
-            final AppendableBlock block = stateWriter.append();
-            block.putBool(invalid);
-            block.putLong(lastRefreshBaseTxn);
-            block.putStr(invalidationReason);
-            block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_MSG_TYPE);
-
-            final AppendableBlock blockTs = stateWriter.append();
-            blockTs.putLong(lastRefreshTimestamp);
-            blockTs.commit(MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE);
-            stateWriter.commit();
+            MatViewState.append(
+                    lastRefreshTimestamp,
+                    lastRefreshBaseTxn,
+                    invalid,
+                    invalidationReason,
+                    stateWriter
+            );
         }
     }
 
