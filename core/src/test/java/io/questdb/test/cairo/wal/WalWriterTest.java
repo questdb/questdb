@@ -1644,7 +1644,7 @@ public class WalWriterTest extends AbstractCairoTest {
                         row.putSym(1, "sym" + i);
                         row.append();
                         if (i == 1) {
-                            walWriter.commitWithExtra(42, 42);
+                            walWriter.matViewRefreshCommit(42, 42);
                         } else {
                             walWriter.commit();
                         }
@@ -1656,7 +1656,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 assertEquals(42, txn); // refresh commit
 
                 try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
-                    walWriter.invalidate(45, 45, true, "test_invalidate");
+                    walWriter.invalidateMatView(45, 45, true, "test_invalidate");
                 }
 
 
@@ -1665,7 +1665,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                     // reset invalidation
-                    walWriter.invalidate(43, 43, false, "test_invalidate");
+                    walWriter.invalidateMatView(43, 43, false, "test_invalidate");
                 }
 
                 drainWalQueue();
@@ -1698,7 +1698,7 @@ public class WalWriterTest extends AbstractCairoTest {
             tableToken = createTable(model);
             final long refreshTxn = 42;
             try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
-                walWriter.invalidate(0, 0, true, "test_invalidate0");
+                walWriter.invalidateMatView(0, 0, true, "test_invalidate0");
                 for (int i = 0; i < 10; i++) {
                     TableWriter.Row row = walWriter.newRow(0);
                     row.putByte(0, (byte) i);
@@ -1707,10 +1707,10 @@ public class WalWriterTest extends AbstractCairoTest {
                     if (i % 2 == 0) {
                         walWriter.commit();
                     } else {
-                        walWriter.commitWithExtra(refreshTxn + i, i);
+                        walWriter.matViewRefreshCommit(refreshTxn + i, i);
                     }
                 }
-                walWriter.invalidate(1, 1, false, "test_invalidate1");
+                walWriter.invalidateMatView(1, 1, false, "test_invalidate1");
             }
 
             try (Path path = new Path();
@@ -1726,7 +1726,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     path.trimTo(pathLen).concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                     WalEventCursor walEventCursor = walEventReader.of(path, segmentTxn);
                     if (walEventCursor.getType() == WalTxnType.MAT_VIEW_INVALIDATE) {
-                        WalEventCursor.InvalidationInfo info = walEventCursor.getInvalidationInfo();
+                        WalEventCursor.MatViewInvalidationInfo info = walEventCursor.getMvInvalidationInfo();
                         if (i == 0) {
                             assertTrue(info.isInvalid());
                             assertEquals("test_invalidate0", info.getInvalidationReason().toString());
@@ -1745,7 +1745,7 @@ public class WalWriterTest extends AbstractCairoTest {
                         assertEquals(segmentTxn, info.getEndRowID());
                     }
                     if (walEventCursor.getType() == WalTxnType.MAT_VIEW_DATA) {
-                        WalEventCursor.DataInfoExt info = walEventCursor.getDataInfoExt();
+                        WalEventCursor.MatViewDataInfo info = walEventCursor.getMatViewDataInfo();
                         assertEquals(segmentTxn - 1, info.getStartRowID());
                         assertEquals(segmentTxn, info.getEndRowID());
                         assertEquals(refreshTxn + segmentTxn - 1, info.getLastRefreshBaseTableTxn());
@@ -1820,7 +1820,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 for (int i = 0; i < rowsToInsertTotal; i++) {
                     boolean invalidate = rnd.nextBoolean();
                     if (invalidate) {
-                        walWriter.invalidate(i, i, invalidate, "Invalidating " + i);
+                        walWriter.invalidateMatView(i, i, invalidate, "Invalidating " + i);
                     }
                     String symbol = rnd.nextInt(10) == 5 ? null : rnd.nextString(rnd.nextInt(9) + 1);
                     int v = rnd.nextInt(rowsToInsertTotal);
@@ -1840,7 +1840,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 if (rnd.nextBoolean()) {
                     walWriter.commit();
                 } else {
-                    walWriter.commitWithExtra(0, 0);
+                    walWriter.matViewRefreshCommit(0, 0);
                 }
 
                 drainWalQueue();
@@ -3798,7 +3798,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 WalEventCursor walEventCursor = walEventReader.of(path, segmentTxn);
                 if (walEventCursor.getType() == WalTxnType.MAT_VIEW_INVALIDATE) {
                     if (newFormat) {
-                        WalEventCursor.InvalidationInfo info = walEventCursor.getInvalidationInfo();
+                        WalEventCursor.MatViewInvalidationInfo info = walEventCursor.getMvInvalidationInfo();
                         assertTrue(info.isInvalid());
                         assertEquals("test_invalidate", info.getInvalidationReason().toString());
                     } else {
@@ -3812,7 +3812,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 }
                 if (walEventCursor.getType() == WalTxnType.MAT_VIEW_DATA) {
                     if (newFormat) {
-                        WalEventCursor.DataInfoExt info = walEventCursor.getDataInfoExt();
+                        WalEventCursor.MatViewDataInfo info = walEventCursor.getMatViewDataInfo();
                         assertEquals(segmentTxn, info.getStartRowID());
                         assertEquals(segmentTxn + 1, info.getEndRowID());
                         assertEquals(refreshTxn + segmentTxn, info.getLastRefreshBaseTableTxn());

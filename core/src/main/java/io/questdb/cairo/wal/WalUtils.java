@@ -149,7 +149,7 @@ public class WalUtils {
                             try (WalEventReader eventReader = walEventReader) {
                                 WalEventCursor walEventCursor = eventReader.of(tablePath, segmentTxn);
                                 if (walEventCursor.getType() == MAT_VIEW_DATA) {
-                                    return walEventCursor.getDataInfoExt().getLastRefreshBaseTableTxn();
+                                    return walEventCursor.getMatViewDataInfo().getLastRefreshBaseTableTxn();
                                 }
                                 if (walEventCursor.getType() == MAT_VIEW_INVALIDATE) {
                                     return txnInvalid;

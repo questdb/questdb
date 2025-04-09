@@ -308,11 +308,6 @@ public class WalWriter implements TableWriterAPI {
         commit0(Long.MIN_VALUE, Long.MIN_VALUE);
     }
 
-    public void commitWithExtra(long lastRefreshBaseTxn, long lastRefreshTimestamp) {
-        assert lastRefreshBaseTxn != Numbers.LONG_NULL;
-        commit0(lastRefreshBaseTxn, lastRefreshTimestamp);
-    }
-
     public void doClose(boolean truncate) {
         if (open) {
             open = false;
@@ -414,14 +409,14 @@ public class WalWriter implements TableWriterAPI {
         return segmentRowCount > currentTxnStartRowNum;
     }
 
-    public void invalidate(
+    public void invalidateMatView(
             long lastRefreshBaseTxn,
             long lastRefreshTimestamp,
             boolean invalid,
             @Nullable CharSequence invalidationReason
     ) {
         try {
-            lastSegmentTxn = events.invalidate(lastRefreshBaseTxn, lastRefreshTimestamp, invalid, invalidationReason);
+            lastSegmentTxn = events.appendMatViewInvalidate(lastRefreshBaseTxn, lastRefreshTimestamp, invalid, invalidationReason);
             getSequencerTxn();
         } catch (Throwable th) {
             rollback();
@@ -435,6 +430,11 @@ public class WalWriter implements TableWriterAPI {
 
     public boolean isOpen() {
         return this.open;
+    }
+
+    public void matViewRefreshCommit(long lastRefreshBaseTxn, long lastRefreshTimestamp) {
+        assert lastRefreshBaseTxn != Numbers.LONG_NULL;
+        commit0(lastRefreshBaseTxn, lastRefreshTimestamp);
     }
 
     @Override
