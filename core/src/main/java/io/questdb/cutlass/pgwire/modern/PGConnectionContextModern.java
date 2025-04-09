@@ -64,8 +64,6 @@ import io.questdb.network.QueryPausedException;
 import io.questdb.network.SuspendEvent;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.BinarySequence;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
 import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.IntList;
@@ -153,9 +151,10 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
     private final BindVariableService bindVariableService;
     private final IntList bindVariableTypes = new IntList();
-    private final CharacterStore characterStore;
+    private final CharacterStore bindVariableValuesCharacterStore;
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final PGWireConfiguration configuration;
+    private final DirectUtf8String directUtf8NamedPortal = new DirectUtf8String();
     private final DirectUtf8String directUtf8NamedStatement = new DirectUtf8String();
     private final boolean dumpNetworkTraffic;
     private final CairoEngine engine;
@@ -164,7 +163,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private final int forceSendFragmentationChunkSize;
     private final int maxBlobSize;
     private final Metrics metrics;
-    private final CharSequenceObjHashMap<PGPipelineEntry> namedPortals;
+    private final Utf8SequenceObjHashMap<PGPipelineEntry> namedPortals;
     private final Utf8SequenceObjHashMap<PGPipelineEntry> namedStatements;
     private final ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters;
     private final ArrayDeque<PGPipelineEntry> pipeline = new ArrayDeque<>();
@@ -173,6 +172,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private final Rnd rnd;
     private final SecurityContextFactory securityContextFactory;
     private final SqlExecutionContextImpl sqlExecutionContext;
+    private final CharacterStore sqlTextCharacterStore;
     private final WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool;
     private final SCSequence tempSequence = new SCSequence();
     private final DirectUtf8String utf8String = new DirectUtf8String();
@@ -225,7 +225,11 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             this.sendBufferSize = configuration.getSendBufferSize();
             this.forceSendFragmentationChunkSize = configuration.getForceSendFragmentationChunkSize();
             this.forceRecvFragmentationChunkSize = configuration.getForceRecvFragmentationChunkSize();
-            this.characterStore = new CharacterStore(
+            this.sqlTextCharacterStore = new CharacterStore(
+                    configuration.getCharacterStoreCapacity(),
+                    configuration.getCharacterStorePoolCapacity()
+            );
+            this.bindVariableValuesCharacterStore = new CharacterStore(
                     configuration.getCharacterStoreCapacity(),
                     configuration.getCharacterStorePoolCapacity()
             );
@@ -236,7 +240,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             this.sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, bindVariableService, this.rnd = configuration.getRandom());
             this.namedStatements = new Utf8SequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
             this.pendingWriters = new ObjObjHashMap<>(configuration.getPendingWritersCacheSize());
-            this.namedPortals = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
+            this.namedPortals = new Utf8SequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
             this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
             this.metrics = engine.getMetrics();
             this.tasCache = tasCache;
@@ -324,7 +328,8 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         clearWriters();
         // Clear every field, even if already cleaned to be on the safe side.
         Misc.clear(bindVariableTypes);
-        Misc.clear(characterStore);
+        Misc.clear(sqlTextCharacterStore);
+        Misc.clear(bindVariableValuesCharacterStore);
         Misc.clear(circuitBreaker);
         Misc.clear(responseUtf8Sink);
         Misc.clear(pendingWriters);
@@ -580,18 +585,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         }
     }
 
-    private void freePipelineEntriesFrom(CharSequenceObjHashMap<PGPipelineEntry> cache, boolean isStatementClose) {
-        ObjList<CharSequence> names = cache.keys();
-        for (int i = 0, n = names.size(); i < n; i++) {
-            PGPipelineEntry pe = cache.get(names.getQuick(i));
-            pe.setStateClosed(true, isStatementClose);
-            // return the factory back to global cache in case of a select
-            pe.cacheIfPossible(tasCache, null);
-            releaseToPool(pe);
-        }
-        cache.clear();
-    }
-
     private void freePipelineEntriesFrom(Utf8SequenceObjHashMap<PGPipelineEntry> cache, boolean isStatementClose) {
         ObjList<Utf8String> names = cache.keys();
         for (int i = 0, n = names.size(); i < n; i++) {
@@ -604,20 +597,10 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         cache.clear();
     }
 
-    private CharSequence getString(long lo, long hi, CharSequence errorMessage) throws BadProtocolException {
-        CharacterStoreEntry e = characterStore.newEntry();
-        if (Utf8s.utf8ToUtf16(lo, hi, e)) {
-            return characterStore.toImmutable();
-        } else {
-            LOG.error().$(errorMessage).$();
-            throw BadProtocolException.INSTANCE;
-        }
-    }
-
     @Nullable
-    private CharSequence getUtf16Str(long lo, long hi, String utf8ErrorStr) throws BadProtocolException {
+    private Utf8Sequence getUtf8NamedPortal(long lo, long hi) {
         if (hi - lo > 0) {
-            return getString(lo, hi, utf8ErrorStr);
+            return directUtf8NamedPortal.of(lo, hi);
         }
         return null;
     }
@@ -723,13 +706,12 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         responseUtf8Sink.sendBufferAndReset();
     }
 
-    private boolean lookupPipelineEntryForNamedStatement(long lo, long hi) throws BadProtocolException {
-        @Nullable Utf8Sequence namedStatement = getUtf8NamedStatement(lo, hi);
-        if (namedStatement != null) {
-            PGPipelineEntry pe = namedStatements.get(namedStatement);
+    private boolean lookupPipelineEntryForNamedPortal(@Nullable Utf8Sequence namedPortal) throws BadProtocolException {
+        if (namedPortal != null) {
+            PGPipelineEntry pe = namedPortals.get(namedPortal);
             if (pe == null) {
                 throw msgKaput()
-                        .put("statement or portal does not exist [name=").put(namedStatement).put(']');
+                        .put(" portal does not exist [name=").put(namedPortal).put(']');
             }
 
             replaceCurrentPipelineEntry(pe);
@@ -738,12 +720,13 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         return true;
     }
 
-    private boolean lookupPipelineEntryForPortalName(@Nullable CharSequence portalName) throws BadProtocolException {
-        if (portalName != null) {
-            PGPipelineEntry pe = namedPortals.get(portalName);
+    private boolean lookupPipelineEntryForNamedStatement(long lo, long hi) throws BadProtocolException {
+        @Nullable Utf8Sequence namedStatement = getUtf8NamedStatement(lo, hi);
+        if (namedStatement != null) {
+            PGPipelineEntry pe = namedStatements.get(namedStatement);
             if (pe == null) {
                 throw msgKaput()
-                        .put(" portal does not exist [name=").put(portalName).put(']');
+                        .put("statement or portal does not exist [name=").put(namedStatement).put(']');
             }
 
             replaceCurrentPipelineEntry(pe);
@@ -765,7 +748,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
 
         // portal name
         long hi = getUtf8StrSize(lo, msgLimit, "bad portal name length (bind)", pipelineCurrentEntry);
-        CharSequence portalName = getUtf16Str(lo, hi, "invalid UTF8 bytes in portal name (bind)");
+        Utf8Sequence namedPortal = getUtf8NamedPortal(lo, hi);
         // named statement
         lo = hi + 1;
         hi = getUtf8StrSize(lo, msgLimit, "bad prepared statement name length [msgType='B']", pipelineCurrentEntry);
@@ -784,12 +767,12 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // that the prepared statement and the portal can be interleaved in the pipeline. For that
         // not to fail, these have to be separate factories and pipeline entries
 
-        if (portalName != null) {
-            LOG.info().$("create portal [name=").$(portalName).I$();
-            int index = namedPortals.keyIndex(portalName);
+        if (namedPortal != null) {
+            LOG.info().$("create portal [name=").$(namedPortal).I$();
+            int index = namedPortals.keyIndex(namedPortal);
             if (index > -1) {
                 // intern the name of the portal, the name will be cached in a list
-                portalName = Chars.toString(portalName);
+                Utf8String immutableNamedPortal = Utf8String.newInstance(namedPortal);
 
                 // the current pipeline entry could either be named or unnamed
                 // we only have to clone the named entries, in case they are interleaved in the
@@ -831,7 +814,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                     // Keep the reference to the portal name on the prepared statement before we overwrite the
                     // reference. Keeping list of portal names is required in case the client closes the prepared
                     // statement. We will also be required to close all the portals.
-                    pipelineCurrentEntry.bindPortalName(portalName);
+                    pipelineCurrentEntry.bindPortalName(immutableNamedPortal);
                     pipelineCurrentEntry.clearState();
                     pipelineCurrentEntry = pe;
                     pipelineCurrentEntry.setStateBind(true);
@@ -841,10 +824,10 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 // doing this; they would have to send "parse" message without statement name and then
                 // send "bind" message without statement name but with portal). So we can use
                 // the current entry as the portal
-                pipelineCurrentEntry.setPortal(true, (String) portalName);
-                namedPortals.putAt(index, portalName, pipelineCurrentEntry);
+                pipelineCurrentEntry.setNamedPortal(true, immutableNamedPortal);
+                namedPortals.putAt(index, namedPortal, pipelineCurrentEntry);
             } else {
-                throw msgKaput().put("portal already exists [portalName=").put(portalName).put(']');
+                throw msgKaput().put("portal already exists [namedPortal=").put(namedPortal).put(']');
             }
         }
 
@@ -904,7 +887,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             case 'P':
                 lo = lo + 1;
                 final long high = getUtf8StrSize(lo, msgLimit, "bad prepared portal name length (close)", pipelineCurrentEntry);
-                lookedUpPipelineEntry = uncacheNamedPortal(getUtf16Str(lo, high, "invalid UTF8 bytes in portal name (close)"));
+                lookedUpPipelineEntry = removeNamedPortalFromCache(getUtf8NamedPortal(lo, high));
                 break;
             default:
                 throw msgKaput().put("invalid type for close message [type=").put(type).put(']');
@@ -933,13 +916,10 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // 'P' = portal name
         // followed by the name, which can be NULL, typically with 'P'
         boolean isPortal = Unsafe.getUnsafe().getByte(lo) == 'P';
-        // todo: we can use utf8 names in maps and also lookup 0 terminator more efficiently
         final long hi = getUtf8StrSize(lo + 1, msgLimit, "bad prepared statement name length (describe)", pipelineCurrentEntry);
         final boolean nullTargetName;
         if (isPortal) {
-            nullTargetName = lookupPipelineEntryForPortalName(
-                    getUtf16Str(lo + 1, hi, "invalid UTF8 bytes in portal name (describe)")
-            );
+            nullTargetName = lookupPipelineEntryForNamedPortal(getUtf8NamedPortal(lo + 1, hi));
         } else {
             nullTargetName = lookupPipelineEntryForNamedStatement(lo + 1, hi);
         }
@@ -961,7 +941,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         }
 
         final long hi = getUtf8StrSize(lo, msgLimit, "bad portal name length (execute)", pipelineCurrentEntry);
-        lookupPipelineEntryForPortalName(getUtf16Str(lo, hi, "invalid UTF8 bytes in portal name (execute)"));
+        lookupPipelineEntryForNamedPortal(getUtf8NamedPortal(lo, hi));
 
         if (pipelineCurrentEntry == null) {
             throw msgKaput().put("spurious execute message");
@@ -978,7 +958,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 taiPool,
                 pendingWriters,
                 this,
-                characterStore,
+                bindVariableValuesCharacterStore,
                 utf8String,
                 binarySequenceParamsPool,
                 tempSequence,
@@ -1047,7 +1027,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // read query text from the message
         lo = hi + 1;
         hi = getUtf8StrSize(lo, msgLimit, "bad query text length", pipelineCurrentEntry);
-        final CharacterStoreEntry e = characterStore.newEntry();
+        final CharacterStoreEntry e = sqlTextCharacterStore.newEntry();
         if (!Utf8s.utf8ToUtf16(lo, hi, e)) {
             throw msgKaput().put("invalid UTF8 bytes in parse query");
         }
@@ -1150,12 +1130,12 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             return;
         }
 
-        CharacterStoreEntry e = characterStore.newEntry();
+        CharacterStoreEntry e = sqlTextCharacterStore.newEntry();
         if (!Utf8s.utf8ToUtf16(lo, limit - 1, e)) {
             throw msgKaput().put("invalid UTF8 bytes in parse query");
         }
         sqlExecutionContext.initNow();
-        CharSequence activeSqlText = characterStore.toImmutable();
+        CharSequence activeSqlText = sqlTextCharacterStore.toImmutable();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.compileBatch(activeSqlText, sqlExecutionContext, batchCallback);
             if (pipelineCurrentEntry == null) {
@@ -1320,12 +1300,31 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         freezeRecvBuffer = false;
         sqlExecutionContext.setCacheHit(false);
         sqlExecutionContext.containsSecret(false);
-        Misc.clear(characterStore);
+        Misc.clear(sqlTextCharacterStore);
     }
 
     private void releaseToPool(@NotNull PGPipelineEntry pe) {
         pe.close();
         entryPool.release(pe);
+    }
+
+    private PGPipelineEntry removeNamedPortalFromCache(Utf8Sequence portalName) {
+        if (portalName != null) {
+            final int index = namedPortals.keyIndex(portalName);
+            if (index < 0) {
+                PGPipelineEntry pe = namedPortals.valueAt(index);
+                PGPipelineEntry peParent = pe.getParentPreparedStatementPipelineEntry();
+                if (peParent != null) {
+                    int parentIndex = peParent.getNamedPortals().indexOf(portalName);
+                    if (parentIndex != -1) {
+                        peParent.getNamedPortals().remove(parentIndex);
+                    }
+                }
+                namedPortals.removeAt(index);
+                return pe;
+            }
+        }
+        return null;
     }
 
     private PGPipelineEntry removeNamedStatementFromCache(Utf8Sequence namedStatement) {
@@ -1335,7 +1334,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 PGPipelineEntry pe = namedStatements.valueAt(index);
                 namedStatements.removeAt(index);
                 // also remove entries for the matching portal names
-                ObjList<CharSequence> portalNames = pe.getPortalNames();
+                ObjList<Utf8String> portalNames = pe.getNamedPortals();
                 for (int i = 0, n = portalNames.size(); i < n; i++) {
                     int portalKeyIndex = namedPortals.keyIndex(portalNames.getQuick(i));
                     if (portalKeyIndex < 0) {
@@ -1457,31 +1456,12 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 LOG.debug().$("pipeline entry not consumed [instance=)").$(pipelineCurrentEntry)
                         .$(", sql=").$(pipelineCurrentEntry.getSqlText())
                         .$(", stmt=").$(pipelineCurrentEntry.getNamedStatement())
-                        .$(", portal=").$(pipelineCurrentEntry.getPortalName())
+                        .$(", portal=").$(pipelineCurrentEntry.getNamedPortal())
                         .I$();
                 break;
             }
         }
-        characterStore.clear();
-    }
-
-    private PGPipelineEntry uncacheNamedPortal(CharSequence portalName) {
-        if (portalName != null) {
-            final int index = namedPortals.keyIndex(portalName);
-            if (index < 0) {
-                PGPipelineEntry pe = namedPortals.valueAt(index);
-                PGPipelineEntry peParent = pe.getParentPreparedStatementPipelineEntry();
-                if (peParent != null) {
-                    int parentIndex = peParent.getPortalNames().indexOf(portalName);
-                    if (parentIndex != -1) {
-                        peParent.getPortalNames().remove(parentIndex);
-                    }
-                }
-                namedPortals.removeAt(index);
-                return pe;
-            }
-        }
-        return null;
+        sqlTextCharacterStore.clear();
     }
 
     static void dumpBuffer(char direction, long buffer, int len, boolean dumpNetworkTraffic) {
@@ -1565,7 +1545,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
 
         @Override
         public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence queryText) throws Exception {
-            CharacterStoreEntry entry = characterStore.newEntry();
+            CharacterStoreEntry entry = sqlTextCharacterStore.newEntry();
             entry.put(queryText);
             pipelineCurrentEntry.ofSimpleQuery(
                     entry.toImmutable(),
@@ -1580,7 +1560,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                     taiPool,
                     pendingWriters,
                     PGConnectionContextModern.this,
-                    characterStore,
+                    bindVariableValuesCharacterStore,
                     utf8String,
                     binarySequenceParamsPool,
                     tempSequence,
@@ -1608,7 +1588,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 return false;
             }
 
-            CharacterStoreEntry entry = characterStore.newEntry();
+            CharacterStoreEntry entry = sqlTextCharacterStore.newEntry();
             entry.put(sqlText);
             try {
                 pipelineCurrentEntry.ofSimpleCachedSelect(entry.toImmutable(), sqlExecutionContext, tas);
