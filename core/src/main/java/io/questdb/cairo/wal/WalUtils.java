@@ -117,7 +117,7 @@ public class WalUtils {
      * @param walEventReader     the reader to read WAL events
      * @param blockFileReader    the reader to read state file
      * @param matViewStateReader the POD to read materialized view state into
-     * @return -1 if the transaction could not be extracted or the last WAL-E entry is not a refresh commit (MAT_VIEW_DATA),
+     * @return -1 if the transaction could not be extracted, -2 if the last WAL-E entry is an invalidation commit (MAT_VIEW_INVALIDATE),
      * or a transaction number greater than -1 if it is a valid last refresh transaction
      */
     public static long getMatViewLastRefreshBaseTxn(
@@ -130,6 +130,7 @@ public class WalUtils {
             MatViewStateReader matViewStateReader
     ) {
         long txnNotFound = -1;
+        long txnInvalid = -2;
         try (MemoryCMR mem = txnLogMemory) {
             int tablePathLen = tablePath.size();
             mem.smallFile(configuration.getFilesFacade(), tablePath.concat(SEQ_DIR).concat(TXNLOG_FILE_NAME).$(), MemoryTag.MMAP_TX_LOG);
@@ -151,7 +152,7 @@ public class WalUtils {
                                     return walEventCursor.getDataInfoExt().getLastRefreshBaseTableTxn();
                                 }
                                 if (walEventCursor.getType() == MAT_VIEW_INVALIDATE) {
-                                    return txnNotFound;
+                                    return txnInvalid;
                                 }
                             } catch (Throwable th) {
                                 // walEventReader may not be able to find/open the WAL-e files

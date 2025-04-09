@@ -399,6 +399,11 @@ public class CairoEngine implements Closeable, WriterSource {
 
                             path.trimTo(pathLen).concat(tableToken);
                             long refreshTxn = WalUtils.getMatViewLastRefreshBaseTxn(path, tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
+                            if (refreshTxn == -2) {
+                                // keep original invalidation reason
+                                state.setLastRefreshBaseTableTxn(-1);
+                                continue;
+                            }
                             long baseTableLastTxn = getTableSequencerAPI().lastTxn(baseTableToken);
                             state.setLastRefreshBaseTableTxn(refreshTxn);
                             if (refreshTxn == -1 || refreshTxn > baseTableLastTxn) {

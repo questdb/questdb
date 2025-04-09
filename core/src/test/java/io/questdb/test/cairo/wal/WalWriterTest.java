@@ -1661,7 +1661,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
 
                 txn = WalUtils.getMatViewLastRefreshBaseTxn(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
-                assertEquals(-1, txn); // invalidate commit
+                assertEquals(-2, txn); // invalidate commit
 
                 try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                     // reset invalidation
