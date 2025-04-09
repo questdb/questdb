@@ -282,7 +282,7 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
         }
     }
 
-    private static void assertTableSizeEventually(CairoEngine engine, CharSequence tableName, long expectedSize) {
+    private static void assertTableSizeEventually(CairoEngine engine, CharSequence tableName, long expectedSize) throws Exception {
         TestUtils.assertEventually(() -> {
             assertTableExists(engine, tableName);
 
