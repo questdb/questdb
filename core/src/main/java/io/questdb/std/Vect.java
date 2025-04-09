@@ -317,7 +317,7 @@ public final class Vect {
 
     public static native void quickSortLongIndexAscInPlace(long pLongData, long count);
 
-    public static native void radixSortABLongIndexAsc(
+    public static native long radixSortABLongIndexAsc(
             long pDataA,
             long countA,
             long pDataB,
@@ -328,10 +328,13 @@ public final class Vect {
             long maxTimestamp
     );
 
+    public static void radixSortLongIndexAscChecked(long pLongData, long count, long pCpy, long min, long max) {
+        long resultCount = radixSortLongIndexAsc(pLongData, count, pCpy, min, max);
+        assert resultCount == count : "radix sort error result =" + resultCount + ", expected=" + count;
+    }
+
     // This is not In Place sort, to be renamed later
     public static native void radixSortLongIndexAscInPlace(long pLongData, long count, long pCpy);
-
-    public static native void radixSortLongIndexAscInPlaceBounded(long pLongData, long count, long pCpy, long min, long max);
 
     public static native long radixSortManySegmentsIndexAsc(
             long tsOutAddr,
@@ -458,6 +461,8 @@ public final class Vect {
 
     // accept externally allocated memory for merged index of proper size
     private static native void mergeLongIndexesAscInner(long pIndexStructArray, int count, long mergedIndexAddr);
+
+    private static native long radixSortLongIndexAsc(long pLongData, long count, long pCpy, long min, long max);
 
     static {
         Os.init();
