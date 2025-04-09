@@ -535,7 +535,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             final String columnName = metadata.getColumnName(i);
             final TableColumnMetadata augMeta = augmentedColumnMetadata.get(columnName);
 
-            if (!TableUtils.isValidColumnName(columnName, Integer.MAX_VALUE)) {
+            if (!TableUtils.isValidColumnName(columnName, 255)) {
                 throw SqlException.invalidColumnName(0, columnName);
             }
 
