@@ -24,12 +24,9 @@
 
 package io.questdb.metrics;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory;
-import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor.PrometheusMetricsRecord;
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsRecord;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 
 public class DoubleGaugeImpl implements Target, DoubleGauge {
@@ -46,6 +43,14 @@ public class DoubleGaugeImpl implements Target, DoubleGauge {
     }
 
     @Override
+    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
+        appendType(sink);
+        appendMetricName(sink);
+        PrometheusFormatUtils.appendSampleLineSuffix(sink, value);
+        PrometheusFormatUtils.appendNewLine(sink);
+    }
+
+    @Override
     public int scrapeIntoRecord(PrometheusMetricsRecord record) {
         record
                 .setGaugeName(getName())
@@ -53,14 +58,6 @@ public class DoubleGaugeImpl implements Target, DoubleGauge {
                 .setValue(value)
                 .setKind("DOUBLE");
         return 1;
-    }
-
-    @Override
-    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
-        appendType(sink);
-        appendMetricName(sink);
-        PrometheusFormatUtils.appendSampleLineSuffix(sink, value);
-        PrometheusFormatUtils.appendNewLine(sink);
     }
 
     @Override

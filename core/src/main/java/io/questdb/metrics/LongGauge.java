@@ -24,10 +24,7 @@
 
 package io.questdb.metrics;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor.PrometheusMetricsRecord;
-import io.questdb.std.str.DirectUtf8Sink;
-import io.questdb.std.str.Utf8Sink;
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsRecord;
 
 public interface LongGauge extends Target {
 

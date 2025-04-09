@@ -40,7 +40,8 @@ import org.junit.Test;
 public class PrometheusMetricsTest extends AbstractCairoTest {
 
     public void assertPrometheusMetrics(CharSequence expected, MetricsRegistry metricsRegistry) {
-        try (PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor cursor = new PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor()) {
+        try (PrometheusMetricsRecordCursorFactory factory = new PrometheusMetricsRecordCursorFactory(configuration)) {
+            PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor cursor = (PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor) factory.getCursor(sqlExecutionContext);
             cursor.of(metricsRegistry);
             printSql(cursor, PrometheusMetricsRecordCursorFactory.METADATA);
         } catch (SqlException e) {
@@ -119,6 +120,13 @@ public class PrometheusMetricsTest extends AbstractCairoTest {
         assertPrometheusMetrics("name\ttype\tvalue\tkind\tlabels\n" +
                         "questdb_gauge\tgauge\t1\tLONG\t\n",
                 metricsRegistry);
+    }
+
+    @Test
+    public void testMetricsAreDisabled() throws Exception {
+        configuration.getMetrics().disable();
+        assertException("prometheus_metrics();", 0, "metrics are disabled! try setting `metrics.enabled=true` in `server.conf`");
+        configuration.getMetrics().clear();
     }
 
     @Test

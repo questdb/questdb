@@ -24,16 +24,14 @@
 
 package io.questdb.metrics;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory;
-import io.questdb.std.str.Utf8Sink;
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsRecord;
 import org.jetbrains.annotations.TestOnly;
 
 public interface Counter extends Target {
 
     void add(long value);
 
-    public CharSequence getName();
+    CharSequence getName();
 
     long getValue();
 
@@ -41,8 +39,11 @@ public interface Counter extends Target {
         add(1);
     }
 
+    @TestOnly
+    void reset();
+
     @Override
-    default int scrapeIntoRecord(PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor.PrometheusMetricsRecord record) {
+    default int scrapeIntoRecord(PrometheusMetricsRecord record) {
         record
                 .setCounterName(getName())
                 .setType("counter")
@@ -50,7 +51,4 @@ public interface Counter extends Target {
                 .setKind("LONG");
         return 1;
     }
-
-    @TestOnly
-    void reset();
 }

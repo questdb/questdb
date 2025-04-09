@@ -24,10 +24,8 @@
 
 package io.questdb.metrics;
 
-import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory;
-import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor.PrometheusMetricsRecord;
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsRecord;
 import io.questdb.std.str.BorrowableUtf8Sink;
-import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.atomic.LongAdder;
@@ -59,9 +57,16 @@ public class CounterWithOneLabelImpl implements CounterWithOneLabel {
     }
 
     @Override
-    public int scrapeIntoRecord(PrometheusMetricsRecord record) {
-        scrapeIntoRecord(record, 0);
-        return counters.length;
+    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
+        PrometheusFormatUtils.appendCounterType(name, sink);
+        for (int i = 0, n = counters.length; i < n; i++) {
+            PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
+            sink.putAscii('{');
+            PrometheusFormatUtils.appendLabel(sink, labelName0, labelValues0[i]);
+            sink.putAscii('}');
+            PrometheusFormatUtils.appendSampleLineSuffix(sink, counters[i].longValue());
+        }
+        PrometheusFormatUtils.appendNewLine(sink);
     }
 
     @Override
@@ -75,15 +80,8 @@ public class CounterWithOneLabelImpl implements CounterWithOneLabel {
     }
 
     @Override
-    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
-        PrometheusFormatUtils.appendCounterType(name, sink);
-        for (int i = 0, n = counters.length; i < n; i++) {
-            PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
-            sink.putAscii('{');
-            PrometheusFormatUtils.appendLabel(sink, labelName0, labelValues0[i]);
-            sink.putAscii('}');
-            PrometheusFormatUtils.appendSampleLineSuffix(sink, counters[i].longValue());
-        }
-        PrometheusFormatUtils.appendNewLine(sink);
+    public int scrapeIntoRecord(PrometheusMetricsRecord record) {
+        scrapeIntoRecord(record, 0);
+        return counters.length;
     }
 }
