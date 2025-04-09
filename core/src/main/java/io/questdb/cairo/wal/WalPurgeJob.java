@@ -234,7 +234,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         } catch (CairoException ce) {
             LOG.error().$("broad sweep failed [table=").$(tableToken)
                     .$(", msg=").$((Throwable) ce)
-                    .$(", errno=").$(ff.errno()).$(']').$();
+                    .$(", errno=").$(ff.errno())
+                    .I$();
         }
     }
 

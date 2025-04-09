@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GenericRecordMetadata;
@@ -47,11 +48,14 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 
 public class MatViewsFunctionFactory implements FunctionFactory {
+    private static final Log LOG = LogFactory.getLog(MatViewsFunctionFactory.class);
 
     @Override
     public String getSignature() {
@@ -136,23 +140,33 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     final int pathLen = path.size();
 
                     final int n = viewTokens.size();
-                    while (viewIndex < n) {
+                    for (; viewIndex < n; viewIndex++) {
                         final TableToken viewToken = viewTokens.get(viewIndex);
                         if (engine.getTableTokenIfExists(viewToken.getTableName()) != null) {
                             final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(viewToken);
-                            assert matViewDefinition != null : "materialized view definition not found: " + viewToken;
-
-                            final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, viewToken.getDirName());
-                            if (isMatViewStateExists) {
-                                reader.of(path.trimTo(pathLen).concat(viewToken.getDirName()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
-                                viewStateReader.of(reader, viewToken);
-                            } else {
-                                viewStateReader.clear();
+                            if (matViewDefinition == null) {
+                                continue; // mat view was dropped concurrently
                             }
 
-                            TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());
+                            viewStateReader.clear();
+                            final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, viewToken.getDirName());
+                            if (isMatViewStateExists) {
+                                try {
+                                    reader.of(path.trimTo(pathLen).concat(viewToken.getDirName()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                                    viewStateReader.of(reader, viewToken);
+                                } catch (CairoException e) {
+                                    LOG.info().$("could not read materialized view state file [view=").utf8(viewToken.getTableName())
+                                            .$(", msg=").$(e.getFlyweightMessage())
+                                            .$(", errno=").$(e.getErrno())
+                                            .I$();
+                                    continue;
+                                }
+                            }
+
                             final long lastRefreshedBaseTxn = viewStateReader.getLastRefreshBaseTxn();
                             final long lastRefreshTimestamp = viewStateReader.getLastRefreshTimestamp();
+
+                            final TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());
                             // Read base table txn after mat view's last refreshed txn to avoid
                             // showing obsolete base table txn.
                             final long lastAppliedBaseTxn = baseTableToken != null
@@ -169,7 +183,6 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                             viewIndex++;
                             return true;
                         }
-                        viewIndex++;
                     }
                     return false;
                 }
