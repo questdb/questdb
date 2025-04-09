@@ -119,9 +119,9 @@ public class VarcharFunctionTest {
         }
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testCastToDate() {
-        new VarcharConstant("2021-09-10T10:12:33.887Z").getDate(null);
+        Assert.assertEquals(1631268753887L, new VarcharConstant("2021-09-10T10:12:33.887Z").getDate(null));
     }
 
     @Test

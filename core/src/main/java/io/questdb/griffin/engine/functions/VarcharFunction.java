@@ -68,7 +68,7 @@ public abstract class VarcharFunction implements ScalarFunction {
 
     @Override
     public long getDate(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastStrAsDate(getStrA(rec));
     }
 
     @Override
