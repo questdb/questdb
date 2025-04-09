@@ -362,7 +362,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
             }
 
-            walWriter.commitWithExtra(baseTableTxn, refreshTimestamp);
+            walWriter.matViewRefreshCommit(baseTableTxn, refreshTimestamp);
             state.refreshSuccess(factory, copier, walWriter.getMetadata().getMetadataVersion(), refreshTimestamp, refreshTriggeredTimestamp, baseTableTxn);
             if (rowCount > 0) {
                 state.setLastRefreshBaseTableTxn(baseTableTxn);
@@ -493,7 +493,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     private void refreshFailState(MatViewState state, WalWriter walWriter, long refreshTimestamp, String errorMessage) {
         state.refreshFail(refreshTimestamp, errorMessage);
-        walWriter.invalidate(state.getLastRefreshBaseTxn(), state.getLastRefreshTimestamp(), true, errorMessage);
+        walWriter.invalidateMatView(state.getLastRefreshBaseTxn(), state.getLastRefreshTimestamp(), true, errorMessage);
         // Invalidate dependent views recursively.
         enqueueInvalidateDependentViews(state.getViewDefinition().getMatViewToken(), "base materialized view refresh failed");
     }
@@ -581,11 +581,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     private void resetInvalidState(MatViewState state, WalWriter walWriter) {
         state.markAsValid();
-        walWriter.invalidate(state.getLastRefreshBaseTxn(), state.getLastRefreshTimestamp(), false, null);
+        walWriter.invalidateMatView(state.getLastRefreshBaseTxn(), state.getLastRefreshTimestamp(), false, null);
     }
 
     private void setInvalidState(MatViewState state, WalWriter walWriter, String invalidationReason) {
         state.markAsInvalid(invalidationReason);
-        walWriter.invalidate(state.getLastRefreshBaseTxn(), state.getLastRefreshTimestamp(), true, invalidationReason);
+        walWriter.invalidateMatView(state.getLastRefreshBaseTxn(), state.getLastRefreshTimestamp(), true, invalidationReason);
     }
 }

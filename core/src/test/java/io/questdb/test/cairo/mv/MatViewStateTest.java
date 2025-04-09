@@ -101,14 +101,14 @@ public class MatViewStateTest extends AbstractCairoTest {
                 for (int i = 0; i < iterations; i++) {
                     boolean invalidate = rnd.nextBoolean();
                     if (invalidate) {
-                        walWriter.invalidate(i, i, true, "Invalidating " + i);
+                        walWriter.invalidateMatView(i, i, true, "Invalidating " + i);
                         assertState(tableToken, i, i, true, "Invalidating " + i);
                     }
                     TableWriter.Row row = walWriter.newRow(0);
                     row.putStr(0, "ABC");
                     row.putDouble(1, rnd.nextDouble());
                     row.append();
-                    walWriter.commitWithExtra(i, i);
+                    walWriter.matViewRefreshCommit(i, i);
                     assertState(tableToken, i, i, false, null);
                 }
                 assertState(tableToken, iterations - 1, iterations - 1, false, null);
@@ -120,12 +120,12 @@ public class MatViewStateTest extends AbstractCairoTest {
                     row.putStr(0, "ABC");
                     row.putDouble(1, rnd.nextDouble());
                     row.append();
-                    walWriter.commitWithExtra(i, i);
+                    walWriter.matViewRefreshCommit(i, i);
                     drainWalQueue();
                     assertState(tableToken, iterations - 1, iterations - 1, false, null);
                 }
 
-                walWriter.invalidate(42, 42, true, "missed invalidation");
+                walWriter.invalidateMatView(42, 42, true, "missed invalidation");
                 drainWalQueue();
                 assertState(tableToken, iterations - 1, iterations - 1, false, null);
             }

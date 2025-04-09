@@ -560,7 +560,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         int tablePathLen = path.size();
                         path.slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                         final WalEventCursor walEventCursor = eventReader.of(path, segmentTxn);
-                        final WalEventCursor.DataInfoExt data = walEventCursor.getDataInfoExt();
+                        final WalEventCursor.MatViewDataInfo data = walEventCursor.getMatViewDataInfo();
                         updateMatViewRefreshState(
                                 path.trimTo(tablePathLen),
                                 data.getLastRefreshBaseTableTxn(),
@@ -614,7 +614,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     int tablePathLen = path.size();
                     path.slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                     final WalEventCursor walEventCursor = eventReader.of(path, segmentTxn);
-                    final WalEventCursor.InvalidationInfo info = walEventCursor.getInvalidationInfo();
+                    final WalEventCursor.MatViewInvalidationInfo info = walEventCursor.getMvInvalidationInfo();
                     updateMatViewRefreshState(
                             path.trimTo(tablePathLen),
                             info.getLastRefreshBaseTableTxn(),
