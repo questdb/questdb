@@ -81,7 +81,7 @@ class OperationExecutor implements Closeable {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             executionContext.remapTableNameResolutionTo(tableToken);
             CompiledQuery compiledQuery;
-            while(true) {
+            while (true) {
                 try {
                     compiledQuery = compiler.compile(alterSql, executionContext);
                     break;
