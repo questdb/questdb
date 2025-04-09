@@ -844,7 +844,11 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     }
 
     private static CountDownLatch createTableCommitNotifier(String tableName) {
-        CountDownLatch released = new CountDownLatch(1);
+        return createTableCommitNotifier(tableName, 1);
+    }
+
+    private static CountDownLatch createTableCommitNotifier(String tableName, int count) {
+        CountDownLatch released = new CountDownLatch(count);
         engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
             if (name != null && Chars.equalsNc(name.getTableName(), tableName)) {
                 if (PoolListener.isWalOrWriter(factoryType) && event == PoolListener.EV_RETURN) {
@@ -881,7 +885,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .col("u1", ColumnType.UUID)
                     .timestamp();
             AbstractCairoTest.create(model);
-            CountDownLatch released = createTableCommitNotifier("mytable");
+            CountDownLatch released = createTableCommitNotifier("mytable", 2);
 
             // this sender fails as the string is not UUID
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
