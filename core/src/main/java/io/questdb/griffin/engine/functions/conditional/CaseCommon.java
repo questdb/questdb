@@ -143,10 +143,15 @@ public class CaseCommon {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        if (isNull(arg.getType())) {
+        int argType = arg.getType();
+        if (isNull(argType)) {
             return Constants.getNullConstant(toType);
         }
-        final int keyIndex = castFactories.keyIndex(Numbers.encodeLowHighInts(arg.getType(), toType));
+        if (ColumnType.isArray(argType)) {
+            assert argType == toType; // no type escalation for arrays
+            return arg;
+        }
+        final int keyIndex = castFactories.keyIndex(Numbers.encodeLowHighInts(argType, toType));
         if (keyIndex < 0) {
             FunctionFactory factory = castFactories.valueAt(keyIndex);
             ObjList<Function> args = tlArgs.get();
@@ -173,6 +178,15 @@ public class CaseCommon {
         }
         if (isNull(valueType)) {
             return commonType;
+        }
+
+        boolean arrayCommonType = ColumnType.isArray(commonType);
+        boolean arrayValueType = ColumnType.isArray(valueType);
+        if (arrayCommonType && arrayValueType) {
+            if (commonType == valueType) {
+                return commonType;
+            }
+            throw SqlException.inconvertibleTypes(valuePos, valueType, ColumnType.nameOf(valueType), commonType, ColumnType.nameOf(commonType));
         }
 
         final int type = typeEscalationMap.get(Numbers.encodeLowHighInts(commonType, valueType));
@@ -203,6 +217,9 @@ public class CaseCommon {
                 default:
                     return new GeoLongCaseFunction(returnType, picker, args);
             }
+        }
+        if (ColumnType.isArray(returnType)) {
+            return new ArrayCaseFunction(returnType, picker, args);
         }
 
         return getCaseFunctionConstructor(position, returnType).getInstance(position, picker, args);

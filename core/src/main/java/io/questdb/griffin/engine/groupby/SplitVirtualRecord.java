@@ -148,7 +148,7 @@ public class SplitVirtualRecord implements Record {
 
     @Override
     public Record getRecord(int col) {
-        return getFunction(col).getRecord(base);
+        return getFunction(col).extendedOps().getRecord(base);
     }
 
     @Override

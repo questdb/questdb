@@ -77,7 +77,7 @@ import java.util.concurrent.locks.LockSupport;
 abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     static final int FD = 1_000_000;
     static final Log LOG = LogFactory.getLog(BaseLineTcpContextTest.class);
-    protected final AtomicInteger recvBufferSize = new AtomicInteger();
+    protected final AtomicInteger maxRecvBufferSize = new AtomicInteger();
     protected boolean autoCreateNewColumns = true;
     protected boolean autoCreateNewTables = true;
     protected LineTcpConnectionContext context;
@@ -104,7 +104,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
         microSecondTicks = -1;
         recvBuffer = null;
         disconnected = true;
-        recvBufferSize.set(512);
+        maxRecvBufferSize.set(512 * 1024);
         disconnectOnError = false;
         floatDefaultColumnType = ColumnType.DOUBLE;
         integerDefaultColumnType = ColumnType.LONG;
@@ -179,7 +179,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
                 return super.getLineAuthenticatorFactory();
             }
         };
-        return new DefaultLineTcpReceiverConfiguration() {
+        return new DefaultLineTcpReceiverConfiguration(configuration) {
             @Override
             public boolean getAutoCreateNewColumns() {
                 return autoCreateNewColumns;
@@ -216,6 +216,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
+            public long getMaxRecvBufferSize() {
+                return maxRecvBufferSize.get();
+            }
+
+            @Override
             public MicrosecondClock getMicrosecondClock() {
                 return new MicrosecondClockImpl() {
                     @Override
@@ -235,7 +240,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
             @Override
             public int getRecvBufferSize() {
-                return recvBufferSize.get();
+                return Math.min(super.getRecvBufferSize(), (int) getMaxRecvBufferSize());
             }
 
             @Override

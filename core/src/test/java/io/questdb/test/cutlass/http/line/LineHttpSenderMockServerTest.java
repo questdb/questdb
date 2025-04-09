@@ -25,6 +25,8 @@
 package io.questdb.test.cutlass.http.line;
 
 import io.questdb.BuildInformationHolder;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConstants;
@@ -52,7 +54,8 @@ import java.util.function.Function;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class LineHttpSenderMockServerTest extends AbstractTest {
-    public static final Function<Integer, Sender.LineSenderBuilder> DEFAULT_FACTORY = port -> Sender.builder(Sender.Transport.HTTP).address("localhost:" + port);
+    public static final Function<Integer, Sender.LineSenderBuilder> DEFAULT_FACTORY =
+            port -> Sender.builder(Sender.Transport.HTTP).address("localhost:" + port).protocolVersion(Sender.PROTOCOL_VERSION_V1);
 
     private static final CharSequence QUESTDB_VERSION = new BuildInformationHolder().getSwVersion();
 
@@ -137,7 +140,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         testWithMock(mockHttpProcessor, sender -> sender.table("test")
                 .symbol("sym", "bol")
                 .doubleColumn("x", 1.0)
-                .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";username=Aladdin;password=;;Open;;Sesame;;;;;")); // escaped semicolons in password
+                .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";protocol_version=1;username=Aladdin;password=;;Open;;Sesame;;;;;")); // escaped semicolons in password
     }
 
     @Test
@@ -149,7 +152,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
         testWithMock(mockHttpProcessor, sender -> sender.table("test")
                 .symbol("sym", "bol")
                 .doubleColumn("x", 1.0)
-                .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";user=Aladdin;pass=;;Open;;Sesame;;;;;")); // escaped semicolons in password
+                .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";protocol_version=1;user=Aladdin;pass=;;Open;;Sesame;;;;;")); // escaped semicolons in password
     }
 
     @Test
@@ -197,7 +200,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                                 .atNow();
                     }
                 },
-                port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush_interval=off;auto_flush_rows=1;"));
+                port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush_interval=off;auto_flush_rows=1;protocol_version=1;"));
     }
 
     @Test
@@ -502,7 +505,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     }
 
     @NotNull
-    private DefaultHttpServerConfiguration createHttpServerConfiguration() {
+    private DefaultHttpServerConfiguration createHttpServerConfiguration(CairoConfiguration cairoConfiguration) {
         return new HttpServerConfigurationBuilder()
                 .withBaseDir(root)
                 .withSendBufferSize(4096)
@@ -510,7 +513,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .withAllowDeflateBeforeSend(false)
                 .withServerKeepAlive(true)
                 .withHttpProtocolVersion("HTTP/1.1 ")
-                .build();
+                .build(cairoConfiguration);
     }
 
     private void testWithMock(MockHttpProcessor mockHttpProcessor, Consumer<Sender> senderConsumer) throws Exception {
@@ -523,7 +526,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
 
     private void testWithMock(MockHttpProcessor mockHttpProcessor, Consumer<Sender> senderConsumer, Function<Integer, Sender.LineSenderBuilder> senderBuilderFactory, boolean verifyBeforeClose) throws Exception {
         assertMemoryLeak(() -> {
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration();
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(new DefaultCairoConfiguration(root));
 
             try (WorkerPool workerPool = new TestWorkerPool(1);
                  HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, PlainSocketFactory.INSTANCE)) {

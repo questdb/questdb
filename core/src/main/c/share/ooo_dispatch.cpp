@@ -289,18 +289,48 @@ void MULTI_VERSION_NAME (merge_copy_varchar_column)(
         const int64_t secondWord = src_fix[bit][rr * 2 + 1];
 
         auto originalData = secondWord & 0x000000000000ffffLL;
-        auto rellocatedSecondWord = originalData | (dst_var_offset << 16);
+        auto relocatedSecondWord = originalData | (dst_var_offset << 16);
         if ((firstWord & 1) == 0 && (firstWord & 4) == 0) {
             // not inlined and not null
             auto originalOffset = secondWord >> 16;
             auto len = (firstWord >> 4) & 0xffffff;
-            auto lenInDataMem = len;
-            auto data = src_var[bit] + originalOffset;
-            __MEMCPY(dst_var + dst_var_offset, data, lenInDataMem);
-            dst_var_offset += lenInDataMem;
+            __MEMCPY(dst_var + dst_var_offset, src_var[bit] + originalOffset, len);
+            dst_var_offset += len;
         }
         dst_fix[l * 2] = firstWord;
-        dst_fix[l * 2 + 1] = rellocatedSecondWord;
+        dst_fix[l * 2 + 1] = relocatedSecondWord;
+    }
+}
+
+// 32
+void MULTI_VERSION_NAME (merge_copy_array_column)(
+        index_t *merge_index,
+        int64_t merge_index_size,
+        int64_t *src_data_fix,
+        char *src_data_var,
+        int64_t *src_ooo_fix,
+        char *src_ooo_var,
+        int64_t *dst_fix,
+        char *dst_var,
+        int64_t dst_var_offset
+) {
+    int64_t *src_fix[] = {src_ooo_fix, src_data_fix};
+    char *src_var[] = {src_ooo_var, src_data_var};
+
+    for (int64_t l = 0; l < merge_index_size; l++) {
+        const uint64_t row = merge_index[l].i;
+        const uint32_t bit = (row >> 63);
+        const uint64_t rr = row & ~(1ull << 63);
+        const int64_t src_var_offset = src_fix[bit][rr * 2] & OFFSET_MAX;
+        auto size = static_cast<uint32_t>(src_fix[bit][rr * 2 + 1] & ARRAY_SIZE_MAX);
+
+        const auto relocated_var_offset = dst_var_offset & OFFSET_MAX;
+        if (size > 0) {
+            __MEMCPY(dst_var + dst_var_offset, src_var[bit] + src_var_offset, size);
+            dst_var_offset += size;
+        }
+        dst_fix[l * 2] = relocated_var_offset;
+        dst_fix[l * 2 + 1] = size;
     }
 }
 
@@ -413,14 +443,14 @@ void MULTI_VERSION_NAME (make_timestamp_index)(const int64_t *data, int64_t low,
     static_assert(sizeof(index_t) == 16);
 
     int64_t l = low;
-    Vec8q vec_i((l + 0) | (1ull << 63),
-                (l + 1) | (1ull << 63),
-                (l + 2) | (1ull << 63),
-                (l + 3) | (1ull << 63),
-                (l + 4) | (1ull << 63),
-                (l + 5) | (1ull << 63),
-                (l + 6) | (1ull << 63),
-                (l + 7) | (1ull << 63));
+    Vec8q vec_i((l + 0) | (1ll << 63),
+                (l + 1) | (1ll << 63),
+                (l + 2) | (1ll << 63),
+                (l + 3) | (1ll << 63),
+                (l + 4) | (1ll << 63),
+                (l + 5) | (1ll << 63),
+                (l + 6) | (1ll << 63),
+                (l + 7) | (1ll << 63));
     const Vec8q vec8(8);
     Vec8q vec_ts;
 
@@ -478,12 +508,12 @@ void MULTI_VERSION_NAME (set_memory_vanilla_short)(int16_t *data, const int16_t 
 }
 
 // 24
-void MULTI_VERSION_NAME (set_var_refs_64_bit)(int64_t *data, int64_t offset, int64_t count) {
+void MULTI_VERSION_NAME (set_binary_column_null_refs)(int64_t *data, int64_t offset, int64_t count) {
     set_var_refs<int64_t>(data, offset, count);
 }
 
 // 25
-void MULTI_VERSION_NAME (set_var_refs_32_bit)(int64_t *data, int64_t offset, int64_t count) {
+void MULTI_VERSION_NAME (set_string_column_null_refs)(int64_t *data, int64_t offset, int64_t count) {
     set_var_refs<int32_t>(data, offset, count);
 }
 
@@ -577,3 +607,46 @@ void MULTI_VERSION_NAME (set_varchar_null_refs)(int64_t *aux, int64_t offset, in
         aux[i + 1] = o;
     }
 }
+
+// 31
+void MULTI_VERSION_NAME (set_array_null_refs)(int64_t *aux, int64_t offset, int64_t count) {
+    // varchar aux is 16 bytes
+    count *= 2;
+    // offset for subsequent varchars stays the same
+    Vec4q vec(offset, 0, offset, 0);
+
+    int64_t i = 0;
+    for (; i < count - 3; i += 4) {
+        vec.store(aux + i);
+    }
+
+    // tail
+    for (; i < count; i += 2) {
+        aux[i] = offset;
+        aux[i + 1] = 0;
+    }
+}
+
+// 32
+void MULTI_VERSION_NAME (shift_copy_array_aux)(int64_t shift, const int64_t *src, int64_t src_lo, int64_t src_hi, int64_t *dest) {
+    const int64_t count = 2 * (src_hi - src_lo + 1);
+
+    Vec4q vec;
+    // The offset is stored in the first 8 bytes of arrays's 16 bytes.
+    auto vec_shift = Vec4q(shift , 0, shift , 0);
+
+    auto src_loo = src + 2 * src_lo;
+    int64_t i = 0;
+    for (; i < count - 3; i += 4) {
+        vec.load(src_loo + i);
+        vec -= vec_shift;
+        vec.store(dest + i);
+    }
+
+    // tail
+    for (; i < count; i += 2) {
+        dest[i] = src[i + 2 * src_lo] - shift;
+        dest[i + 1] = src[i + 2 * src_lo + 1];
+    }
+}
+

@@ -24,22 +24,28 @@
 
 package io.questdb.test.griffin.engine.functions;
 
+import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.StrArrayFunction;
 import org.junit.Test;
 
 public class StrArrayFunctionTest {
-    // assert that all type casts that are not possible will throw exception
 
     private static final StrArrayFunction function = new StrArrayFunction() {
+
+        @Override
+        public FunctionExtension extendedOps() {
+            return this;
+        }
+
         @Override
         public int getArrayLength() {
             return 1;
         }
 
         @Override
-        public CharSequence getStrA(Record rec) {
-            return "{hello}";
+        public Record getRecord(Record rec) {
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -48,8 +54,8 @@ public class StrArrayFunctionTest {
         }
 
         @Override
-        public CharSequence getStrB(Record rec) {
-            return getStrA(rec);
+        public CharSequence getStrA(Record rec) {
+            return "{hello}";
         }
 
         @Override
@@ -58,8 +64,8 @@ public class StrArrayFunctionTest {
         }
 
         @Override
-        public int getStrLen(Record rec) {
-            return getStrA(rec).length();
+        public CharSequence getStrB(Record rec) {
+            return getStrA(rec);
         }
 
         @Override
@@ -68,10 +74,22 @@ public class StrArrayFunctionTest {
         }
 
         @Override
+        public int getStrLen(Record rec) {
+            return getStrA(rec).length();
+        }
+
+        @Override
         public boolean isThreadSafe() {
             return true;
         }
     };
+
+    // assert that all type casts that are not possible will throw exception
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetArray() {
+        function.getArray(null);
+    }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetBin() {

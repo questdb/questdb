@@ -73,6 +73,16 @@ public class AlterTableRenameColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRenameArrayColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (arr double[]);");
+            execute("alter table x rename column arr to arr2;");
+            assertSql("column\ttype\narr2\tDOUBLE[]\n",
+                    "select \"column\", \"type\" from table_columns('x')");
+        });
+    }
+
+    @Test
     public void testRenameColumn() throws Exception {
         TestUtils.assertMemoryLeak(
                 () -> {

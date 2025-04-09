@@ -363,7 +363,8 @@ public class InfluxDBClientTest extends AbstractTest {
     @Test
     public void testLineDoesNotFitBuffer() throws Exception {
         try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
-            put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512");
+            put(PropertyKey.LINE_HTTP_MAX_RECV_BUFFER_SIZE.getEnvVarName(), "512");
+            put(PropertyKey.HTTP_RECV_BUFFER_SIZE.getEnvVarName(), "128");
             put(PropertyKey.DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "15");
         }})) {
             serverMain.start();

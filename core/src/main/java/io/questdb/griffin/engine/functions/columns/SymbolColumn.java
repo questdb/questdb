@@ -24,8 +24,8 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -35,7 +35,7 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.Nullable;
 
-public class SymbolColumn extends SymbolFunction implements ScalarFunction {
+public class SymbolColumn extends SymbolFunction implements Function {
     private final int columnIndex;
     private final boolean symbolTableStatic;
     private boolean ownSymbolTable;

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.constants;
 
+import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IntervalFunction;
@@ -31,7 +32,7 @@ import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
-public class IntervalConstant extends IntervalFunction implements ConstantFunction {
+public class IntervalConstant extends IntervalFunction implements ConstantFunction, FunctionExtension {
     public static final IntervalConstant NULL = new IntervalConstant(Numbers.LONG_NULL, Numbers.LONG_NULL);
 
     private final Interval interval = new Interval();
@@ -55,8 +56,38 @@ public class IntervalConstant extends IntervalFunction implements ConstantFuncti
     }
 
     @Override
+    public FunctionExtension extendedOps() {
+        return this;
+    }
+
+    @Override
+    public int getArrayLength() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public @NotNull Interval getInterval(Record rec) {
         return interval;
+    }
+
+    @Override
+    public Record getRecord(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public CharSequence getStrA(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public CharSequence getStrB(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public int getStrLen(Record rec, int arrayIndex) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
