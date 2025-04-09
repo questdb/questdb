@@ -79,6 +79,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.ObjectStackPool;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.SimpleAssociativeCache;
 import io.questdb.std.Transient;
@@ -396,7 +397,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    public @NotNull PGPipelineEntry copyIfExecuted(ObjectPool<PGPipelineEntry> entryPool) {
+    public @NotNull PGPipelineEntry copyIfExecuted(ObjectStackPool<PGPipelineEntry> entryPool) {
         if (!stateExec) {
             return this;
         }

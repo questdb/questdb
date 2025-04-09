@@ -29,6 +29,7 @@ import java.util.Arrays;
 public class ObjStack<T> implements Mutable {
     private static final int DEFAULT_INITIAL_CAPACITY = 16;
     private static final int MIN_INITIAL_CAPACITY = 8;
+    private final int initialCapacity;
     private T[] elements;
     private int head;
     private int mask;
@@ -39,6 +40,7 @@ public class ObjStack<T> implements Mutable {
     }
 
     public ObjStack(int initialCapacity) {
+        this.initialCapacity = initialCapacity;
         allocateElements(initialCapacity);
     }
 
@@ -77,6 +79,20 @@ public class ObjStack<T> implements Mutable {
         if (head == tail) {
             doubleCapacity();
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    public void resetCapacity() {
+        if (elements.length > initialCapacity) {
+            int h = head;
+            int n = elements.length;
+            int r = n - h;
+            T[] old = elements;
+            this.elements = (T[]) new Object[initialCapacity];
+            System.arraycopy(old, h, elements, 0, Math.min(initialCapacity, r));
+            mask = initialCapacity - 1;
+        }
+        head = tail = 0;
     }
 
     public int size() {

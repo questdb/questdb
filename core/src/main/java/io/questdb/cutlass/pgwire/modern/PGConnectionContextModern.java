@@ -74,6 +74,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.ObjectStackPool;
 import io.questdb.std.Rnd;
 import io.questdb.std.SimpleAssociativeCache;
 import io.questdb.std.Unsafe;
@@ -158,7 +159,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private final DirectUtf8String directUtf8NamedStatement = new DirectUtf8String();
     private final boolean dumpNetworkTraffic;
     private final CairoEngine engine;
-    private final ObjectPool<PGPipelineEntry> entryPool;
+    private final ObjectStackPool<PGPipelineEntry> entryPool;
     private final int forceRecvFragmentationChunkSize;
     private final int forceSendFragmentationChunkSize;
     private final int maxBlobSize;
@@ -244,7 +245,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
             this.metrics = engine.getMetrics();
             this.tasCache = tasCache;
-            this.entryPool = new ObjectPool<>(() -> new PGPipelineEntry(engine), 4);
+            this.entryPool = new ObjectStackPool<>(() -> new PGPipelineEntry(engine), 1024);
             final boolean enableInsertCache = configuration.isInsertCacheEnabled();
             final int insertBlockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1;
             final int insertRowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1;

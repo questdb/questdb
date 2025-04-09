@@ -40,82 +40,58 @@ import org.jetbrains.annotations.NotNull;
  *     should be used with care.</li>
  * </ul>
  */
-public class ObjectPool<T extends Mutable> implements Mutable {
-    private static final Log LOG = LogFactory.getLog(ObjectPool.class);
+public class ObjectStackPool<T extends Mutable> implements Mutable {
+    private static final Log LOG = LogFactory.getLog(ObjectStackPool.class);
     private final ObjectFactory<T> factory;
     private final int initialSize;
-    private ObjList<T> list;
-    private int pos = 0;
-    private int size;
+    private final ObjStack<T> stack;
+    private int outieCount;
 
-    public ObjectPool(@NotNull ObjectFactory<T> factory, int size) {
-        this.list = new ObjList<>(size);
+    public ObjectStackPool(@NotNull ObjectFactory<T> factory, int size) {
+        this.stack = new ObjStack<>(size);
         this.factory = factory;
-        this.size = size;
         this.initialSize = size;
-        fill();
+        this.outieCount = 0;
+        fill(size);
     }
 
     @Override
     public void clear() {
-        pos = 0;
-    }
-
-    public int getPos() {
-        return pos;
+        resetCapacity();
     }
 
     public T next() {
-        if (pos == size) {
+        if (!stack.notEmpty()) {
             expand();
         }
-
-        T o = list.getQuick(pos++);
+        outieCount++;
+        T o = stack.pop();
         o.clear();
         return o;
     }
 
-    /**
-     * Return an individual object to the pool.
-     * <p>
-     * This method has complexity O(n) where n is the number of objects in the pool thus should be used with care.
-     * It cannot be used after {@link #resetCapacity()} or {@link #clear()} have been called since they automatically
-     * mark all objects as released.
-     *
-     * @param o object to return to the pool
-     */
     public void release(T o) {
-        assert pos > 0 : "returnObject called more times than next()";
-        pos--;
-
-        int objectPos = pos;
-        while (list.getQuick(objectPos) != o) {
-            objectPos--;
-            if (objectPos < 0) {
-                throw new AssertionError("Object not found in pool [object=" + o + ']');
-            }
+        if (o == null) {
+            return;
         }
-        T objectToSwap = list.getQuick(pos);
-        list.setQuick(pos, o);
-        list.setQuick(objectPos, objectToSwap);
+        outieCount--;
+        if (outieCount < initialSize) {
+            stack.push(o);
+        }
     }
 
     public void resetCapacity() {
-        this.list = new ObjList<>(initialSize);
-        this.size = initialSize;
-        fill();
-        pos = 0;
+        stack.resetCapacity();
     }
 
     private void expand() {
-        fill();
-        size <<= 1;
-        LOG.debug().$("pool resize [class=").$(factory.getClass().getName()).$(", size=").$(size).$(']').$();
+        fill(outieCount);
+        LOG.debug().$("stack pool resize [class=").$(factory.getClass().getName()).$(", outieCount=").$(outieCount).$(']').$();
     }
 
-    private void fill() {
-        for (int i = 0; i < size; i++) {
-            list.add(factory.newInstance());
+    private void fill(int count) {
+        for (int i = 0; i < count; i++) {
+            stack.push(factory.newInstance());
         }
     }
 }

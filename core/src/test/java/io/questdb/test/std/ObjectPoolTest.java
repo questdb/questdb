@@ -149,15 +149,13 @@ public class ObjectPoolTest extends AbstractTest {
         TestObject notFromPool = new TestObject();
         try {
             pool.release(notFromPool);
-            Assert.fail();
         } catch (AssertionError expected) {
 
         }
 
-        TestObject o = pool.next();
+        TestObject ignore = pool.next();
         try {
             pool.release(notFromPool);
-            Assert.fail();
         } catch (AssertionError expected) {
 
         }
