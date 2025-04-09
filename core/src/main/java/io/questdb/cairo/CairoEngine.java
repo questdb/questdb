@@ -399,14 +399,14 @@ public class CairoEngine implements Closeable, WriterSource {
 
                             path.trimTo(pathLen).concat(tableToken);
                             long refreshTxn = WalUtils.getMatViewLastRefreshBaseTxn(path, tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
-                            if (refreshTxn == -2) {
+                            if (refreshTxn == WalUtils.MAT_VIEW_REFRESH_TXN_INVALID) {
                                 // keep original invalidation reason
                                 state.setLastRefreshBaseTableTxn(-1);
                                 continue;
                             }
                             long baseTableLastTxn = getTableSequencerAPI().lastTxn(baseTableToken);
                             state.setLastRefreshBaseTableTxn(refreshTxn);
-                            if (refreshTxn == -1 || refreshTxn > baseTableLastTxn) {
+                            if (refreshTxn == WalUtils.MAT_VIEW_REFRESH_TXN_NOT_FOUND || refreshTxn > baseTableLastTxn) {
                                 LOG.info().$("materialized view is out of sync with base table [table=").utf8(matViewDefinition.getBaseTableName())
                                         .$(", view=").utf8(tableToken.getTableName())
                                         .$(", lastRefreshBaseTxn=").$(state.getLastRefreshBaseTxn())

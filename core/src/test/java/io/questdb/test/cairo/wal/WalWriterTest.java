@@ -1620,7 +1620,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
                 int tableLen = path.size();
                 long txn = WalUtils.getMatViewLastRefreshBaseTxn(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
-                assertEquals(-1, txn); // no transactions
+                assertEquals(MAT_VIEW_REFRESH_TXN_NOT_FOUND, txn); // no transactions
 
                 long maxTxn = 3;
                 try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
@@ -1635,7 +1635,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
 
                 txn = WalUtils.getMatViewLastRefreshBaseTxn(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
-                assertEquals(-1, txn); // incomplete refresh, no commitWithExtra
+                assertEquals(MAT_VIEW_REFRESH_TXN_NOT_FOUND, txn); // incomplete refresh, no commitWithExtra
 
                 try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                     for (int i = 0; i < maxTxn; i++) {
@@ -1661,7 +1661,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
 
                 txn = WalUtils.getMatViewLastRefreshBaseTxn(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
-                assertEquals(-2, txn); // invalidate commit
+                assertEquals(MAT_VIEW_REFRESH_TXN_INVALID, txn); // invalidate commit
 
                 try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                     // reset invalidation
@@ -1680,7 +1680,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 ff.remove(path.$());
                 Assert.assertFalse(ff.exists(path.$()));
                 txn = WalUtils.getMatViewLastRefreshBaseTxn(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
-                assertEquals(-1, txn); // no _event file, no state file
+                assertEquals(MAT_VIEW_REFRESH_TXN_NOT_FOUND, txn); // no _event file, no state file
             }
         });
     }

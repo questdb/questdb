@@ -47,6 +47,8 @@ public class WalUtils {
     public static final String EVENT_FILE_NAME = "_event";
     public static final String EVENT_INDEX_FILE_NAME = "_event.i";
     public static final CharSequence INITIAL_META_FILE_NAME = "_meta.0";
+    public static final int MAT_VIEW_REFRESH_TXN_INVALID = -2;
+    public static final int MAT_VIEW_REFRESH_TXN_NOT_FOUND = -1;
     public static final int METADATA_WALID = -1;
     public static final int MIN_WAL_ID = DROP_TABLE_WAL_ID;
     public static final int SEG_MIN_ID = 0;
@@ -117,8 +119,8 @@ public class WalUtils {
      * @param walEventReader     the reader to read WAL events
      * @param blockFileReader    the reader to read state file
      * @param matViewStateReader the POD to read materialized view state into
-     * @return -1 if the transaction could not be extracted, -2 if the last WAL-E entry is an invalidation commit (MAT_VIEW_INVALIDATE),
-     * or a transaction number greater than -1 if it is a valid last refresh transaction
+     * @return MAT_VIEW_REFRESH_TXN_NOT_FOUND if the transaction could not be extracted, MAT_VIEW_REFRESH_TXN_INVALID if the last WAL-E entry is an invalidation commit (MAT_VIEW_INVALIDATE),
+     * or a transaction number >= 0 if it is a valid last refresh transaction
      */
     public static long getMatViewLastRefreshBaseTxn(
             Path tablePath,
@@ -129,8 +131,6 @@ public class WalUtils {
             BlockFileReader blockFileReader,
             MatViewStateReader matViewStateReader
     ) {
-        long txnNotFound = -1;
-        long txnInvalid = -2;
         try (MemoryCMR mem = txnLogMemory) {
             int tablePathLen = tablePath.size();
             mem.smallFile(configuration.getFilesFacade(), tablePath.concat(SEQ_DIR).concat(TXNLOG_FILE_NAME).$(), MemoryTag.MMAP_TX_LOG);
@@ -144,6 +144,7 @@ public class WalUtils {
                         final int walId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_WAL_ID_OFFSET);
                         final int segmentId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_OFFSET);
                         final int segmentTxn = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_TXN_OFFSET);
+                        // only valid wal ids considered
                         if (walId > 0) {
                             tablePath.concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                             try (WalEventReader eventReader = walEventReader) {
@@ -152,7 +153,7 @@ public class WalUtils {
                                     return walEventCursor.getMatViewDataInfo().getLastRefreshBaseTableTxn();
                                 }
                                 if (walEventCursor.getType() == MAT_VIEW_INVALIDATE) {
-                                    return txnInvalid;
+                                    return MAT_VIEW_REFRESH_TXN_INVALID;
                                 }
                             } catch (Throwable th) {
                                 // walEventReader may not be able to find/open the WAL-e files
@@ -163,16 +164,18 @@ public class WalUtils {
                                     // read from state file if exists
                                     if (!matViewStateReader.isInvalid()) {
                                         return matViewStateReader.getLastRefreshBaseTxn();
+                                    } else {
+                                        return MAT_VIEW_REFRESH_TXN_INVALID;
                                     }
                                 } catch (Throwable th2) {
                                 }
-                                return txnNotFound;
+                                return MAT_VIEW_REFRESH_TXN_NOT_FOUND;
                             }
                         }
                     }
                 }
             }
         }
-        return txnNotFound;
+        return MAT_VIEW_REFRESH_TXN_NOT_FOUND;
     }
 }
