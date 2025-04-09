@@ -79,6 +79,7 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.Rnd;
 import io.questdb.std.SimpleAssociativeCache;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Utf8SequenceObjHashMap;
 import io.questdb.std.Vect;
 import io.questdb.std.WeakSelfReturningObjectPool;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -86,6 +87,7 @@ import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StdoutSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -154,6 +156,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private final CharacterStore characterStore;
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final PGWireConfiguration configuration;
+    private final DirectUtf8String directUtf8NamedStatement = new DirectUtf8String();
     private final boolean dumpNetworkTraffic;
     private final CairoEngine engine;
     private final ObjectPool<PGPipelineEntry> entryPool;
@@ -162,10 +165,10 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private final int maxBlobSize;
     private final Metrics metrics;
     private final CharSequenceObjHashMap<PGPipelineEntry> namedPortals;
-    private final CharSequenceObjHashMap<PGPipelineEntry> namedStatements;
+    private final Utf8SequenceObjHashMap<PGPipelineEntry> namedStatements;
     private final ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters;
     private final ArrayDeque<PGPipelineEntry> pipeline = new ArrayDeque<>();
-    private final Consumer<? super CharSequence> preparedStatementDeallocator = this::deallocateNamedStatement;
+    private final Consumer<? super Utf8Sequence> preparedStatementDeallocator = this::deallocateNamedStatement;
     private final ResponseUtf8Sink responseUtf8Sink = new ResponseUtf8Sink();
     private final Rnd rnd;
     private final SecurityContextFactory securityContextFactory;
@@ -231,7 +234,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             this.circuitBreaker = circuitBreaker;
             this.sqlExecutionContext = sqlExecutionContext;
             this.sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, bindVariableService, this.rnd = configuration.getRandom());
-            this.namedStatements = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
+            this.namedStatements = new Utf8SequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
             this.pendingWriters = new ObjObjHashMap<>(configuration.getPendingWritersCacheSize());
             this.namedPortals = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
             this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
@@ -336,7 +339,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         totalReceived = 0;
         transactionState = IMPLICIT_TRANSACTION;
         entryPool.clear();
-        Misc.clear(characterStore);
     }
 
     @Override
@@ -535,6 +537,14 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         recvBufferReadOffset = 0;
     }
 
+    private void deallocateNamedStatement(Utf8Sequence statementName) {
+        PGPipelineEntry pe = removeNamedStatementFromCache(statementName);
+
+        // the entry with a named prepared statement must be returned back to the pool
+        // otherwise we will leak memory until the connection is closed.
+        releaseToPool(pe);
+    }
+
     private void doSendWithRetries(int bufferOffset, int bufferSize) throws PeerDisconnectedException, PeerIsSlowToReadException {
         int offset = bufferOffset;
         int remaining = bufferSize;
@@ -582,6 +592,18 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         cache.clear();
     }
 
+    private void freePipelineEntriesFrom(Utf8SequenceObjHashMap<PGPipelineEntry> cache, boolean isStatementClose) {
+        ObjList<Utf8String> names = cache.keys();
+        for (int i = 0, n = names.size(); i < n; i++) {
+            PGPipelineEntry pe = cache.get(names.getQuick(i));
+            pe.setStateClosed(true, isStatementClose);
+            // return the factory back to global cache in case of a select
+            pe.cacheIfPossible(tasCache, null);
+            releaseToPool(pe);
+        }
+        cache.clear();
+    }
+
     private CharSequence getString(long lo, long hi, CharSequence errorMessage) throws BadProtocolException {
         CharacterStoreEntry e = characterStore.newEntry();
         if (Utf8s.utf8ToUtf16(lo, hi, e)) {
@@ -594,9 +616,16 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
 
     @Nullable
     private CharSequence getUtf16Str(long lo, long hi, String utf8ErrorStr) throws BadProtocolException {
-        // todo: use utf8 maps
         if (hi - lo > 0) {
             return getString(lo, hi, utf8ErrorStr);
+        }
+        return null;
+    }
+
+    @Nullable
+    private Utf8Sequence getUtf8NamedStatement(long lo, long hi) {
+        if (hi - lo > 0) {
+            return directUtf8NamedStatement.of(lo, hi);
         }
         return null;
     }
@@ -694,12 +723,13 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         responseUtf8Sink.sendBufferAndReset();
     }
 
-    private boolean lookupPipelineEntryForPortalName(@Nullable CharSequence portalName) throws BadProtocolException {
-        if (portalName != null) {
-            PGPipelineEntry pe = namedPortals.get(portalName);
+    private boolean lookupPipelineEntryForNamedStatement(long lo, long hi) throws BadProtocolException {
+        @Nullable Utf8Sequence namedStatement = getUtf8NamedStatement(lo, hi);
+        if (namedStatement != null) {
+            PGPipelineEntry pe = namedStatements.get(namedStatement);
             if (pe == null) {
                 throw msgKaput()
-                        .put(" portal does not exist [name=").put(portalName).put(']');
+                        .put("statement or portal does not exist [name=").put(namedStatement).put(']');
             }
 
             replaceCurrentPipelineEntry(pe);
@@ -708,12 +738,12 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         return true;
     }
 
-    private boolean lookupPipelineEntryForStatementName(@Nullable CharSequence statementName) throws BadProtocolException {
-        if (statementName != null) {
-            PGPipelineEntry pe = namedStatements.get(statementName);
+    private boolean lookupPipelineEntryForPortalName(@Nullable CharSequence portalName) throws BadProtocolException {
+        if (portalName != null) {
+            PGPipelineEntry pe = namedPortals.get(portalName);
             if (pe == null) {
                 throw msgKaput()
-                        .put("statement or portal does not exist [name=").put(statementName).put(']');
+                        .put(" portal does not exist [name=").put(portalName).put(']');
             }
 
             replaceCurrentPipelineEntry(pe);
@@ -740,9 +770,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         lo = hi + 1;
         hi = getUtf8StrSize(lo, msgLimit, "bad prepared statement name length [msgType='B']", pipelineCurrentEntry);
 
-        CharSequence statementName = getUtf16Str(lo, hi, "invalid UTF8 bytes in statement name (bind)");
-
-        lookupPipelineEntryForStatementName(statementName);
+        lookupPipelineEntryForNamedStatement(lo, hi);
 
         // Past this point the pipeline entry must not be null.
         // If it is - this means back-to-back "bind" messages were received with no prepared statement name.
@@ -870,7 +898,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 // reference from maps.
                 lo = lo + 1;
                 final long hi = getUtf8StrSize(lo, msgLimit, "bad prepared statement name length", pipelineCurrentEntry);
-                lookedUpPipelineEntry = uncacheNamedStatement(getUtf16Str(lo, hi, "invalid UTF8 bytes in statement name (close)"));
+                lookedUpPipelineEntry = removeNamedStatementFromCache(getUtf8NamedStatement(lo, hi));
                 isStatementClose = true;
                 break;
             case 'P':
@@ -913,9 +941,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                     getUtf16Str(lo + 1, hi, "invalid UTF8 bytes in portal name (describe)")
             );
         } else {
-            nullTargetName = lookupPipelineEntryForStatementName(
-                    getUtf16Str(lo + 1, hi, "invalid UTF8 bytes in statement name (describe)")
-            );
+            nullTargetName = lookupPipelineEntryForNamedStatement(lo + 1, hi);
         }
 
         // some defensive code to have predictable behaviour
@@ -1016,7 +1042,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // when statement name is present in "parse" message
         // it should be interpreted as "store" command, e.g. we store the
         // parsed SQL as short and sweet statement name.
-        final CharSequence targetStatementName = getUtf16Str(lo, hi, "invalid UTF8 bytes in statement name (parse)");
+        final Utf8Sequence namedStatement = getUtf8NamedStatement(lo, hi);
 
         // read query text from the message
         lo = hi + 1;
@@ -1096,24 +1122,24 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             // compiling the SQL from scratch.
             pipelineCurrentEntry.compileNewSQL(utf16SqlText, engine, sqlExecutionContext, taiPool, false);
         }
-        msgParseCreateTargetStatement(targetStatementName);
+        msgParseCreateNamedStatement(namedStatement);
     }
 
-    private void msgParseCreateTargetStatement(CharSequence targetStatementName) throws BadProtocolException {
-        if (targetStatementName != null) {
-            LOG.info().$("create prepared statement [name=").$(targetStatementName).I$();
-            int index = namedStatements.keyIndex(targetStatementName);
+    private void msgParseCreateNamedStatement(Utf8Sequence namedStatement) throws BadProtocolException {
+        if (namedStatement != null) {
+            LOG.info().$("create prepared statement [name=").$(namedStatement).I$();
+            int index = namedStatements.keyIndex(namedStatement);
             if (index > -1) {
                 if (namedStatements.size() == namedStatementLimit) {
                     throw msgKaput().put("client created too many named statements without closing them. it looks like a buggy client. [limit=").put(namedStatementLimit).put(']');
                 }
 
-                final String preparedStatementName = Chars.toString(targetStatementName);
-                pipelineCurrentEntry.setPreparedStatement(true, preparedStatementName);
-                namedStatements.putAt(index, preparedStatementName, pipelineCurrentEntry);
+                final Utf8String immutableNamedStatement = Utf8String.newInstance(namedStatement);
+                pipelineCurrentEntry.setNamedStatement(immutableNamedStatement);
+                namedStatements.putAt(index, immutableNamedStatement, pipelineCurrentEntry);
             } else {
                 throw msgKaput()
-                        .put("duplicate statement [name=").put(targetStatementName).put(']');
+                        .put("duplicate statement [name=").put(namedStatement).put(']');
             }
         }
     }
@@ -1302,6 +1328,35 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         entryPool.release(pe);
     }
 
+    private PGPipelineEntry removeNamedStatementFromCache(Utf8Sequence namedStatement) {
+        if (namedStatement != null) {
+            int index = namedStatements.keyIndex(namedStatement);
+            if (index < 0) {
+                PGPipelineEntry pe = namedStatements.valueAt(index);
+                namedStatements.removeAt(index);
+                // also remove entries for the matching portal names
+                ObjList<CharSequence> portalNames = pe.getPortalNames();
+                for (int i = 0, n = portalNames.size(); i < n; i++) {
+                    int portalKeyIndex = namedPortals.keyIndex(portalNames.getQuick(i));
+                    if (portalKeyIndex < 0) {
+                        // release the entry, it must not be referenced from anywhere other than
+                        // this list (we enforce portal name uniqueness)
+                        Misc.free(namedPortals.valueAt(portalKeyIndex));
+                        namedPortals.removeAt(portalKeyIndex);
+                    } else {
+                        // else: do not make a fuss if portal name does not exist
+                        LOG.debug()
+                                .$("ignoring non-existent portal [portalName=").$(portalNames.getQuick(i))
+                                .$(", namedStatement=").$(namedStatement)
+                                .I$();
+                    }
+                }
+                return pe;
+            }
+        }
+        return null;
+    }
+
     private void replaceCurrentPipelineEntry(PGPipelineEntry nextEntry) {
         if (nextEntry == pipelineCurrentEntry) {
             return;
@@ -1401,7 +1456,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             } else {
                 LOG.debug().$("pipeline entry not consumed [instance=)").$(pipelineCurrentEntry)
                         .$(", sql=").$(pipelineCurrentEntry.getSqlText())
-                        .$(", stmt=").$(pipelineCurrentEntry.getPreparedStatementName())
+                        .$(", stmt=").$(pipelineCurrentEntry.getNamedStatement())
                         .$(", portal=").$(pipelineCurrentEntry.getPortalName())
                         .I$();
                 break;
@@ -1423,43 +1478,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                     }
                 }
                 namedPortals.removeAt(index);
-                return pe;
-            }
-        }
-        return null;
-    }
-
-    private void deallocateNamedStatement(CharSequence statementName) {
-        PGPipelineEntry pe = uncacheNamedStatement(statementName);
-
-        // the entry with a named prepared statement must be returned back to the pool
-        // otherwise we will leak memory until the connection is closed.
-        releaseToPool(pe);
-    }
-
-    private PGPipelineEntry uncacheNamedStatement(CharSequence statementName) {
-        if (statementName != null) {
-            int index = namedStatements.keyIndex(statementName);
-            if (index < 0) {
-                PGPipelineEntry pe = namedStatements.valueAt(index);
-                namedStatements.removeAt(index);
-                // also remove entries for the matching portal names
-                ObjList<CharSequence> portalNames = pe.getPortalNames();
-                for (int i = 0, n = portalNames.size(); i < n; i++) {
-                    int portalKeyIndex = namedPortals.keyIndex(portalNames.getQuick(i));
-                    if (portalKeyIndex < 0) {
-                        // release the entry, it must not be referenced from anywhere other than
-                        // this list (we enforce portal name uniqueness)
-                        Misc.free(namedPortals.valueAt(portalKeyIndex));
-                        namedPortals.removeAt(portalKeyIndex);
-                    } else {
-                        // else: do not make a fuss if portal name does not exist
-                        LOG.debug()
-                                .$("ignoring non-existent portal [portalName=").$(portalNames.getQuick(i))
-                                .$(", statementName=").$(statementName)
-                                .I$();
-                    }
-                }
                 return pe;
             }
         }
