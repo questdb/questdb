@@ -422,7 +422,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             }
         }
         createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata);
-        // Key column validation ( best effort):
+        // Key column validation (best-effort):
         // Option 1. Base table has no dedup.
         //           Any key columns are fine in this case.
         // Option 2. Base table has dedup columns.
@@ -455,7 +455,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
      * The node may contain multiple columns/aliases, e.g. `concat(sym1, sym2)`, which are searched
      * down to their names in the base table.
      * <p>
-     * Used to find the list of base table columns used in mat view query keys (best effort validation).
+     * Used to find the list of base table columns used in mat view query keys (best-effort validation).
      */
     private static void copyBaseTableColumnNames(
             ExpressionNode node,
