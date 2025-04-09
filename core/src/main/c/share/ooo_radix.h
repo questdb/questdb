@@ -32,7 +32,6 @@
 #include <algorithm>
 #include "simd.h"
 #include "ooo.h"
-#include <array>
 
 #define assertm(exp, msg) assert(((void)msg, exp))
 
