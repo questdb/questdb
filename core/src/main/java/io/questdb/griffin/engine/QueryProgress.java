@@ -55,11 +55,14 @@ import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 // Factory that adds query to registry on getCursor() and removes on cursor close().
 public class QueryProgress extends AbstractRecordCursorFactory implements ResourcePoolSupervisor<ReaderPool.R> {
+    static final int STATE_POSSIBLE_BIND_VARIABLE = 1;
+    static final int STATE_START = 0;
     @SuppressWarnings("FieldMayBeFinal")
     private static Log LOG = LogFactory.getLog(QueryProgress.class);
     private final RecordCursorFactory base;
@@ -378,6 +381,23 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         for (int i = 0; i < leakedReadersCount; i++) {
             log.$(", leaked=").$(leakedReaders.getQuick(i).getTableToken().getTableName());
         }
+    }
+
+    private void substituteBindVariablesIntoQueryText(@NotNull CharSequence sqlText, @NotNull SqlExecutionContext executionContext) {
+        StringSink sink = Misc.getThreadLocalSink();
+        int state = STATE_START;
+        int bindVarNumber;
+        for (int i = 0, n = sqlText.length(); i < n; i++) {
+            char c = sqlText.charAt(i);
+
+            if (c == '$') {
+                state = STATE_POSSIBLE_BIND_VARIABLE;
+                continue;
+            }
+
+        }
+
+        executionContext.getBindVariableService().define()
     }
 
     @Override
