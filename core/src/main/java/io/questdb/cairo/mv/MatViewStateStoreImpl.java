@@ -59,7 +59,9 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
 
     public MatViewStateStoreImpl(CairoEngine engine) {
         this.telemetry = engine.getTelemetryMatView();
-        this.telemetryFacade = telemetry.isEnabled() ? this::storeMatViewTelemetry : this::storeMatViewTelemetryNoOp;
+        this.telemetryFacade = telemetry.isEnabled()
+                ? this::storeMatViewTelemetry
+                : (event, tableToken, baseTableTxn, errorMessage, latencyUs) -> { /* no-op */ };
         this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
         this.createLastNotifiedTxn = name -> new AtomicLong();
     }
@@ -226,8 +228,5 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
 
     private void storeMatViewTelemetry(short event, TableToken tableToken, long baseTableTxn, CharSequence errorMessage, long latencyUs) {
         TelemetryMatViewTask.store(telemetry, event, tableToken.getTableId(), baseTableTxn, errorMessage, latencyUs);
-    }
-
-    private void storeMatViewTelemetryNoOp(short event, TableToken tableToken, long baseTableTxn, CharSequence errorMessage, long latencyUs) {
     }
 }
