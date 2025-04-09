@@ -31,7 +31,12 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMAR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Long256Acceptor;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -100,8 +105,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
                         }
                     } catch (CairoException e) {
                         LOG.error().$("cannot determine file length to safely truncate [fd=").$(fd)
+                                .$(", msg=").$(e.getFlyweightMessage())
                                 .$(", errno=").$(e.getErrno())
-                                .$(", error=").$(e.getFlyweightMessage())
                                 .I$();
                     }
                 }

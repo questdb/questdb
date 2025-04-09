@@ -569,10 +569,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 null
                         );
                     } catch (CairoException e) {
-                        LOG.error().$("could not update state for materialized view [table=")
-                                .$(writer.getTableToken())
-                                .$(", error=")
-                                .$(e.getFlyweightMessage())
+                        LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
+                                .$(", msg=").$(e.getFlyweightMessage())
+                                .$(", errno=").$(e.getErrno())
                                 .I$();
                     }
                 }
@@ -624,10 +623,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             info.getInvalidationReason()
                     );
                 } catch (CairoException e) {
-                    LOG.error().$("could not update state for materialized view [table=")
-                            .$(writer.getTableToken())
-                            .$(", error=")
-                            .$(e.getFlyweightMessage()).I$();
+                    LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
+                            .$(", msg=").$(e.getFlyweightMessage())
+                            .$(", errno=").$(e.getErrno())
+                            .I$();
                 }
                 return 1;
             default:
@@ -710,8 +709,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             LogRecord log = !e.isWALTolerable() ? LOG.error() : LOG.info();
             log.$("error applying SQL to wal table [table=")
                     .utf8(tableWriter.getTableToken().getTableName()).$(", sql=").$(sql)
-                    .$(", error=").$(e.getFlyweightMessage())
-                    .$(", errno=").$(e.getErrno()).I$();
+                    .$(", msg=").$(e.getFlyweightMessage())
+                    .$(", errno=").$(e.getErrno())
+                    .I$();
 
             if (!e.isWALTolerable()) {
                 throw e;

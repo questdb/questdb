@@ -1376,9 +1376,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(lexer.lastTokenPosition(), "'resume' or 'suspend'").put(" expected");
             }
         } catch (CairoException e) {
-            LOG.info().$("could not alter materialized view [table=").$(matViewToken.getTableName())
+            LOG.info().$("could not alter materialized view [view=").$(matViewToken.getTableName())
+                    .$(", msg=").$(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
-                    .$(", ex=").$(e.getFlyweightMessage())
                     .I$();
             if (e.getPosition() == 0) {
                 e.position(lexer.lastTokenPosition());
@@ -1649,8 +1649,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         } catch (CairoException e) {
             LOG.info().$("could not alter table [table=").$(tableToken.getTableName())
+                    .$(", msg=").$(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
-                    .$(", ex=").$(e.getFlyweightMessage())
                     .I$();
             if (e.getPosition() == 0) {
                 e.position(lexer.lastTokenPosition());
@@ -4103,7 +4103,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             } catch (CairoException e) {
                 LOG.info()
                         .$("could not backup [table=").utf8(tableName)
-                        .$(", ex=").$(e.getFlyweightMessage())
+                        .$(", msg=").$(e.getFlyweightMessage())
                         .$(", errno=").$(e.getErrno())
                         .I$();
                 auxPath.of(cachedBackupTmpRoot).concat(tableToken).slash$();

@@ -392,8 +392,9 @@ public class WalWriter implements TableWriterAPI {
         } catch (CairoException e) {
             LOG.critical().$("could not apply structure changes, WAL will be closed [table=").$(tableToken.getTableName())
                     .$(", walId=").$(walId)
+                    .$(", ex=").$((Throwable) e)
                     .$(", errno=").$(e.getErrno())
-                    .$(", error=").$((Throwable) e).I$();
+                    .I$();
             distressed = true;
             return false;
         }
