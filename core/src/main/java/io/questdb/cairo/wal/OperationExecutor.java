@@ -88,7 +88,7 @@ class OperationExecutor implements Closeable {
                 } catch (TableReferenceOutOfDateException ex) {
                     // The table is renamed in the table registry
                     // just before the compilation of this ALTER
-                    TableToken updatedToken = engine.getTableTokenByDirName(tableToken.getDirName());
+                    TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
                     if (updatedToken != null && !updatedToken.equals(tableToken)) {
                         tableWriter.updateTableToken(updatedToken);
                         executionContext.remapTableNameResolutionTo(updatedToken);
