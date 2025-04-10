@@ -897,12 +897,12 @@ public class CreateMatViewTest extends AbstractCairoTest {
             createTable(TABLE1);
             createTable(TABLE2);
 
-            assertException(
+            assertExceptionNoLeakCheck(
                     "create materialized view " + TABLE2 + " as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day",
                     25, "table with the requested name already exists"
             );
 
-            assertException(
+            assertExceptionNoLeakCheck(
                     "create materialized view if not exists " + TABLE2 + " as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day",
                     39, "table with the requested name already exists"
             );
@@ -912,17 +912,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             // without IF NOT EXISTS
             // assertMatViewDefinition() fails with "definition is null" when this assertException is called!
-//            assertException(
-//                    "create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day",
-//                    25, "view already exists"
-//            );
-            try {
-                execute("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
-                fail("Expected SqlException missing");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "view already exists");
-                Assert.assertEquals(25, e.getPosition());
-            }
+            assertExceptionNoLeakCheck(
+                    "create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day",
+                    25, "view already exists"
+            );
 
             // with IF NOT EXISTS
             execute("create materialized view if not exists test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
