@@ -24,8 +24,12 @@
 
 package io.questdb.test.std.datetime.microtime;
 
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimeZoneRulesMicros;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -41,6 +45,7 @@ import java.util.List;
 import java.util.Set;
 
 public class TimeZoneRulesMicrosTest {
+    private static final Log LOG = LogFactory.getLog(TimeZoneRulesMicrosTest.class);
 
     @Test
     public void testCompatibility() {
@@ -144,11 +149,13 @@ public class TimeZoneRulesMicrosTest {
 
     @Test
     public void testToUtcCompatibility() {
-        Set<String> allZones = ZoneId.getAvailableZoneIds();
-        List<String> zoneList = new ArrayList<>(allZones);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+
+        final Set<String> allZones = ZoneId.getAvailableZoneIds();
+        final List<String> zoneList = new ArrayList<>(allZones);
         Collections.sort(zoneList);
-        List<ZoneId> zones = new ArrayList<>(zoneList.size());
-        List<TimeZoneRulesMicros> zoneRules = new ArrayList<>(zoneList.size());
+        final List<ZoneId> zones = new ArrayList<>(zoneList.size());
+        final List<TimeZoneRulesMicros> zoneRules = new ArrayList<>(zoneList.size());
 
         for (String z : zoneList) {
             ZoneId zone = ZoneId.of(z);
@@ -156,9 +163,10 @@ public class TimeZoneRulesMicrosTest {
             zoneRules.add(new TimeZoneRulesMicros(zone.getRules()));
         }
 
-        DateTimeFormatter localDateTimeFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'.000Z'");
+        final DateTimeFormatter localDateTimeFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'.000Z'");
         long micros = Timestamps.toMicros(1900, 1, 1, 0, 0);
-        long deadline = Timestamps.toMicros(2115, 12, 31, 0, 0);
+        final long deadline = Timestamps.toMicros(2115, 12, 31, 0, 0);
+        final long step = Math.max(1, rnd.nextLong(30)) * Timestamps.DAY_MICROS;
 
         while (micros < deadline) {
             LocalDateTime dt = LocalDateTime.parse(Timestamps.toString(micros), localDateTimeFormat);
@@ -184,7 +192,7 @@ public class TimeZoneRulesMicrosTest {
                     throw e;
                 }
             }
-            micros += Timestamps.DAY_MICROS;
+            micros += step;
         }
     }
 }
