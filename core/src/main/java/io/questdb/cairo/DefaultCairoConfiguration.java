@@ -1151,6 +1151,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getWriteBackOffTimeoutOnMemPressureMs() {
+        return 4000;
+    }
+
+    @Override
     public long getWriterAsyncCommandBusyWaitTimeout() {
         return 1000L;
     }
@@ -1240,6 +1245,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isQueryTracingBindVariableSubstitutionEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isQueryTracingEnabled() {
         return false;
     }
@@ -1312,10 +1322,5 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean useFastAsOfJoin() {
         return true;
-    }
-
-    @Override
-    public long getWriteBackOffTimeoutOnMemPressureMs() {
-        return 4000;
     }
 }

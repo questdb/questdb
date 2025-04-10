@@ -32,10 +32,13 @@ import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
+import org.jetbrains.annotations.NotNull;
 
-public class VarcharBindVariable extends VarcharFunction implements ScalarFunction, Mutable {
+public class VarcharBindVariable extends VarcharFunction implements ScalarFunction, Mutable, Sinkable {
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private boolean isNull = true;
 
@@ -196,5 +199,15 @@ public class VarcharBindVariable extends VarcharFunction implements ScalarFuncti
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("?::varchar");
+    }
+
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        if (isNull) {
+            sink.put("null");
+        } else {
+            sink.put('\'').put(utf8Sink).put('\'');
+        }
+        sink.put("::varchar");
     }
 }

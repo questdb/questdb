@@ -54,6 +54,7 @@ public class QueryTracingTest extends AbstractCairoTest {
             assertSql("table_name\n", exampleQuery);
             int sleepMillis = 100;
             while (true) {
+                //noinspection BusyWait
                 Thread.sleep(sleepMillis);
                 try {
                     assertSql(

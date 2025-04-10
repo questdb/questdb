@@ -247,6 +247,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long instanceHashLo;
     private final boolean interruptOnClosedConnection;
     private final boolean ioURingEnabled;
+    private final boolean isQueryTracingBindVariableSubstitutionEnabled;
     private final boolean isQueryTracingEnabled;
     private final boolean isReadOnlyInstance;
     private final int jsonCacheLimit;
@@ -744,6 +745,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         );
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
         this.isQueryTracingEnabled = getBoolean(properties, env, PropertyKey.QUERY_TRACING_ENABLED, false);
+        this.isQueryTracingBindVariableSubstitutionEnabled = getBoolean(properties, env, PropertyKey.QUERY_TRACING_BIND_VARIABLE_SUBSTITUTION_ENABLED, false);
         this.cairoTableRegistryAutoReloadFrequency = getMillis(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
         this.cairoTableRegistryCompactionThreshold = getInt(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 30);
         this.cairoWriteBackOffTimeoutOnMemPressureMs = getMillis(properties, env, PropertyKey.CAIRO_WRITE_BACK_OFF_TIMEOUT_ON_MEM_PRESSURE, 4000);
@@ -2138,6 +2140,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         } else {
             parts = unparsedResult.split(",");
         }
+        //noinspection ForLoopReplaceableByForEach
         for (int i = 0, n = parts.length; i < n; i++) {
             String url = parts[i].trim();
             if (url.isEmpty()) {
@@ -3687,6 +3690,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isPartitionO3OverwriteControlEnabled() {
             return o3PartitionOverwriteControlEnabled;
+        }
+
+        @Override
+        public boolean isQueryTracingBindVariableSubstitutionEnabled() {
+            return isQueryTracingBindVariableSubstitutionEnabled;
         }
 
         @Override

@@ -1127,6 +1127,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getWriteBackOffTimeoutOnMemPressureMs() {
+        return getDelegate().getWriteBackOffTimeoutOnMemPressureMs();
+    }
+
+    @Override
     public long getWriterAsyncCommandBusyWaitTimeout() {
         return getDelegate().getWriterAsyncCommandBusyWaitTimeout();
     }
@@ -1209,6 +1214,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isPartitionO3OverwriteControlEnabled() {
         return getDelegate().isPartitionO3OverwriteControlEnabled();
+    }
+
+    @Override
+    public boolean isQueryTracingBindVariableSubstitutionEnabled() {
+        return getDelegate().isQueryTracingBindVariableSubstitutionEnabled();
     }
 
     @Override
@@ -1297,11 +1307,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean useFastAsOfJoin() {
         return getDelegate().useFastAsOfJoin();
-    }
-
-    @Override
-    public long getWriteBackOffTimeoutOnMemPressureMs() {
-        return getDelegate().getWriteBackOffTimeoutOnMemPressureMs();
     }
 
     protected CairoConfiguration getDelegate() {

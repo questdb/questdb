@@ -34,6 +34,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.ResourcePoolSupervisor;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -54,15 +55,16 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 // Factory that adds query to registry on getCursor() and removes on cursor close().
 public class QueryProgress extends AbstractRecordCursorFactory implements ResourcePoolSupervisor<ReaderPool.R> {
-    static final int STATE_POSSIBLE_BIND_VARIABLE = 1;
-    static final int STATE_START = 0;
     @SuppressWarnings("FieldMayBeFinal")
     private static Log LOG = LogFactory.getLog(QueryProgress.class);
     private final RecordCursorFactory base;
@@ -105,6 +107,12 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         CairoConfiguration config = engine.getConfiguration();
         long durationNanos = config.getNanosecondClock().getTicks() - beginNanos;
         boolean isJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED;
+
+        // Substitutes bind variables into the query text
+        if (queryTrace != null && config.isQueryTracingBindVariableSubstitutionEnabled() && Chars.indexOf(sqlText, '$') >= 0) {
+            queryTrace.queryText = substituteBindVariablesIntoQueryText(sqlText, executionContext);
+            sqlText = queryTrace.queryText;
+        }
 
         CharSequence principal = executionContext.getSecurityContext().getPrincipal();
         LogRecord log = null;
@@ -383,21 +391,64 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
     }
 
-    private void substituteBindVariablesIntoQueryText(@NotNull CharSequence sqlText, @NotNull SqlExecutionContext executionContext) {
+    private static String substituteBindVariablesIntoQueryText(@NotNull CharSequence sqlText, @NotNull SqlExecutionContext executionContext) {
         StringSink sink = Misc.getThreadLocalSink();
-        int state = STATE_START;
+
         int bindVarNumber;
         for (int i = 0, n = sqlText.length(); i < n; i++) {
             char c = sqlText.charAt(i);
+            int start;
 
-            if (c == '$') {
-                state = STATE_POSSIBLE_BIND_VARIABLE;
-                continue;
+            switch (c) {
+                case '\'':
+                case '"':
+                    sink.put(c);
+                    for (int j = i + 1; j < n; j++) {
+                        c = sqlText.charAt(j);
+                        if (sqlText.charAt(j) == c) {
+                            break;
+                        } else {
+                            sink.put(c);
+                        }
+                    }
+                    break;
+                case '$':
+                    start = i;
+                    do {
+                        i++;
+                        if (i >= n) {
+                            break;
+                        }
+                        c = sqlText.charAt(i);
+                    } while (c >= '0' && c <= '9');
+                    if (i - start > 1) {
+                        try {
+                            bindVarNumber = Numbers.parseInt(sqlText, start + 1, i);
+
+                            Function bindVarFunction = executionContext
+                                    .getBindVariableService()
+                                    .getFunction(bindVarNumber - 1);
+
+                            if (bindVarFunction instanceof Sinkable) {
+                                ((Sinkable) bindVarFunction).toSink(sink);
+                            } else {
+                                // fall out and leave it unsubstituted
+                                sink.put(sqlText, start, i);
+                            }
+                            // make sure we go back 1 char, so it isn't missed
+                            i--;
+                            continue;
+                        } catch (NumericException ignore) {
+                            return sqlText.toString();
+                        }
+                    } else {
+                        sink.put(sqlText, start, i);
+                    }
+                default:
+                    sink.put(c);
             }
-
         }
-
-        executionContext.getBindVariableService().define()
+        return sink.toString();
     }
 
     @Override
