@@ -375,12 +375,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                     0
             );
             final long approxBucketMicros = timestampSampler.getApproxBucketSize();
-            int partitionBy = PartitionBy.DAY;
-            if (approxBucketMicros > Timestamps.HOUR_MICROS) {
-                partitionBy = PartitionBy.YEAR;
-            } else if (approxBucketMicros > Timestamps.MINUTE_MICROS) {
-                partitionBy = PartitionBy.MONTH;
-            }
+            final int partitionBy = approxBucketMicros > Timestamps.HOUR_MICROS ? PartitionBy.YEAR
+                    : approxBucketMicros > Timestamps.MINUTE_MICROS ? PartitionBy.MONTH
+                    : PartitionBy.DAY;
             createTableOperation.setPartitionBy(partitionBy);
             final int ttlHoursOrMonths = createTableOperation.getTtlHoursOrMonths();
             if (ttlHoursOrMonths > 0) {
