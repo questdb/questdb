@@ -1567,7 +1567,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 columnIndex
                         );
                     } else {
-                        throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'cache' or 'nocache' expected").put(" found '").put(tok).put('\'');
+                        throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'symbol', 'cache' or 'nocache' expected").put(" found '").put(tok).put('\'');
                     }
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
