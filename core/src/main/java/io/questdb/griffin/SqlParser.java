@@ -256,7 +256,7 @@ public class SqlParser {
         return visitor.visit(node);
     }
 
-    private static void collectTables(QueryModel model, LowerCaseCharSequenceHashSet tableNames) {
+    private static void collectAllTableNames(QueryModel model, LowerCaseCharSequenceHashSet tableNames) {
         QueryModel m = model;
         do {
             final ExpressionNode tableNameExpr = m.getTableNameExpr();
@@ -270,12 +270,12 @@ public class SqlParser {
                 if (joinModel == m) {
                     continue;
                 }
-                collectTables(joinModel, tableNames);
+                collectAllTableNames(joinModel, tableNames);
             }
 
             final QueryModel unionModel = m.getUnionModel();
             if (unionModel != null) {
-                collectTables(unionModel, tableNames);
+                collectAllTableNames(unionModel, tableNames);
             }
 
             m = m.getNestedModel();
@@ -924,7 +924,7 @@ public class SqlParser {
             // Find base table name if not set explicitly.
             if (baseTableName == null) {
                 tableNames.clear();
-                collectTables(queryModel, tableNames);
+                collectAllTableNames(queryModel, tableNames);
                 if (tableNames.size() < 1) {
                     throw SqlException.$(0, "missing base table, materialized views have to be based on a table");
                 }
