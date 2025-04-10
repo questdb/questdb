@@ -911,6 +911,11 @@ public class CreateMatViewTest extends AbstractCairoTest {
             execute("create materialized view test as (" + query + ") partition by day");
 
             // without IF NOT EXISTS
+            // assertMatViewDefinition() fails with "definition is null" when this assertException is called!
+//            assertException(
+//                    "create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day",
+//                    25, "view already exists"
+//            );
             try {
                 execute("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
                 fail("Expected SqlException missing");
