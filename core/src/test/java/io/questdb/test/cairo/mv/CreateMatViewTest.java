@@ -899,12 +899,14 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             assertExceptionNoLeakCheck(
                     "create materialized view " + TABLE2 + " as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day",
-                    25, "table with the requested name already exists"
+                    25,
+                    "table with the requested name already exists"
             );
 
             assertExceptionNoLeakCheck(
                     "create materialized view if not exists " + TABLE2 + " as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day",
-                    39, "table with the requested name already exists"
+                    39,
+                    "table with the requested name already exists"
             );
 
             final String query = "select ts, avg(v) from " + TABLE2 + " sample by 4h";
@@ -914,7 +916,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             // assertMatViewDefinition() fails with "definition is null" when this assertException is called!
             assertExceptionNoLeakCheck(
                     "create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day",
-                    25, "view already exists"
+                    25,
+                    "view already exists"
             );
 
             // with IF NOT EXISTS
@@ -922,9 +925,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertMatViewDefinition("test", query, TABLE2, 4, 'h');
             assertMatViewMetadata("test", query, TABLE2, 4, 'h');
 
-            assertException(
+            assertExceptionNoLeakCheck(
                     "create table test(ts timestamp, col varchar) timestamp(ts) partition by day wal",
-                    13, "materialized view with the requested name already exists"
+                    13,
+                    "materialized view with the requested name already exists"
             );
         });
     }
@@ -1388,19 +1392,12 @@ public class CreateMatViewTest extends AbstractCairoTest {
             createTable(TABLE1);
             final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
             execute("create materialized view test as (" + query + ") partition by day");
-            try {
-                assertSql(
-                        "ddl\n" +
-                                "CREATE MATERIALIZED VIEW 'test' with base 'table1' as ( \n" +
-                                "select ts, v+v doubleV, avg(v) from table1 sample by 30s\n" +
-                                ") timestamp(ts) PARTITION BY DAY WAL;\n",
-                        "show create materialized test"
-                );
-                fail("Expected SqlException missing");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "'view' expected");
-                Assert.assertEquals(25, e.getPosition());
-            }
+
+            assertExceptionNoLeakCheck(
+                    "show create materialized test",
+                    25,
+                    "'view' expected"
+            );
         });
     }
 
