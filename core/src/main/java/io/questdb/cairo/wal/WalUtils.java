@@ -47,8 +47,6 @@ public class WalUtils {
     public static final String EVENT_FILE_NAME = "_event";
     public static final String EVENT_INDEX_FILE_NAME = "_event.i";
     public static final CharSequence INITIAL_META_FILE_NAME = "_meta.0";
-    public static final int MAT_VIEW_REFRESH_TXN_INVALID = -2;
-    public static final int MAT_VIEW_REFRESH_TXN_NOT_FOUND = -1;
     public static final int METADATA_WALID = -1;
     public static final int MIN_WAL_ID = DROP_TABLE_WAL_ID;
     public static final int SEG_MIN_ID = 0;
