@@ -2124,6 +2124,40 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     true
             );
         });
+
+        assertMemoryLeak(() -> {
+            assertQuery(
+                    "column\n" +
+                            "108\n",
+                    "SELECT 'm' - 1;",
+                    null,
+                    true,
+                    true
+            );
+
+            assertQuery(
+                    "column\n" +
+                            "255\n",
+                    "SELECT '256' - 1;",
+                    null,
+                    true,
+                    true
+            );
+        });
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (c1 int);");
+            execute("INSERT INTO x VALUES(10)");
+
+            assertQuery(
+                    "column\n" +
+                            "39\n",
+                    "SELECT '1' - c1 FROM x",
+                    null,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test

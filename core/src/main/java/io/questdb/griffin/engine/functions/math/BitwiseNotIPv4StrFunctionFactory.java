@@ -47,4 +47,9 @@ public class BitwiseNotIPv4StrFunctionFactory implements FunctionFactory {
     ) {
         return new BitwiseNotIPv4FunctionFactory.BitwiseNotIPv4Function(args.getQuick(0));
     }
+
+    @Override
+    public boolean supportImplicitCastCharToStr() {
+        return false;
+    }
 }
