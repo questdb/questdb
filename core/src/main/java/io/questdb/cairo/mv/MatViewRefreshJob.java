@@ -127,7 +127,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             case PartitionBy.WEEK:
                 return Timestamps.WEEK_MICROS;
             case PartitionBy.MONTH:
-                return 31 * Timestamps.DAY_MICROS;
+                return 30 * Timestamps.DAY_MICROS;
             case PartitionBy.YEAR:
                 return 365 * Timestamps.DAY_MICROS;
             default:
