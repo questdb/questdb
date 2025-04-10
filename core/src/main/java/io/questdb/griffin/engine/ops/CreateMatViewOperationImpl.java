@@ -361,6 +361,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             final QueryColumn queryColumn = findTimestampFloorColumn(queryModel);
             if (queryColumn != null) {
                 final ExpressionNode ast = queryColumn.getAst();
+                // there are three timestamp_floor() overloads, so check all of them
                 if (ast.paramCount == 3 || ast.paramCount == 4) {
                     final int idx = ast.paramCount - 1;
                     intervalExpr = ast.args.getQuick(idx).token;
