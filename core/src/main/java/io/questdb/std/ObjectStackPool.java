@@ -29,35 +29,51 @@ import io.questdb.log.LogFactory;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * Single-threaded object pool based on ObjList. The goal is to optimise intermediate allocation of objects.
+ * Single-threaded object pool based on ObjStack. The goal is to optimise intermediate allocation of objects.
  * <p>
- * There are 2 ways to use this pool:
- * <ul>
- *     <li>Mass release: You keep acquiring objects via @link {@link #next()} and then release them all at once via
- *     {@link #clear()}. This is the fastest way to use the pool.</li>
- *     <li>Individual release: You acquire objects via @link {@link #next()} and then release them individually via
- *     {@link #release(Mutable)}. This method has complexity O(n) where n is the number of objects in the pool thus
- *     should be used with care.</li>
- * </ul>
+ * This pool acts very much like a stack, may be with some exceptions:
+ * - it pre-allocates new objects, so that stack is non-empty to begin with
+ * - it can reset its capacity, when capacity is reduced, unreferenced objects will be GCd
+ * - technically there is nothing stopping calling code to return objects that have never been part of the pool
+ * the client code must be diligent not to return stray objects
+ * - returning null is allowed, it would not break the pool
+ * - getting objects out of the pool using `next()` when pool is empty will double capacity of the pool
  */
 public class ObjectStackPool<T extends Mutable> implements Mutable {
     private static final Log LOG = LogFactory.getLog(ObjectStackPool.class);
     private final ObjectFactory<T> factory;
-    private final int initialSize;
+    private final int initialCapacity;
     private final ObjStack<T> stack;
     private int outieCount;
 
-    public ObjectStackPool(@NotNull ObjectFactory<T> factory, int size) {
-        this.stack = new ObjStack<>(size);
+    public ObjectStackPool(@NotNull ObjectFactory<T> factory, int initialCapacity) {
+        this.stack = new ObjStack<>(initialCapacity);
         this.factory = factory;
-        this.initialSize = size;
+        // take capacity of the stack, stack will ceil the initial capacity value to the next power of 2
+        this.initialCapacity = this.stack.getCapacity();
         this.outieCount = 0;
-        fill(size);
+        fill(initialCapacity);
     }
 
     @Override
     public void clear() {
         resetCapacity();
+    }
+
+    public int getCapacity() {
+        return stack.getCapacity();
+    }
+
+    public int getInitialCapacity() {
+        return initialCapacity;
+    }
+
+    public int getOutieCount() {
+        return outieCount;
+    }
+
+    public int getSize() {
+        return stack.size();
     }
 
     public T next() {
@@ -75,9 +91,7 @@ public class ObjectStackPool<T extends Mutable> implements Mutable {
             return;
         }
         outieCount--;
-        if (outieCount < initialSize) {
-            stack.push(o);
-        }
+        stack.push(o);
     }
 
     public void resetCapacity() {

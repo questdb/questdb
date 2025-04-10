@@ -125,7 +125,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private static final int SYNC_DESCRIBE = 2;
     private static final int SYNC_DONE = 5;
     private static final int SYNC_PARSE = 0;
-    private final CompiledQueryImpl compiledQueryCopy;
     private final CairoEngine engine;
     private final StringSink errorMessageSink = new StringSink();
     private final int maxRecompileAttempts;
@@ -213,8 +212,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     public PGPipelineEntry(CairoEngine engine) {
         this.isCopy = false;
         this.engine = engine;
-        this.compiledQuery = new CompiledQueryImpl(engine);
-        this.compiledQueryCopy = compiledQuery;
         this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
         this.msgParseParameterTypeOIDs = new IntList();
         this.outParameterTypeDescriptionTypes = new LongList();
@@ -277,7 +274,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // so we just null them out and let the original entry close them
             insertOp = Misc.free(insertOp);
             operation = Misc.free(operation);
-            Misc.free(compiledQuery.getUpdateOperation());
+            if (compiledQuery != null) {
+                Misc.free(compiledQuery.getUpdateOperation());
+            }
         } else {
             insertOp = null;
             operation = null;
@@ -293,7 +292,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         namedPortals.clear();
         isCopy = false;
         cacheHit = false;
-        compiledQuery = compiledQueryCopy;
         cursor = Misc.free(cursor);
         error = false;
         empty = false;
@@ -1302,6 +1300,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
+    private void ensureCompiledQuery() {
+        if (compiledQuery == null) {
+            compiledQuery = new CompiledQueryImpl(engine);
+        }
+    }
+
     private void ensureValueLength(int variableIndex, int sizeRequired, int sizeActual) throws BadProtocolException {
         if (sizeRequired == sizeActual) {
             return;
@@ -1388,6 +1392,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             engine.getMetrics().pgWireMetrics().markStart();
             // execute against writer from the engine, synchronously (null sequence)
             try {
+                ensureCompiledQuery();
                 for (int attempt = 1; ; attempt++) {
                     try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, false)) {
                         // this doesn't actually wait, because the call is synchronous
@@ -1525,6 +1530,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         if (transactionState != ERROR_TRANSACTION) {
             engine.getMetrics().pgWireMetrics().markStart();
             // execute against writer from the engine, synchronously (null sequence)
+            ensureCompiledQuery();
             try {
                 for (int attempt = 1; ; attempt++) {
                     try {
@@ -2581,6 +2587,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 String sqlText = cq.getSqlText();
                 UpdateOperation updateOperation = cq.getUpdateOperation();
                 updateOperation.withSqlStatement(sqlText);
+                ensureCompiledQuery();
                 compiledQuery.ofUpdate(updateOperation);
                 compiledQuery.withSqlText(sqlText);
                 sqlTag = TAG_UPDATE;
@@ -2615,6 +2622,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 break;
             case CompiledQuery.ALTER:
                 // future-proofing ALTER execution
+                ensureCompiledQuery();
                 compiledQuery.ofAlter(AlterOperation.deepCloneOf(cq.getAlterOperation()));
                 compiledQuery.withSqlText(cq.getSqlText());
                 sqlTag = TAG_OK;

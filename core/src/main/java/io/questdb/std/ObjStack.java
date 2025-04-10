@@ -28,7 +28,6 @@ import java.util.Arrays;
 
 public class ObjStack<T> implements Mutable {
     private static final int DEFAULT_INITIAL_CAPACITY = 16;
-    private static final int MIN_INITIAL_CAPACITY = 8;
     private final int initialCapacity;
     private T[] elements;
     private int head;
@@ -49,6 +48,10 @@ public class ObjStack<T> implements Mutable {
             head = tail = 0;
             Arrays.fill(elements, null);
         }
+    }
+
+    public int getCapacity() {
+        return elements.length;
     }
 
     public boolean notEmpty() {
@@ -105,7 +108,7 @@ public class ObjStack<T> implements Mutable {
 
     @SuppressWarnings("unchecked")
     private void allocateElements(int capacity) {
-        capacity = capacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(capacity);
+        capacity = Numbers.ceilPow2(capacity);
         elements = (T[]) new Object[capacity];
         mask = capacity - 1;
     }
