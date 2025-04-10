@@ -2113,7 +2113,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (ast.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase("timestamp_floor", ast.token)) {
                     final CharSequence ts;
                     // there are three timestamp_floor() overloads, so check all of them
-                    if (ast.paramCount == 3 || ast.paramCount == 4) {
+                    if (ast.paramCount == 3 || ast.paramCount == 5) {
                         final int idx = ast.paramCount - 2;
                         ts = ast.args.getQuick(idx).token;
                     } else {

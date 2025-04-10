@@ -2495,6 +2495,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     args.add(new StrConstant("d"));
                                 } else if (factory instanceof TimestampFloorFromOffsetFunctionFactory && p == 3) {
                                     args.add(new StrConstant("00:30"));
+                                    args.add(new StrConstant("UTC"));
                                 } else if (factory instanceof DateTruncFunctionFactory && p == 0) {
                                     args.add(new StrConstant("year"));
                                 } else if (factory instanceof ToUTCTimestampFunctionFactory && p == 1) {

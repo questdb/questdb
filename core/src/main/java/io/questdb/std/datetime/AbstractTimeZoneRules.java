@@ -57,7 +57,7 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     // year to array of transitions level 1 cache: [L1_CACHE_YEAR_LO, L1_CACHE_YEAR_HI) years only
     private final Transition[][] transitionsL1Cache;
     // year to array of transitions level 2 cache (all other years)
-    private final ConcurrentIntHashMap<Transition[]> transitionsL2Cache = new ConcurrentIntHashMap<>();
+    private final ConcurrentIntHashMap<Transition[]> transitionsL2Cache;
     private final int[] wallOffsets;
 
     public AbstractTimeZoneRules(ZoneRules rules, long multiplier) {
@@ -130,8 +130,10 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
             for (int i = Math.max(0, cutoffYear - L1_CACHE_YEAR_LO), n = transitionsL1Cache.length; i < n; i++) {
                 transitionsL1Cache[i] = computeTransitions(i + L1_CACHE_YEAR_LO);
             }
+            transitionsL2Cache = new ConcurrentIntHashMap<>();
         } else {
             transitionsL1Cache = null;
+            transitionsL2Cache = null;
         }
     }
 
@@ -203,6 +205,11 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     public long getOffset(long utcEpoch) {
         final int y = getYear(utcEpoch);
         return getOffset(utcEpoch, y);
+    }
+
+    @Override
+    public boolean hasFixedOffset() {
+        return standardOffset != Long.MIN_VALUE;
     }
 
     private Transition[] computeTransitions(int year) {
