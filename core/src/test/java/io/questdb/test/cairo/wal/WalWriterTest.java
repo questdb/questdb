@@ -1619,8 +1619,8 @@ public class WalWriterTest extends AbstractCairoTest {
                 MatViewStateReader matViewStateReader = new MatViewStateReader();
                 path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
                 int tableLen = path.size();
-                long txn = WalUtils.getMatViewLastRefreshBaseTxn(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
-                assertEquals(MAT_VIEW_REFRESH_TXN_NOT_FOUND, txn); // no transactions
+                boolean success = WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
+                assertFalse(success); // no transactions
 
                 long maxTxn = 3;
                 try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
@@ -1634,8 +1634,8 @@ public class WalWriterTest extends AbstractCairoTest {
                 }
 
 
-                txn = WalUtils.getMatViewLastRefreshBaseTxn(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
-                assertEquals(MAT_VIEW_REFRESH_TXN_NOT_FOUND, txn); // incomplete refresh, no commitWithExtra
+                success = WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
+                assertFalse(success); // incomplete refresh, no commitMatView
 
                 try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                     for (int i = 0; i < maxTxn; i++) {
@@ -1652,16 +1652,19 @@ public class WalWriterTest extends AbstractCairoTest {
                 }
 
 
-                txn = WalUtils.getMatViewLastRefreshBaseTxn(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
-                assertEquals(42, txn); // refresh commit
+                success = WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
+                assertTrue(success);
+                assertEquals(42, matViewStateReader.getLastRefreshBaseTxn()); // refresh commit
 
                 try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                     walWriter.invalidateMatView(45, 45, true, "test_invalidate");
                 }
 
 
-                txn = WalUtils.getMatViewLastRefreshBaseTxn(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
-                assertEquals(MAT_VIEW_REFRESH_TXN_INVALID, txn); // invalidate commit
+                success = WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
+                assertTrue(success);
+                assertTrue(matViewStateReader.isInvalid());
+                assertEquals(45, matViewStateReader.getLastRefreshBaseTxn()); // invalidate commit
 
                 try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
                     // reset invalidation
@@ -1673,14 +1676,15 @@ public class WalWriterTest extends AbstractCairoTest {
                 path.trimTo(tableLen).concat(WAL_NAME_BASE).put(1).slash().put(0).concat(EVENT_FILE_NAME);
                 ff.remove(path.$());
                 Assert.assertFalse(ff.exists(path.$()));
-                txn = WalUtils.getMatViewLastRefreshBaseTxn(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
-                assertEquals(43, txn); // no _event file, state file
+                success = WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
+                assertTrue(success);
+                assertEquals(43, matViewStateReader.getLastRefreshBaseTxn()); // no _event file, state file
 
                 path.trimTo(tableLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
                 ff.remove(path.$());
                 Assert.assertFalse(ff.exists(path.$()));
-                txn = WalUtils.getMatViewLastRefreshBaseTxn(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
-                assertEquals(MAT_VIEW_REFRESH_TXN_NOT_FOUND, txn); // no _event file, no state file
+                success = WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
+                assertFalse(success);  // no _event file, no state file
             }
         });
     }

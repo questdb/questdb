@@ -268,4 +268,11 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
             throw new IllegalStateException("cannot unlock, not locked");
         }
     }
+
+    public void updateFromReader(MatViewStateReader reader) {
+        this.invalid = reader.isInvalid();
+        this.invalidationReason = reader.getInvalidationReason();
+        this.lastRefreshBaseTxn = reader.getLastRefreshBaseTxn();
+        this.lastRefreshTimestamp = reader.getLastRefreshTimestamp();
+    }
 }

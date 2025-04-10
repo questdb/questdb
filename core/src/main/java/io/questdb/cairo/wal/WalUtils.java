@@ -110,20 +110,21 @@ public class WalUtils {
     }
 
     /**
-     * Retrieves the last refresh base transaction for a materialized view.
+     * Retrieves the last refresh state for a materialized view.
+     * <p>
+     * Note: This function is intended to be used during the initialization phase only.
+     * It has been extracted into `WalUtils` solely to facilitate its usage in tests.
      *
      * @param tablePath          the path to the table
      * @param tableToken         the table token
      * @param configuration      the Cairo configuration
      * @param txnLogMemory       the memory to iterate over transaction logs
      * @param walEventReader     the reader to read WAL events
-     * @param blockFileReader    the reader to read state file
-     * @param matViewStateReader the POD to read materialized view state into
-     * @return MAT_VIEW_REFRESH_TXN_NOT_FOUND if the transaction could not be extracted,
-     * MAT_VIEW_REFRESH_TXN_INVALID if the last WAL-E entry is an invalidation commit (MAT_VIEW_INVALIDATE),
-     * or a non-negative transaction number if it is a valid last refresh transaction
+     * @param blockFileReader    the reader to read the state file
+     * @param matViewStateReader the reader used to collect the state
+     * @return true if the last mat view state was successfully retrieved, false otherwise
      */
-    public static long getMatViewLastRefreshBaseTxn(
+    public static boolean readMatViewState(
             Path tablePath,
             TableToken tableToken,
             CairoConfiguration configuration,
@@ -145,16 +146,21 @@ public class WalUtils {
                         final int walId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_WAL_ID_OFFSET);
                         final int segmentId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_OFFSET);
                         final int segmentTxn = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_TXN_OFFSET);
-                        // only valid wal ids considered
+                        // Only process valid WAL IDs
                         if (walId > 0) {
                             tablePath.concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
+                            // Since we are scanning the transaction log of a materialized view table,
+                            // we assume the last transaction is the one we are looking for (for the most cases).
+                            // As a result, memory usage is not optimized.
                             try (WalEventReader eventReader = walEventReader) {
                                 WalEventCursor walEventCursor = eventReader.of(tablePath, segmentTxn);
                                 if (walEventCursor.getType() == MAT_VIEW_DATA) {
-                                    return walEventCursor.getMatViewDataInfo().getLastRefreshBaseTableTxn();
+                                    matViewStateReader.of(walEventCursor.getMatViewDataInfo());
+                                    return true;
                                 }
                                 if (walEventCursor.getType() == MAT_VIEW_INVALIDATE) {
-                                    return MAT_VIEW_REFRESH_TXN_INVALID;
+                                    matViewStateReader.of(walEventCursor.getMvInvalidationInfo());
+                                    return true;
                                 }
                             } catch (Throwable th) {
                                 // walEventReader may not be able to find/open the WAL-e files
@@ -162,21 +168,16 @@ public class WalUtils {
                                     tablePath.trimTo(tablePathLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
                                     blockReader.of(tablePath.$());
                                     matViewStateReader.of(blockReader, tableToken);
-                                    // read from state file if exists
-                                    if (!matViewStateReader.isInvalid()) {
-                                        return matViewStateReader.getLastRefreshBaseTxn();
-                                    } else {
-                                        return MAT_VIEW_REFRESH_TXN_INVALID;
-                                    }
+                                    return true;
                                 } catch (Throwable th2) {
                                 }
-                                return MAT_VIEW_REFRESH_TXN_NOT_FOUND;
+                                return false;
                             }
                         }
                     }
                 }
             }
         }
-        return MAT_VIEW_REFRESH_TXN_NOT_FOUND;
+        return false;
     }
 }

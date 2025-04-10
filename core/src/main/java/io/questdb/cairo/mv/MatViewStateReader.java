@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.ReadableBlock;
+import io.questdb.cairo.wal.WalEventCursor;
 import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -67,6 +68,22 @@ public class MatViewStateReader implements ReadableMatViewState, Mutable {
     @Override
     public boolean isInvalid() {
         return invalid;
+    }
+
+    public MatViewStateReader of(@NotNull WalEventCursor.MatViewDataInfo info) {
+        invalid = false;
+        invalidationReason = null;
+        lastRefreshBaseTxn = info.getLastRefreshBaseTableTxn();
+        lastRefreshTimestamp = info.getLastRefreshTimestamp();
+        return this;
+    }
+
+    public MatViewStateReader of(@NotNull WalEventCursor.MatViewInvalidationInfo info) {
+        invalid = info.isInvalid();
+        invalidationReason = Chars.toString(info.getInvalidationReason());
+        lastRefreshBaseTxn = info.getLastRefreshBaseTableTxn();
+        lastRefreshTimestamp = info.getLastRefreshTimestamp();
+        return this;
     }
 
     public MatViewStateReader of(
