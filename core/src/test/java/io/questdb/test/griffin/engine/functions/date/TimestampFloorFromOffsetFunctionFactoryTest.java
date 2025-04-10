@@ -191,7 +191,7 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
             @Nullable String from,
             @Nullable String offset
     ) throws SqlException {
-        assertSql(
+        assertQueryNoLeakCheck(
                 expected,
                 "select timestamp_floor('" +
                         interval + "', '" +
@@ -203,7 +203,7 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
 
         bindVariableService.clear();
         bindVariableService.setStr("offset", offset);
-        assertSql(
+        assertQueryNoLeakCheck(
                 expected,
                 "select timestamp_floor('" +
                         interval + "', '" +
