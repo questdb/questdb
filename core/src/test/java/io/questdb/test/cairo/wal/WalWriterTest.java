@@ -137,8 +137,10 @@ public class WalWriterTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSqlCursors("sm", "select * from sm order by id");
-            assertSql("count\tmin\tmax\n" +
-                    "2\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:00:00.000000Z\n", "select count(*), min(ts), max(ts) from sm");
+            assertSql(
+                    "count\tmin\tmax\n" +
+                            "2\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:00:00.000000Z\n", "select count(*), min(ts), max(ts) from sm"
+            );
         });
     }
 
@@ -4006,14 +4008,14 @@ public class WalWriterTest extends AbstractCairoTest {
                     walWriter.commit();
                 } else {
                     if (newFormat) {
-                        walWriter.commitWithExtra(refreshTxn + i, i);
+                        walWriter.commitMatView(refreshTxn + i, i);
                     } else {
                         walWriter.commit();
                     }
                 }
             }
             if (newFormat) {
-                walWriter.invalidate(true, "test_invalidate");
+                walWriter.invalidateMatView(1, 1, true, "test_invalidate");
             }
         }
         return tableToken;
