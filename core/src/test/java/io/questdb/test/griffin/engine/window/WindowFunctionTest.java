@@ -3095,6 +3095,33 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImplicitCastExceptionInLag() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE 'trades' ( " +
+                            " symbol SYMBOL, " +
+                            " side SYMBOL, " +
+                            " price DOUBLE, " +
+                            " amount DOUBLE, " +
+                            " timestamp TIMESTAMP " +
+                            ") timestamp(timestamp) PARTITION BY DAY;"
+            );
+            execute("INSERT INTO trades VALUES ('ETH-USD', 'sell', 2615.54, 0.00044, '2022-03-08T18:03:57.609765Z');");
+
+            assertExceptionNoLeakCheck(
+                    "SELECT " +
+                            "    timestamp, " +
+                            "    price, " +
+                            "    lag('timestamp') OVER (ORDER BY timestamp) AS previous_price " +
+                            "FROM trades " +
+                            "LIMIT 10;",
+                    0,
+                    "inconvertible value: `timestamp` [STRING -> DOUBLE]"
+            );
+        });
+    }
+
+    @Test
     public void testLagException() throws Exception {
         execute("create table tab (ts timestamp, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)");
         assertExceptionNoLeakCheck(
@@ -4783,6 +4810,34 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 "ts",
                 true,
                 false
+        );
+    }
+
+    @Test
+    public void testUnSupportImplicitCast() throws Exception {
+        assertException(
+                "SELECT ts, side, lead(side) OVER ( PARTITION BY symbol ORDER BY ts ) " +
+                        "AS next_price FROM trades " +
+                        "WHERE ts  >= '1970-03-08 00:00:00' AND ts < '2025-03-08 23:59:59'",
+                "create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(100) price," +
+                        " rnd_symbol('XX','YY','ZZ') side," +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        " timestamp_sequence(0, 100000000000) ts" +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day",
+                22,
+                "argument type mismatch for function `lead` at #1 expected: DOUBLE, actual: SYMBOL"
+        );
+
+        assertException(
+                "SELECT ts, side, first_value(side) OVER ( PARTITION BY symbol ORDER BY ts ) " +
+                        "AS next_price FROM trades " +
+                        "WHERE ts  >= '1970-03-08 00:00:00' AND ts < '2025-03-08 23:59:59'",
+                29,
+                "argument type mismatch for function `first_value` at #1 expected: DOUBLE, actual: SYMBOL"
         );
     }
 

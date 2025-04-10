@@ -401,7 +401,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         SqlException ex = SqlException.position(node.position);
         if (descriptor != null) {
             if (args != null) {
-                if (args.size() != descriptor.getSigArgCount()) {
+                if (args.size() != descriptor.getNotVarArgsSigCount()) {
                     ex.put("wrong number of arguments for function `").put(node.token)
                             .put("`; expected: ").put(descriptor.getSigArgCount())
                             .put(", provided: ").put(args.size());
