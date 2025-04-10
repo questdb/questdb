@@ -897,21 +897,15 @@ public class CreateMatViewTest extends AbstractCairoTest {
             createTable(TABLE1);
             createTable(TABLE2);
 
-            try {
-                execute("create materialized view " + TABLE2 + " as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
-                fail("Expected SqlException missing");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "table with the requested name already exists");
-                Assert.assertEquals(25, e.getPosition());
-            }
+            assertException(
+                    "create materialized view " + TABLE2 + " as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day",
+                    25, "table with the requested name already exists"
+            );
 
-            try {
-                execute("create materialized view if not exists " + TABLE2 + " as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
-                fail("Expected SqlException missing");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "table with the requested name already exists");
-                Assert.assertEquals(39, e.getPosition());
-            }
+            assertException(
+                    "create materialized view if not exists " + TABLE2 + " as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day",
+                    39, "table with the requested name already exists"
+            );
 
             final String query = "select ts, avg(v) from " + TABLE2 + " sample by 4h";
             execute("create materialized view test as (" + query + ") partition by day");
@@ -930,13 +924,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertMatViewDefinition("test", query, TABLE2, 4, 'h');
             assertMatViewMetadata("test", query, TABLE2, 4, 'h');
 
-            try {
-                execute("create table test(ts timestamp, col varchar) timestamp(ts) partition by day wal");
-                fail("Expected SqlException missing");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "materialized view with the requested name already exists");
-                Assert.assertEquals(13, e.getPosition());
-            }
+            assertException(
+                    "create table test(ts timestamp, col varchar) timestamp(ts) partition by day wal",
+                    13, "materialized view with the requested name already exists"
+            );
         });
     }
 
