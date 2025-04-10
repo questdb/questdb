@@ -295,12 +295,12 @@ public class SqlParser {
     }
 
     private static boolean isTableQueried(QueryModel model, String tableName) {
-        QueryModel m = model;
-        do {
+        for (QueryModel m = model; m != null; m = m.getNestedModel()) {
             final ExpressionNode tableNameExpr = m.getTableNameExpr();
             if (tableNameExpr != null
                     && tableNameExpr.type == ExpressionNode.LITERAL
-                    && Chars.equalsIgnoreCase(tableName, unquote(tableNameExpr.token))) {
+                    && Chars.equalsIgnoreCase(tableName, unquote(tableNameExpr.token))
+            ) {
                 return true;
             }
 
@@ -319,9 +319,7 @@ public class SqlParser {
             if (unionModel != null && isTableQueried(unionModel, tableName)) {
                 return true;
             }
-
-            m = m.getNestedModel();
-        } while (m != null);
+        }
 
         return false;
     }
@@ -373,8 +371,7 @@ public class SqlParser {
     }
 
     private static void validateMatViewQuery(QueryModel model, String baseTableName) throws SqlException {
-        QueryModel m = model;
-        do {
+        for (QueryModel m = model; m != null; m = m.getNestedModel()) {
             if ((m.getSampleByFrom() != null || m.getSampleByTo() != null) && isTableQueried(m, baseTableName)) {
                 final int position = m.getSampleByFrom() != null ? m.getSampleByFrom().position : m.getSampleByTo().position;
                 throw SqlException.position(position)
@@ -417,9 +414,7 @@ public class SqlParser {
                 }
                 validateMatViewQuery(unionModel, baseTableName);
             }
-
-            m = m.getNestedModel();
-        } while (m != null);
+        }
     }
 
     private static void validateShowTransactions(GenericLexer lexer) throws SqlException {
@@ -853,7 +848,7 @@ public class SqlParser {
         mvOpBuilder.clear(); // clears tableOpBuilder too
         tableOpBuilder.setDefaultSymbolCapacity(configuration.getDefaultSymbolCapacity());
 
-        // Mat view is always WAL enabled.
+        // Mat view is always WAL-enabled.
         tableOpBuilder.setWalEnabled(true);
 
         expectTok(lexer, "view");
