@@ -993,12 +993,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             };
 
             for (String query : queries) {
-                try {
-                    execute(query);
-                    fail("Expected SqlException missing for " + query);
-                } catch (SqlException e) {
-                    TestUtils.assertContains(query, e.getFlyweightMessage(), "base table");
-                }
+                assertExceptionNoLeakCheck(query, -1, "base table");
             }
         });
     }
