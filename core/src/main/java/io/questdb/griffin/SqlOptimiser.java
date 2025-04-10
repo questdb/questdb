@@ -48,6 +48,8 @@ import io.questdb.griffin.engine.functions.catalogue.ShowStandardConformingStrin
 import io.questdb.griffin.engine.functions.catalogue.ShowTimeZoneFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLevelCursorFactory;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
+import io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
@@ -5142,7 +5144,7 @@ public class SqlOptimiser implements Mutable {
                 }
 
                 final ExpressionNode tsFloorFunc = expressionNodePool.next();
-                tsFloorFunc.token = "timestamp_floor";
+                tsFloorFunc.token = TimestampFloorFunctionFactory.NAME;
                 tsFloorFunc.type = FUNCTION;
                 tsFloorFunc.paramCount = 5;
 
@@ -5239,7 +5241,7 @@ public class SqlOptimiser implements Mutable {
                     }
 
                     final ExpressionNode toUtcFunc = expressionNodePool.next();
-                    toUtcFunc.token = "to_utc";
+                    toUtcFunc.token = ToUTCTimestampFunctionFactory.NAME;
                     toUtcFunc.type = FUNCTION;
                     toUtcFunc.paramCount = 2;
                     final ExpressionNode toUtcParam = expressionNodePool.next();

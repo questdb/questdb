@@ -134,6 +134,7 @@ import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctIntKeyRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
@@ -2110,7 +2111,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
                 final QueryColumn col = model.getColumns().getQuick(i);
                 final ExpressionNode ast = col.getAst();
-                if (ast.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase("timestamp_floor", ast.token)) {
+                if (ast.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase(TimestampFloorFunctionFactory.NAME, ast.token)) {
                     final CharSequence ts;
                     // there are three timestamp_floor() overloads, so check all of them
                     if (ast.paramCount == 3 || ast.paramCount == 5) {

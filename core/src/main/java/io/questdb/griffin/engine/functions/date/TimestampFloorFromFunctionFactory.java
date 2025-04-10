@@ -43,7 +43,7 @@ public class TimestampFloorFromFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "timestamp_floor(sNn)";
+        return TimestampFloorFunctionFactory.NAME + "(sNn)";
     }
 
     @Override

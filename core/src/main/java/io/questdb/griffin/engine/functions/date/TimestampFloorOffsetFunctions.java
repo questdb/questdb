@@ -62,7 +62,7 @@ final class TimestampFloorOffsetFunctions {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("timestamp_floor('");
+            sink.val(TimestampFloorFunctionFactory.NAME).val("('");
             if (stride != 1) {
                 sink.val(stride);
             }

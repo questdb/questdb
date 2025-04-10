@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlParser;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExpressionNode;
@@ -527,7 +528,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             for (int i = 0, n = queryColumns.size(); i < n; i++) {
                 final QueryColumn queryColumn = queryColumns.getQuick(i);
                 final ExpressionNode ast = queryColumn.getAst();
-                if (ast.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase("timestamp_floor", ast.token)) {
+                if (ast.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase(TimestampFloorFunctionFactory.NAME, ast.token)) {
                     return queryColumn;
                 }
             }

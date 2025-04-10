@@ -47,10 +47,11 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 public class ToUTCTimestampFunctionFactory implements FunctionFactory {
+    public static final String NAME = "to_utc";
 
     @Override
     public String getSignature() {
-        return "to_utc(NS)";
+        return NAME + "(NS)";
     }
 
     @Override
@@ -122,7 +123,7 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public String getName() {
-            return "to_utc";
+            return NAME;
         }
 
         @Override
@@ -149,7 +150,7 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public String getName() {
-            return "to_utc";
+            return NAME;
         }
 
         @Override
@@ -189,7 +190,7 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public String getName() {
-            return "to_utc";
+            return NAME;
         }
 
         @Override

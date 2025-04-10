@@ -63,7 +63,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
 
     @Override
     public String getSignature() {
-        return "timestamp_floor(sNnSS)";
+        return TimestampFloorFunctionFactory.NAME + "(sNnSS)";
     }
 
     @Override
@@ -439,7 +439,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("timestamp_floor('");
+            sink.val(TimestampFloorFunctionFactory.NAME).val("('");
             if (stride != 1) {
                 sink.val(stride);
             }
@@ -613,7 +613,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("timestamp_floor('");
+            sink.val(TimestampFloorFunctionFactory.NAME).val("('");
             if (stride != 1) {
                 sink.val(stride);
             }
@@ -933,7 +933,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("timestamp_floor('");
+            sink.val(TimestampFloorFunctionFactory.NAME).val("('");
             if (stride != 1) {
                 sink.val(stride);
             }
@@ -1217,7 +1217,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("timestamp_floor('");
+            sink.val(TimestampFloorFunctionFactory.NAME).val("('");
             if (stride != 1) {
                 sink.val(stride);
             }
@@ -1340,7 +1340,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("timestamp_floor('");
+            sink.val(TimestampFloorFunctionFactory.NAME).val("('");
             if (stride != 1) {
                 sink.val(stride);
             }
@@ -1621,7 +1621,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("timestamp_floor('")
+            sink.val(TimestampFloorFunctionFactory.NAME).val("('")
                     .val(getUnit()).val("',")
                     .val(tsFunc).val(',')
                     .val(Timestamps.toString(offset))

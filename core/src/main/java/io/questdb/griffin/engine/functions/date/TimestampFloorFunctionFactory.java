@@ -35,10 +35,11 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 public class TimestampFloorFunctionFactory implements FunctionFactory {
+    public static final String NAME = "timestamp_floor";
 
     @Override
     public String getSignature() {
-        return "timestamp_floor(sN)";
+        return NAME + "(sN)";
     }
 
     @Override
