@@ -24,11 +24,6 @@
 
 package io.questdb.griffin;
 
-import java.util.ArrayDeque;
-
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
@@ -116,6 +111,10 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.ArrayDeque;
 
 import static io.questdb.griffin.SqlKeywords.*;
 
@@ -402,7 +401,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         SqlException ex = SqlException.position(node.position);
         if (descriptor != null) {
             if (args != null) {
-                if (args.size() != descriptor.getSigArgCount()) {
+                if (args.size() != descriptor.getNotVarArgsSigCount()) {
                     ex.put("wrong number of arguments for function `").put(node.token)
                             .put("`; expected: ").put(descriptor.getSigArgCount())
                             .put(", provided: ").put(args.size());
