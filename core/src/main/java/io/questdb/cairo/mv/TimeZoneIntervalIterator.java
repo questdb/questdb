@@ -99,36 +99,37 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
 
     @Override
     public boolean next() {
-        if (localTimestampHi != localMaxTimestamp) {
-            utcTimestampLo = utcTimestampHi;
-            for (int i = 0; i < step; i++) {
-                localTimestampHi = sampler.nextTimestamp(localTimestampHi);
-                if (localTimestampHi == localMaxTimestamp) {
-                    utcTimestampHi = utcMaxTimestamp;
-                    return true;
-                }
-            }
-            // Make sure to adjust the right boundary in case if we ended up
-            // in a gap or a backward shift interval.
-            for (int n = localShifts.size() / 2; shiftIndex < n; shiftIndex++) {
-                final int idx = shiftIndex << 1;
-                final long shiftLo = IntervalUtils.getEncodedPeriodLo(localShifts, idx);
-                if (localTimestampHi < shiftLo) {
-                    break;
-                }
-                final long shiftHi = IntervalUtils.getEncodedPeriodHi(localShifts, idx);
-                if (localTimestampHi <= shiftHi) { // localTimestampHi >= shiftLo is already true
-                    localTimestampHi = sampler.nextTimestamp(sampler.round(shiftHi));
-                    shiftOffset = tzRules.getLocalOffset(shiftHi);
-                    shiftIndex++;
-                    break;
-                }
-                shiftOffset = tzRules.getLocalOffset(shiftHi);
-            }
-            utcTimestampHi = localTimestampHi - shiftOffset;
-            return true;
+        if (localTimestampHi == localMaxTimestamp) {
+            return false;
         }
-        return false;
+
+        utcTimestampLo = utcTimestampHi;
+        for (int i = 0; i < step; i++) {
+            localTimestampHi = sampler.nextTimestamp(localTimestampHi);
+            if (localTimestampHi == localMaxTimestamp) {
+                utcTimestampHi = utcMaxTimestamp;
+                return true;
+            }
+        }
+        // Make sure to adjust the right boundary in case if we ended up
+        // in a gap or a backward shift interval.
+        for (int n = localShifts.size() / 2; shiftIndex < n; shiftIndex++) {
+            final int idx = shiftIndex << 1;
+            final long shiftLo = IntervalUtils.getEncodedPeriodLo(localShifts, idx);
+            if (localTimestampHi < shiftLo) {
+                break;
+            }
+            final long shiftHi = IntervalUtils.getEncodedPeriodHi(localShifts, idx);
+            if (localTimestampHi <= shiftHi) { // localTimestampHi >= shiftLo is already true
+                localTimestampHi = sampler.nextTimestamp(sampler.round(shiftHi));
+                shiftOffset = tzRules.getLocalOffset(shiftHi);
+                shiftIndex++;
+                break;
+            }
+            shiftOffset = tzRules.getLocalOffset(shiftHi);
+        }
+        utcTimestampHi = localTimestampHi - shiftOffset;
+        return true;
     }
 
     public TimeZoneIntervalIterator of(
