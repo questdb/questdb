@@ -362,7 +362,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
             }
 
-            walWriter.matViewRefreshCommit(baseTableTxn, refreshTimestamp);
+            walWriter.commitMatView(baseTableTxn, refreshTimestamp);
             state.refreshSuccess(factory, copier, walWriter.getMetadata().getMetadataVersion(), refreshTimestamp, refreshTriggeredTimestamp, baseTableTxn);
             if (rowCount > 0) {
                 state.setLastRefreshBaseTableTxn(baseTableTxn);

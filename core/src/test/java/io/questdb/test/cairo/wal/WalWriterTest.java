@@ -1644,7 +1644,7 @@ public class WalWriterTest extends AbstractCairoTest {
                         row.putSym(1, "sym" + i);
                         row.append();
                         if (i == 1) {
-                            walWriter.matViewRefreshCommit(42, 42);
+                            walWriter.commitMatView(42, 42);
                         } else {
                             walWriter.commit();
                         }
@@ -1707,7 +1707,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     if (i % 2 == 0) {
                         walWriter.commit();
                     } else {
-                        walWriter.matViewRefreshCommit(refreshTxn + i, i);
+                        walWriter.commitMatView(refreshTxn + i, i);
                     }
                 }
                 walWriter.invalidateMatView(1, 1, false, "test_invalidate1");
@@ -1840,7 +1840,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 if (rnd.nextBoolean()) {
                     walWriter.commit();
                 } else {
-                    walWriter.matViewRefreshCommit(0, 0);
+                    walWriter.commitMatView(0, 0);
                 }
 
                 drainWalQueue();

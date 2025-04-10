@@ -308,6 +308,12 @@ public class WalWriter implements TableWriterAPI {
         commit0(Long.MIN_VALUE, Long.MIN_VALUE);
     }
 
+    // Called as the last transaction of a materialized view refresh.
+    public void commitMatView(long lastRefreshBaseTxn, long lastRefreshTimestamp) {
+        assert lastRefreshBaseTxn != Numbers.LONG_NULL;
+        commit0(lastRefreshBaseTxn, lastRefreshTimestamp);
+    }
+
     public void doClose(boolean truncate) {
         if (open) {
             open = false;
@@ -409,6 +415,8 @@ public class WalWriter implements TableWriterAPI {
         return segmentRowCount > currentTxnStartRowNum;
     }
 
+    // Marks the materialized view as invalid or resets its invalidation status,
+    // depending on the input values.
     public void invalidateMatView(
             long lastRefreshBaseTxn,
             long lastRefreshTimestamp,
@@ -430,11 +438,6 @@ public class WalWriter implements TableWriterAPI {
 
     public boolean isOpen() {
         return this.open;
-    }
-
-    public void matViewRefreshCommit(long lastRefreshBaseTxn, long lastRefreshTimestamp) {
-        assert lastRefreshBaseTxn != Numbers.LONG_NULL;
-        commit0(lastRefreshBaseTxn, lastRefreshTimestamp);
     }
 
     @Override
