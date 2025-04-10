@@ -171,7 +171,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             maxTs = txnRangeLoader.getMaxTimestamp();
         } else {
             // Full table scan.
-            // In case of an empty table min timestamp is set to Long.MAX_VALUE
+            // When the table is empty, min timestamp is set to Long.MAX_VALUE,
             // while max timestamp is Long.MIN_VALUE, so we end up skipping the refresh.
             minTs = baseTableReader.getMinTimestamp();
             maxTs = baseTableReader.getMaxTimestamp();
@@ -393,7 +393,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
 
             try {
-                // Mark the view invalid only if the operation is forced or the view was ever refreshed.
+                // Mark the view invalid only if the operation is forced or the view was never refreshed.
                 if (force || state.getLastRefreshBaseTxn() != -1) {
                     setInvalidState(state, invalidationReason);
                 }
