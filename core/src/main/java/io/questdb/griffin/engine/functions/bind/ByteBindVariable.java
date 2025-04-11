@@ -65,7 +65,7 @@ class ByteBindVariable extends ByteFunction implements ScalarFunction, Mutable, 
     public void toPlan(PlanSink sink) {
         sink.val("?::byte");
     }
-    
+
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.put(value).put("::byte");

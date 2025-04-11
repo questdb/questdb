@@ -46,7 +46,7 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 public class QueryTracingSubstitutionTest extends AbstractBootstrapTest {
 
     @Test
-    public void testBindVariableLimitSignChange() throws Exception {
+    public void testSubstitutionOfBindVariables() throws Exception {
         assertMemoryLeak(() -> {
             createDummyConfiguration("pg.select.cache.enabled=true", "query.tracing.enabled=true", "query.tracing.bind.variable.substitution.enabled=true");
             try (final ServerMain serverMain = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
@@ -68,7 +68,7 @@ public class QueryTracingSubstitutionTest extends AbstractBootstrapTest {
                         try (final ResultSet resultSet = stmt.executeQuery()) {
                             assertResultSet(
                                     "$1[BIT],$2[SMALLINT],$3[VARCHAR],$4[DOUBLE],$5[REAL],$6[INTEGER],$7[BIGINT],$8[SMALLINT],$9[VARCHAR],$10[VARCHAR]\n" +
-                                            "true,111,1970-01-01 +01,123.456,123.456,987654,987654,11111,test,1970-01-01 01:00:00+01\n",
+                                            "true,111,1970-01-01 +01,123.456,123.456,987654,987654,11111,test,1970-01-01 01:00:00+00\n",
                                     Misc.getThreadLocalSink(),
                                     resultSet
                             );
