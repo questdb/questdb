@@ -870,7 +870,6 @@ io.questdb.griffin.engine.functions.math.BitwiseOrStrIPv4FunctionFactory
 io.questdb.griffin.engine.functions.math.BitwiseOrIntFunctionFactory
 io.questdb.griffin.engine.functions.math.BitwiseXorIntFunctionFactory
 io.questdb.griffin.engine.functions.math.BitwiseNotIPv4FunctionFactory
-io.questdb.griffin.engine.functions.math.BitwiseNotIPv4StrFunctionFactory
 io.questdb.griffin.engine.functions.math.BitwiseNotIntFunctionFactory
 
 # IPv4 operators

@@ -988,6 +988,24 @@ public class IPv4Test extends AbstractCairoTest {
                 22,
                 "there is no matching operator `&` with the argument types: IPv4 & CHAR"
         );
+
+        assertException(
+                "select ipv4 '1.1.1.1' | '0'",
+                22,
+                "there is no matching operator `|` with the argument types: IPv4 | CHAR"
+        );
+
+        assertException(
+                "select '0' & ipv4 '1.1.1.1'",
+                11,
+                "there is no matching operator `&` with the argument types: CHAR & IPv4"
+        );
+
+        assertException(
+                "select '0' | ipv4 '1.1.1.1'",
+                11,
+                "there is no matching operator `|` with the argument types: CHAR | IPv4"
+        );
     }
 
     @Test
