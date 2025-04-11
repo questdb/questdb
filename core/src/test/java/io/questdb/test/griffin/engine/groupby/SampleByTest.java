@@ -4056,7 +4056,6 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByFromToBindVariables() throws Exception {
         assertMemoryLeak(() -> {
-
             execute(FROM_TO_DDL, sqlExecutionContext);
 
             snapshotMemoryUsage();
@@ -12649,20 +12648,24 @@ public class SampleByTest extends AbstractCairoTest {
 
             String query2 = "select ts, avg(x) from fromto\n" +
                     "sample by 1w fill(null)";
-            assertSql(
+            assertQueryNoLeakCheck(
                     "ts\tavg\n" +
                             "2017-12-28T00:00:00.000000Z\t72.5\n" +
                             "2018-01-04T00:00:00.000000Z\t312.5\n",
-                    query2
+                    query2,
+                    "ts",
+                    true
             );
 
             String query3 = query1.replace("1w", "2w");
-            assertSql(
+            assertQueryNoLeakCheck(
                     "ts\tavg\n" +
                             "2017-12-20T00:00:00.000000Z\t48.5\n" +
                             "2018-01-03T00:00:00.000000Z\t288.5\n" +
                             "2018-01-17T00:00:00.000000Z\tnull\n",
-                    query3
+                    query3,
+                    "ts",
+                    true
             );
         });
     }
