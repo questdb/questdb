@@ -45,7 +45,7 @@ public class MonthTimestampSampler implements TimestampSampler {
 
     @Override
     public long getApproxBucketSize() {
-        return 31 * Timestamps.DAY_MICROS * monthCount;
+        return Timestamps.MONTH_MICROS_APPROX * monthCount;
     }
 
     @Override

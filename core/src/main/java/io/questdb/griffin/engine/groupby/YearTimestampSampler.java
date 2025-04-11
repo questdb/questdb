@@ -44,7 +44,7 @@ public class YearTimestampSampler implements TimestampSampler {
 
     @Override
     public long getApproxBucketSize() {
-        return 365 * Timestamps.DAY_MICROS * yearCount;
+        return Timestamps.YEAR_MICROS_NONLEAP * yearCount;
     }
 
     @Override
