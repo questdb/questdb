@@ -170,9 +170,10 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         }
 
         String query = "select * from " + "t1" + join + " JOIN " + "(select " + projection + " from t2 " + filter + ") t2" + onSuffix;
+        int limit;
         switch (limitType) {
             case POSITIVE_LIMIT:
-                int limit = rnd.nextInt(100);
+                limit = rnd.nextInt(100);
                 query = "select * from (" + query + " ) limit " + limit;
                 break;
             case NEGATIVE_LIMIT:
