@@ -286,7 +286,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean matViewEnabled;
     private final long matViewInsertAsSelectBatchSize;
     private final int matViewMaxRecompileAttempts;
-    private final int matViewMaxRetriesOnOom;
     private final long matViewMinRefreshInterval;
     private final boolean matViewParallelExecutionEnabled;
     private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewRefreshPoolConfiguration();
@@ -1274,7 +1273,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             // reuse wal apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, false);
             this.matViewMaxRecompileAttempts = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_SQL_MAX_RECOMPILE_ATTEMPTS, 10);
-            this.matViewMaxRetriesOnOom = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES_ON_OOM, 3);
             this.matViewMinRefreshInterval = getMicros(properties, env, PropertyKey.CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL, Timestamps.MINUTE_MICROS);
             this.matViewRefreshWorkerCount = getInt(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_COUNT, cpuWalApplyWorkers);
             this.matViewRefreshWorkerAffinity = getAffinity(properties, env, PropertyKey.MAT_VIEW_REFRESH_WORKER_AFFINITY, matViewRefreshWorkerCount);
@@ -2931,11 +2929,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getMatViewMaxRecompileAttempts() {
             return matViewMaxRecompileAttempts;
-        }
-
-        @Override
-        public int getMatViewMaxRetriesOnOom() {
-            return matViewMaxRetriesOnOom;
         }
 
         @Override

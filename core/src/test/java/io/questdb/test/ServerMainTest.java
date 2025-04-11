@@ -542,7 +542,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "metrics.enabled\tQDB_METRICS_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
                                     "cairo.mat.view.enabled\tQDB_CAIRO_MAT_VIEW_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.mat.view.sql.max.recompile.attempts\tQDB_CAIRO_MAT_VIEW_SQL_MAX_RECOMPILE_ATTEMPTS\t10\tdefault\tfalse\ttrue\n" +
-                                    "cairo.mat.view.max.refresh.retries.on.oom\tQDB_CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES_ON_OOM\t3\tdefault\tfalse\ttrue\n" +
                                     "cairo.mat.view.min.refresh.interval\tQDB_CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL\t60000000\tdefault\tfalse\ttrue\n" +
                                     "cairo.mat.view.insert.as.select.batch.size\tQDB_CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE\t1000000\tdefault\tfalse\ttrue\n" +
                                     "cairo.mat.view.rows.per.query.estimate\tQDB_CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE\t10000000\tdefault\tfalse\ttrue\n" +

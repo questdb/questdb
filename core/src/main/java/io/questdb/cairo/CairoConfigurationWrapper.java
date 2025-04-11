@@ -447,11 +447,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getMatViewMaxRetriesOnOom() {
-        return getDelegate().getMatViewMaxRetriesOnOom();
-    }
-
-    @Override
     public long getMatViewMinRefreshInterval() {
         return getDelegate().getMatViewMinRefreshInterval();
     }

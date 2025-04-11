@@ -484,11 +484,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getMatViewMaxRetriesOnOom() {
-        return 3;
-    }
-
-    @Override
     public long getMatViewMinRefreshInterval() {
         return Timestamps.MINUTE_MICROS;
     }
