@@ -29,7 +29,7 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class YearTimestampSampler implements TimestampSampler {
-    private final int yearCount;
+    private final int stepYears;
     private int startDay;
     private int startHour;
     private int startMicros;
@@ -38,30 +38,42 @@ public class YearTimestampSampler implements TimestampSampler {
     private int startMonth;
     private int startSec;
 
-    public YearTimestampSampler(int yearCount) {
-        this.yearCount = yearCount;
+    public YearTimestampSampler(int stepYears) {
+        this.stepYears = stepYears;
     }
 
     @Override
     public long getApproxBucketSize() {
-        return Timestamps.YEAR_MICROS_NONLEAP * yearCount;
+        return Timestamps.YEAR_MICROS_NONLEAP * stepYears;
     }
 
     @Override
     public long nextTimestamp(long timestamp) {
-        return addYears(timestamp, yearCount);
+        return addYears(timestamp, stepYears);
+    }
+
+    @Override
+    public long nextTimestamp(long timestamp, int numSteps, long maxTimestamp) {
+        long result = timestamp;
+        for (int i = 0; i < numSteps; i++) {
+            result = addYears(result, stepYears);
+            if (result == maxTimestamp) {
+                break;
+            }
+        }
+        return result;
     }
 
     @Override
     public long previousTimestamp(long timestamp) {
-        return addYears(timestamp, -yearCount);
+        return addYears(timestamp, -stepYears);
     }
 
     @Override
     public long round(long value) {
         final int y = Timestamps.getYear(value);
         return Timestamps.toMicros(
-                y - y % yearCount,
+                y - y % stepYears,
                 Timestamps.isLeapYear(y),
                 startDay,
                 startMonth,

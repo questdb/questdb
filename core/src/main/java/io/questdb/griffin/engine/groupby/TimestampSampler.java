@@ -34,7 +34,11 @@ public interface TimestampSampler extends Sinkable {
         throw new UnsupportedOperationException();
     }
 
-    long nextTimestamp(long timestamp);
+    default long nextTimestamp(long timestamp) {
+        return nextTimestamp(timestamp, 1, Long.MAX_VALUE);
+    }
+
+    long nextTimestamp(long timestamp, int numSteps, long maxTimestamp);
 
     long previousTimestamp(long timestamp);
 
