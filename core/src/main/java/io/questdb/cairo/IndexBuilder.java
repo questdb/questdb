@@ -77,13 +77,14 @@ public class IndexBuilder extends RebuildColumnBase {
                 // lets not leave half-baked file sitting around
                 LOG.error()
                         .$("could not create index [name=").$(path)
+                        .$(", msg=").$(e.getFlyweightMessage())
                         .$(", errno=").$(e.getErrno())
-                        .$(']').$();
+                        .I$();
                 if (!ff.removeQuiet(lpsz)) {
                     LOG.error()
                             .$("could not remove '").$(path).$("'. Please remove MANUALLY.")
                             .$("[errno=").$(ff.errno())
-                            .$(']').$();
+                            .I$();
                 }
                 throw e;
             } finally {
@@ -91,7 +92,7 @@ public class IndexBuilder extends RebuildColumnBase {
                 ddlMem.close();
             }
             if (!ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn))) {
-                LOG.error().$("could not create index [name=").$(path).$(']').$();
+                LOG.error().$("could not create index [name=").$(path).I$();
                 throw CairoException.critical(ff.errno()).put("could not create index [name=").put(path).put(']');
             }
             LOG.info().$("writing ").$(path).$();

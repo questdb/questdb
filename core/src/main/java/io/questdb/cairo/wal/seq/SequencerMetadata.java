@@ -32,7 +32,6 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
-import io.questdb.cairo.mv.MatViewRefreshState;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -143,8 +142,6 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             try (BlockFileWriter writer = new BlockFileWriter(ff, commitMode)) {
                 writer.of(path.trimTo(pathLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                 MatViewDefinition.append(tableStruct.getMatViewDefinition(), writer);
-                writer.of(path.trimTo(pathLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                MatViewRefreshState.append(null, writer);
             }
             path.trimTo(pathLen);
         }

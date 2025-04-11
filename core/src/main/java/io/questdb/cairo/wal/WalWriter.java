@@ -308,7 +308,8 @@ public class WalWriter implements TableWriterAPI {
         commit0(Long.MIN_VALUE, Long.MIN_VALUE);
     }
 
-    public void commitWithExtra(long lastRefreshBaseTxn, long lastRefreshTimestamp) {
+    // Called as the last transaction of a materialized view refresh.
+    public void commitMatView(long lastRefreshBaseTxn, long lastRefreshTimestamp) {
         assert lastRefreshBaseTxn != Numbers.LONG_NULL;
         commit0(lastRefreshBaseTxn, lastRefreshTimestamp);
     }
@@ -392,8 +393,9 @@ public class WalWriter implements TableWriterAPI {
         } catch (CairoException e) {
             LOG.critical().$("could not apply structure changes, WAL will be closed [table=").$(tableToken.getTableName())
                     .$(", walId=").$(walId)
+                    .$(", ex=").$((Throwable) e)
                     .$(", errno=").$(e.getErrno())
-                    .$(", error=").$((Throwable) e).I$();
+                    .I$();
             distressed = true;
             return false;
         }
@@ -413,9 +415,16 @@ public class WalWriter implements TableWriterAPI {
         return segmentRowCount > currentTxnStartRowNum;
     }
 
-    public void invalidate(boolean invalid, @Nullable CharSequence invalidationReason) {
+    // Marks the materialized view as invalid or resets its invalidation status,
+    // depending on the input values.
+    public void invalidateMatView(
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            boolean invalid,
+            @Nullable CharSequence invalidationReason
+    ) {
         try {
-            lastSegmentTxn = events.invalidate(invalid, invalidationReason);
+            lastSegmentTxn = events.appendMatViewInvalidate(lastRefreshBaseTxn, lastRefreshTimestamp, invalid, invalidationReason);
             getSequencerTxn();
         } catch (Throwable th) {
             rollback();

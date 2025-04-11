@@ -55,4 +55,8 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
         anotherHolder.invalidationReason = invalidationReason;
         anotherHolder.refreshTriggeredTimestamp = refreshTriggeredTimestamp;
     }
+
+    public boolean isBaseTableTask() {
+        return matViewToken == null;
+    }
 }
