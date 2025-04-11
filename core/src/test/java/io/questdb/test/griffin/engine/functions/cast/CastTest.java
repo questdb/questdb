@@ -1252,20 +1252,16 @@ public class CastTest extends AbstractCairoTest {
     @Test
     public void testCharToBoolean() throws Exception {
         assertQuery(
-                "a\n",
-                "select a from tab",
-                "create table tab (a boolean)",
+                "cast\n",
+                "select a::boolean from tab",
+                "create table tab (a char)",
                 null,
-                "insert into tab select cast('f' as boolean) from long_sequence(10)",
-                "a\n" +
+                "insert into tab values('0'), ('1'), ('T'), ('t'), ('F'), ('f')",
+                "cast\n" +
                         "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
-                        "false\n" +
+                        "true\n" +
+                        "true\n" +
+                        "true\n" +
                         "false\n" +
                         "false\n",
                 true,
@@ -1306,18 +1302,18 @@ public class CastTest extends AbstractCairoTest {
                 "select a from tab",
                 "create table tab (a byte)",
                 null,
-                "insert into tab select cast(cast(rnd_int(0,11,0)+47 as char) as byte) from long_sequence(10)",
+                "insert into tab select cast(cast(rnd_int(0,9,0)+47 as char) as byte) from long_sequence(10)",
                 "a\n" +
-                        "5\n" +
-                        "0\n" +
-                        "0\n" +
-                        "6\n" +
-                        "3\n" +
                         "7\n" +
+                        "0\n" +
+                        "8\n" +
+                        "0\n" +
+                        "7\n" +
+                        "1\n" +
+                        "2\n" +
+                        "1\n" +
                         "6\n" +
-                        "0\n" +
-                        "0\n" +
-                        "9\n",
+                        "3\n",
                 true,
                 true,
                 false
@@ -1356,18 +1352,18 @@ public class CastTest extends AbstractCairoTest {
                 "select a from tab",
                 "create table tab (a date)",
                 null,
-                "insert into tab select cast(cast(rnd_int(0,11,0)+47 as char) as date) from long_sequence(10)",
+                "insert into tab select cast(cast(rnd_int(0,9,0)+47 as char) as date) from long_sequence(10)",
                 "a\n" +
-                        "1970-01-01T00:00:00.005Z\n" +
-                        "\n" +
-                        "\n" +
-                        "1970-01-01T00:00:00.006Z\n" +
-                        "1970-01-01T00:00:00.003Z\n" +
                         "1970-01-01T00:00:00.007Z\n" +
-                        "1970-01-01T00:00:00.006Z\n" +
-                        "\n" +
                         "1970-01-01T00:00:00.000Z\n" +
-                        "1970-01-01T00:00:00.009Z\n",
+                        "1970-01-01T00:00:00.008Z\n" +
+                        "1970-01-01T00:00:00.000Z\n" +
+                        "1970-01-01T00:00:00.007Z\n" +
+                        "1970-01-01T00:00:00.001Z\n" +
+                        "1970-01-01T00:00:00.002Z\n" +
+                        "1970-01-01T00:00:00.001Z\n" +
+                        "1970-01-01T00:00:00.006Z\n" +
+                        "1970-01-01T00:00:00.003Z\n",
                 true,
                 true,
                 false
@@ -1381,18 +1377,18 @@ public class CastTest extends AbstractCairoTest {
                 "select a from tab",
                 "create table tab (a double)",
                 null,
-                "insert into tab select cast(cast(rnd_int(0,11,0)+47 as char) as double) from long_sequence(10)",
+                "insert into tab select cast(cast(rnd_int(0,9,0)+47 as char) as double) from long_sequence(10)",
                 "a\n" +
-                        "5.0\n" +
-                        "null\n" +
-                        "null\n" +
-                        "6.0\n" +
-                        "3.0\n" +
                         "7.0\n" +
-                        "6.0\n" +
-                        "null\n" +
                         "0.0\n" +
-                        "9.0\n",
+                        "8.0\n" +
+                        "0.0\n" +
+                        "7.0\n" +
+                        "1.0\n" +
+                        "2.0\n" +
+                        "1.0\n" +
+                        "6.0\n" +
+                        "3.0\n",
                 true,
                 true,
                 false
@@ -1406,18 +1402,18 @@ public class CastTest extends AbstractCairoTest {
                 "select a from tab",
                 "create table tab (a float)",
                 null,
-                "insert into tab select cast(cast(rnd_int(0,11,0)+47 as char) as float) from long_sequence(10)",
+                "insert into tab select cast(cast(rnd_int(0,9,0)+47 as char) as float) from long_sequence(10)",
                 "a\n" +
-                        "5.0000\n" +
-                        "null\n" +
-                        "null\n" +
-                        "6.0000\n" +
-                        "3.0000\n" +
                         "7.0000\n" +
-                        "6.0000\n" +
-                        "null\n" +
                         "0.0000\n" +
-                        "9.0000\n",
+                        "8.0000\n" +
+                        "0.0000\n" +
+                        "7.0000\n" +
+                        "1.0000\n" +
+                        "2.0000\n" +
+                        "1.0000\n" +
+                        "6.0000\n" +
+                        "3.0000\n",
                 true,
                 true,
                 false
@@ -1431,18 +1427,18 @@ public class CastTest extends AbstractCairoTest {
                 "select a from tab",
                 "create table tab (a int)",
                 null,
-                "insert into tab select cast(cast(rnd_int(0,11,0)+47 as char) as int) from long_sequence(10)",
+                "insert into tab select cast(cast(rnd_int(0,9,0)+47 as char) as int) from long_sequence(10)",
                 "a\n" +
-                        "5\n" +
-                        "null\n" +
-                        "null\n" +
-                        "6\n" +
-                        "3\n" +
                         "7\n" +
-                        "6\n" +
-                        "null\n" +
                         "0\n" +
-                        "9\n",
+                        "8\n" +
+                        "0\n" +
+                        "7\n" +
+                        "1\n" +
+                        "2\n" +
+                        "1\n" +
+                        "6\n" +
+                        "3\n",
                 true,
                 true,
                 false
@@ -1456,18 +1452,18 @@ public class CastTest extends AbstractCairoTest {
                 "select a from tab",
                 "create table tab (a long)",
                 null,
-                "insert into tab select cast(cast(rnd_int(0,11,0)+47 as char) as long) from long_sequence(10)",
+                "insert into tab select cast(cast(rnd_int(0,9,0)+47 as char) as long) from long_sequence(10)",
                 "a\n" +
-                        "5\n" +
-                        "null\n" +
-                        "null\n" +
-                        "6\n" +
-                        "3\n" +
                         "7\n" +
-                        "6\n" +
-                        "null\n" +
                         "0\n" +
-                        "9\n",
+                        "8\n" +
+                        "0\n" +
+                        "7\n" +
+                        "1\n" +
+                        "2\n" +
+                        "1\n" +
+                        "6\n" +
+                        "3\n",
                 true,
                 true,
                 false
@@ -1481,18 +1477,18 @@ public class CastTest extends AbstractCairoTest {
                 "select a from tab",
                 "create table tab (a long256)",
                 null,
-                "insert into tab select cast(rnd_char() as long256) from long_sequence(10)",
+                "insert into tab select cast(cast(rnd_int(0,9,0)+47 as char) as long256) from long_sequence(10)",
                 "a\n" +
-                        "0x56\n" +
-                        "0x54\n" +
-                        "0x4a\n" +
-                        "0x57\n" +
-                        "0x43\n" +
-                        "0x50\n" +
-                        "0x53\n" +
-                        "0x57\n" +
-                        "0x48\n" +
-                        "0x59\n",
+                        "0x07\n" +
+                        "0x00\n" +
+                        "0x08\n" +
+                        "0x00\n" +
+                        "0x07\n" +
+                        "0x01\n" +
+                        "0x02\n" +
+                        "0x01\n" +
+                        "0x06\n" +
+                        "0x03\n",
                 true,
                 true,
                 false
@@ -1503,31 +1499,80 @@ public class CastTest extends AbstractCairoTest {
     public void testCharToLong256Sort() throws Exception {
         assertQuery(
                 "x\n" +
-                        "0x43\n" +
-                        "0x45\n" +
-                        "0x47\n" +
-                        "0x48\n" +
-                        "0x48\n" +
-                        "0x4a\n" +
-                        "0x4e\n" +
-                        "0x50\n" +
-                        "0x50\n" +
-                        "0x52\n" +
-                        "0x52\n" +
-                        "0x53\n" +
-                        "0x54\n" +
-                        "0x56\n" +
-                        "0x57\n" +
-                        "0x57\n" +
-                        "0x58\n" +
-                        "0x58\n" +
-                        "0x59\n" +
-                        "0x5a\n",
+                        "0x30\n" +
+                        "0x31\n" +
+                        "0x31\n" +
+                        "0x31\n" +
+                        "0x32\n" +
+                        "0x32\n" +
+                        "0x33\n" +
+                        "0x34\n" +
+                        "0x34\n" +
+                        "0x37\n" +
+                        "0x37\n" +
+                        "0x37\n" +
+                        "0x38\n" +
+                        "0x38\n" +
+                        "0x38\n" +
+                        "0x38\n" +
+                        "0x38\n" +
+                        "0x39\n" +
+                        "0x39\n" +
+                        "0x39\n",
                 "select cast(a as long256) x from tt order by x",
-                "create table tt as (select rnd_char() a from long_sequence(20))",
+                "create table tt as (select cast(rnd_int(0,9,0)+48 as char) a from long_sequence(20))",
                 null,
                 true,
                 true
+        );
+    }
+
+    @Test
+    public void testCharToNumbersException() throws Exception {
+        assertException(
+                "select 'm'::byte",
+                0,
+                "inconvertible value: m [CHAR -> BYTE]"
+        );
+        assertException(
+                "select 'm'::short",
+                0,
+                "inconvertible value: m [CHAR -> SHORT]"
+        );
+        assertException(
+                "select 'm'::int",
+                0,
+                "inconvertible value: m [CHAR -> INT]"
+        );
+        assertException(
+                "select 'm'::long",
+                0,
+                "inconvertible value: m [CHAR -> LONG]"
+        );
+        assertException(
+                "select 'm'::float",
+                0,
+                "inconvertible value: m [CHAR -> DOUBLE]"
+        );
+        assertException(
+                "select 'm'::double",
+                0,
+                "inconvertible value: m [CHAR -> DOUBLE]"
+        );
+        assertException(
+                "select 'm'::date - 1",
+                0,
+                "inconvertible value: m [CHAR -> DATE]"
+        );
+        assertException(
+                "select 'm'::timestamp - 1",
+                0,
+                "inconvertible value: m [CHAR -> TIMESTAMP]"
+        );
+        assertException(
+                "select 'm'::boolean",
+                0,
+                "inconvertible value: m [CHAR -> BOOLEAN]"
         );
     }
 
@@ -1538,18 +1583,18 @@ public class CastTest extends AbstractCairoTest {
                 "select a from tab",
                 "create table tab (a short)",
                 null,
-                "insert into tab select cast(cast(rnd_int(0,11,0)+47 as char) as short) from long_sequence(10)",
+                "insert into tab select cast(cast(rnd_int(0,9,0)+47 as char) as short) from long_sequence(10)",
                 "a\n" +
-                        "5\n" +
-                        "0\n" +
-                        "0\n" +
-                        "6\n" +
-                        "3\n" +
                         "7\n" +
+                        "0\n" +
+                        "8\n" +
+                        "0\n" +
+                        "7\n" +
+                        "1\n" +
+                        "2\n" +
+                        "1\n" +
                         "6\n" +
-                        "0\n" +
-                        "0\n" +
-                        "9\n",
+                        "3\n",
                 true,
                 true,
                 false
@@ -1727,18 +1772,18 @@ public class CastTest extends AbstractCairoTest {
                 "select a from tab",
                 "create table tab (a timestamp)",
                 null,
-                "insert into tab select cast(cast(rnd_int(0,11,0)+47 as char) as timestamp) from long_sequence(10)",
+                "insert into tab select cast(cast(rnd_int(0,9,0)+47 as char) as timestamp) from long_sequence(10)",
                 "a\n" +
-                        "1970-01-01T00:00:00.000005Z\n" +
-                        "\n" +
-                        "\n" +
-                        "1970-01-01T00:00:00.000006Z\n" +
-                        "1970-01-01T00:00:00.000003Z\n" +
                         "1970-01-01T00:00:00.000007Z\n" +
-                        "1970-01-01T00:00:00.000006Z\n" +
-                        "\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
-                        "1970-01-01T00:00:00.000009Z\n",
+                        "1970-01-01T00:00:00.000008Z\n" +
+                        "1970-01-01T00:00:00.000000Z\n" +
+                        "1970-01-01T00:00:00.000007Z\n" +
+                        "1970-01-01T00:00:00.000001Z\n" +
+                        "1970-01-01T00:00:00.000002Z\n" +
+                        "1970-01-01T00:00:00.000001Z\n" +
+                        "1970-01-01T00:00:00.000006Z\n" +
+                        "1970-01-01T00:00:00.000003Z\n",
                 true,
                 true,
                 false

@@ -33,7 +33,8 @@ public class AddIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testLeftNull() throws Exception {
-        assertQuery("column\n\n", "SELECT (null + 10)");
+        assertQuery("column\n" +
+                "null\n", "SELECT (null + 10)");
     }
 
     @Test
@@ -43,7 +44,8 @@ public class AddIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testRightNull() throws Exception {
-        assertQuery("column\n\n", "SELECT (4 + null)");
+        assertQuery("column\n" +
+                "null\n", "SELECT (4 + null)");
     }
 
     @Test

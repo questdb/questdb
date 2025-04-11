@@ -43,7 +43,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private final NetworkFacade nf;
     private final int throttle;
     private long buffer;
-    private AtomicBoolean cancelledFlag;
+    private volatile AtomicBoolean cancelledFlag;
     private long fd = -1;
     private volatile long powerUpTime = Long.MAX_VALUE;
     private int secret;
@@ -72,8 +72,10 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     @Override
     public void cancel() {
         powerUpTime = Long.MIN_VALUE;
-        if (cancelledFlag != null) {
-            cancelledFlag.set(true);
+        // This call can be concurrent with the call to setCancelledFlag
+        AtomicBoolean cf = cancelledFlag;
+        if (cf != null) {
+            cf.set(true);
         }
     }
 
