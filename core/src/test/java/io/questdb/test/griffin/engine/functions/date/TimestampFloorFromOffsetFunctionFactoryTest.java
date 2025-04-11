@@ -150,9 +150,9 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
             bindVariableService.clear();
             bindVariableService.setStr("offset", "00:00");
             assertPlanNoLeakCheck(
-                    "select timestamp_floor('1d', ts, null, :offset, null) from x",
+                    "select timestamp_floor('d', ts, null, :offset, null) from x",
                     "VirtualRecord\n" +
-                            "  functions: [timestamp_floor('day',ts,null,:offset::string,null)]\n" +
+                            "  functions: [timestamp_floor('d',ts,null,:offset::string,null)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n"
