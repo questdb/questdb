@@ -2475,6 +2475,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 Function stolenFilter = slave.getFilter();
                                                 slave.halfClose();
 
+                                                Misc.free(slave.getCompiledFilter());
+                                                Misc.free(slave.getBindVarMemory());
+                                                Misc.freeObjList(slave.getBindVarFunctions());
+
                                                 master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(configuration, createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata), master, slaveBase, stolenFilter, masterMetadata.getColumnCount());
                                                 created = true;
                                             }
@@ -2494,6 +2498,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         Function stolenFilter = selectedRecordCursorFactoryBase.getFilter();
                                                         selectedRecordCursorFactoryBase.halfClose();
                                                         selectedRecordCursorFactory.replaceBaseFactory(filterStealingBase);
+
+                                                        Misc.free(selectedRecordCursorFactoryBase.getCompiledFilter());
+                                                        Misc.free(selectedRecordCursorFactoryBase.getBindVarMemory());
+                                                        Misc.freeObjList(selectedRecordCursorFactoryBase.getBindVarFunctions());
 
                                                         master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
                                                                 configuration,
