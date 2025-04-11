@@ -48,7 +48,6 @@ import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.log.LogRecord;
 import io.questdb.mp.Job;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -60,9 +59,6 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
-
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.LockSupport;
 
 public class MatViewRefreshJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MatViewRefreshJob.class);
@@ -324,17 +320,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     }
                 } catch (Throwable th) {
                     factory = Misc.free(factory);
-                    if (CairoException.isCairoOomError(th) && i < maxRecompileAttempts) {
-                        LogRecord logRecord = LOG.info().$("query failed with out-of-memory, retrying with ");
-                        if (intervalStep > 1) {
-                            intervalStep /= 2;
-                            logRecord.$("a reduced intervalStep");
-                        } else {
-                            logRecord.$("the smallest intervalStep");
-                            LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(500));
-                        }
-                        logRecord.$(" [view=")
-                                .$(viewDef.getMatViewToken())
+                    if (CairoException.isCairoOomError(th) && i < maxRecompileAttempts && intervalStep > 1) {
+                        intervalStep /= 2;
+                        LOG.info().$("query failed with out-of-memory, retrying with a reduced intervalStep")
+                                .$(" [view=").$(viewDef.getMatViewToken())
                                 .$(", intervalStep=").$(intervalStep)
                                 .$(", error=").$(((CairoException) th).getFlyweightMessage())
                                 .I$();
