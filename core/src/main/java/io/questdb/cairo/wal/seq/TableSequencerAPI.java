@@ -100,7 +100,7 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public void dropTable(TableToken tableToken, boolean failedCreate) {
-        LOG.info().$("dropping wal table [name=").$(tableToken).$(", dirName=").utf8(tableToken.getDirName()).I$();
+        LOG.info().$("dropping wal table [table=").$(tableToken).I$();
         try (TableSequencerImpl seq = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
                 seq.dropTable();
