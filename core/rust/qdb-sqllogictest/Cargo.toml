@@ -14,5 +14,5 @@ once_cell = "1.19.0"
 sqllogictest = { path = "sqllogictest" }
 sqllogictest-engines = { path = "sqllogictest-engines" }
 async-trait = "0.1.81"
-tokio = "1.38.0"
+tokio = "1.43.1"
 
