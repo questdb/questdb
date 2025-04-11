@@ -167,6 +167,13 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
         telemetryFacade.store(MAT_VIEW_CREATE, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, null, 0);
     }
 
+    public void initFromReader(MatViewStateReader reader) {
+        this.invalid = reader.isInvalid();
+        this.invalidationReason = reader.getInvalidationReason();
+        this.lastRefreshBaseTxn = reader.getLastRefreshBaseTxn();
+        this.lastRefreshTimestamp = reader.getLastRefreshTimestamp();
+    }
+
     public boolean isDropped() {
         return dropped;
     }
@@ -267,12 +274,5 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
         if (!latch.compareAndSet(true, false)) {
             throw new IllegalStateException("cannot unlock, not locked");
         }
-    }
-
-    public void updateFromReader(MatViewStateReader reader) {
-        this.invalid = reader.isInvalid();
-        this.invalidationReason = reader.getInvalidationReason();
-        this.lastRefreshBaseTxn = reader.getLastRefreshBaseTxn();
-        this.lastRefreshTimestamp = reader.getLastRefreshTimestamp();
     }
 }

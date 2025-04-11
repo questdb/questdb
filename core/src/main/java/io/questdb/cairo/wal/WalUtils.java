@@ -149,7 +149,7 @@ public class WalUtils {
                             tablePath.concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
                             // Since we are scanning the transaction log of a materialized view table,
                             // we assume the last transaction is the one we are looking for (for the most cases).
-                            // As a result, memory usage is not optimized.
+                            // As a result, fd and memory usage is not optimized.
                             try (WalEventReader eventReader = walEventReader) {
                                 WalEventCursor walEventCursor = eventReader.of(tablePath, segmentTxn);
                                 if (walEventCursor.getType() == MAT_VIEW_DATA) {
@@ -167,7 +167,7 @@ public class WalUtils {
                                     blockReader.of(tablePath.$());
                                     matViewStateReader.of(blockReader, tableToken);
                                     return true;
-                                } catch (Throwable th2) {
+                                } catch (Throwable ignored) {
                                 }
                                 return false;
                             }

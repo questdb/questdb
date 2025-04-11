@@ -398,23 +398,27 @@ public class CairoEngine implements Closeable, WriterSource {
                             }
 
                             path.trimTo(pathLen).concat(tableToken);
-                            boolean success = WalUtils.readMatViewState(path, tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader);
-                            if (success) {
-                                state.updateFromReader(matViewStateReader);
-                                if (state.isInvalid()) {
-                                    continue;
-                                }
-                                long baseTableLastTxn = getTableSequencerAPI().lastTxn(baseTableToken);
-                                if (state.getLastRefreshBaseTxn() > baseTableLastTxn) {
-                                    LOG.info().$("materialized view is out of sync with base table [table=").utf8(matViewDefinition.getBaseTableName())
-                                            .$(", view=").utf8(tableToken.getTableName())
-                                            .$(", lastRefreshBaseTxn=").$(state.getLastRefreshBaseTxn())
-                                            .$(", baseTableLastTxn=").$(baseTableLastTxn)
-                                            .I$();
-                                    matViewStateStore.enqueueInvalidate(tableToken, "out of sync with base table");
-                                } else {
-                                    matViewStateStore.enqueueIncrementalRefresh(tableToken);
-                                }
+                            if (!WalUtils.readMatViewState(path, tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader)) {
+                                LOG.info().$("could not find materialized view state, falling back to defaults [table=").utf8(matViewDefinition.getBaseTableName())
+                                        .$(", view=").utf8(tableToken.getTableName())
+                                        .I$();
+                                continue;
+                            }
+
+                            state.initFromReader(matViewStateReader);
+                            if (state.isInvalid()) {
+                                continue;
+                            }
+                            long baseTableLastTxn = getTableSequencerAPI().lastTxn(baseTableToken);
+                            if (state.getLastRefreshBaseTxn() > baseTableLastTxn) {
+                                LOG.info().$("materialized view is out of sync with base table [table=").utf8(matViewDefinition.getBaseTableName())
+                                        .$(", view=").utf8(tableToken.getTableName())
+                                        .$(", lastRefreshBaseTxn=").$(state.getLastRefreshBaseTxn())
+                                        .$(", baseTableLastTxn=").$(baseTableLastTxn)
+                                        .I$();
+                                matViewStateStore.enqueueInvalidate(tableToken, "out of sync with base table");
+                            } else {
+                                matViewStateStore.enqueueIncrementalRefresh(tableToken);
                             }
                         }
                     } catch (Throwable th) {
