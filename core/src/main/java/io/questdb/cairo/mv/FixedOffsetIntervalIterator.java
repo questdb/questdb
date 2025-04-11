@@ -63,17 +63,12 @@ public class FixedOffsetIntervalIterator implements SampleByIntervalIterator {
 
     @Override
     public boolean next() {
-        if (timestampHi != maxTimestamp) {
-            timestampLo = timestampHi;
-            for (int i = 0; i < step; i++) {
-                timestampHi = sampler.nextTimestamp(timestampHi);
-                if (timestampHi == maxTimestamp) {
-                    break;
-                }
-            }
-            return true;
+        if (timestampHi == maxTimestamp) {
+            return false;
         }
-        return false;
+        timestampLo = timestampHi;
+        timestampHi = sampler.nextTimestamp(timestampHi, step, maxTimestamp);
+        return true;
     }
 
     public FixedOffsetIntervalIterator of(
