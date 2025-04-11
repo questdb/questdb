@@ -184,7 +184,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             int filteredFrameIndex = initialFilteredFrameIndex;
 
             int stopAtFrameIndex = Rows.toPartitionIndex(highestKnownSlaveRowIdWithNoMatch);
-            long stopAtRowId = (stopAtFrameIndex == slaveFrameIndex) ? Rows.toLocalRowID(highestKnownSlaveRowIdWithNoMatch) : 0;
+            long stopAtRowId = (stopAtFrameIndex == filteredFrameIndex) ? Rows.toLocalRowID(highestKnownSlaveRowIdWithNoMatch) : 0;
 
             for (; ; ) {
                 // let's try to move backwards in the slave cursor until we have a match
@@ -208,7 +208,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                     filteredFrameIndex = timeFrame.getFrameIndex();
                     filteredRowId = timeFrame.getRowHi() - 1;
                     currentFrameLo = timeFrame.getRowLo();
-                    stopAtRowId = (stopAtFrameIndex == initialFilteredFrameIndex) ? Rows.toLocalRowID(highestKnownSlaveRowIdWithNoMatch) : 0;
+                    stopAtRowId = (stopAtFrameIndex == filteredFrameIndex) ? Rows.toLocalRowID(highestKnownSlaveRowIdWithNoMatch) : 0;
                 }
 
                 if (filteredRowId < stopAtRowId) {
