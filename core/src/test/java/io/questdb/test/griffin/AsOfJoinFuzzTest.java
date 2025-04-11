@@ -147,6 +147,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         switch (projectionType) {
             case NONE:
                 projection = "*";
+                break;
             case CROSS_COLUMN:
                 projection = "s, ts, i";
                 break;
