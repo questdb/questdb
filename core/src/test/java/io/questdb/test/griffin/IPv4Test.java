@@ -732,6 +732,15 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplicitCastStrIPv4() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "column\n" +
+                        "253.253.253.253\n",
+                "select ~ ipv4 '2.2.2.2'"
+        ));
+    }
+
+    @Test
     public void testExplicitCastStrToIPv4() throws Exception {
         assertMemoryLeak(() -> assertSql(
                 "cast\n" +
@@ -4575,15 +4584,6 @@ public class IPv4Test extends AbstractCairoTest {
                 "column\n" +
                         "false\n",
                 "select ipv4 '2.2.2.2' <= '1.1.1.1'"
-        ));
-    }
-
-    @Test
-    public void testImplicitCastStrIPv43() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "column\n" +
-                        "253.253.253.253\n",
-                "select ~ '2.2.2.2'"
         ));
     }
 
