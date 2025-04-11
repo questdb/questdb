@@ -216,7 +216,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
 
                 if (filteredRowId < stopUnderRowId) {
                     record.hasSlave(false);
-                    highestKnownSlaveRowIdWithNoMatch = Rows.toRowID(initialFilteredFrameIndex, initialFilteredRowId);
+                    highestKnownSlaveRowIdWithNoMatch = Rows.toRowID(initialFilteredFrameIndex, initialFilteredRowId + 1);
                     break;
                 }
 
