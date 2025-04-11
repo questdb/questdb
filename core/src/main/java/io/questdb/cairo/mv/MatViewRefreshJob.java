@@ -191,7 +191,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             TableWriterAPI tableWriter,
             long baseTableTxn,
             long refreshTriggeredTimestamp
-    ) {
+    ) throws SqlException {
         assert state.isLocked();
 
         final int maxRecompileAttempts = configuration.getMatViewMaxRecompileAttempts();
