@@ -2209,6 +2209,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 final long fd = TableUtils.openFileRWOrFail(ff, path.concat(SEQ_DIR).concat(TXNLOG_FILE_NAME).$(), configuration.getWriterFileOpenOpts());
                 try {
+                    engine.clear(); // release WalWriters and txnlog file, so we can truncate it
                     Assert.assertTrue(ff.truncate(fd, TableTransactionLogFile.HEADER_SIZE / 2));
                 } finally {
                     ff.close(fd);
