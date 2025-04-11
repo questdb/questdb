@@ -25,9 +25,9 @@
 package io.questdb.metrics;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -84,9 +84,10 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
         TableToken tableToken;
         try {
             tableToken = engine.verifyTableName(TABLE_NAME);
-            try (TableWriter writer = engine.getWriter(tableToken, "query_tracing")) {
-                if (writer.getMetadata().getColumnIndexQuiet(COLUMN_ERROR) < 0) {
-                    writer.addColumn("error", ColumnType.VARCHAR);
+            try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
+                CompiledQuery cc = sqlCompiler.query().$("ALTER TABLE ").$(TABLE_NAME).$(" ADD COLUMN IF NOT EXISTS ").$(COLUMN_ERROR).$(" VARCHAR; ").compile(sqlExecutionContext);
+                try (OperationFuture fut = cc.execute(null)) {
+                    fut.await();
                 }
             }
         } catch (Exception recoverable) {
