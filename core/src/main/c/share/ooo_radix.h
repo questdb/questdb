@@ -100,7 +100,7 @@ inline void radix_shuffle(uint64_t *counts, const T *src, T *dest, const uint64_
 
 template<uint16_t n, typename TRevIdx>
 int64_t
-radix_copy_segments_index_asc(
+radix_sort_segments_index_asc(
         const int64_t *lag_ts, const uint64_t lag_size,
         const index_l **segment_ts_maps,
         const txn_info *segment_txns,
@@ -234,7 +234,7 @@ radix_copy_segments_index_asc(
 
 
 template<uint16_t N>
-int64_t radix_copy_segments_index_asc_rev(
+int64_t radix_sort_segments_index_asc_rev(
         const int64_t *lag_ts,
         const uint64_t lag_size,
         const index_l **segment_ts_maps,
@@ -258,22 +258,22 @@ int64_t radix_copy_segments_index_asc_rev(
 
     switch (total_row_count_bytes) {
         case 1u:
-            return radix_copy_segments_index_asc<N, uint8_t>(
+            return radix_sort_segments_index_asc<N, uint8_t>(
                     lag_ts, lag_size, segment_ts_maps, segment_txns, txn_count, out, cpy, segment_count,
                     min_value, result_format, segment_bits, ts_bits, txn_bits
             );
         case 2u:
-            return radix_copy_segments_index_asc<N, uint16_t>(
+            return radix_sort_segments_index_asc<N, uint16_t>(
                     lag_ts, lag_size, segment_ts_maps, segment_txns, txn_count, out, cpy, segment_count,
                     min_value, result_format, segment_bits, ts_bits, txn_bits
             );
         case 4u:
-            return radix_copy_segments_index_asc<N, uint32_t>(
+            return radix_sort_segments_index_asc<N, uint32_t>(
                     lag_ts, lag_size, segment_ts_maps, segment_txns, txn_count, out, cpy, segment_count,
                     min_value, result_format, segment_bits, ts_bits, txn_bits
             );
         case 8u:
-            return radix_copy_segments_index_asc<N, uint64_t>(
+            return radix_sort_segments_index_asc<N, uint64_t>(
                     lag_ts, lag_size, segment_ts_maps, segment_txns, txn_count, out, cpy, segment_count,
                     min_value, result_format, segment_bits, ts_bits, txn_bits
             );
@@ -283,7 +283,7 @@ int64_t radix_copy_segments_index_asc_rev(
     }
 }
 
-inline int64_t radix_copy_segments_index_asc_precompiled(
+inline int64_t radix_sort_segments_index_asc_precompiled(
         uint16_t ts_bits, uint16_t txn_bits, uint16_t segment_bits,
         const int64_t *lag_ts, const uint64_t lag_size,
         const index_l **segment_ts, const txn_info *segment_txns,
@@ -297,56 +297,56 @@ inline int64_t radix_copy_segments_index_asc_precompiled(
     auto n = (ts_bits + txn_bits + 7) >> 3;
     switch (n) {
         case 1:
-            return radix_copy_segments_index_asc_rev<1>(
+            return radix_sort_segments_index_asc_rev<1>(
                     lag_ts, lag_size,
                     segment_ts, segment_txns, txn_count, out, cpy,
                     segment_count, min_value, total_row_count_bytes, total_row_count, result_format,
                     segment_bits, ts_bits, txn_bits
             );
         case 2:
-            return radix_copy_segments_index_asc_rev<2>(
+            return radix_sort_segments_index_asc_rev<2>(
                     lag_ts, lag_size,
                     segment_ts, segment_txns, txn_count, out, cpy,
                     segment_count, min_value, total_row_count_bytes, total_row_count, result_format,
                     segment_bits, ts_bits, txn_bits
             );
         case 3:
-            return radix_copy_segments_index_asc_rev<3>(
+            return radix_sort_segments_index_asc_rev<3>(
                     lag_ts, lag_size,
                     segment_ts, segment_txns, txn_count, out, cpy,
                     segment_count, min_value, total_row_count_bytes, total_row_count, result_format,
                     segment_bits, ts_bits, txn_bits
             );
         case 4:
-            return radix_copy_segments_index_asc_rev<4>(
+            return radix_sort_segments_index_asc_rev<4>(
                     lag_ts, lag_size,
                     segment_ts, segment_txns, txn_count, out, cpy,
                     segment_count, min_value, total_row_count_bytes, total_row_count, result_format,
                     segment_bits, ts_bits, txn_bits
             );
         case 5:
-            return radix_copy_segments_index_asc_rev<5>(
+            return radix_sort_segments_index_asc_rev<5>(
                     lag_ts, lag_size,
                     segment_ts, segment_txns, txn_count, out, cpy,
                     segment_count, min_value, total_row_count_bytes, total_row_count, result_format,
                     segment_bits, ts_bits, txn_bits
             );
         case 6:
-            return radix_copy_segments_index_asc_rev<6>(
+            return radix_sort_segments_index_asc_rev<6>(
                     lag_ts, lag_size,
                     segment_ts, segment_txns, txn_count, out, cpy,
                     segment_count, min_value, total_row_count_bytes, total_row_count, result_format,
                     segment_bits, ts_bits, txn_bits
             );
         case 7:
-            return radix_copy_segments_index_asc_rev<7>(
+            return radix_sort_segments_index_asc_rev<7>(
                     lag_ts, lag_size,
                     segment_ts, segment_txns, txn_count, out, cpy,
                     segment_count, min_value, total_row_count_bytes, total_row_count, result_format,
                     segment_bits, ts_bits, txn_bits
             );
         case 8:
-            return radix_copy_segments_index_asc_rev<8>(
+            return radix_sort_segments_index_asc_rev<8>(
                     lag_ts, lag_size,
                     segment_ts, segment_txns, txn_count, out, cpy,
                     segment_count, min_value, total_row_count_bytes, total_row_count, result_format,
@@ -541,7 +541,6 @@ jlong merge_shuffle_symbol_column_from_many_addresses(
 
     int64_t out_index = 0;
     jlong rows_processed = 0;
-    jlong dups = 0;
     for (uint64_t txn_index = 0; txn_index < txn_count; txn_index++) {
         auto segment_addr = src[segment_txns[txn_index].seg_info_index];
         uint64_t hi = segment_txns[txn_index].segment_row_offset + segment_txns[txn_index].row_count;
@@ -553,7 +552,6 @@ jlong merge_shuffle_symbol_column_from_many_addresses(
             if (merge_format == dedup_shuffle_index_format) {
                 if (dst_index == 0) {
                     // 0 means this row is not in the result set
-                    dups++;
                     continue;
                 }
                 // rows shifted by 1
@@ -571,7 +569,7 @@ jlong merge_shuffle_symbol_column_from_many_addresses(
             rows_processed++;
         }
     }
-    return rows_processed - dups;
+    return rows_processed;
 }
 
 template<typename TIdx>

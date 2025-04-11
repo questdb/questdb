@@ -247,6 +247,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getDebugWalApplyBlockFailureNoRetry() {
+        return getDelegate().getDebugWalApplyBlockFailureNoRetry();
+    }
+
+    @Override
     public @NotNull DateLocale getDefaultDateLocale() {
         return getDelegate().getDefaultDateLocale();
     }

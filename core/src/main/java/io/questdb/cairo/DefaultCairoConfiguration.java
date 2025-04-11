@@ -280,6 +280,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean getDebugWalApplyBlockFailureNoRetry() {
+        return true;
+    }
+
+    @Override
     public @NotNull DateLocale getDefaultDateLocale() {
         return DateFormatUtils.EN_LOCALE;
     }

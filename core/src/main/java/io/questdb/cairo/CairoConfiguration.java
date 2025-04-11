@@ -729,4 +729,6 @@ public interface CairoConfiguration {
     }
 
     boolean useFastAsOfJoin();
+
+    boolean getDebugWalApplyBlockFailureNoRetry();
 }
