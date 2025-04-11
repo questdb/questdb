@@ -748,6 +748,14 @@ public class SqlUtil {
         return implicitCastStrVarcharAsTimestamp0(value, ColumnType.VARCHAR);
     }
 
+    public static boolean isNotPlainSelectModel(QueryModel model) {
+        return model.getTableName() != null
+                || model.getGroupBy().size() > 0
+                || model.getJoinModels().size() > 1
+                || model.getLatestByType() != QueryModel.LATEST_BY_NONE
+                || model.getUnionModel() != null;
+    }
+
     public static boolean isParallelismSupported(ObjList<Function> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
             if (!functions.getQuick(i).supportsParallelism()) {
@@ -844,14 +852,6 @@ public class SqlUtil {
             throw ImplicitCastException.inconvertibleValue(value, columnType, ColumnType.TIMESTAMP);
         }
         return Numbers.LONG_NULL;
-    }
-
-    public static boolean isNotPlainSelectModel(QueryModel model) {
-        return model.getTableName() != null
-                || model.getGroupBy().size() > 0
-                || model.getJoinModels().size() > 1
-                || model.getLatestByType() != QueryModel.LATEST_BY_NONE
-                || model.getUnionModel() != null;
     }
 
     static CharSequence createColumnAlias(
