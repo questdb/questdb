@@ -53,7 +53,7 @@ public abstract class IntervalFunction implements ScalarFunction {
 
     @Override
     public byte getByte(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override

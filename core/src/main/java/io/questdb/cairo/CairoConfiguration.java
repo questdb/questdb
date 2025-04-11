@@ -733,4 +733,6 @@ public interface CairoConfiguration {
     boolean useFastAsOfJoin();
 
     long getWriteBackOffTimeoutOnMemPressureMs();
+
+    boolean getDebugWalApplyBlockFailureNoRetry();
 }

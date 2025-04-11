@@ -30,9 +30,9 @@ constexpr uint8_t dedup_index_format = 1;
 constexpr uint8_t shuffle_index_format = 2;
 constexpr uint8_t dedup_shuffle_index_format = 3;
 
-constexpr uint8_t error_sort_timestamp_txn_range_overflow = -1;
-constexpr uint8_t error_sort_segment_index_offset_range_overflow = -2;
-constexpr uint8_t error_sort_row_count_overflow = -3;
+constexpr int8_t error_sort_timestamp_txn_range_overflow = -1;
+constexpr int8_t error_sort_segment_index_offset_range_overflow = -2;
+constexpr int8_t error_sort_row_count_overflow = -3;
 
 template<auto Start, auto End, auto Inc, class F>
 constexpr void constexpr_for(F &&f) {
