@@ -109,37 +109,40 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 throw new IllegalArgumentException("Unexpected join type: " + joinType);
         }
 
-        StringSink timeFilter = new StringSink();
+        StringSink filter = new StringSink();
         if (exerciseIntervals) {
             int n = rnd.nextInt(5) + 1;
             long baseTs = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
             for (int i = 0; i < n; i++) {
                 if (i == 0) {
-                    timeFilter.put(" where ts between '");
+                    filter.put(" where ts between '");
                 } else {
-                    timeFilter.put(" or ts between '");
+                    filter.put(" or ts between '");
                 }
                 int startDays = rnd.nextInt(10 * (i + 1));
                 int endDays = startDays + rnd.nextInt(100) + 1;
                 long tsStart = baseTs + Timestamps.DAY_MICROS * startDays;
                 long tsEnd = baseTs + Timestamps.DAY_MICROS * endDays;
-                TimestampFormatUtils.appendDateTimeUSec(timeFilter, tsStart);
-                timeFilter.put("' and '");
-                TimestampFormatUtils.appendDateTimeUSec(timeFilter, tsEnd);
-                timeFilter.put("'");
+                TimestampFormatUtils.appendDateTimeUSec(filter, tsStart);
+                filter.put("' and '");
+                TimestampFormatUtils.appendDateTimeUSec(filter, tsEnd);
+                filter.put("'");
             }
         }
         if (exerciseFilters) {
             int n = rnd.nextInt(5) + 1;
             for (int i = 0; i < n; i++) {
                 if (i == 0 && !exerciseIntervals) {
-                    timeFilter.put("where i != ");
+                    filter.put("where i != ");
                 } else {
-                    timeFilter.put(" and i != ");
+                    filter.put(" and i != ");
                 }
                 int toBeExcluded = rnd.nextInt(100);
-                timeFilter.put(toBeExcluded);
+                filter.put(toBeExcluded);
             }
+            // let's exercise symbol columns too,
+            // symbols and symbol sources can be tricky
+            filter.put(" and s != 'nope' ");
         }
 
         String projection = "";
@@ -157,9 +160,16 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             case ADD_COLUMN:
                 projection = "*, i as i2";
                 break;
+            case REMOVE_SYMBOL_COLUMN:
+                if (joinType == JoinType.ASOF) {
+//                     key-ed ASOF join can't remove symbol column since it is used as a JOIN key
+                    return;
+                }
+                projection = "ts, i, ts";
+                break;
         }
 
-        String query = "select * from " + "t1" + join + " JOIN " + "(select " + projection + " from t2 " + timeFilter + ") t2" + onSuffix;
+        String query = "select * from " + "t1" + join + " JOIN " + "(select " + projection + " from t2 " + filter + ") t2" + onSuffix;
         switch (limitType) {
             case POSITIVE_LIMIT:
                 int limit = rnd.nextInt(100);
@@ -271,5 +281,6 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         CROSS_COLUMN,
         RENAME_COLUMN,
         ADD_COLUMN,
+        REMOVE_SYMBOL_COLUMN
     }
 }

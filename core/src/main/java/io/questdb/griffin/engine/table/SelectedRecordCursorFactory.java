@@ -372,7 +372,7 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
     }
 
-    private static class SelectedTimeFrameCursor implements TimeFrameRecordCursor {
+    public static class SelectedTimeFrameCursor implements TimeFrameRecordCursor {
         private final IntList columnCrossIndex;
         private final SelectedRecord recordA;
         private final SelectedRecord recordB;
@@ -459,6 +459,10 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
                 recordB.of(baseCursor.getRecordB());
             }
             return this;
+        }
+
+        public TimeFrameRecordCursor unwrap() {
+            return baseCursor;
         }
     }
 }

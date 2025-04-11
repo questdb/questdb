@@ -36,12 +36,14 @@ import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
 
 public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final FilteredAsOfJoinKeyedFastRecordCursor cursor;
     private final Function slaveRecordFilter;
+    private final boolean unwrapSlave;
 
     public FilteredAsOfJoinNoKeyFastRecordCursorFactory(
             CairoConfiguration configuration,
@@ -49,7 +51,8 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             Function slaveRecordFilter,
-            int columnSplit) {
+            int columnSplit,
+            boolean unwrapSlave) {
         super(metadata, null, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
         this.slaveRecordFilter = slaveRecordFilter;
@@ -60,6 +63,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 slaveFactory.getMetadata().getTimestampIndex(),
                 configuration.getSqlAsOfJoinLookAhead()
         );
+        this.unwrapSlave = unwrapSlave;
     }
 
     @Override
@@ -73,7 +77,11 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
         TimeFrameRecordCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
-            slaveRecordFilter.init(slaveCursor, executionContext);
+            if (unwrapSlave && slaveCursor instanceof SelectedRecordCursorFactory.SelectedTimeFrameCursor) {
+                slaveRecordFilter.init(((SelectedRecordCursorFactory.SelectedTimeFrameCursor) slaveCursor).unwrap(), executionContext);
+            } else {
+                slaveRecordFilter.init(slaveCursor, executionContext);
+            }
             cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
