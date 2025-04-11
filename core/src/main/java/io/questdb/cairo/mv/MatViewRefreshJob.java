@@ -61,6 +61,9 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
+
 public class MatViewRefreshJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MatViewRefreshJob.class);
     private final BlockFileWriter blockFileWriter;
@@ -259,7 +262,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             factory = state.acquireRecordFactory();
             copier = state.getRecordToRowCopier();
 
-            for (int i = 0; i < maxRecompileAttempts; i++) {
+            for (int i = 1; i <= maxRecompileAttempts; i++) {
                 try {
                     if (factory == null) {
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -310,7 +313,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     break;
                 } catch (TableReferenceOutOfDateException e) {
                     factory = Misc.free(factory);
-                    if (i >= maxRecompileAttempts - 1) {
+                    if (i >= maxRecompileAttempts) {
                         LOG.info().$("base table is under heavy DDL changes, will retry refresh later [view=").$(viewDef.getMatViewToken())
                                 .$(", recompileAttempts=").$(maxRecompileAttempts)
                                 .I$();
@@ -319,13 +322,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     }
                 } catch (Throwable th) {
                     factory = Misc.free(factory);
-                    if (CairoException.isCairoOomError(th)) {
+                    if (CairoException.isCairoOomError(th) && i < maxRecompileAttempts) {
                         LogRecord logRecord = LOG.info().$("query failed with out-of-memory, retrying with ");
                         if (intervalStep > 1) {
                             intervalStep /= 2;
                             logRecord.$("a reduced intervalStep");
                         } else {
                             logRecord.$("the smallest intervalStep");
+                            LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(500));
                         }
                         logRecord.$(" [view=")
                                 .$(viewDef.getMatViewToken())
