@@ -2456,10 +2456,11 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4MinusIPv4Char() throws Exception {
-        assertMemoryLeak(() -> assertSql(
+        assertMemoryLeak(() -> assertQuery(
                 "column\n" +
-                        "1.1.0.160\n",
-                "select ipv4 '1.1.1.1' - 'a'"
+                        "1.1.0.248\n",
+                "select ipv4 '1.1.1.1' - '9'",
+                true
         ));
     }
 
