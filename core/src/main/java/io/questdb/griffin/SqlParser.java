@@ -2941,7 +2941,8 @@ public class SqlParser {
                 accumulatedColumns.add(col);
                 accumulatedColumnPositions.add(colPosition);
 
-                if (tok == null || Chars.equals(tok, ';') || Chars.equals(tok, ')')) {//accept ending ) in create table as
+                if (tok == null || Chars.equals(tok, ';') || Chars.equals(tok, ')')) {
+                    //accept ending ')' in create table as
                     lexer.unparseLast();
                     break;
                 }

@@ -181,7 +181,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
      * @param partitionBy                 partition type
      * @param timestampColumnName         designated timestamp column name
      * @param timestampColumnNamePosition designated timestamp column name in user's input
-     * @param volumeAlias                 the name of the "volume" where table is created, volumes are use to create table on different physical disks
+     * @param volumeAlias                 the name of the "volume" where table is created, volumes are used to create table on different physical disks
      * @param walEnabled                  WAL flag
      * @param defaultSymbolCapacity       the default symbol capacity value, usually comes from the configuration
      * @param maxUncommittedRows          max uncommitted rows for non-WAL tables, this is written to table's metadata to be used by ingress protocols
