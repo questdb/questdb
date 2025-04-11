@@ -85,7 +85,9 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
         try {
             tableToken = engine.verifyTableName(TABLE_NAME);
             try (TableWriter writer = engine.getWriter(tableToken, "query_tracing")) {
-                writer.addColumn("error", ColumnType.VARCHAR);
+                if (writer.getMetadata().getColumnIndexQuiet(COLUMN_ERROR) < 0) {
+                    writer.addColumn("error", ColumnType.VARCHAR);
+                }
             }
         } catch (Exception recoverable) {
             try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
