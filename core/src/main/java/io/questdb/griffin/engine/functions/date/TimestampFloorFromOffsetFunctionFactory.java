@@ -153,7 +153,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             }
 
             if (offsetFunc.isConstant()) {
-                return createAllConstTzFunc(unit, unitPos, timestampFunc, stride, from + offset, tzRules, tzStr);
+                return createAllConstTzFunc(timestampFunc, floorFunc, stride, unit, from, offset, offsetStr, tzRules, tzStr);
             }
             if (offsetFunc.isRuntimeConstant()) {
                 return createRuntimeConstOffsetTzFunc(unit, unitPos, timestampFunc, stride, from, tzRules, tzStr, offsetFunc, offsetPos);
@@ -216,36 +216,20 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
     }
 
     private static @NotNull Function createAllConstTzFunc(
-            char unit,
-            int unitPos,
             Function timestampFunc,
+            TimestampFloorFunction floorFunc,
             int stride,
+            char unit,
+            long from,
             long offset,
+            String offsetStr,
             TimeZoneRules tzRules,
             String tzStr
-    ) throws SqlException {
-        switch (unit) {
-            case 'M':
-                return new AllConstTzMMFunc(timestampFunc, stride, offset, tzRules, tzStr);
-            case 'y':
-                return new AllConstTzYYYYFunc(timestampFunc, stride, offset, tzRules, tzStr);
-            case 'w':
-                return new AllConstTzWWFunc(timestampFunc, stride, offset, tzRules, tzStr);
-            case 'd':
-                return new AllConstTzDDFunc(timestampFunc, stride, offset, tzRules, tzStr);
-            case 'h':
-                return new AllConstTzHHFunc(timestampFunc, stride, offset, tzRules, tzStr);
-            case 'm':
-                return new AllConstTzMIFunc(timestampFunc, stride, offset, tzRules, tzStr);
-            case 's':
-                return new AllConstTzSSFunc(timestampFunc, stride, offset, tzRules, tzStr);
-            case 'T':
-                return new AllConstTzMSFunc(timestampFunc, stride, offset, tzRules, tzStr);
-            case 'U':
-                return new AllConstTzMCFunc(timestampFunc, stride, offset, tzRules, tzStr);
-            default:
-                throw SqlException.position(unitPos).put("unexpected unit");
+    ) {
+        if (from + offset == 0) {
+            return new ConstTzNoOffsetFunc(timestampFunc, floorFunc, stride, unit, tzRules, tzStr);
         }
+        return new AllConstTzFunc(timestampFunc, floorFunc, stride, unit, from, offset, offsetStr, tzRules, tzStr);
     }
 
     private static @NotNull Function createAllRuntimeConstTzFunc(
@@ -381,10 +365,9 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
     }
 
     private static class AllConstFunc extends TimestampFunction implements UnaryFunction {
-        private final long effectiveOffset;
+        private final long effectiveOffset; // from + offset
         private final TimestampFloorFunction floorFunc;
         private final long from;
-        private final long offset;
         private final String offsetStr;
         private final int stride;
         private final Function tsFunc;
@@ -408,7 +391,6 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             this.stride = stride;
             this.unit = unit;
             this.from = from;
-            this.offset = offset;
             this.effectiveOffset = from + offset;
             this.offsetStr = offsetStr;
             this.tzOffset = tzOffset;
@@ -457,50 +439,52 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
         }
     }
 
-    private static class AllConstTzDDFunc extends AllConstTzFunc {
-
-        public AllConstTzDDFunc(Function arg, int stride, long offset, TimeZoneRules tzRules, String tzStr) {
-            super(arg, stride, offset, tzRules, tzStr);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorDD(timestamp, stride, offset);
-        }
-
-        @Override
-        CharSequence getUnit() {
-            return "day";
-        }
-    }
-
     // both offset and time zone are consts
-    private static abstract class AllConstTzFunc extends TimestampFunction implements UnaryFunction {
-        protected final long offset;
-        protected final int stride;
-        private final Function arg;
+    private static class AllConstTzFunc extends TimestampFunction implements UnaryFunction {
+        private final long effectiveOffset; // from + offset
+        private final TimestampFloorFunction floorFunc;
+        private final long from;
+        private final String offsetStr;
+        private final int stride;
+        private final Function tsFunc;
         private final TimeZoneRules tzRules;
         private final String tzStr;
+        private final char unit;
 
-        public AllConstTzFunc(Function arg, int stride, long offset, TimeZoneRules tzRules, String tzStr) {
-            this.arg = arg;
+        public AllConstTzFunc(
+                Function tsFunc,
+                TimestampFloorFunction floorFunc,
+                int stride,
+                char unit,
+                long from,
+                long offset,
+                String offsetStr,
+                TimeZoneRules tzRules,
+                String tzStr
+        ) {
+            this.tsFunc = tsFunc;
+            this.floorFunc = floorFunc;
             this.stride = stride;
-            this.offset = offset;
+            this.unit = unit;
+            this.from = from;
+            this.effectiveOffset = from + offset;
+            this.offsetStr = offsetStr;
             this.tzRules = tzRules;
             this.tzStr = tzStr;
         }
 
         @Override
         public Function getArg() {
-            return arg;
+            return tsFunc;
         }
 
         @Override
         public final long getTimestamp(Record rec) {
-            final long timestamp = arg.getTimestamp(rec);
+            final long timestamp = tsFunc.getTimestamp(rec);
             if (timestamp != Numbers.LONG_NULL) {
                 final long localTimestamp = timestamp + tzRules.getOffset(timestamp);
-                return floor(localTimestamp);
+                // TODO: we need to correct the timestamp here if it's in a gap
+                return floorFunc.floor(localTimestamp, stride, effectiveOffset);
             }
             return Numbers.LONG_NULL;
         }
@@ -511,157 +495,24 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             if (stride != 1) {
                 sink.val(stride);
             }
-            sink.val(getUnit()).val("',");
-            sink.val(arg).val(',');
-            if (offset != 0) {
-                sink.val('\'').val(Timestamps.toString(offset)).val("\',");
+            sink.val(unit).val("',");
+            sink.val(tsFunc).val(',');
+            if (from != 0) {
+                sink.val('\'').val(Timestamps.toString(from)).val("',");
+            } else {
+                sink.val("null,");
+            }
+            if (offsetStr != null) {
+                sink.val('\'').val(offsetStr).val("',");
+            } else {
+                sink.val("'00:00',");
             }
             if (tzStr != null) {
-                sink.val(",'").val(tzStr).val('\'');
+                sink.val(tzStr).val('\'');
             } else {
                 sink.val(",null");
             }
             sink.val(')');
-        }
-
-        abstract protected long floor(long timestamp);
-
-        abstract CharSequence getUnit();
-    }
-
-    private static class AllConstTzHHFunc extends AllConstTzFunc {
-
-        public AllConstTzHHFunc(Function arg, int stride, long offset, TimeZoneRules tzRules, String tzStr) {
-            super(arg, stride, offset, tzRules, tzStr);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorHH(timestamp, stride, offset);
-        }
-
-        @Override
-        CharSequence getUnit() {
-            return "hour";
-        }
-    }
-
-    private static class AllConstTzMCFunc extends AllConstTzFunc {
-
-        public AllConstTzMCFunc(Function arg, int stride, long offset, TimeZoneRules tzRules, String tzStr) {
-            super(arg, stride, offset, tzRules, tzStr);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorMC(timestamp, stride, offset);
-        }
-
-        @Override
-        CharSequence getUnit() {
-            return "microsecond";
-        }
-    }
-
-    private static class AllConstTzMIFunc extends AllConstTzFunc {
-
-        public AllConstTzMIFunc(Function arg, int stride, long offset, TimeZoneRules tzRules, String tzStr) {
-            super(arg, stride, offset, tzRules, tzStr);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorMI(timestamp, stride, offset);
-        }
-
-        @Override
-        CharSequence getUnit() {
-            return "minute";
-        }
-    }
-
-    private static class AllConstTzMMFunc extends AllConstTzFunc {
-
-        public AllConstTzMMFunc(Function arg, int stride, long offset, TimeZoneRules tzRules, String tzStr) {
-            super(arg, stride, offset, tzRules, tzStr);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorMM(timestamp, stride, offset);
-        }
-
-        @Override
-        CharSequence getUnit() {
-            return "month";
-        }
-    }
-
-    private static class AllConstTzMSFunc extends AllConstTzFunc {
-
-        public AllConstTzMSFunc(Function arg, int stride, long offset, TimeZoneRules tzRules, String tzStr) {
-            super(arg, stride, offset, tzRules, tzStr);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorMS(timestamp, stride, offset);
-        }
-
-        @Override
-        CharSequence getUnit() {
-            return "millisecond";
-        }
-    }
-
-    private static class AllConstTzSSFunc extends AllConstTzFunc {
-
-        public AllConstTzSSFunc(Function arg, int stride, long offset, TimeZoneRules tzRules, String tzStr) {
-            super(arg, stride, offset, tzRules, tzStr);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorSS(timestamp, stride, offset);
-        }
-
-        @Override
-        CharSequence getUnit() {
-            return "second";
-        }
-    }
-
-    private static class AllConstTzWWFunc extends AllConstTzFunc {
-
-        public AllConstTzWWFunc(Function arg, int stride, long offset, TimeZoneRules tzRules, String tzStr) {
-            super(arg, stride, offset, tzRules, tzStr);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorWW(timestamp, stride, offset);
-        }
-
-        @Override
-        CharSequence getUnit() {
-            return "week";
-        }
-    }
-
-    private static class AllConstTzYYYYFunc extends AllConstTzFunc {
-
-        public AllConstTzYYYYFunc(Function arg, int stride, long offset, TimeZoneRules tzRules, String tzStr) {
-            super(arg, stride, offset, tzRules, tzStr);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorYYYY(timestamp, stride, offset);
-        }
-
-        @Override
-        CharSequence getUnit() {
-            return "year";
         }
     }
 
@@ -1014,6 +865,64 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
         }
     }
 
+    private static class ConstTzNoOffsetFunc extends TimestampFunction implements UnaryFunction {
+        private final TimestampFloorFunction floorFunc;
+        private final int stride;
+        private final Function tsFunc;
+        private final TimeZoneRules tzRules;
+        private final String tzStr;
+        private final char unit;
+
+        public ConstTzNoOffsetFunc(
+                Function tsFunc,
+                TimestampFloorFunction floorFunc,
+                int stride,
+                char unit,
+                TimeZoneRules tzRules,
+                String tzStr
+        ) {
+            this.tsFunc = tsFunc;
+            this.floorFunc = floorFunc;
+            this.stride = stride;
+            this.unit = unit;
+            this.tzRules = tzRules;
+            this.tzStr = tzStr;
+        }
+
+        @Override
+        public Function getArg() {
+            return tsFunc;
+        }
+
+        @Override
+        public final long getTimestamp(Record rec) {
+            final long timestamp = tsFunc.getTimestamp(rec);
+            if (timestamp != Numbers.LONG_NULL) {
+                final long localTimestamp = timestamp + tzRules.getOffset(timestamp);
+                return floorFunc.floor(localTimestamp, stride, 0);
+            }
+            return Numbers.LONG_NULL;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(TimestampFloorFunctionFactory.NAME).val("('");
+            if (stride != 1) {
+                sink.val(stride);
+            }
+            sink.val(unit).val("',");
+            sink.val(tsFunc).val(',');
+            sink.val("null,");
+            sink.val("'00:00',");
+            if (tzStr != null) {
+                sink.val(tzStr).val('\'');
+            } else {
+                sink.val(",null");
+            }
+            sink.val(')');
+        }
+    }
+
     private static class RuntimeConstOffsetFunction extends TimestampFunction implements BinaryFunction {
         private final TimestampFloorFunction floorFunc;
         private final long from;
@@ -1024,7 +933,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
         private final long tzOffset;
         private final String tzStr;
         private final char unit;
-        private long effectiveOffset;
+        private long effectiveOffset; // from + offset
 
         public RuntimeConstOffsetFunction(
                 Function tsFunc,

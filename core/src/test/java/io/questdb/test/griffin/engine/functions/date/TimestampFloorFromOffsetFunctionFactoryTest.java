@@ -139,6 +139,15 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
             );
 
             assertPlanNoLeakCheck(
+                    "select timestamp_floor('3d', ts, null, '00:00', 'Europe/Berlin') from x",
+                    "VirtualRecord\n" +
+                            "  functions: [timestamp_floor('3d',ts,null,'00:00',Europe/Berlin')]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
                     "select timestamp_floor('1d', ts, null, '00:01', null) from x",
                     "VirtualRecord\n" +
                             "  functions: [timestamp_floor('day',ts,'1970-01-01T00:01:00.000Z')]\n" +
