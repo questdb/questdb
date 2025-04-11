@@ -78,9 +78,9 @@ public final class TimestampSamplerFactory {
         return k;
     }
 
-    public static TimestampSampler getInstance(long period, CharSequence units, int position) throws SqlException {
+    public static TimestampSampler getInstance(long interval, CharSequence units, int position) throws SqlException {
         if (units.length() == 1) {
-            return getInstance(period, units.charAt(0), position);
+            return getInstance(interval, units.charAt(0), position);
         }
         // Just in case SqlParser will allow this in the future
         throw SqlException.$(position, "expected one character interval qualifier");

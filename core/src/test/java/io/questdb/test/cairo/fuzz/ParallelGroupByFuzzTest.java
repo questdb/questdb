@@ -84,7 +84,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     @Parameterized.Parameters(name = "parallel={0} JIT={1} parquet={2}")
     public static Collection<Object[]> data() {
         // only run a single combination per CI run
-        final Rnd rnd = TestUtils.generateRandom(AbstractCairoTest.LOG);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
         // make sure to have a run with all equal flags occasionally
         if (rnd.nextInt(100) >= 90) {
             boolean flag = rnd.nextBoolean();

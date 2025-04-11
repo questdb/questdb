@@ -57,6 +57,7 @@ public final class Timestamps {
     public static final long MILLI_MICROS = 1000;
     public static final long MINUTE_MICROS = 60000000;
     public static final long MINUTE_SECONDS = 60;
+    public static final long MONTH_MICROS_APPROX = 30 * DAY_MICROS;
     public static final long O3_MIN_TS = 0L;
     public static final long SECOND_MICROS = 1000000;
     public static final int SECOND_MILLIS = 1000;
@@ -73,6 +74,7 @@ public final class Timestamps {
     public static final int WEEK_DAYS = 7;
     public static final long WEEK_MICROS = 604800000000L; // DAY_MICROS * 7
     public static final long YEAR_10000 = 253_402_300_800_000_000L;
+    public static final long YEAR_MICROS_NONLEAP = 365 * DAY_MICROS;
     private static final char AFTER_NINE = '9' + 1;
     private static final char BEFORE_ZERO = '0' - 1;
     private static final int DAYS_0000_TO_1970 = 719527;
@@ -81,11 +83,9 @@ public final class Timestamps {
     };
     private static final int DAY_HOURS = 24;
     private static final int HOUR_MINUTES = 60;
-    private static final long LEAP_YEAR_MICROS = 366 * DAY_MICROS;
     private static final long[] MAX_MONTH_OF_YEAR_MICROS = new long[12];
     private static final long[] MIN_MONTH_OF_YEAR_MICROS = new long[12];
-    private static final int YEAR_DAYS = 365;
-    private static final long YEAR_MICROS = YEAR_DAYS * DAY_MICROS;
+    private static final long YEAR_MICROS_LEAP = 366 * DAY_MICROS;
     private static final int YEAR_MONTHS = 12;
 
     private Timestamps() {
@@ -194,10 +194,11 @@ public final class Timestamps {
     }
 
     public static long ceilDD(long micros) {
-        int y, m;
-        boolean l;
-        return yearMicros(y = getYear(micros), l = isLeapYear(y))
-                + monthOfYearMicros(m = getMonthOfYear(micros, y, l), l)
+        int y = getYear(micros);
+        boolean l = isLeapYear(y);
+        int m = getMonthOfYear(micros, y, l);
+        return yearMicros(y, l)
+                + monthOfYearMicros(m, l)
                 + (getDayOfMonth(micros, y, m, l)) * DAY_MICROS;
     }
 
@@ -210,10 +211,11 @@ public final class Timestamps {
     }
 
     public static long ceilMM(long micros) {
-        int y, m;
-        boolean l;
-        return yearMicros(y = getYear(micros), l = isLeapYear(y))
-                + monthOfYearMicros(m = getMonthOfYear(micros, y, l), l)
+        int y = getYear(micros);
+        boolean l = isLeapYear(y);
+        int m = getMonthOfYear(micros, y, l);
+        return yearMicros(y, l)
+                + monthOfYearMicros(m, l)
                 + (getDaysPerMonth(m, l)) * DAY_MICROS;
     }
 
@@ -230,9 +232,9 @@ public final class Timestamps {
     }
 
     public static long ceilYYYY(long micros) {
-        int y;
-        boolean l;
-        return yearMicros(y = getYear(micros), l = isLeapYear(y))
+        int y = getYear(micros);
+        boolean l = isLeapYear(y);
+        return yearMicros(y, l)
                 + monthOfYearMicros(12, l)
                 + (DAYS_PER_MONTH[11]) * DAY_MICROS;
     }
@@ -462,13 +464,13 @@ public final class Timestamps {
     }
 
     public static long floorYYYY(long micros) {
-        int y;
-        return yearMicros(y = getYear(micros), isLeapYear(y));
+        final int y = getYear(micros);
+        return yearMicros(y, isLeapYear(y));
     }
 
     public static long floorYYYY(long micros, int stride) {
         final int origin = getYear(0);
-        int y = origin + ((getYear(micros) - origin) / stride) * stride;
+        final int y = origin + ((getYear(micros) - origin) / stride) * stride;
         return yearMicros(y, isLeapYear(y));
     }
 
@@ -882,8 +884,8 @@ public final class Timestamps {
 
         if (diff < 0) {
             year--;
-        } else if (diff >= YEAR_MICROS) {
-            yearStart += leap ? LEAP_YEAR_MICROS : YEAR_MICROS;
+        } else if (diff >= YEAR_MICROS_NONLEAP) {
+            yearStart += leap ? YEAR_MICROS_LEAP : YEAR_MICROS_NONLEAP;
             if (yearStart <= micros) {
                 year++;
             }
@@ -1279,8 +1281,7 @@ public final class Timestamps {
     }
 
     public static long toUTC(long localTimestamp, TimeZoneRules zoneRules) {
-        final long offset = zoneRules.getLocalOffset(localTimestamp);
-        return localTimestamp - offset;
+        return localTimestamp - zoneRules.getLocalOffset(localTimestamp);
     }
 
     /**

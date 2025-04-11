@@ -74,6 +74,12 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
             // CEST to CET
             assertToTimezone(
                     "to_timezone\n" +
+                            "2021-10-31T01:01:00.000000Z\n",
+                    "2021-10-30T23:01:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToTimezone(
+                    "to_timezone\n" +
                             "2021-10-31T02:01:00.000000Z\n",
                     "2021-10-31T00:01:00.000000Z",
                     "Europe/Berlin"
@@ -88,6 +94,12 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
                     "to_timezone\n" +
                             "2021-10-31T03:01:00.000000Z\n",
                     "2021-10-31T02:01:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToTimezone(
+                    "to_timezone\n" +
+                            "2021-10-31T04:01:00.000000Z\n",
+                    "2021-10-31T03:01:00.000000Z",
                     "Europe/Berlin"
             );
         });

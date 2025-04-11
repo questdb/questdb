@@ -22,27 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.groupby;
+package io.questdb.cairo.mv;
 
-import io.questdb.std.str.Sinkable;
+/**
+ * Allows iterating through SAMPLE BY buckets with the given step.
+ * The goal is to split a potentially large time interval to be scanned by
+ * the materialized view query into smaller intervals, thus minimizing
+ * chances of out-of-memory kills.
+ */
+public interface SampleByIntervalIterator {
 
-public interface TimestampSampler extends Sinkable {
+    long getMaxTimestamp();
 
-    long getApproxBucketSize();
+    long getMinTimestamp();
 
-    default long getBucketSize() {
-        throw new UnsupportedOperationException();
-    }
+    int getStep();
 
-    default long nextTimestamp(long timestamp) {
-        return nextTimestamp(timestamp, 1);
-    }
+    long getTimestampHi();
 
-    long nextTimestamp(long timestamp, int numSteps);
+    long getTimestampLo();
 
-    long previousTimestamp(long timestamp);
+    boolean next();
 
-    long round(long timestamp);
-
-    void setStart(long timestamp);
+    void toTop(int step);
 }

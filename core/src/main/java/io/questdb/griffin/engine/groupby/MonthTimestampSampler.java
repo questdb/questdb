@@ -31,7 +31,7 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.std.datetime.microtime.Timestamps.toMicros;
 
 public class MonthTimestampSampler implements TimestampSampler {
-    private final int monthCount;
+    private final int stepMonths;
     private int startDay;
     private int startHour;
     private int startMicros;
@@ -39,18 +39,28 @@ public class MonthTimestampSampler implements TimestampSampler {
     private int startMin;
     private int startSec;
 
-    public MonthTimestampSampler(int monthCount) {
-        this.monthCount = monthCount;
+    public MonthTimestampSampler(int stepMonths) {
+        this.stepMonths = stepMonths;
+    }
+
+    @Override
+    public long getApproxBucketSize() {
+        return Timestamps.MONTH_MICROS_APPROX * stepMonths;
     }
 
     @Override
     public long nextTimestamp(long timestamp) {
-        return addMonth(timestamp, monthCount);
+        return addMonth(timestamp, stepMonths);
+    }
+
+    @Override
+    public long nextTimestamp(long timestamp, int numSteps) {
+        return addMonth(timestamp, numSteps * stepMonths);
     }
 
     @Override
     public long previousTimestamp(long timestamp) {
-        return addMonth(timestamp, -monthCount);
+        return addMonth(timestamp, -stepMonths);
     }
 
     @Override
@@ -59,7 +69,7 @@ public class MonthTimestampSampler implements TimestampSampler {
         final boolean leap = Timestamps.isLeapYear(y);
         int m = Timestamps.getMonthOfYear(value, y, leap);
         // target month
-        int nextMonth = ((m - 1) / monthCount) * monthCount + 1;
+        int nextMonth = ((m - 1) / stepMonths) * stepMonths + 1;
         int d = startDay > 0 ? startDay : 1;
         return toMicros(y, leap, d, nextMonth, startHour, startMin, startSec, startMillis, startMicros);
     }
