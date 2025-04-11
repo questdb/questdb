@@ -32,7 +32,8 @@ import org.junit.Test;
 public class SubIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testLeftNan() throws Exception {
-        assertQuery("column\n\n", "SELECT null - 5");
+        assertQuery("column\n" +
+                "null\n", "SELECT null - 5");
     }
 
     @Test

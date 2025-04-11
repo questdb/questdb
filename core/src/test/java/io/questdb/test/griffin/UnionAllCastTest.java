@@ -338,18 +338,18 @@ public class UnionAllCastTest extends AbstractCairoTest {
     public void testCharShort() throws Exception {
         testUnionAll(
                 "a\n" +
-                        "-22955\n" +
-                        "-1398\n" +
-                        "21015\n" +
-                        "30202\n" +
-                        "-19496\n" +
-                        "86\n" +
-                        "84\n" +
-                        "74\n" +
-                        "87\n" +
-                        "67\n",
+                        "-27056\n" +
+                        "24814\n" +
+                        "-11455\n" +
+                        "-13027\n" +
+                        "-21227\n" +
+                        "0\n" +
+                        "3\n" +
+                        "5\n" +
+                        "9\n" +
+                        "8\n",
                 "create table x as (select rnd_short() a from long_sequence(5))",
-                "create table y as (select rnd_char() b from long_sequence(5))"
+                "create table y as (select '0'::char a union select '3'::char union select '5'::char union select '9'::char union select '8'::char)"
         );
     }
 
@@ -1452,17 +1452,17 @@ public class UnionAllCastTest extends AbstractCairoTest {
     public void testIntChar() throws Exception {
         testUnionAll(
                 "a\n" +
-                        "80\n" +
-                        "83\n" +
-                        "87\n" +
-                        "72\n" +
-                        "89\n" +
+                        "0\n" +
+                        "3\n" +
+                        "5\n" +
+                        "9\n" +
+                        "8\n" +
                         "-1148479920\n" +
                         "315515118\n" +
                         "1548800833\n" +
                         "-727724771\n" +
                         "73575701\n",
-                "create table x as (select rnd_char() a from long_sequence(5))",
+                "create table x as (select '0'::char a union select '3'::char union select '5'::char union select '9'::char union select '8'::char)",
                 "create table y as (select rnd_int() b from long_sequence(5))"
         );
     }
@@ -1749,17 +1749,17 @@ public class UnionAllCastTest extends AbstractCairoTest {
     public void testLongChar() throws Exception {
         testUnionAll(
                 "a\n" +
-                        "80\n" +
-                        "83\n" +
-                        "87\n" +
-                        "72\n" +
-                        "89\n" +
+                        "0\n" +
+                        "3\n" +
+                        "5\n" +
+                        "9\n" +
+                        "8\n" +
                         "4689592037643856\n" +
                         "4729996258992366\n" +
                         "7746536061816329025\n" +
                         "-6945921502384501475\n" +
                         "8260188555232587029\n",
-                "create table x as (select rnd_char() a from long_sequence(5))",
+                "create table x as (select '0'::char a union select '3'::char union select '5'::char union select '9'::char union select '8'::char)",
                 "create table y as (select rnd_long() b from long_sequence(5))"
         );
     }
@@ -1934,17 +1934,17 @@ public class UnionAllCastTest extends AbstractCairoTest {
     public void testShortChar() throws Exception {
         testUnionAll(
                 "a\n" +
-                        "80\n" +
-                        "83\n" +
-                        "87\n" +
-                        "72\n" +
-                        "89\n" +
+                        "0\n" +
+                        "3\n" +
+                        "5\n" +
+                        "9\n" +
+                        "8\n" +
                         "-27056\n" +
                         "24814\n" +
                         "-11455\n" +
                         "-13027\n" +
                         "-21227\n",
-                "create table x as (select rnd_char() a from long_sequence(5))",
+                "create table x as (select '0'::char a union select '3'::char union select '5'::char union select '9'::char union select '8'::char)",
                 "create table y as (select rnd_short() b from long_sequence(5))"
         );
     }
