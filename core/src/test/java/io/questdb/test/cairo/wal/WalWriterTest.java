@@ -117,6 +117,26 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void test1RowCommitEqualSize() throws Exception {
+        // Force 1 by 1 commit application
+        setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, 1);
+
+        assertMemoryLeak(() -> {
+            execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL dedup upsert keys (ts, id)");
+            TableToken tableToken = engine.verifyTableName("sm");
+
+            execute("insert into " + tableToken.getTableName() + "(id, ts) values (1, '2022-02-24')");
+            execute("insert into " + tableToken.getTableName() + "(id, ts) values (2, '2022-02-24')");
+            drainWalQueue();
+
+            assertSqlCursors("sm", "select * from sm order by id");
+            assertSql("count\tmin\tmax\n" +
+                    "2\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:00:00.000000Z\n", "select count(*), min(ts), max(ts) from sm");
+        });
+    }
+
+    @Test
     public void testAddColumnRollsUncommittedRowsToNewSegment() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());
@@ -1666,14 +1686,14 @@ public class WalWriterTest extends AbstractCairoTest {
                     .col("b", ColumnType.SYMBOL)
                     .timestamp("ts").noWal();
             TableToken tableToken = createTable(model);
-            TableToken _unused = createTable(copyModel);
+            createTable(copyModel);
 
             final int rowsToInsertTotal = 100;
             Rnd rnd = new Rnd();
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
                     WalWriter walWriter = engine.getWalWriter(tableToken);
-                    TableWriter copyWriter = getWriter(tableCopyName);
+                    TableWriter copyWriter = getWriter(tableCopyName)
             ) {
                 for (int i = 0; i < rowsToInsertTotal; i++) {
                     boolean invalidate = rnd.nextBoolean();
@@ -3724,6 +3744,7 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
+    @SuppressWarnings("SameParameterValue")
     private static void checkWalEvents(TableToken tableToken, long refreshTxn, boolean newFormat) {
         try (Path path = new Path();
              WalEventReader walEventReader = new WalEventReader(configuration.getFilesFacade());
@@ -3819,6 +3840,7 @@ public class WalWriterTest extends AbstractCairoTest {
         }
     }
 
+    @SuppressWarnings("SameParameterValue")
     private TableToken createPopulateTable(String tableName, long refreshTxn, boolean newFormat) {
         TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
                 .col("a", ColumnType.BYTE)
@@ -3892,7 +3914,7 @@ public class WalWriterTest extends AbstractCairoTest {
             Utf8StringSink sink = new Utf8StringSink();
             StringSink stringSink = new StringSink();
 
-            Rnd rnd = TestUtils.generateRandom(LOG, 672802496975500L, 1742393295792L);
+            Rnd rnd = TestUtils.generateRandom(LOG);
 
             ObjList<WalWriter> writerObjList = new ObjList<>();
             for (int c = 0; c < walWriterCount; c++) {
@@ -3951,6 +3973,8 @@ public class WalWriterTest extends AbstractCairoTest {
             assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(s as int)");
             assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(v as int)");
             assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id % " + symbolCount + " <> cast(m as int)");
+
+            Assert.assertTrue(engine.getTableSequencerAPI().getTxnTracker(tableToken).getMemPressureControl().getMaxBlockRowCount() > 1000);
 
         });
     }
