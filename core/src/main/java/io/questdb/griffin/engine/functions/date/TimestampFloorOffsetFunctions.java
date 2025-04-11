@@ -63,9 +63,7 @@ final class TimestampFloorOffsetFunctions {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(TimestampFloorFunctionFactory.NAME).val("('");
-            if (stride != 1) {
-                sink.val(stride);
-            }
+            sink.val(stride);
             sink.val(getUnit()).val("',");
             sink.val(getArg());
             if (offset != 0) {
@@ -76,7 +74,7 @@ final class TimestampFloorOffsetFunctions {
 
         abstract protected long floor(long timestamp);
 
-        abstract CharSequence getUnit();
+        abstract char getUnit();
     }
 
     static class TimestampFloorOffsetDDFunction extends AbstractTimestampFloorOffsetFunction {
@@ -91,8 +89,8 @@ final class TimestampFloorOffsetFunctions {
         }
 
         @Override
-        CharSequence getUnit() {
-            return "day";
+        char getUnit() {
+            return 'd';
         }
     }
 
@@ -108,8 +106,8 @@ final class TimestampFloorOffsetFunctions {
         }
 
         @Override
-        CharSequence getUnit() {
-            return "hour";
+        char getUnit() {
+            return 'h';
         }
     }
 
@@ -125,8 +123,8 @@ final class TimestampFloorOffsetFunctions {
         }
 
         @Override
-        CharSequence getUnit() {
-            return "microsecond";
+        char getUnit() {
+            return 'U';
         }
     }
 
@@ -142,8 +140,8 @@ final class TimestampFloorOffsetFunctions {
         }
 
         @Override
-        CharSequence getUnit() {
-            return "minute";
+        char getUnit() {
+            return 'm';
         }
     }
 
@@ -159,8 +157,8 @@ final class TimestampFloorOffsetFunctions {
         }
 
         @Override
-        CharSequence getUnit() {
-            return "month";
+        char getUnit() {
+            return 'M';
         }
     }
 
@@ -176,8 +174,8 @@ final class TimestampFloorOffsetFunctions {
         }
 
         @Override
-        CharSequence getUnit() {
-            return "millisecond";
+        char getUnit() {
+            return 'T';
         }
     }
 
@@ -193,8 +191,8 @@ final class TimestampFloorOffsetFunctions {
         }
 
         @Override
-        CharSequence getUnit() {
-            return "second";
+        char getUnit() {
+            return 's';
         }
     }
 
@@ -210,8 +208,8 @@ final class TimestampFloorOffsetFunctions {
         }
 
         @Override
-        CharSequence getUnit() {
-            return "week";
+        char getUnit() {
+            return 'w';
         }
     }
 
@@ -227,8 +225,8 @@ final class TimestampFloorOffsetFunctions {
         }
 
         @Override
-        CharSequence getUnit() {
-            return "year";
+        char getUnit() {
+            return 'y';
         }
     }
 }

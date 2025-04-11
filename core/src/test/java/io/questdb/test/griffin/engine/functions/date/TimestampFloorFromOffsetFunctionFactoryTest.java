@@ -123,7 +123,7 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
             assertPlanNoLeakCheck(
                     "select timestamp_floor('3d', ts, null, '00:00', null) from x",
                     "VirtualRecord\n" +
-                            "  functions: [timestamp_floor('3day',ts)]\n" +
+                            "  functions: [timestamp_floor('3d',ts)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n"
@@ -148,9 +148,18 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
             );
 
             assertPlanNoLeakCheck(
+                    "select timestamp_floor('3d', ts, null, '12:00', 'Europe/Berlin') from x",
+                    "VirtualRecord\n" +
+                            "  functions: [timestamp_floor('3d',ts,null,'12:00',Europe/Berlin')]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
                     "select timestamp_floor('1d', ts, null, '00:01', null) from x",
                     "VirtualRecord\n" +
-                            "  functions: [timestamp_floor('day',ts,'1970-01-01T00:01:00.000Z')]\n" +
+                            "  functions: [timestamp_floor('1d',ts,'1970-01-01T00:01:00.000Z')]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n"
@@ -161,7 +170,40 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
             assertPlanNoLeakCheck(
                     "select timestamp_floor('d', ts, null, :offset, null) from x",
                     "VirtualRecord\n" +
-                            "  functions: [timestamp_floor('d',ts,null,:offset::string,null)]\n" +
+                            "  functions: [timestamp_floor('1d',ts,null,:offset::string,null)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n"
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("offset", "00:00");
+            assertPlanNoLeakCheck(
+                    "select timestamp_floor('d', ts, null, :offset, 'Europe/London') from x",
+                    "VirtualRecord\n" +
+                            "  functions: [timestamp_floor('1d',ts,null,:offset::string,'Europe/London')]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n"
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "UTC");
+            assertPlanNoLeakCheck(
+                    "select timestamp_floor('d', ts, null, '00:00', :tz) from x",
+                    "VirtualRecord\n" +
+                            "  functions: [timestamp_floor('1d',ts,null,'00:00',:tz::string)]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n"
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "Europe/Paris");
+            assertPlanNoLeakCheck(
+                    "select timestamp_floor('d', ts, null, '03:00', :tz) from x",
+                    "VirtualRecord\n" +
+                            "  functions: [timestamp_floor('1d',ts,null,'03:00',:tz::string)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n"
@@ -173,7 +215,7 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
             assertPlanNoLeakCheck(
                     "select timestamp_floor('1d', ts, null, :offset, :tz) from x",
                     "VirtualRecord\n" +
-                            "  functions: [timestamp_floor('day',ts,null,:offset::string:tz::string)]\n" +
+                            "  functions: [timestamp_floor('1d',ts,null,:offset::string,:tz::string)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n"
