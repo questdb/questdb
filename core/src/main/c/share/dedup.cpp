@@ -420,7 +420,7 @@ int64_t dedup_sorted_timestamp_index_many_addresses_segment_bits_clean(
             reverse_index[index_out[i].i.ri] = i;
         }
 
-        return dedup_rows;
+        return no_timestamp_duplicates;
     }
 
     if (dedup_rows > 0) {
