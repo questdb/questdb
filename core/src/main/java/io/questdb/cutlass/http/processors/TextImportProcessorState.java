@@ -31,7 +31,7 @@ import io.questdb.std.Mutable;
 
 import java.io.Closeable;
 
-class TextImportProcessorState implements Mutable, Closeable {
+public class TextImportProcessorState implements Mutable, Closeable {
     public static final int STATE_OK = 0;
     public int columnIndex = 0;
     public TextLoaderCompletedState completeState;
@@ -69,7 +69,7 @@ class TextImportProcessorState implements Mutable, Closeable {
         textLoader = Misc.free(textLoader);
     }
 
-    public void snapshotStateAndCloseWriter() {
+    void snapshotStateAndCloseWriter() {
         if (completeState == null) {
             completeState = new TextLoaderCompletedState();
         }
