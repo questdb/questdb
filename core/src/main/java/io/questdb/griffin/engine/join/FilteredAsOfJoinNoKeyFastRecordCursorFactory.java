@@ -113,7 +113,6 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long highestKnownSlaveRowIdWithNoMatch = 0;
         private int unfilteredCursorFrameIndex = -1;
-        private boolean unfilteredRecordHasSlave;
         private long unfilteredRecordRowId = -1;
 
         public FilteredAsOfJoinKeyedFastRecordCursor(
@@ -136,7 +135,6 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 return false;
             }
 
-            record.hasSlave(unfilteredRecordHasSlave);
             final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
             TimeFrame timeFrame = slaveCursor.getTimeFrame();
             if (masterTimestamp >= lookaheadTimestamp) {
@@ -150,7 +148,6 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
 
                 nextSlave(masterTimestamp);
 
-                unfilteredRecordHasSlave = record.hasSlave();
                 unfilteredRecordRowId = slaveRecB.getRowId();
                 unfilteredCursorFrameIndex = timeFrame.getFrameIndex();
             }
@@ -242,7 +239,6 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             slaveRecordFilter.toTop();
             unfilteredRecordRowId = -1;
             unfilteredCursorFrameIndex = -1;
-            unfilteredRecordHasSlave = false;
             highestKnownSlaveRowIdWithNoMatch = 0;
         }
     }
