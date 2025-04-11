@@ -43,7 +43,7 @@ public class PrometheusMetricsTest extends AbstractCairoTest {
         try (PrometheusMetricsRecordCursorFactory factory = new PrometheusMetricsRecordCursorFactory(configuration)) {
             PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor cursor = (PrometheusMetricsRecordCursorFactory.PrometheusMetricsCursor) factory.getCursor(sqlExecutionContext);
             cursor.of(metricsRegistry);
-            printSql(cursor, PrometheusMetricsRecordCursorFactory.METADATA);
+            assertCursor(expected, false, false, true, cursor, factory.getMetadata(), false);
         } catch (SqlException e) {
             throw new RuntimeException(e);
         }

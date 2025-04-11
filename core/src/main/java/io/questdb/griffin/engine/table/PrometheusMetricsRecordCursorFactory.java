@@ -164,7 +164,7 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
 
         @Override
         public long size() throws DataUnavailableException {
-            return size;
+            return -1;
         }
 
         @Override
@@ -211,7 +211,7 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
             if (lo == -1 || hi == -1 || lo == hi) {
                 return Utf8String.EMPTY;
             } else {
-                return value.of(getLo(slot), getHi(slot));
+                return value.of(getLo(slot), getHi(slot), sink.isAscii());
             }
         }
 
@@ -261,8 +261,8 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
 
         public PrometheusMetricsRecord setGaugeName(CharSequence name) {
             setLo(NAME, sink.hi());
-            sink.put(PrometheusFormatUtils.METRIC_NAME_PREFIX);
-            sink.put(name);
+            sink.putAscii(PrometheusFormatUtils.METRIC_NAME_PREFIX);
+            sink.putAscii(name);
             setHi(NAME, sink.hi());
             return this;
         }
@@ -294,7 +294,7 @@ public final class PrometheusMetricsRecordCursorFactory extends AbstractRecordCu
             setLo(NAME, sink.hi());
             sink.putAscii(PrometheusFormatUtils.METRIC_NAME_PREFIX);
             sink.putAscii(MEMORY_TAG_PREFIX);
-            sink.put(name);
+            sink.putAscii(name);
             setHi(NAME, sink.hi());
             return this;
         }
