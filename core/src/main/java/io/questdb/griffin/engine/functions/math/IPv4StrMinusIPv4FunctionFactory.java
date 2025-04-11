@@ -47,4 +47,9 @@ public class IPv4StrMinusIPv4FunctionFactory implements FunctionFactory {
     ) {
         return new IPv4MinusIPv4FunctionFactory.IPv4MinusIPv4Function(args.getQuick(0), args.getQuick(1));
     }
+
+    @Override
+    public boolean supportImplicitCastCharToStr() {
+        return false;
+    }
 }

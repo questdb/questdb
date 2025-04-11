@@ -25,6 +25,7 @@
 package io.questdb.network;
 
 import io.questdb.std.LongIntHashMap;
+import io.questdb.std.Misc;
 
 public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispatcher<C> {
     private final LongIntHashMap fds = new LongIntHashMap();
@@ -52,8 +53,8 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
     @Override
     public void close() {
         super.close();
-        readFdSet.close();
-        writeFdSet.close();
+        Misc.free(readFdSet);
+        Misc.free(writeFdSet);
         LOG.info().$("closed").$();
     }
 

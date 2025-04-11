@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -50,7 +52,14 @@ public class CastCharToBooleanFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return (arg.getChar(rec) | 32) == 't';
+            char c = arg.getChar(rec);
+            if (c == '0' || (c | 32) == 'f') {
+                return false;
+            } else if (c == '1' || (c | 32) == 't') {
+                return true;
+            }
+
+            throw ImplicitCastException.inconvertibleValue(c, ColumnType.CHAR, ColumnType.BOOLEAN);
         }
     }
 }

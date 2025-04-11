@@ -33,6 +33,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.wal.SymbolMapDiff;
@@ -46,6 +47,8 @@ import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
@@ -92,6 +95,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -969,6 +973,78 @@ public class WalWriterTest extends AbstractCairoTest {
                     "a\tb\tts\tc\n" +
                             "1\t\t1970-01-01T00:00:00.000000Z\tnull\n", tableToken.getTableName()
             );
+        });
+    }
+
+    @Test
+    public void testAlterWithParallelTableRename() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table alter_rename0 (i int, s symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("create table alter_rename1 (i int, s symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            TableToken token0 = engine.verifyTableName("alter_rename0");
+            TableToken token1 = engine.verifyTableName("alter_rename1");
+
+            AtomicBoolean stop = new AtomicBoolean(false);
+            CountDownLatch countDownLatch = new CountDownLatch(2);
+            AtomicInteger errors = new AtomicInteger();
+
+            Thread alterThread = new Thread(() -> {
+                try {
+                    countDownLatch.countDown();
+                    for (int i = 0; i < 100; i++) {
+                        try {
+                            execute("alter table alter_rename0 alter column s symbol capacity 1024");
+                        } catch (SqlException e) {
+                            if (!e.isTableDoesNotExist()) {
+                                throw e;
+                            }
+                            i--;
+                        } catch (CairoException e) {
+                            if (!e.isTableDoesNotExist()) {
+                                throw e;
+                            }
+                            i--;
+                        }
+                        drainWalQueue();
+                    }
+                } catch (Throwable e) {
+                    errors.incrementAndGet();
+                    throw new RuntimeException(e);
+                } finally {
+                    Path.clearThreadLocals();
+                    stop.set(true);
+                }
+            });
+            alterThread.start();
+
+            Thread renameThread = new Thread(() -> {
+                try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                        .with(AllowAllSecurityContext.INSTANCE);
+                     SqlCompiler compiler = engine.getSqlCompiler()) {
+                    countDownLatch.countDown();
+                    while (!stop.get()) {
+                        execute(compiler, "rename table alter_rename0 to alter_rename_tmp", sqlExecutionContext);
+                        execute(compiler, "rename table alter_rename1 to alter_rename0", sqlExecutionContext);
+                        execute(compiler, "rename table alter_rename_tmp to alter_rename1", sqlExecutionContext);
+                    }
+                } catch (Throwable th) {
+                    errors.incrementAndGet();
+                    throw new RuntimeException(th);
+                } finally {
+                    Path.clearThreadLocals();
+                    stop.set(true);
+                }
+            });
+            renameThread.start();
+
+
+            alterThread.join();
+            renameThread.join();
+
+            Assert.assertEquals(0, errors.get());
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token0));
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token1));
+
         });
     }
 
