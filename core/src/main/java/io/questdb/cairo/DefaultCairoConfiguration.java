@@ -1250,6 +1250,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isQueryTracingBindVariableSubstitutionEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isQueryTracingEnabled() {
         return false;
     }

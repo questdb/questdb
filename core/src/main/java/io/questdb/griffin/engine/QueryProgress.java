@@ -34,6 +34,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.ReaderPool;
 import io.questdb.cairo.pool.ResourcePoolSupervisor;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -54,7 +55,11 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -137,10 +142,15 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         // as well as already converted to an immutable String, as needed to queue it up for handling
         // at a later time. For this reason, do not assign queryTrace.queryText = sqlText here.
         if (queryTrace != null && engine.getConfiguration().isQueryTracingEnabled()) {
+            if (queryTrace.shouldSubstituteBindVariables(engine.getConfiguration())) {
+                // unless we need to change it!
+                queryTrace.queryText = substituteBindVariablesIntoQueryText(sqlText, executionContext);
+            }
             queryTrace.executionNanos = durationNanos;
             queryTrace.isJit = isJit;
             queryTrace.timestamp = config.getMicrosecondClock().getTicks();
             queryTrace.principal = principal.toString();
+            queryTrace.error = null;
             engine.getMessageBus().getQueryTraceQueue().enqueue(queryTrace);
         }
     }
@@ -152,7 +162,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             @NotNull SqlExecutionContext executionContext,
             long beginNanos
     ) {
-        logError(e, sqlId, sqlText, executionContext, beginNanos, null);
+        logError(e, sqlId, sqlText, executionContext, beginNanos, null, null);
     }
 
     public static void logError(
@@ -161,10 +171,13 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             @NotNull CharSequence sqlText,
             @NotNull SqlExecutionContext executionContext,
             long beginNanos,
-            @Nullable ObjList<TableReader> leakedReaders
+            @Nullable ObjList<TableReader> leakedReaders,
+            @Nullable QueryTrace queryTrace
     ) {
         int leakedReadersCount = leakedReaders != null ? leakedReaders.size() : 0;
         LogRecord log = null;
+        CharSequence message = null;
+
         try {
             executionContext.getCairoEngine().getMetrics().healthMetrics().incrementQueryErrorCounter();
             // Extract all the variables before the call to call LOG.errorW() to avoid exception
@@ -183,7 +196,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             if (e instanceof FlyweightMessageContainer) {
                 final int pos = ((FlyweightMessageContainer) e).getPosition();
                 final int errno = e instanceof CairoException ? ((CairoException) e).getErrno() : 0;
-                final CharSequence message = ((FlyweightMessageContainer) e).getFlyweightMessage();
+                message = ((FlyweightMessageContainer) e).getFlyweightMessage();
                 // We need guaranteed logging for errors, hence errorW() call.
 
                 log.$(" [id=").$(sqlId)
@@ -197,6 +210,9 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                         .$(", pos=").$(pos);
             } else {
                 // This is unknown exception, can be OOM that can cause exception in logging.
+                if (e != null) {
+                    message = e.getMessage();
+                }
                 log.$(" [id=").$(sqlId)
                         .$(", sql=`").utf8(sqlText).$('`')
                         .$(", principal=").$(principal)
@@ -206,6 +222,19 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                         .$(", exception=").$(e);
             }
             appendLeakedReaderNames(leakedReaders, leakedReadersCount, log);
+
+            final CairoEngine engine = executionContext.getCairoEngine();
+            if (queryTrace != null && engine.getConfiguration().isQueryTracingEnabled()) {
+                if (queryTrace.shouldSubstituteBindVariables(engine.getConfiguration())) {
+                    queryTrace.queryText = substituteBindVariablesIntoQueryText(sqlText, executionContext);
+                }
+                queryTrace.executionNanos = durationNanos;
+                queryTrace.isJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED;
+                queryTrace.timestamp = engine.getConfiguration().getMicrosecondClock().getTicks();
+                queryTrace.principal = principal.toString();
+                queryTrace.error = message != null ? message.toString() : null;
+                engine.getMessageBus().getQueryTraceQueue().enqueue(queryTrace);
+            }
         } catch (Throwable th) {
             // Game over, we can't log anything
             System.err.print("Could not log exception message! ");
@@ -380,6 +409,67 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
     }
 
+
+    private static String substituteBindVariablesIntoQueryText(@NotNull CharSequence sqlText, @NotNull SqlExecutionContext executionContext) {
+        StringSink sink = Misc.getThreadLocalSink();
+
+        int bindVarNumber;
+        for (int i = 0, n = sqlText.length(); i < n; i++) {
+            char c = sqlText.charAt(i);
+            int start;
+
+            switch (c) {
+                case '\'':
+                case '"':
+                    sink.put(c);
+                    for (int j = i + 1; j < n; j++) {
+                        c = sqlText.charAt(j);
+                        if (sqlText.charAt(j) == c) {
+                            break;
+                        } else {
+                            sink.put(c);
+                        }
+                    }
+                    break;
+                case '$':
+                    start = i;
+                    do {
+                        i++;
+                        if (i >= n) {
+                            break;
+                        }
+                        c = sqlText.charAt(i);
+                    } while (c >= '0' && c <= '9');
+                    if (i - start > 1) {
+                        try {
+                            bindVarNumber = Numbers.parseInt(sqlText, start + 1, i);
+
+                            Function bindVarFunction = executionContext
+                                    .getBindVariableService()
+                                    .getFunction(bindVarNumber - 1);
+
+                            if (bindVarFunction instanceof Sinkable) {
+                                ((Sinkable) bindVarFunction).toSink(sink);
+                            } else {
+                                // fall out and leave it unsubstituted
+                                sink.put(sqlText, start, i);
+                            }
+                            // make sure we go back 1 char, so it isn't missed
+                            i--;
+                            continue;
+                        } catch (NumericException ignore) {
+                            return sqlText.toString();
+                        }
+                    } else {
+                        sink.put(sqlText, start, i);
+                    }
+                default:
+                    sink.put(c);
+            }
+        }
+        return sink.toString();
+    }
+
     @Override
     protected void _close() {
         cursor.close();
@@ -479,7 +569,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                         if (th == null) {
                             logEnd(sqlId, sqlText, executionContext, beginNanos, readers, queryTrace);
                         } else {
-                            logError(th, sqlId, sqlText, executionContext, beginNanos, readers);
+                            logError(th, sqlId, sqlText, executionContext, beginNanos, readers, queryTrace);
                         }
                     } finally {
                         // Unregister must follow the base cursor close call to avoid concurrent access

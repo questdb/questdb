@@ -38,9 +38,11 @@ import io.questdb.std.Chars;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
-public class NamedParameterLinkFunction implements ScalarFunction {
+public class NamedParameterLinkFunction implements ScalarFunction, Sinkable {
     private final int type;
     private final String variableName;
     private Function base;
@@ -243,6 +245,12 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     @Override
     public void toPlan(PlanSink sink) {
         sink.val(variableName).val("::").val(Chars.toLowerCaseAscii(ColumnType.nameOf(type)));
+    }
+
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        assert base instanceof Sinkable;
+        ((Sinkable) base).toSink(sink);
     }
 
     private Function getBase() {
