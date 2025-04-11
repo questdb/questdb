@@ -172,6 +172,8 @@ public interface CairoConfiguration {
     @NotNull
     String getDbRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
 
+    boolean getDebugWalApplyBlockFailureNoRetry();
+
     @NotNull
     DateLocale getDefaultDateLocale();
 
@@ -729,6 +731,4 @@ public interface CairoConfiguration {
     }
 
     boolean useFastAsOfJoin();
-
-    boolean getDebugWalApplyBlockFailureNoRetry();/
 }
