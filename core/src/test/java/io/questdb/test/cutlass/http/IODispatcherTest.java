@@ -5926,6 +5926,7 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testNetworkErrorCouldNotBindSocket() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
             try (IODispatcher<HttpConnectionContext> ignored1 = IODispatchers.create(
