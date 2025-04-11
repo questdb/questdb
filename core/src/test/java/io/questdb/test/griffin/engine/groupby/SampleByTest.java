@@ -3695,6 +3695,37 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByDstForwardShift() throws Exception {
+        // Although '00:15' offset here pushes certain bucket timestamps to the gap hour
+        // in 'Europe/Prague' time zone (2021-03-28T02:00 - 2021-03-28T03:00), timestamp_floor()
+        // function used in sample by rewrite should assign them to the previous bucket, so
+        // that there are no duplicate timestamps returned after backward conversion to UTC.
+        assertQuery(
+                "k\ts\tlat\tlon\n" +
+                        "2021-03-28T00:15:00.000000Z\ta\t144.77803379943109\tnull\n" +
+                        "2021-03-28T01:15:00.000000Z\ta\t31.267026583720984\tnull\n" +
+                        "2021-03-28T02:15:00.000000Z\ta\t103.7167928478985\t128.42101395467057\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from x " +
+                        "where s in ('a') " +
+                        "sample by 1h align to calendar time zone 'Europe/Prague' with offset '00:15'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a') s," +
+                        "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60*1000000L) k" +
+                        "   from" +
+                        "   long_sequence(100)" +
+                        "), index(s) timestamp(k) partition by DAY",
+                "k",
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testSampleByFilteredByIndex() throws Exception {
         assertQuery(
                 "time\ts1\tdd\n" +
