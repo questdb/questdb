@@ -144,6 +144,11 @@ public class DefaultPGWireConfiguration extends DefaultIODispatcherConfiguration
     }
 
     @Override
+    public int getPipelineCapacity() {
+        return 64;
+    }
+
+    @Override
     public String getPoolName() {
         return "pgwire";
     }

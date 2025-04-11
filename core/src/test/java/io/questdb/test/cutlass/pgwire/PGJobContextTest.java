@@ -3457,7 +3457,6 @@ if __name__ == "__main__":
         String select1 = "select 1 from long_sequence(1) where sleep(120000)";
         String select2 = "select sleep(120000) from long_sequence(1)";
         String selectWithJoin = "select 1 from long_sequence(1) ls1 join long_sequence(1) on sleep(120000)";
-        String insert = "insert into tab values (sleep(120000), 100000000000000L::timestamp, 'A' )";
         String insertAsSelect1 = "insert into tab select true, 100000000000000L::timestamp, 'B' from long_sequence(1) where sleep(120000)";
         String insertAsSelect2 = "insert into tab select sleep(120000), 100000000000000L::timestamp, 'B' from long_sequence(1)";
         String insertAsSelectBatched = "insert batch 100 into tab select true, 100000000000000L::timestamp, 'B' from long_sequence(1) where sleep(120000)";
@@ -3475,7 +3474,6 @@ if __name__ == "__main__":
                 select1,
                 select2,
                 selectWithJoin,
-                insert,
                 insertAsSelect1,
                 insertAsSelect2,
                 insertAsSelectBatched,

@@ -112,6 +112,12 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public int define(int index, int type, int position) throws SqlException {
+        // check if the function already defined as this type
+        // to avoid overhead of re-defining each variable
+        Function function = getFunction(index);
+        if (function != null && function.getType() == type) {
+            return type;
+        }
         switch (ColumnType.tagOf(type)) {
             // unable to define undefined type
             case ColumnType.UNDEFINED:

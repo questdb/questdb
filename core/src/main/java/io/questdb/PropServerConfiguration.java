@@ -607,6 +607,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgNetIdleConnectionTimeout;
     private String pgPassword;
     private int pgPendingWritersCacheCapacity;
+    private int pgPipelineCapacity;
     private String pgReadOnlyPassword;
     private boolean pgReadOnlySecurityContext;
     private boolean pgReadOnlyUserEnabled;
@@ -1258,6 +1259,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgNamesStatementPoolCapacity = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_POOL_CAPACITY, 32);
                 this.pgPendingWritersCacheCapacity = getInt(properties, env, PropertyKey.PG_PENDING_WRITERS_CACHE_CAPACITY, 16);
                 this.pgNamedStatementLimit = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_LIMIT, 10_000);
+                this.pgPipelineCapacity = getInt(properties, env, PropertyKey.PG_PIPELINE_CAPACITY, 64);
             }
 
             this.walApplyWorkerCount = getInt(properties, env, PropertyKey.WAL_APPLY_WORKER_COUNT, cpuWalApplyWorkers);
@@ -5075,6 +5077,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPendingWritersCacheSize() {
             return pgPendingWritersCacheCapacity;
+        }
+
+        @Override
+        public int getPipelineCapacity() {
+            return pgPipelineCapacity;
         }
 
         @Override

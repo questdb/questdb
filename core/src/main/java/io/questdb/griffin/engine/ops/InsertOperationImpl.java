@@ -65,7 +65,6 @@ public class InsertOperationImpl implements InsertOperation {
     public InsertMethod createMethod(SqlExecutionContext executionContext, WriterSource writerSource) throws SqlException {
         SecurityContext securityContext = executionContext.getSecurityContext();
         securityContext.authorizeInsert(tableToken);
-        insertMethod.executionContext = executionContext;
 
         initContext(executionContext);
         if (insertMethod.writer == null) {
@@ -101,11 +100,6 @@ public class InsertOperationImpl implements InsertOperation {
         }
     }
 
-    @Override
-    public void setInsertSql(CharSequence query) {
-        insertMethod.insertSql = Chars.toString(query);
-    }
-
     private void initContext(SqlExecutionContext executionContext) throws SqlException {
         for (int i = 0, n = insertRows.size(); i < n; i++) {
             InsertRowImpl row = insertRows.get(i);
@@ -114,8 +108,6 @@ public class InsertOperationImpl implements InsertOperation {
     }
 
     private class InsertMethodImpl implements InsertMethod {
-        private SqlExecutionContext executionContext;
-        private String insertSql;
         private TableWriterAPI writer = null;
 
         @Override
@@ -130,16 +122,11 @@ public class InsertOperationImpl implements InsertOperation {
 
         @Override
         public long execute() {
-            long queryId = engine.getQueryRegistry().register(insertSql, executionContext);
-            try {
-                for (int i = 0, n = insertRows.size(); i < n; i++) {
-                    InsertRowImpl row = insertRows.get(i);
-                    row.append(writer);
-                }
-                return insertRows.size();
-            } finally {
-                engine.getQueryRegistry().unregister(queryId, executionContext);
+            for (int i = 0, n = insertRows.size(); i < n; i++) {
+                InsertRowImpl row = insertRows.get(i);
+                row.append(writer);
             }
+            return insertRows.size();
         }
 
         @Override
