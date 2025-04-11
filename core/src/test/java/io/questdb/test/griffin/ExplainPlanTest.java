@@ -8589,7 +8589,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a as (select rnd_int() i, timestamp_sequence(0, 100) ts from long_sequence(10000)) timestamp(ts) ;",
                 "select * from a order by ts desc limit 9223372036854775806L+3L ",
-                "Limit lo: -9223372036854775807L skip-over-rows: 0 limit: 10000\n" +
+                "Limit lo: -9223372036854775807 skip-over-rows: 0 limit: 10000\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: a\n"
@@ -10609,7 +10609,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             ") order by ts asc",
                     "Sort\n" +
                             "  keys: [ts]\n" +
-                            "    Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 0\n" +
+                            "    Limit lo: 9223372036854775807 skip-over-rows: 0 limit: 0\n" +
                             "        Window\n" +
                             "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
@@ -10631,7 +10631,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             ") order by ts desc",
                     "Sort\n" +
                             "  keys: [ts desc]\n" +
-                            "    Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 0\n" +
+                            "    Limit lo: 9223372036854775807 skip-over-rows: 0 limit: 0\n" +
                             "        Window\n" +
                             "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
@@ -10653,7 +10653,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             ") order by hostname",
                     "Sort\n" +
                             "  keys: [hostname]\n" +
-                            "    Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 0\n" +
+                            "    Limit lo: 9223372036854775807 skip-over-rows: 0 limit: 0\n" +
                             "        Window\n" +
                             "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
@@ -10751,7 +10751,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             ") order by ts asc ",
                     "Sort\n" +
                             "  keys: [ts]\n" +
-                            "    Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 0\n" +
+                            "    Limit lo: 9223372036854775807 skip-over-rows: 0 limit: 0\n" +
                             "        Window\n" +
                             "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
@@ -10773,7 +10773,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             ") order by ts desc ",
                     "Sort\n" +
                             "  keys: [ts desc]\n" +
-                            "    Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 0\n" +
+                            "    Limit lo: 9223372036854775807 skip-over-rows: 0 limit: 0\n" +
                             "        Window\n" +
                             "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
@@ -10795,7 +10795,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             ") order by hostname ",
                     "Sort\n" +
                             "  keys: [hostname]\n" +
-                            "    Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 0\n" +
+                            "    Limit lo: 9223372036854775807 skip-over-rows: 0 limit: 0\n" +
                             "        Window\n" +
                             "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
@@ -10810,7 +10810,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWindowParentModelOrderPushdownIsDoneWhenNestedModelsSpecifyNoneOrMatchingOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
+            execute("create table cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
 
             String expectedForwardPlan = "Window\n" +
                     "  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
@@ -10869,7 +10869,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             String expectedForwardLimitPlan =
-                    "Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 0\n" +
+                    "Limit lo: 9223372036854775807 skip-over-rows: 0 limit: 0\n" +
                             "    Window\n" +
                             "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
@@ -10959,7 +10959,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     expectedBackwardPlan
             );
 
-            String expectedBackwardLimitPlan = "Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 0\n" +
+            String expectedBackwardLimitPlan = "Limit lo: 9223372036854775807 skip-over-rows: 0 limit: 0\n" +
                     "    Window\n" +
                     "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                     "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +

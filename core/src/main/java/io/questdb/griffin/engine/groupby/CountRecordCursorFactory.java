@@ -41,8 +41,8 @@ import io.questdb.std.Misc;
 
 public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final GenericRecordMetadata DEFAULT_COUNT_METADATA = new GenericRecordMetadata();
-    private final RecordCursorFactory base;
     private final CountRecordCursor cursor = new CountRecordCursor();
+    private RecordCursorFactory base;
 
     public CountRecordCursorFactory(RecordMetadata metadata, RecordCursorFactory base) {
         super(metadata);
@@ -71,6 +71,11 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    @Override
+    public void setBaseFactory(RecordCursorFactory base) {
+        this.base = base;
     }
 
     @Override

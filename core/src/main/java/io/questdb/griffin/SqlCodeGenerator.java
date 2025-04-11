@@ -69,6 +69,7 @@ import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.engine.AnalyzeFactory;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.ExplainPlanFactory;
 import io.questdb.griffin.engine.LimitOverflowException;
@@ -185,6 +186,7 @@ import io.questdb.griffin.engine.groupby.vect.SumLongVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.SumShortVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor;
+import io.questdb.griffin.engine.join.AbstractJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
@@ -245,6 +247,7 @@ import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
+import io.questdb.griffin.engine.union.AbstractSetRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptRecordCursorFactory;
 import io.questdb.griffin.engine.union.IntersectAllRecordCursorFactory;
@@ -542,12 +545,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             factory = new RecordCursorFactoryStub(innerModel, null);
         }
 
-        return new ExplainPlanFactory(factory, model.getFormat());
+        if (model.isAnalyze()) {
+            factory = wrapFactoriesWithAnalyze(factory);
+        }
+
+        return new ExplainPlanFactory(factory, model.getFormat(), model.isAnalyze());
     }
 
-    public RecordCursorFactory generateExplain(QueryModel model, RecordCursorFactory factory, int format) {
+    public RecordCursorFactory generateExplain(QueryModel model, RecordCursorFactory factory, int format, boolean isAnalyze) {
         RecordCursorFactory recordCursorFactory = new RecordCursorFactoryStub(model, factory);
-        return new ExplainPlanFactory(recordCursorFactory, format);
+        return new ExplainPlanFactory(recordCursorFactory, format, isAnalyze);
     }
 
     public BytecodeAssembler getAsm() {
@@ -6284,7 +6291,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return limitFunc;
     }
 
-
     private void validateBothTimestampOrders(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory, int position) throws SqlException {
         if (masterFactory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
             throw SqlException.$(position, "left side of time series join doesn't have ASC timestamp order");
@@ -6340,6 +6346,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         this.fullFatJoins = fullFatJoins;
     }
 
+    RecordCursorFactory wrapFactoriesWithAnalyze(RecordCursorFactory factory) {
+        if (factory == null || factory instanceof SqlCodeGenerator.RecordCursorFactoryStub) {
+            return factory;
+        } else {
+            if (factory instanceof AbstractSetRecordCursorFactory) {
+                RecordCursorFactory factoryA = wrapFactoriesWithAnalyze(((AbstractSetRecordCursorFactory) factory).getFactoryA());
+                RecordCursorFactory factoryB = wrapFactoriesWithAnalyze(((AbstractSetRecordCursorFactory) factory).getFactoryB());
+                ((AbstractSetRecordCursorFactory) factory).setFactoryA(factoryA);
+                ((AbstractSetRecordCursorFactory) factory).setFactoryB(factoryB);
+            } else if (factory instanceof AbstractJoinRecordCursorFactory) {
+                RecordCursorFactory masterFactory = wrapFactoriesWithAnalyze(((AbstractJoinRecordCursorFactory) factory).getMasterFactory());
+                RecordCursorFactory slaveFactory = wrapFactoriesWithAnalyze(((AbstractJoinRecordCursorFactory) factory).getSlaveFactory());
+                ((AbstractJoinRecordCursorFactory) factory).setMasterFactory(masterFactory);
+                ((AbstractJoinRecordCursorFactory) factory).setSlaveFactory(slaveFactory);
+            } else {
+                RecordCursorFactory nested = wrapFactoriesWithAnalyze(factory.getBaseFactory());
+
+                if (nested != null) {
+                    factory.setBaseFactory(nested);
+                    if (factory.getBaseFactory() != nested) {
+                        throw CairoException.nonCritical().put("could not set base factory [factory=").put(factory.getClass().getName()).put("]");
+                    }
+                }
+            }
+            return new AnalyzeFactory(factory);
+        }
+    }
+
     @FunctionalInterface
     public interface FullFatJoinGenerator {
         RecordCursorFactory create(
@@ -6390,12 +6424,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         @Override
         public RecordMetadata getMetadata() {
-            return null;
+            if (factory != null) {
+                return factory.getMetadata();
+            } else {
+                return null;
+            }
         }
 
         @Override
         public boolean recordCursorSupportsRandomAccess() {
             return false;
+        }
+
+        @Override
+        public void setBaseFactory(RecordCursorFactory base) {
+            this.factory = base;
         }
 
         @Override

@@ -4548,7 +4548,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                 q3,
                 "Sort\n" +
                         "  keys: [ts1 desc]\n" +
-                        "    Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 10\n" +
+                        "    Limit lo: 9223372036854775807 skip-over-rows: 0 limit: 10\n" +
                         "        Window\n" +
                         "          functions: [max(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]\n" +
                         "            PageFrame\n" +
@@ -4577,7 +4577,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                 "Radix sort light\n" +
                         "  keys: [ts1 desc]\n" +
                         "    SelectedRecord\n" +
-                        "        Limit lo: 9223372036854775807L skip-over-rows: 0 limit: 10\n" +
+                        "        Limit lo: 9223372036854775807 skip-over-rows: 0 limit: 10\n" +
                         "            Sort\n" +
                         "              keys: [ts2]\n" +
                         "                Window\n" +

@@ -58,6 +58,8 @@ public interface PlanSink {
 
     int getOrder();
 
+    int getPlanSinkType();
+
     @TestOnly
     StringSink getSink();
 

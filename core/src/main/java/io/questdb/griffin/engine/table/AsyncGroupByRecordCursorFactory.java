@@ -69,14 +69,13 @@ import static io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFa
 public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final PageFrameReducer AGGREGATE = AsyncGroupByRecordCursorFactory::aggregate;
     private static final PageFrameReducer FILTER_AND_AGGREGATE = AsyncGroupByRecordCursorFactory::filterAndAggregate;
-
-    private final RecordCursorFactory base;
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncGroupByRecordCursor cursor;
     private final PageFrameSequence<AsyncGroupByAtom> frameSequence;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final ObjList<Function> recordFunctions; // includes groupByFunctions
     private final int workerCount;
+    private RecordCursorFactory base;
 
     public AsyncGroupByRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -182,6 +181,11 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
+    }
+
+    @Override
+    public void setBaseFactory(RecordCursorFactory base) {
+        this.base = base;
     }
 
     @Override

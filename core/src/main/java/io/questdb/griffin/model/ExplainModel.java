@@ -37,6 +37,7 @@ public class ExplainModel implements ExecutionModel, Mutable, Sinkable {
     public static final ObjectFactory<ExplainModel> FACTORY = ExplainModel::new;
     public static final int FORMAT_JSON = 2;
     public static final int FORMAT_TEXT = 1;
+    private boolean analyze;
     private int format;
     private ExecutionModel model;
 
@@ -72,6 +73,14 @@ public class ExplainModel implements ExecutionModel, Mutable, Sinkable {
         return model.getTableNameExpr();
     }
 
+    public boolean isAnalyze() {
+        return analyze;
+    }
+
+    public void setAnalyze(boolean b) {
+        this.analyze = b;
+    }
+
     public void setFormat(int format) {
         this.format = format;
     }
@@ -83,6 +92,9 @@ public class ExplainModel implements ExecutionModel, Mutable, Sinkable {
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii("EXPLAIN");
+        if (this.analyze) {
+            sink.putAscii(" ANALYZE");
+        }
         sink.putAscii(" (FORMAT ").putAscii(format == FORMAT_TEXT ? "TEXT" : "JSON").putAscii(") ");
     }
 }

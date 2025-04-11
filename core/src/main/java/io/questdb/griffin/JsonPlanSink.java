@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.model.ExplainModel;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
@@ -125,6 +126,11 @@ public class JsonPlanSink extends BasePlanSink {
     @Override
     public int getLineCount() {
         return 1;
+    }
+
+    @Override
+    public int getPlanSinkType() {
+        return ExplainModel.FORMAT_JSON;
     }
 
     @Override

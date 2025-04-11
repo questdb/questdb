@@ -787,7 +787,7 @@ public class SqlParser {
         ));
 
         tok = tok(lexer, "'as' or 'with' or 'refresh'");
-        CharSequence baseTableName = null;
+        CharSequence baseTableName;
         if (isWithKeyword(tok)) {
             expectTok(lexer, "base");
             tok = tok(lexer, "base table expected");
@@ -853,6 +853,7 @@ public class SqlParser {
                 m = m.getNestedModel();
             }
 
+            assert queryModel != null;
             final QueryModel nestedModel = queryModel.getNestedModel();
             if (nestedModel != null) {
                 if (nestedModel.getSampleByTimezoneName() != null) {
@@ -1840,10 +1841,25 @@ public class SqlParser {
         return parseSelect(lexer, sqlParserCallback, null);
     }
 
+    /**
+     * Can return a negative value, meaning it is `EXPLAIN ANALYZE`.
+     *
+     * @param lexer
+     * @param prevTok
+     * @return
+     * @throws SqlException
+     */
     private int parseExplainOptions(GenericLexer lexer, CharSequence prevTok) throws SqlException {
         int parenthesisPos = lexer.getPosition();
         CharSequence explainTok = GenericLexer.immutableOf(prevTok);
-        CharSequence tok = tok(lexer, "'create', 'insert', 'update', 'select', 'with' or '('");
+        CharSequence tok = tok(lexer, "'create', 'insert', 'update', 'select', 'with' or '(' or 'analyze'");
+        int signum = 1;
+        if (isAnalyzeKeyword(tok)) {
+            signum = -1;
+            parenthesisPos = lexer.getPosition();
+            tok = tok(lexer, "'create', 'insert', 'update', 'select', 'with' or '('");
+        }
+
         if (Chars.equals(tok, '(')) {
             tok = tok(lexer, "'format'");
             if (isFormatKeyword(tok)) {
@@ -1854,17 +1870,17 @@ public class SqlParser {
                     if (!Chars.equals(tok, ')')) {
                         throw SqlException.$((lexer.lastTokenPosition()), "unexpected explain option found");
                     }
-                    return format;
+                    return format * signum;
                 } else {
                     throw SqlException.$((lexer.lastTokenPosition()), "unexpected explain format found");
                 }
             } else {
                 lexer.backTo(parenthesisPos, explainTok);
-                return ExplainModel.FORMAT_TEXT;
+                return ExplainModel.FORMAT_TEXT * signum;
             }
         } else {
-            lexer.unparseLast();
-            return ExplainModel.FORMAT_TEXT;
+            lexer.backTo(parenthesisPos, explainTok);
+            return ExplainModel.FORMAT_TEXT * signum;
         }
     }
 
@@ -3589,14 +3605,15 @@ public class SqlParser {
     }
 
     ExecutionModel parse(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
-        final CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
+        CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
 
         if (isExplainKeyword(tok)) {
             int format = parseExplainOptions(lexer, tok);
             ExecutionModel model = parseExplain(lexer, executionContext, sqlParserCallback);
             ExplainModel explainModel = explainModelPool.next();
-            explainModel.setFormat(format);
             explainModel.setModel(model);
+            explainModel.setAnalyze(format < 0); // if format < 0, we are in ANALYZE mode.
+            explainModel.setFormat(Math.abs(format));
             return explainModel;
         }
 
