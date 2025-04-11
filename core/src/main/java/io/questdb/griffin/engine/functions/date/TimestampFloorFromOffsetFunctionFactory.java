@@ -187,25 +187,26 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             String tzStr
     ) throws SqlException {
         if (tzOffset == 0) {
+            final long effectiveOffset = from + offset;
             switch (unit) {
                 case 'M':
-                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMMFunction(timestampFunc, stride, from + offset);
+                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMMFunction(timestampFunc, stride, effectiveOffset);
                 case 'y':
-                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetYYYYFunction(timestampFunc, stride, from + offset);
+                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetYYYYFunction(timestampFunc, stride, effectiveOffset);
                 case 'w':
-                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetWWFunction(timestampFunc, stride, from + offset);
+                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetWWFunction(timestampFunc, stride, effectiveOffset);
                 case 'd':
-                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetDDFunction(timestampFunc, stride, from + offset);
+                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetDDFunction(timestampFunc, stride, effectiveOffset);
                 case 'h':
-                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetHHFunction(timestampFunc, stride, from + offset);
+                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetHHFunction(timestampFunc, stride, effectiveOffset);
                 case 'm':
-                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMIFunction(timestampFunc, stride, from + offset);
+                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMIFunction(timestampFunc, stride, effectiveOffset);
                 case 's':
-                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetSSFunction(timestampFunc, stride, from + offset);
+                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetSSFunction(timestampFunc, stride, effectiveOffset);
                 case 'T':
-                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMSFunction(timestampFunc, stride, from + offset);
+                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMSFunction(timestampFunc, stride, effectiveOffset);
                 case 'U':
-                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMCFunction(timestampFunc, stride, from + offset);
+                    return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMCFunction(timestampFunc, stride, effectiveOffset);
                 default:
                     throw SqlException.position(unitPos).put("unexpected unit");
             }
@@ -415,6 +416,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
     }
 
     private static class AllConstFunc extends TimestampFunction implements UnaryFunction {
+        private final long effectiveOffset;
         private final TimestampFloorFunction floorFunc;
         private final long from;
         private final long offset;
@@ -442,6 +444,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             this.unit = unit;
             this.from = from;
             this.offset = offset;
+            this.effectiveOffset = from + offset;
             this.offsetStr = offsetStr;
             this.tzOffset = tzOffset;
             this.tzStr = tzStr;
@@ -457,7 +460,7 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             final long timestamp = tsFunc.getTimestamp(rec);
             if (timestamp != Numbers.LONG_NULL) {
                 final long localTimestamp = timestamp + tzOffset;
-                return floorFunc.floor(localTimestamp, stride, from + offset);
+                return floorFunc.floor(localTimestamp, stride, effectiveOffset);
             }
             return Numbers.LONG_NULL;
         }
