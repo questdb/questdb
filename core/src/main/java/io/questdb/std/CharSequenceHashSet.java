@@ -32,7 +32,6 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Arrays;
 
 public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements Sinkable {
-
     private static final int MIN_INITIAL_CAPACITY = 16;
     private final ObjList<CharSequence> list;
     private boolean hasNull = false;

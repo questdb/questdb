@@ -25,7 +25,6 @@
 package io.questdb.std;
 
 public class LowerCaseCharSequenceHashSet extends AbstractLowerCaseCharSequenceHashSet {
-
     private static final int MIN_INITIAL_CAPACITY = 16;
 
     public LowerCaseCharSequenceHashSet() {
@@ -82,6 +81,16 @@ public class LowerCaseCharSequenceHashSet extends AbstractLowerCaseCharSequenceH
             }
         }
         return true;
+    }
+
+    // returns the first non-null key, in arbitrary order
+    public CharSequence getAny() {
+        for (int i = 0, n = keys.length; i < n; i++) {
+            if (keys[i] != noEntryKey) {
+                return keys[i];
+            }
+        }
+        return null;
     }
 
     @Override

@@ -87,6 +87,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private int timestampColumnNamePosition;
     private int timestampIndex = -1;
     private int ttlHoursOrMonths;
+    private int ttlPosition;
     private boolean walEnabled;
 
     public CreateTableOperationImpl(
@@ -127,6 +128,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             long o3MaxLag,
             int maxUncommittedRows,
             int ttlHoursOrMonths,
+            int ttlPosition,
             boolean walEnabled
     ) {
         this.sqlText = sqlText;
@@ -155,6 +157,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.o3MaxLag = o3MaxLag;
         this.maxUncommittedRows = maxUncommittedRows;
         this.ttlHoursOrMonths = ttlHoursOrMonths;
+        this.ttlPosition = ttlPosition;
         this.walEnabled = walEnabled;
 
         this.selectText = null;
@@ -178,7 +181,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
      * @param partitionBy                 partition type
      * @param timestampColumnName         designated timestamp column name
      * @param timestampColumnNamePosition designated timestamp column name in user's input
-     * @param volumeAlias                 the name of the "volume" where table is created, volumes are use to create table on different physical disks
+     * @param volumeAlias                 the name of the "volume" where table is created, volumes are used to create table on different physical disks
      * @param walEnabled                  WAL flag
      * @param defaultSymbolCapacity       the default symbol capacity value, usually comes from the configuration
      * @param maxUncommittedRows          max uncommitted rows for non-WAL tables, this is written to table's metadata to be used by ingress protocols
@@ -199,6 +202,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int timestampColumnNamePosition,
             @Nullable String volumeAlias,
             int ttlHoursOrMonths,
+            int ttlPosition,
             boolean walEnabled,
             int defaultSymbolCapacity,
             int maxUncommittedRows,
@@ -217,6 +221,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.timestampColumnName = timestampColumnName;
         this.timestampColumnNamePosition = timestampColumnNamePosition;
         this.ttlHoursOrMonths = ttlHoursOrMonths;
+        this.ttlPosition = ttlPosition;
         this.defaultSymbolCapacity = defaultSymbolCapacity;
         this.batchSize = batchSize;
         this.batchO3MaxLag = batchO3MaxLag;
@@ -358,6 +363,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         return ttlHoursOrMonths;
     }
 
+    public int getTtlPosition() {
+        return ttlPosition;
+    }
+
     @Override
     public CharSequence getVolumeAlias() {
         return volumeAlias;
@@ -424,6 +433,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     @Override
     public boolean isWalEnabled() {
         return walEnabled;
+    }
+
+    public void setPartitionBy(int partitionBy) {
+        this.partitionBy = partitionBy;
     }
 
     public void setTimestampColumnName(String timestampColumnName) {
