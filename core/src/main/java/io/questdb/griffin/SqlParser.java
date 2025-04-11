@@ -787,7 +787,7 @@ public class SqlParser {
         ));
 
         tok = tok(lexer, "'as' or 'with' or 'refresh'");
-        CharSequence baseTableName = null;
+        CharSequence baseTableName;
         if (isWithKeyword(tok)) {
             expectTok(lexer, "base");
             tok = tok(lexer, "base table expected");
@@ -853,6 +853,7 @@ public class SqlParser {
                 m = m.getNestedModel();
             }
 
+            assert queryModel != null;
             final QueryModel nestedModel = queryModel.getNestedModel();
             if (nestedModel != null) {
                 if (nestedModel.getSampleByTimezoneName() != null) {
@@ -2081,24 +2082,6 @@ public class SqlParser {
         parseTableName(lexer, model);
     }
 
-    private CharSequence parseGroupBy(QueryModel model, GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
-        CharSequence tok;
-        expectBy(lexer);
-        do {
-            tokIncludingLocalBrace(lexer, "literal");
-            lexer.unparseLast();
-            ExpressionNode n = expr(lexer, model, sqlParserCallback, model.getDecls());
-            if (n == null || (n.type != ExpressionNode.LITERAL && n.type != ExpressionNode.CONSTANT && n.type != ExpressionNode.FUNCTION && n.type != ExpressionNode.OPERATION)) {
-                throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "literal expected");
-            }
-
-            model.addGroupBy(n);
-
-            tok = optTok(lexer);
-        } while (tok != null && Chars.equals(tok, ','));
-        return tok;
-    }
-
     private ExecutionModel parseInsert(
             GenericLexer lexer,
             SqlParserCallback sqlParserCallback,
@@ -2365,14 +2348,14 @@ public class SqlParser {
         ExpressionNode lo = expr(lexer, model, sqlParserCallback, model.getDecls());
         ExpressionNode hi = null;
 
-        tok = optTok(lexer);
+        tok = SqlUtil.fetchNext(lexer);
         if (tok != null && Chars.equals(tok, ',')) {
             hi = expr(lexer, model, sqlParserCallback, model.getDecls());
         } else {
             lexer.unparseLast();
         }
         model.setLimit(lo, hi);
-        tok = optTok(lexer);
+        tok = SqlUtil.fetchNext(lexer);
         return tok;
     }
 
@@ -2394,19 +2377,19 @@ public class SqlParser {
                 throw SqlException.$(lexer.lastTokenPosition(), "non-empty literal or expression expected");
             }
 
-            tok = optTok(lexer);
+            tok = SqlUtil.fetchNext(lexer);
 
             if (tok != null && isDescKeyword(tok)) {
 
                 model.addOrderBy(n, QueryModel.ORDER_DIRECTION_DESCENDING);
-                tok = optTok(lexer);
+                tok = SqlUtil.fetchNext(lexer);
 
             } else {
 
                 model.addOrderBy(n, QueryModel.ORDER_DIRECTION_ASCENDING);
 
                 if (tok != null && isAscKeyword(tok)) {
-                    tok = optTok(lexer);
+                    tok = SqlUtil.fetchNext(lexer);
                 }
             }
 
@@ -2421,14 +2404,14 @@ public class SqlParser {
     private CharSequence parsePivot(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         lexer.unparseLast();
 
-        CharSequence tok = null;
+        CharSequence tok;
         expectTok(lexer, "pivot");
 
         tok = tok(lexer, "'('");
 
         // this corrects some issue where PIVOT is returned twice by the lexer
         if (isPivotKeyword(tok)) {
-            tok = optTok(lexer);
+            optTok(lexer);
         }
 
         ExpressionNode expr;
@@ -2538,10 +2521,6 @@ public class SqlParser {
             } else {
                 lexer.unparseLast();
             }
-        }
-
-        if (tok != null && isSampleKeyword(tok)) {
-            tok = parseSampleBy(model, lexer, sqlParserCallback);
         }
 
         // parseGroupBy

@@ -269,6 +269,99 @@ public class UnpivotTest extends AbstractSqlParserTest {
                         "                Row forward scan\n" +
                         "                Frame forward scan on: trades\n");
     }
+
+    @Test
+    public void testUnpivotWithPivotAndOrderBy() throws Exception {
+        assertQueryAndPlan(
+                "side\tsymbol\tprice\n",
+                "(\n" +
+                        "  trades\n" +
+                        "  PIVOT (\n" +
+                        "    last(price)\n" +
+                        "    FOR symbol IN ('BTC-USD', 'ETH-USD')\n" +
+                        "    GROUP BY side\n" +
+                        "    ORDER BY side\n" +
+                        "  )\n" +
+                        ") UNPIVOT (\n" +
+                        "  price\n" +
+                        "  FOR symbol IN ('BTC-USD', 'ETH-USD')\n" +
+                        ");",
+                ddlTrades,
+                null,
+                dmlTrades,
+                "side\tsymbol\tprice\n" +
+                        "buy\tBTC-USD\t101497.6\n" +
+                        "buy\tETH-USD\t3678.01\n" +
+                        "sell\tBTC-USD\t101497.0\n" +
+                        "sell\tETH-USD\t3678.0\n",
+                false,
+                false,
+                false,
+                "Unpivot\n" +
+                        "  into: price\n" +
+                        "  for: symbol\n" +
+                        "  in: [BTC-USD,ETH-USD]\n" +
+                        "  nulls: excluded\n" +
+                        "    Sort light\n" +
+                        "      keys: [side]\n" +
+                        "        GroupBy vectorized: false\n" +
+                        "          keys: [side]\n" +
+                        "          values: [last_not_null(case([last,NaN,symbol])),last_not_null(case([last,NaN,symbol]))]\n" +
+                        "            Async JIT Group By workers: 1\n" +
+                        "              keys: [side,symbol]\n" +
+                        "              values: [last(price)]\n" +
+                        "              filter: symbol in [BTC-USD,ETH-USD]\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: trades\n");
+    }
+
+    @Test
+    public void testUnpivotWithPivotAndOrderByAndLimit() throws Exception {
+        assertQueryAndPlan(
+                "side\tsymbol\tprice\n",
+                "(\n" +
+                        "  trades\n" +
+                        "  PIVOT (\n" +
+                        "    last(price)\n" +
+                        "    FOR symbol IN ('BTC-USD', 'ETH-USD')\n" +
+                        "    GROUP BY side\n" +
+                        "    ORDER BY side\n" +
+                        "    LIMIT 2\n" +
+                        "  )\n" +
+                        ") UNPIVOT (\n" +
+                        "  price\n" +
+                        "  FOR symbol IN ('BTC-USD', 'ETH-USD')\n" +
+                        ");",
+                ddlTrades,
+                null,
+                dmlTrades,
+                "side\tsymbol\tprice\n" +
+                        "buy\tBTC-USD\t101497.6\n" +
+                        "buy\tETH-USD\t3678.01\n" +
+                        "sell\tBTC-USD\t101497.0\n" +
+                        "sell\tETH-USD\t3678.0\n",
+                false,
+                false,
+                false,
+                "Unpivot\n" +
+                        "  into: price\n" +
+                        "  for: symbol\n" +
+                        "  in: [BTC-USD,ETH-USD]\n" +
+                        "  nulls: excluded\n" +
+                        "    Sort light lo: 2\n" +
+                        "      keys: [side]\n" +
+                        "        GroupBy vectorized: false\n" +
+                        "          keys: [side]\n" +
+                        "          values: [last_not_null(case([last,NaN,symbol])),last_not_null(case([last,NaN,symbol]))]\n" +
+                        "            Async JIT Group By workers: 1\n" +
+                        "              keys: [side,symbol]\n" +
+                        "              values: [last(price)]\n" +
+                        "              filter: symbol in [BTC-USD,ETH-USD]\n" +
+                        "                PageFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: trades\n");
+    }
 }
 
 

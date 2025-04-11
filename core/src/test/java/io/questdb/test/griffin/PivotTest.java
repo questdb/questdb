@@ -755,6 +755,7 @@ public class PivotTest extends AbstractSqlParserTest {
                         "                Frame forward scan on: cities\n");
     }
 
+
     @Test
     public void testPivotWithSampleBy() throws Exception {
         assertQueryAndPlan(
