@@ -25,7 +25,8 @@
 package io.questdb.std;
 
 public final class Rows {
-    public static final int MAX_SAFE_PARTITION_INDEX = (1 << 19) - 1;
+    public static final int MAX_SAFE_PARTITION_INDEX = (1 << 20) - 1;
+    public static final long MAX_SAFE_ROW_ID = (1L << 44) - 1;
 
     private Rows() {
     }

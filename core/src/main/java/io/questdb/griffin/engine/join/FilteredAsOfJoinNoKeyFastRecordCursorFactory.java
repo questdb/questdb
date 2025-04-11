@@ -184,7 +184,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             int filteredFrameIndex = initialFilteredFrameIndex;
 
             int stopAtFrameIndex = Rows.toPartitionIndex(highestKnownSlaveRowIdWithNoMatch);
-            long stopAtRowId = (stopAtFrameIndex == filteredFrameIndex) ? Rows.toLocalRowID(highestKnownSlaveRowIdWithNoMatch) : 0;
+            long stopUnderRowId = (stopAtFrameIndex == filteredFrameIndex) ? Rows.toLocalRowID(highestKnownSlaveRowIdWithNoMatch) : 0;
 
             for (; ; ) {
                 // let's try to move backwards in the slave cursor until we have a match
@@ -198,9 +198,12 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                         // until we either exhaust the cursor or find a matching record
                         record.hasSlave(false);
 
-                        // remember that there is no matching slave record for a given initial rowId.
-                        // so the next time we can abort the slave cursor traversal before we reach the end of the cursor
-                        highestKnownSlaveRowIdWithNoMatch = Rows.toRowID(initialFilteredFrameIndex, initialFilteredRowId);
+                        // Remember that there is no matching slave record for a given initial rowId.
+                        // So the next time we can abort the slave cursor traversal before we reach the end of the cursor.
+                        // We increment the initial rowId by 1, because the early exit guard is exclusive.
+                        highestKnownSlaveRowIdWithNoMatch = Rows.toRowID(initialFilteredFrameIndex, initialFilteredRowId + 1);
+                        // note: we do not check for overflow here. localRowId has 44 bits, this is enough to store
+                        // 17.5 trillion rows. we don't expect to ever reach this limit within a single partition.
                         break;
                     }
 
@@ -208,10 +211,10 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                     filteredFrameIndex = timeFrame.getFrameIndex();
                     filteredRowId = timeFrame.getRowHi() - 1;
                     currentFrameLo = timeFrame.getRowLo();
-                    stopAtRowId = (stopAtFrameIndex == filteredFrameIndex) ? Rows.toLocalRowID(highestKnownSlaveRowIdWithNoMatch) : 0;
+                    stopUnderRowId = (stopAtFrameIndex == filteredFrameIndex) ? Rows.toLocalRowID(highestKnownSlaveRowIdWithNoMatch) : 0;
                 }
 
-                if (filteredRowId < stopAtRowId) {
+                if (filteredRowId < stopUnderRowId) {
                     record.hasSlave(false);
                     highestKnownSlaveRowIdWithNoMatch = Rows.toRowID(initialFilteredFrameIndex, initialFilteredRowId);
                     break;
