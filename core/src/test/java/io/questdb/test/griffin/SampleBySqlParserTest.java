@@ -62,16 +62,6 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testAlignToCalendarNonStringConstantTimeZone() throws Exception {
-        assertSyntaxError(
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 42 with offset '00:15'",
-                76,
-                "timezone must be a constant expression of STRING or CHAR type",
-                model()
-        );
-    }
-
-    @Test
     public void testAlignToCalendarTimeMissingZone() throws Exception {
         assertSyntaxError(
                 "select b, sum(a), k k1, k from x y sample by 3h align to calendar time",
@@ -125,8 +115,8 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     public void testAlignToCalendarTimeZoneWithNonConstantOffset() throws Exception {
         assertSyntaxError(
                 "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'X' with offset rnd_str('foo','bar')",
-                92,
-                "offset must be a constant expression of STRING or CHAR type",
+                76,
+                "invalid timezone: X",
                 model()
         );
     }
@@ -134,9 +124,9 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testAlignToCalendarTimeZoneWithNonStringConstantOffset() throws Exception {
         assertSyntaxError(
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'X' with offset 42",
-                92,
-                "offset must be a constant expression of STRING or CHAR type",
+                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'X' with offset '00:01'",
+                76,
+                "invalid timezone: X",
                 model()
         );
     }
@@ -164,7 +154,7 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testAlignToCalendarWithTimeZoneAndLimit() throws SqlException {
         assertQuery(
-                "select-choose a, sum from (select-group-by [a, sum(a) sum, timestamp_floor('1h',timestamp) timestamp] a, sum(a) sum, timestamp_floor('1h',timestamp) timestamp from (select [a, timestamp] from x timestamp (timestamp) stride 1h) order by timestamp limit 1)",
+                "select-choose a, sum from (select-group-by [a, sum(a) sum, timestamp_floor('1h',timestamp,null,'00:00',null) timestamp] a, sum(a) sum, timestamp_floor('1h',timestamp,null,'00:00',null) timestamp from (select [a, timestamp] from x timestamp (timestamp) stride 1h) order by timestamp limit 1)",
                 "select a, sum(a) from x sample by 1h align to calendar time zone 'UTC' limit 1;",
                 model()
         );
@@ -173,7 +163,7 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testAlignToCalendarWithTimeZoneAndOrderBy() throws SqlException {
         assertQuery(
-                "select-choose a, sum from (select-group-by [a, sum(a) sum, timestamp_floor('1h',timestamp) timestamp] a, sum(a) sum, timestamp_floor('1h',timestamp) timestamp from (select [a, timestamp] from x timestamp (timestamp) stride 1h) order by a desc)",
+                "select-choose a, sum from (select-group-by [a, sum(a) sum, timestamp_floor('1h',timestamp,null,'00:00',null) timestamp] a, sum(a) sum, timestamp_floor('1h',timestamp,null,'00:00',null) timestamp from (select [a, timestamp] from x timestamp (timestamp) stride 1h) order by a desc)",
                 "select a, sum(a) from x sample by 1h align to calendar time zone 'UTC' order by a desc;",
                 model()
         );
@@ -182,7 +172,7 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testAlignToCalendarWithTimeZoneEndingWithSemicolon() throws SqlException {
         assertQuery(
-                "select-choose a, sum from (select-group-by [a, sum(a) sum, timestamp_floor('1h',timestamp) timestamp] a, sum(a) sum, timestamp_floor('1h',timestamp) timestamp from (select [a, timestamp] from x timestamp (timestamp) stride 1h) order by timestamp)",
+                "select-choose a, sum from (select-group-by [a, sum(a) sum, timestamp_floor('1h',timestamp,null,'00:00',null) timestamp] a, sum(a) sum, timestamp_floor('1h',timestamp,null,'00:00',null) timestamp from (select [a, timestamp] from x timestamp (timestamp) stride 1h) order by timestamp)",
                 "select a, sum(a) from x sample by 1h align to calendar time zone 'UTC';",
                 model()
         );
@@ -191,7 +181,7 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testAlignToCalendarWithoutTimezoneNorOffsetAndLimit() throws SqlException {
         assertQuery(
-                "select-choose a, sum from (select-group-by [a, sum(a) sum, timestamp_floor('1h',timestamp) timestamp] a, sum(a) sum, timestamp_floor('1h',timestamp) timestamp from (select [a, timestamp] from x timestamp (timestamp) stride 1h) order by timestamp limit 1)",
+                "select-choose a, sum from (select-group-by [a, sum(a) sum, timestamp_floor('1h',timestamp,null,'00:00',null) timestamp] a, sum(a) sum, timestamp_floor('1h',timestamp,null,'00:00',null) timestamp from (select [a, timestamp] from x timestamp (timestamp) stride 1h) order by timestamp limit 1)",
                 "select a, sum(a) from x sample by 1h align to calendar limit 1;",
                 model()
         );
@@ -210,7 +200,7 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCalendar() throws SqlException {
         assertQuery(
-                "select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp) stride 3h) y order by timestamp)",
+                "select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp,null,'00:00',null) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp,null,'00:00',null) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp) stride 3h) y order by timestamp)",
                 "select b, sum(a), k k1, k from x y sample by 3h align to calendar",
                 model()
         );
@@ -219,7 +209,7 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCalendarTimeZone() throws SqlException {
         assertQuery(
-                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar time zone 'CET' with offset '00:00'",
+                "select-choose b, sum, k1, k from (select-virtual [b, sum, k1, k, to_utc(timestamp,'CET') timestamp] b, sum, k1, k, to_utc(timestamp,'CET') timestamp from (select-group-by [timestamp_floor('3h',timestamp,null,'00:00','CET') timestamp, b, sum(a) sum, k k1, k] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp,null,'00:00','CET') timestamp from (select [timestamp, b, a, k] from x y timestamp (timestamp) stride 3h) y) timestamp (timestamp) order by timestamp)",
                 "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'CET'",
                 model()
         );
@@ -228,8 +218,8 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCalendarTimeZoneAndOffsetAsBindVariables() throws SqlException {
         assertQuery(
-                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar time zone ? with offset ?",
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone ? with offset ?",
+                "select-choose b, sum, k1, k from (select-virtual [b, sum, k1, k, to_utc(timestamp,$1) timestamp] b, sum, k1, k, to_utc(timestamp,$1) timestamp from (select-group-by [timestamp_floor('3h',timestamp,null,$2,$1) timestamp, b, sum(a) sum, k k1, k] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp,null,$2,$1) timestamp from (select [timestamp, b, a, k] from x y timestamp (timestamp) stride 3h) y) timestamp (timestamp) order by timestamp)",
+                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone $1 with offset $2",
                 model()
         );
     }
@@ -237,7 +227,7 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCalendarTimeZoneAsOffset() throws SqlException {
         assertQuery(
-                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar time zone '+01:00' with offset '00:00'",
+                "select-choose b, sum, k1, k from (select-virtual [b, sum, k1, k, to_utc(timestamp,'+01:00') timestamp] b, sum, k1, k, to_utc(timestamp,'+01:00') timestamp from (select-group-by [timestamp_floor('3h',timestamp,null,'00:00','+01:00') timestamp, b, sum(a) sum, k k1, k] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp,null,'00:00','+01:00') timestamp from (select [timestamp, b, a, k] from x y timestamp (timestamp) stride 3h) y) timestamp (timestamp) order by timestamp)",
                 "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone '+01:00'",
                 model()
         );
@@ -246,7 +236,7 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCalendarTimeZoneAsOffsetNegative() throws SqlException {
         assertQuery(
-                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar time zone '-04:00' with offset '00:00'",
+                "select-choose b, sum, k1, k from (select-virtual [b, sum, k1, k, to_utc(timestamp,'-04:00') timestamp] b, sum, k1, k, to_utc(timestamp,'-04:00') timestamp from (select-group-by [timestamp_floor('3h',timestamp,null,'00:00','-04:00') timestamp, b, sum(a) sum, k k1, k] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp,null,'00:00','-04:00') timestamp from (select [timestamp, b, a, k] from x y timestamp (timestamp) stride 3h) y) timestamp (timestamp) order by timestamp)",
                 "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone '-04:00'",
                 model()
         );
@@ -255,7 +245,7 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCalendarTimeZoneWithOffsetNegative() throws SqlException {
         assertQuery(
-                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar time zone 'CET' with offset '-00:15'",
+                "select-choose b, sum, k1, k from (select-virtual [b, sum, k1, k, to_utc(timestamp,'CET') timestamp] b, sum, k1, k, to_utc(timestamp,'CET') timestamp from (select-group-by [timestamp_floor('3h',timestamp,null,'-00:15','CET') timestamp, b, sum(a) sum, k k1, k] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp,null,'-00:15','CET') timestamp from (select [timestamp, b, a, k] from x y timestamp (timestamp) stride 3h) y) timestamp (timestamp) order by timestamp)",
                 "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'CET' with offset '-00:15'",
                 model()
         );
@@ -264,7 +254,7 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCalendarTimeZoneWithOffsetPositive() throws SqlException {
         assertQuery(
-                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar time zone 'CET' with offset '00:15'",
+                "select-choose b, sum, k1, k from (select-virtual [b, sum, k1, k, to_utc(timestamp,'CET') timestamp] b, sum, k1, k, to_utc(timestamp,'CET') timestamp from (select-group-by [timestamp_floor('3h',timestamp,null,'00:15','CET') timestamp, b, sum(a) sum, k k1, k] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp,null,'00:15','CET') timestamp from (select [timestamp, b, a, k] from x y timestamp (timestamp) stride 3h) y) timestamp (timestamp) order by timestamp)",
                 "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'CET' with offset '00:15'",
                 model()
         );
@@ -273,7 +263,7 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCalendarWithOffsetNegative() throws SqlException {
         assertQuery(
-                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar with offset '-04:45'",
+                "select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp,null,'-04:45',null) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp,null,'-04:45',null) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp) stride 3h) y order by timestamp)",
                 "select b, sum(a), k k1, k from x y sample by 3h align to calendar with offset '-04:45'",
                 model()
         );
@@ -282,7 +272,7 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCalendarWithOffsetPositive() throws SqlException {
         assertQuery(
-                "select-group-by b, sum(a) sum, k1, k1 k from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h align to calendar with offset '01:45'",
+                "select-choose b, sum, k1, k from (select-group-by [b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp,null,'01:45',null) timestamp] b, sum(a) sum, k k1, k, timestamp_floor('3h',timestamp,null,'01:45',null) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp) stride 3h) y order by timestamp)",
                 "select b, sum(a), k k1, k from x y sample by 3h align to calendar with offset '01:45'",
                 model()
         );

@@ -68,7 +68,6 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
         int stride;
 
         if (periodFunc.isConstant() && tzFunc.isConstant()) {
-
             // validate timezone and parse timezone into rules, that provide the offset by timestamp
             final TimeZoneRules timeZoneRules;
             try {
@@ -90,6 +89,7 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
                     throw SqlException.$(argPositions.getQuick(1), "`null` is not a valid stride");
                 }
             }
+
             return new TimestampAddConstVarVarConst(
                     period,
                     periodAddFunc,
@@ -117,8 +117,8 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
             return Numbers.LONG_NULL;
         }
         long offset = timeZoneRules.getOffset(timestamp);
-        long t = periodAddFunction.add(timestamp + offset, stride);
-        return t - timeZoneRules.getOffset(t);
+        long localTimestamp = periodAddFunction.add(timestamp + offset, stride);
+        return localTimestamp - timeZoneRules.getLocalOffset(localTimestamp);
     }
 
     private static class TimestampAddConstConstVarConst extends TimestampFunction implements UnaryFunction {

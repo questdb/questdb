@@ -232,7 +232,7 @@ public class DateFormatUtils {
                 + millis;
 
         if (timezone > -1) {
-            datetime -= locale.getZoneRules(timezone, RESOLUTION_MILLIS).getOffset(datetime, year, leap);
+            datetime -= locale.getZoneRules(timezone, RESOLUTION_MILLIS).getOffset(datetime, year);
         } else if (offset > Long.MIN_VALUE) {
             datetime -= offset;
         }
