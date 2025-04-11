@@ -201,7 +201,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                         // until we either exhaust the cursor or find a matching record
                         record.hasSlave(false);
 
-                        // remember that there is no matching slave record for a given initial rowsId.
+                        // remember that there is no matching slave record for a given initial rowId.
                         // so the next time we can abort the slave cursor traversal before we reach the end of the cursor
                         highestKnownSlaveRowIdWithNoMatch = Rows.toRowID(initialFilteredFrameIndex, initialFilteredRowId);
                         break;
@@ -239,6 +239,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
         @Override
         public void toTop() {
             super.toTop();
+            slaveRecordFilter.toTop();
             unfilteredRecordRowId = -1;
             unfilteredCursorFrameIndex = -1;
             unfilteredRecordHasSlave = false;

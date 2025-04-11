@@ -161,7 +161,6 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
             }
         }
 
-        assert lo == hi;
         // loop exited with lo == hi, verify the final candidate
         slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, lo));
         if (slaveRecA.getTimestamp(slaveTimestampIndex) > masterTimestamp) {

@@ -167,6 +167,18 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         return base.recordCursorSupportsRandomAccess();
     }
 
+    /**
+     * Replace base factory with another one. This is useful when optimizing a physical plan.
+     * <p>
+     * Important: The new base factory must be compatible with the current one, i.e. it must
+     * have the same metadata and the same column count. This is not checked here, but
+     * it is the responsibility of the caller to ensure that this is the case.
+     * <p>
+     * The old base factory is NOT closed. It is the responsibility of the caller to close it
+     * when it is no longer needed.
+     *
+     * @param base the new base factory
+     */
     public void replaceBaseFactory(RecordCursorFactory base) {
         this.base = base;
     }

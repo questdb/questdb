@@ -251,17 +251,17 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         });
     }
 
-    public enum JoinType {
+    private enum JoinType {
         ASOF, ASOF_NONKEYD, LT_NONKEYD
     }
 
-    public enum LimitType {
+    private enum LimitType {
         NO_LIMIT,
         POSITIVE_LIMIT,
         NEGATIVE_LIMIT
     }
 
-    public enum ProjectionType {
+    private enum ProjectionType {
         NONE,
         CROSS_COLUMN,
         RENAME_COLUMN,
