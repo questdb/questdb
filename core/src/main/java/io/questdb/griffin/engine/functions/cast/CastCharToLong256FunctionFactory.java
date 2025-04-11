@@ -29,7 +29,11 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 
 public class CastCharToLong256FunctionFactory implements FunctionFactory {
@@ -58,13 +62,13 @@ public class CastCharToLong256FunctionFactory implements FunctionFactory {
 
         @Override
         public Long256 getLong256A(Record rec) {
-            long256a.setLow(arg.getChar(rec));
+            long256a.setLow(arg.getLong(rec));
             return long256a;
         }
 
         @Override
         public Long256 getLong256B(Record rec) {
-            long256b.setLow(arg.getChar(rec));
+            long256b.setLow(arg.getLong(rec));
             return long256b;
         }
     }
