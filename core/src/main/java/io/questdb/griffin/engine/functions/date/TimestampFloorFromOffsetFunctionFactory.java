@@ -395,8 +395,12 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             final long timestamp = tsFunc.getTimestamp(rec);
             if (timestamp != Numbers.LONG_NULL) {
                 final long localTimestamp = timestamp + tzRules.getOffset(timestamp);
-                // TODO: we need to correct the timestamp here if it's in a gap
-                return floorFunc.floor(localTimestamp, stride, effectiveOffset);
+                final long flooredTimestamp = floorFunc.floor(localTimestamp, stride, effectiveOffset);
+                // Move the timestamp to the previous hour if it belongs to a DST gap, i.e. non-existing
+                // time interval that occur due to a forward clock shift.
+                // This is required to avoid duplicate timestamps returned by SAMPLE BY + DST time zone + offset
+                // queries that get rewritten to a parallel GROUP BY.
+                return flooredTimestamp - tzRules.getGapDuration(flooredTimestamp);
             }
             return Numbers.LONG_NULL;
         }
@@ -482,10 +486,16 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
         public final long getTimestamp(Record rec) {
             final long timestamp = tsFunc.getTimestamp(rec);
             if (timestamp != Numbers.LONG_NULL) {
-                final long localTimestamp = tzRules != null
-                        ? timestamp + tzRules.getOffset(timestamp)
-                        : timestamp + tzOffset;
-                // TODO: we need to correct the timestamp here if it's in a gap
+                if (tzRules != null) {
+                    final long localTimestamp = timestamp + tzRules.getOffset(timestamp);
+                    final long flooredTimestamp = floorFunc.floor(localTimestamp, stride, effectiveOffset);
+                    // Move the timestamp to the previous hour if it belongs to a DST gap, i.e. non-existing
+                    // time interval that occur due to a forward clock shift.
+                    // This is required to avoid duplicate timestamps returned by SAMPLE BY + DST time zone + offset
+                    // queries that get rewritten to a parallel GROUP BY.
+                    return flooredTimestamp - tzRules.getGapDuration(flooredTimestamp);
+                }
+                final long localTimestamp = timestamp + tzOffset;
                 return floorFunc.floor(localTimestamp, stride, effectiveOffset);
             }
             return Numbers.LONG_NULL;
@@ -749,8 +759,12 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
             final long timestamp = tsFunc.getTimestamp(rec);
             if (timestamp != Numbers.LONG_NULL) {
                 final long localTimestamp = timestamp + tzRules.getOffset(timestamp);
-                // TODO: we need to correct the timestamp here if it's in a gap
-                return floorFunc.floor(localTimestamp, stride, effectiveOffset);
+                final long flooredTimestamp = floorFunc.floor(localTimestamp, stride, effectiveOffset);
+                // Move the timestamp to the previous hour if it belongs to a DST gap, i.e. non-existing
+                // time interval that occur due to a forward clock shift.
+                // This is required to avoid duplicate timestamps returned by SAMPLE BY + DST time zone + offset
+                // queries that get rewritten to a parallel GROUP BY.
+                return flooredTimestamp - tzRules.getGapDuration(flooredTimestamp);
             }
             return Numbers.LONG_NULL;
         }
@@ -845,10 +859,16 @@ public class TimestampFloorFromOffsetFunctionFactory implements FunctionFactory 
         public final long getTimestamp(Record rec) {
             final long timestamp = tsFunc.getTimestamp(rec);
             if (timestamp != Numbers.LONG_NULL) {
-                final long localTimestamp = tzRules != null
-                        ? timestamp + tzRules.getOffset(timestamp)
-                        : timestamp + tzOffset;
-                // TODO: we need to correct the timestamp here if it's in a gap
+                if (tzRules != null) {
+                    final long localTimestamp = timestamp + tzRules.getOffset(timestamp);
+                    final long flooredTimestamp = floorFunc.floor(localTimestamp, stride, effectiveOffset);
+                    // Move the timestamp to the previous hour if it belongs to a DST gap, i.e. non-existing
+                    // time interval that occur due to a forward clock shift.
+                    // This is required to avoid duplicate timestamps returned by SAMPLE BY + DST time zone + offset
+                    // queries that get rewritten to a parallel GROUP BY.
+                    return flooredTimestamp - tzRules.getGapDuration(flooredTimestamp);
+                }
+                final long localTimestamp = timestamp + tzOffset;
                 return floorFunc.floor(localTimestamp, stride, effectiveOffset);
             }
             return Numbers.LONG_NULL;

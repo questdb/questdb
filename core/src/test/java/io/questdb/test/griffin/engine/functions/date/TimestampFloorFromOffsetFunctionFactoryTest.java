@@ -224,6 +224,77 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
     }
 
     @Test
+    public void testFloorDstGap() throws Exception {
+        assertMemoryLeak(() -> {
+            // verify that timestamp_floor() never returns timestamps from gaps
+
+            // 2021-03-28T02:00 - 2021-03-28T03:00 is a gap hour in local time
+            assertTimestampFloor(
+                    "timestamp_floor\n" +
+                            "2021-03-28T00:10:00.000000Z\n",
+                    "1h", "2021-03-28T00:00:00.000Z", null, "00:10", "Europe/Berlin"
+            );
+            assertTimestampFloor(
+                    "timestamp_floor\n" +
+                            "2021-03-28T00:10:00.000000Z\n",
+                    "1h", "2021-03-28T00:01:00.000Z", null, "00:10", "Europe/Berlin"
+            );
+            assertTimestampFloor(
+                    "timestamp_floor\n" +
+                            "2021-03-28T01:10:00.000000Z\n",
+                    "1h", "2021-03-28T00:11:00.000Z", null, "00:10", "Europe/Berlin"
+            );
+            assertTimestampFloor(
+                    "timestamp_floor\n" +
+                            "2021-03-28T01:10:00.000000Z\n",
+                    "1h", "2021-03-28T01:00:00.000Z", null, "00:10", "Europe/Berlin"
+            );
+            assertTimestampFloor(
+                    "timestamp_floor\n" +
+                            "2021-03-28T01:10:00.000000Z\n",
+                    "1h", "2021-03-28T01:01:00.000Z", null, "00:10", "Europe/Berlin"
+            );
+            assertTimestampFloor(
+                    "timestamp_floor\n" +
+                            "2021-03-28T03:10:00.000000Z\n",
+                    "1h", "2021-03-28T01:11:00.000Z", null, "00:10", "Europe/Berlin"
+            );
+
+            // 1997-03-30T02:00 - 1997-03-30T03:00 is a gap hour in local time
+            assertTimestampFloor(
+                    "timestamp_floor\n" +
+                            "1997-03-30T00:10:00.000000Z\n",
+                    "1h", "1997-03-30T00:00:00.000Z", null, "00:10", "Europe/Berlin"
+            );
+            assertTimestampFloor(
+                    "timestamp_floor\n" +
+                            "1997-03-30T00:10:00.000000Z\n",
+                    "1h", "1997-03-30T00:01:00.000Z", null, "00:10", "Europe/Berlin"
+            );
+            assertTimestampFloor(
+                    "timestamp_floor\n" +
+                            "1997-03-30T01:10:00.000000Z\n",
+                    "1h", "1997-03-30T00:11:00.000Z", null, "00:10", "Europe/Berlin"
+            );
+            assertTimestampFloor(
+                    "timestamp_floor\n" +
+                            "1997-03-30T01:10:00.000000Z\n",
+                    "1h", "1997-03-30T01:00:00.000Z", null, "00:10", "Europe/Berlin"
+            );
+            assertTimestampFloor(
+                    "timestamp_floor\n" +
+                            "1997-03-30T01:10:00.000000Z\n",
+                    "1h", "1997-03-30T01:01:00.000Z", null, "00:10", "Europe/Berlin"
+            );
+            assertTimestampFloor(
+                    "timestamp_floor\n" +
+                            "1997-03-30T03:10:00.000000Z\n",
+                    "1h", "1997-03-30T01:11:00.000Z", null, "00:10", "Europe/Berlin"
+            );
+        });
+    }
+
+    @Test
     public void testHoursFloorWithStride() throws Exception {
         assertMemoryLeak(() -> {
             assertTimestampFloor(
