@@ -132,15 +132,15 @@ public class WalUtils {
             MatViewStateReader matViewStateReader
     ) {
         try (MemoryCMR mem = txnLogMemory) {
-            int tablePathLen = tablePath.size();
+            final int tablePathLen = tablePath.size();
             mem.smallFile(configuration.getFilesFacade(), tablePath.concat(SEQ_DIR).concat(TXNLOG_FILE_NAME).$(), MemoryTag.MMAP_TX_LOG);
-            long txnCount = mem.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
+            final long txnCount = mem.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
             if (txnCount > 0) {
-                long fileSize = TableTransactionLogFile.HEADER_SIZE + txnCount * TableTransactionLogV1.RECORD_SIZE;
+                final long fileSize = TableTransactionLogFile.HEADER_SIZE + txnCount * TableTransactionLogV1.RECORD_SIZE;
                 if (mem.size() >= fileSize) {
                     for (long txn = txnCount - 1; txn >= 0; txn--) {
                         tablePath.trimTo(tablePathLen);
-                        long offset = TableTransactionLogFile.HEADER_SIZE + txn * TableTransactionLogV1.RECORD_SIZE;
+                        final long offset = TableTransactionLogFile.HEADER_SIZE + txn * TableTransactionLogV1.RECORD_SIZE;
                         final int walId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_WAL_ID_OFFSET);
                         final int segmentId = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_OFFSET);
                         final int segmentTxn = mem.getInt(offset + TableTransactionLogFile.TX_LOG_SEGMENT_TXN_OFFSET);
