@@ -5928,18 +5928,17 @@ public class IODispatcherTest extends AbstractTest {
     public void testNetworkErrorCouldNotBindSocket() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
-            try (IODispatcher<HttpConnectionContext> dispatcher1 = IODispatchers.create(
+            try (IODispatcher<HttpConnectionContext> ignored1 = IODispatchers.create(
                     DefaultIODispatcherConfiguration.INSTANCE,
                     (fd, d) -> new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE)
             )) {
-                // dispatcher1 is not closed
-                // dispatcher2 tries to bind to the same port
+                // Simulate a scenario where the socket cannot be bound
                 try {
-                    try (IODispatcher<HttpConnectionContext> dispatcher2 = IODispatchers.create(
+                    try (IODispatcher<HttpConnectionContext> ignored2 = IODispatchers.create(
                             DefaultIODispatcherConfiguration.INSTANCE,
                             (fd, d) -> new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE)
                     )) {
-                        Assert.fail("dispatcher2 should not be initiated");
+                        Assert.fail("ignored2 should not have been created as the socket binding failed");
                     }
                 } catch (NetworkError e) {
                     TestUtils.assertContains(e.getMessage(), "could not bind socket");
