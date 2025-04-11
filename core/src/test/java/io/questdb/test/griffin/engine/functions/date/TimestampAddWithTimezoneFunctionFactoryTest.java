@@ -27,12 +27,13 @@ package io.questdb.test.griffin.engine.functions.date;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.date.TimestampAddWithTimezoneFunctionFactory;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctionFactoryTest {
-
-    public static char[] units = {'y', 'M', 'w', 'd', 'h', 'm', 's', 'T', 'u'};
+    private static final char[] UNITS = {'y', 'M', 'w', 'd', 'h', 'm', 's', 'T', 'u'};
 
     @Test
     public void testAllVariables() throws Exception {
@@ -144,30 +145,47 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
 
     @Test
     public void testDSTTransitionToUTC() throws Exception {
-        // Input query performing DATEADD and converting to UTC
-        String query = "select to_utc(dateadd('w', 1, '2024-10-21'), 'Europe/Bratislava') as utc_time";
+        assertMemoryLeak(() -> {
+            // Input query performing DATEADD and converting to UTC
+            // Validate the result accounts for DST transition correctly
+            assertQueryNoLeakCheck(
+                    "utc_time\n" +
+                            "2024-10-27T23:00:00.000000Z\n",
+                    "select to_utc(dateadd('w', 1, '2024-10-21'), 'Europe/Bratislava') as utc_time"
+            );
 
-        // Validate the result accounts for DST transition correctly
-        assertQuery(
-                "utc_time\n" +
-                        "2024-10-27T23:00:00.000000Z\n",
-                query
-        );
+            assertQueryNoLeakCheck(
+                    "utc_time\n" +
+                            "2021-03-28T01:00:00.000000Z\n",
+                    "select to_utc(dateadd('h', 2, '2021-03-28'), 'Europe/Berlin') as utc_time"
+            );
+
+            assertQueryNoLeakCheck(
+                    "utc_time\n" +
+                            "2021-10-31T00:00:00.000000Z\n",
+                    "select to_utc(dateadd('h', 2, '2021-10-31'), 'Europe/Berlin') as utc_time"
+            );
+        });
     }
 
     @Test
     public void testDateAddEquivalenceWithUTC() throws Exception {
-        // Direct calculation with DATEADD
-        String directQuery = "select dateadd('w', 1, '2024-10-21', 'Europe/Bratislava') as direct";
-        // Equivalent calculation with intermediate conversions
-        String conversionQuery = "select to_utc(dateadd('w', 1, to_timezone('2024-10-21', 'Europe/Bratislava')), 'Europe/Bratislava') as via_conversion";
+        assertMemoryLeak(() -> {
+            final StringSink sink2 = new StringSink();
+            testDateAddEquivalenceWithUTC('w', 1, "2024-10-21", "Europe/Bratislava", sink2);
 
-        // Validate the two produce the same result
-        assertQuery(
-                "direct\tvia_conversion\n" +
-                        "2024-10-28T01:00:00.000000Z\t2024-10-28T01:00:00.000000Z\n",
-                String.format("select direct, via_conversion from (%s) cross join (%s)", directQuery, conversionQuery)
-        );
+            // CET to CEST
+            testDateAddEquivalenceWithUTC('h', 0, "2021-03-28", "Europe/Berlin", sink2);
+            testDateAddEquivalenceWithUTC('h', 1, "2021-03-28", "Europe/Berlin", sink2);
+            testDateAddEquivalenceWithUTC('h', 2, "2021-03-28", "Europe/Berlin", sink2);
+            testDateAddEquivalenceWithUTC('h', 3, "2021-03-28", "Europe/Berlin", sink2);
+
+            // CEST to CET
+            testDateAddEquivalenceWithUTC('h', 0, "2021-10-31", "Europe/Berlin", sink2);
+            testDateAddEquivalenceWithUTC('h', 1, "2021-10-31", "Europe/Berlin", sink2);
+            testDateAddEquivalenceWithUTC('h', 2, "2021-10-31", "Europe/Berlin", sink2);
+            testDateAddEquivalenceWithUTC('h', 3, "2021-10-31", "Europe/Berlin", sink2);
+        });
     }
 
     @Test
@@ -184,15 +202,15 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
 
     @Test
     public void testNullStride() throws Exception {
-        for (int i = 0; i < units.length; i++) {
-            assertException("select dateadd('" + units[i] + "', null, 1587275359886758L, 'Europe/Bratislava')", 20, "`null` is not a valid stride");
+        for (int i = 0; i < UNITS.length; i++) {
+            assertException("select dateadd('" + UNITS[i] + "', null, 1587275359886758L, 'Europe/Bratislava')", 20, "`null` is not a valid stride");
         }
     }
 
     @Test
     public void testNullTimestamp() throws Exception {
-        for (int i = 0; i < units.length; i++) {
-            assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('" + units[i] + "', 5, null, 'Europe/Bratislava')");
+        for (int i = 0; i < UNITS.length; i++) {
+            assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('" + UNITS[i] + "', 5, null, 'Europe/Bratislava')");
         }
     }
 
@@ -295,6 +313,18 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
     @Test
     public void testUnknownTimezone() throws Exception {
         assertException("select dateadd('d', 2, 1603580400000000L, 'Random/Time')", 42, "invalid timezone [timezone=Random/Time]");
+    }
+
+    private void testDateAddEquivalenceWithUTC(char unit, int interval, String date, String tz, StringSink sink2) throws Exception {
+        // Direct calculation with DATEADD
+        String directQuery = "select dateadd('" + unit + "', " + interval + ", '" + date + "', '" + tz + "') as d";
+        // Equivalent calculation with intermediate conversions
+        String conversionQuery = "select to_utc(dateadd('" + unit + "', " + interval + ", to_timezone('" + date + "', '" + tz + "')), '" + tz + "') as d";
+
+        // Validate the two produce the same result
+        printSql(directQuery, sink);
+        printSql(conversionQuery, sink2);
+        TestUtils.assertEquals(sink2, sink);
     }
 
     @Override

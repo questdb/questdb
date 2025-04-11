@@ -26,11 +26,7 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
@@ -42,12 +38,12 @@ final class TimestampFloorOffsetFunctions {
     private TimestampFloorOffsetFunctions() {
     }
 
-    abstract static class AbstractTimestampFloorConstOffsetFunction extends TimestampFunction implements UnaryFunction {
+    static abstract class AbstractTimestampFloorOffsetFunction extends TimestampFunction implements UnaryFunction {
         protected final long offset;
         protected final int stride;
         private final Function arg;
 
-        public AbstractTimestampFloorConstOffsetFunction(Function arg, int stride, long offset) {
+        public AbstractTimestampFloorOffsetFunction(Function arg, int stride, long offset) {
             this.arg = arg;
             this.stride = stride;
             this.offset = offset;
@@ -66,79 +62,16 @@ final class TimestampFloorOffsetFunctions {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("timestamp_floor('")
-                    .val(getUnit()).val("',")
-                    .val(getArg()).val(',')
-                    .val(Timestamps.toString(offset))
-                    .val(')');
-        }
-
-        abstract protected long floor(long timestamp);
-
-        abstract CharSequence getUnit();
-    }
-
-    abstract static class AbstractTimestampFloorOffsetFunction extends TimestampFunction implements BinaryFunction {
-        protected final int stride;
-        private final long from;
-        private final Function offsetFunc;
-        private final int offsetPos;
-        private final Function tsFunc;
-        private long offset;
-
-        public AbstractTimestampFloorOffsetFunction(Function tsFunc, int stride, long from, Function offsetFunc, int offsetPos) {
-            this.tsFunc = tsFunc;
-            this.stride = stride;
-            this.from = from;
-            this.offsetFunc = offsetFunc;
-            this.offsetPos = offsetPos;
-        }
-
-        public long effectiveOffset() {
-            return from + offset;
-        }
-
-        @Override
-        public Function getLeft() {
-            return tsFunc;
-        }
-
-        @Override
-        public Function getRight() {
-            return offsetFunc;
-        }
-
-        @Override
-        public final long getTimestamp(Record rec) {
-            final long micros = tsFunc.getTimestamp(rec);
-            return micros == Numbers.LONG_NULL ? Numbers.LONG_NULL : floor(micros);
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            BinaryFunction.super.init(symbolTableSource, executionContext);
-
-            final CharSequence offsetStr = offsetFunc.getStrA(null);
-            if (offsetStr != null) {
-                final long val = Timestamps.parseOffset(offsetStr);
-                if (val == Numbers.LONG_NULL) {
-                    // bad value for offset
-                    throw SqlException.$(offsetPos, "invalid offset: ").put(offsetStr);
-                }
-                offset = Numbers.decodeLowInt(val) * Timestamps.MINUTE_MICROS;
-            } else {
-                offset = 0;
+            sink.val(TimestampFloorFunctionFactory.NAME).val("('");
+            if (stride != 1) {
+                sink.val(stride);
             }
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val("timestamp_floor('")
-                    .val(getUnit()).val("',")
-                    .val(tsFunc).val(',')
-                    .val(Timestamps.toString(from)).val(',')
-                    .val(offsetFunc)
-                    .val(')');
+            sink.val(getUnit()).val("',");
+            sink.val(getArg());
+            if (offset != 0) {
+                sink.val(",'").val(Timestamps.toString(offset)).val('\'');
+            }
+            sink.val(')');
         }
 
         abstract protected long floor(long timestamp);
@@ -146,9 +79,9 @@ final class TimestampFloorOffsetFunctions {
         abstract CharSequence getUnit();
     }
 
-    static class TimestampFloorConstOffsetDDFunction extends AbstractTimestampFloorConstOffsetFunction {
+    static class TimestampFloorOffsetDDFunction extends AbstractTimestampFloorOffsetFunction {
 
-        public TimestampFloorConstOffsetDDFunction(Function arg, int stride, long offset) {
+        public TimestampFloorOffsetDDFunction(Function arg, int stride, long offset) {
             super(arg, stride, offset);
         }
 
@@ -163,9 +96,9 @@ final class TimestampFloorOffsetFunctions {
         }
     }
 
-    static class TimestampFloorConstOffsetHHFunction extends AbstractTimestampFloorConstOffsetFunction {
+    static class TimestampFloorOffsetHHFunction extends AbstractTimestampFloorOffsetFunction {
 
-        public TimestampFloorConstOffsetHHFunction(Function arg, int stride, long offset) {
+        public TimestampFloorOffsetHHFunction(Function arg, int stride, long offset) {
             super(arg, stride, offset);
         }
 
@@ -180,9 +113,9 @@ final class TimestampFloorOffsetFunctions {
         }
     }
 
-    static class TimestampFloorConstOffsetMCFunction extends AbstractTimestampFloorConstOffsetFunction {
+    static class TimestampFloorOffsetMCFunction extends AbstractTimestampFloorOffsetFunction {
 
-        public TimestampFloorConstOffsetMCFunction(Function arg, int stride, long offset) {
+        public TimestampFloorOffsetMCFunction(Function arg, int stride, long offset) {
             super(arg, stride, offset);
         }
 
@@ -197,9 +130,9 @@ final class TimestampFloorOffsetFunctions {
         }
     }
 
-    static class TimestampFloorConstOffsetMIFunction extends AbstractTimestampFloorConstOffsetFunction {
+    static class TimestampFloorOffsetMIFunction extends AbstractTimestampFloorOffsetFunction {
 
-        public TimestampFloorConstOffsetMIFunction(Function arg, int stride, long offset) {
+        public TimestampFloorOffsetMIFunction(Function arg, int stride, long offset) {
             super(arg, stride, offset);
         }
 
@@ -214,9 +147,9 @@ final class TimestampFloorOffsetFunctions {
         }
     }
 
-    static class TimestampFloorConstOffsetMMFunction extends AbstractTimestampFloorConstOffsetFunction {
+    static class TimestampFloorOffsetMMFunction extends AbstractTimestampFloorOffsetFunction {
 
-        public TimestampFloorConstOffsetMMFunction(Function arg, int stride, long offset) {
+        public TimestampFloorOffsetMMFunction(Function arg, int stride, long offset) {
             super(arg, stride, offset);
         }
 
@@ -231,9 +164,9 @@ final class TimestampFloorOffsetFunctions {
         }
     }
 
-    static class TimestampFloorConstOffsetMSFunction extends AbstractTimestampFloorConstOffsetFunction {
+    static class TimestampFloorOffsetMSFunction extends AbstractTimestampFloorOffsetFunction {
 
-        public TimestampFloorConstOffsetMSFunction(Function arg, int stride, long offset) {
+        public TimestampFloorOffsetMSFunction(Function arg, int stride, long offset) {
             super(arg, stride, offset);
         }
 
@@ -248,9 +181,9 @@ final class TimestampFloorOffsetFunctions {
         }
     }
 
-    static class TimestampFloorConstOffsetSSFunction extends AbstractTimestampFloorConstOffsetFunction {
+    static class TimestampFloorOffsetSSFunction extends AbstractTimestampFloorOffsetFunction {
 
-        public TimestampFloorConstOffsetSSFunction(Function arg, int stride, long offset) {
+        public TimestampFloorOffsetSSFunction(Function arg, int stride, long offset) {
             super(arg, stride, offset);
         }
 
@@ -265,9 +198,9 @@ final class TimestampFloorOffsetFunctions {
         }
     }
 
-    static class TimestampFloorConstOffsetWWFunction extends AbstractTimestampFloorConstOffsetFunction {
+    static class TimestampFloorOffsetWWFunction extends AbstractTimestampFloorOffsetFunction {
 
-        public TimestampFloorConstOffsetWWFunction(Function arg, int stride, long offset) {
+        public TimestampFloorOffsetWWFunction(Function arg, int stride, long offset) {
             super(arg, stride, offset);
         }
 
@@ -282,168 +215,15 @@ final class TimestampFloorOffsetFunctions {
         }
     }
 
-    static class TimestampFloorConstOffsetYYYYFunction extends AbstractTimestampFloorConstOffsetFunction {
+    static class TimestampFloorOffsetYYYYFunction extends AbstractTimestampFloorOffsetFunction {
 
-        public TimestampFloorConstOffsetYYYYFunction(Function arg, int stride, long offset) {
+        public TimestampFloorOffsetYYYYFunction(Function arg, int stride, long offset) {
             super(arg, stride, offset);
         }
 
         @Override
         public long floor(long timestamp) {
             return Timestamps.floorYYYY(timestamp, stride, offset);
-        }
-
-        @Override
-        CharSequence getUnit() {
-            return "year";
-        }
-    }
-
-    static class TimestampFloorOffsetDDFunction extends AbstractTimestampFloorOffsetFunction {
-
-        public TimestampFloorOffsetDDFunction(Function tsFunc, int stride, long offset, Function offsetFunc, int offsetPos) {
-            super(tsFunc, stride, offset, offsetFunc, offsetPos);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorDD(timestamp, stride, effectiveOffset());
-        }
-
-        @Override
-        CharSequence getUnit() {
-            return "day";
-        }
-    }
-
-    static class TimestampFloorOffsetHHFunction extends AbstractTimestampFloorOffsetFunction {
-
-        public TimestampFloorOffsetHHFunction(Function tsFunc, int stride, long offset, Function offsetFunc, int offsetPos) {
-            super(tsFunc, stride, offset, offsetFunc, offsetPos);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorHH(timestamp, stride, effectiveOffset());
-        }
-
-        @Override
-        CharSequence getUnit() {
-            return "hour";
-        }
-    }
-
-    static class TimestampFloorOffsetMCFunction extends AbstractTimestampFloorOffsetFunction {
-
-        public TimestampFloorOffsetMCFunction(Function tsFunc, int stride, long offset, Function offsetFunc, int offsetPos) {
-            super(tsFunc, stride, offset, offsetFunc, offsetPos);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorMC(timestamp, stride, effectiveOffset());
-        }
-
-        @Override
-        CharSequence getUnit() {
-            return "microsecond";
-        }
-    }
-
-    static class TimestampFloorOffsetMIFunction extends AbstractTimestampFloorOffsetFunction {
-
-        public TimestampFloorOffsetMIFunction(Function tsFunc, int stride, long offset, Function offsetFunc, int offsetPos) {
-            super(tsFunc, stride, offset, offsetFunc, offsetPos);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorMI(timestamp, stride, effectiveOffset());
-        }
-
-        @Override
-        CharSequence getUnit() {
-            return "minute";
-        }
-    }
-
-    static class TimestampFloorOffsetMMFunction extends AbstractTimestampFloorOffsetFunction {
-
-        public TimestampFloorOffsetMMFunction(Function tsFunc, int stride, long offset, Function offsetFunc, int offsetPos) {
-            super(tsFunc, stride, offset, offsetFunc, offsetPos);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorMM(timestamp, stride, effectiveOffset());
-        }
-
-        @Override
-        CharSequence getUnit() {
-            return "month";
-        }
-    }
-
-    static class TimestampFloorOffsetMSFunction extends AbstractTimestampFloorOffsetFunction {
-
-        public TimestampFloorOffsetMSFunction(Function tsFunc, int stride, long offset, Function offsetFunc, int offsetPos) {
-            super(tsFunc, stride, offset, offsetFunc, offsetPos);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorMS(timestamp, stride, effectiveOffset());
-        }
-
-        @Override
-        CharSequence getUnit() {
-            return "millisecond";
-        }
-    }
-
-    static class TimestampFloorOffsetSSFunction extends AbstractTimestampFloorOffsetFunction {
-
-        public TimestampFloorOffsetSSFunction(Function tsFunc, int stride, long offset, Function offsetFunc, int offsetPos) {
-            super(tsFunc, stride, offset, offsetFunc, offsetPos);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorSS(timestamp, stride, effectiveOffset());
-        }
-
-        @Override
-        CharSequence getUnit() {
-            return "second";
-        }
-    }
-
-    static class TimestampFloorOffsetWWFunction extends AbstractTimestampFloorOffsetFunction {
-
-        public TimestampFloorOffsetWWFunction(Function tsFunc, int stride, long offset, Function offsetFunc, int offsetPos) {
-            super(tsFunc, stride, offset, offsetFunc, offsetPos);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorWW(timestamp, stride, effectiveOffset());
-        }
-
-        @Override
-        CharSequence getUnit() {
-            return "week";
-        }
-    }
-
-    static class TimestampFloorOffsetYYYYFunction extends AbstractTimestampFloorOffsetFunction {
-
-        public TimestampFloorOffsetYYYYFunction(Function tsFunc, int stride, long offset, Function offsetFunc, int offsetPos) {
-            super(tsFunc, stride, offset, offsetFunc, offsetPos);
-        }
-
-        @Override
-        public long floor(long timestamp) {
-            return Timestamps.floorYYYY(timestamp, stride, effectiveOffset());
         }
 
         @Override

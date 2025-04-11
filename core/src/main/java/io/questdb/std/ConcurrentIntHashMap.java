@@ -1407,8 +1407,8 @@ public class ConcurrentIntHashMap<V> implements Serializable {
 
     /* ---------------- Table Initialization and Resizing -------------- */
 
-    private static int keyHashCode(final int key) {
-        return Hash.hashInt32(key);
+    private static int keyHashCode(int key) {
+        return key;
     }
 
     private static long mix64(long z) {

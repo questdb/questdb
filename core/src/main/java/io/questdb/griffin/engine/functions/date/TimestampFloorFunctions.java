@@ -60,7 +60,7 @@ final class TimestampFloorFunctions {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("timestamp_floor('").val(getUnit()).val("',").val(getArg()).val(')');
+            sink.val(TimestampFloorFunctionFactory.NAME).val("('").val(getUnit()).val("',").val(getArg()).val(')');
         }
 
         abstract protected long floor(long timestamp);

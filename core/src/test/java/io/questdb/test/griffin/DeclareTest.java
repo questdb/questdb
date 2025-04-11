@@ -510,7 +510,7 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertModel("select-group-by timestamp_floor('1h',timestamp,null,'00:00') timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) stride 1h) order by timestamp",
+            assertModel("select-group-by timestamp_floor('1h',timestamp,null,'00:00',null) timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) stride 1h) order by timestamp",
                     "DECLARE @unit := 1h SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY @unit", ExecutionModel.QUERY);
         });
     }
@@ -540,7 +540,7 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertModel("select-group-by timestamp_floor('1h',timestamp,null,'10:00') timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) stride 1h) order by timestamp",
+            assertModel("select-group-by timestamp_floor('1h',timestamp,null,'10:00',null) timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) stride 1h) order by timestamp",
                     "DECLARE @offset := '10:00' SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY 1h ALIGN TO CALENDAR WITH OFFSET @offset", ExecutionModel.QUERY);
         });
     }
@@ -550,7 +550,7 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertModel("select-virtual to_utc(timestamp,'Antarctica/McMurdo') timestamp, symbol, avg from (select-group-by [timestamp_floor('1h',to_timezone(timestamp,'Antarctica/McMurdo'),null,'00:00') timestamp, symbol, avg(price) avg] timestamp_floor('1h',to_timezone(timestamp,'Antarctica/McMurdo'),null,'00:00') timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) stride 1h)) timestamp (timestamp) order by timestamp",
+            assertModel("select-virtual to_utc(timestamp,'Antarctica/McMurdo') timestamp, symbol, avg from (select-group-by [timestamp_floor('1h',timestamp,null,'00:00','Antarctica/McMurdo') timestamp, symbol, avg(price) avg] timestamp_floor('1h',timestamp,null,'00:00','Antarctica/McMurdo') timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) stride 1h)) timestamp (timestamp) order by timestamp",
                     "DECLARE @tz := 'Antarctica/McMurdo' SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE @tz", ExecutionModel.QUERY);
         });
     }

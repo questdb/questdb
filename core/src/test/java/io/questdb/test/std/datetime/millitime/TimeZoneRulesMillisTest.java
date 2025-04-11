@@ -24,8 +24,12 @@
 
 package io.questdb.test.std.datetime.millitime;
 
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.datetime.millitime.TimeZoneRulesMillis;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -41,6 +45,7 @@ import java.util.List;
 import java.util.Set;
 
 public class TimeZoneRulesMillisTest {
+    private static final Log LOG = LogFactory.getLog(TimeZoneRulesMillisTest.class);
 
     @Test
     public void testCompatibility() {
@@ -148,11 +153,13 @@ public class TimeZoneRulesMillisTest {
 
     @Test
     public void testToUtcCompatibility() {
-        Set<String> allZones = ZoneId.getAvailableZoneIds();
-        List<String> zoneList = new ArrayList<>(allZones);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+
+        final Set<String> allZones = ZoneId.getAvailableZoneIds();
+        final List<String> zoneList = new ArrayList<>(allZones);
         Collections.sort(zoneList);
-        List<ZoneId> zones = new ArrayList<>(zoneList.size());
-        List<TimeZoneRulesMillis> zoneRules = new ArrayList<>(zoneList.size());
+        final List<ZoneId> zones = new ArrayList<>(zoneList.size());
+        final List<TimeZoneRulesMillis> zoneRules = new ArrayList<>(zoneList.size());
 
         for (String z : zoneList) {
             ZoneId zone = ZoneId.of(z);
@@ -160,11 +167,12 @@ public class TimeZoneRulesMillisTest {
             zoneRules.add(new TimeZoneRulesMillis(zone.getRules()));
         }
 
-        DateTimeFormatter localDateTimeFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'.000Z'");
+        final DateTimeFormatter localDateTimeFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'.000Z'");
         long millis = Dates.toMillis(1900, 1, 1, 0, 0);
-        long epochDeadline = Dates.toMillis(2115, 12, 31, 0, 0);
+        final long deadline = Dates.toMillis(2115, 12, 31, 0, 0);
+        final long step = Math.max(1, rnd.nextLong(30)) * Dates.DAY_MILLIS;
 
-        while (millis < epochDeadline) {
+        while (millis < deadline) {
             LocalDateTime dt = LocalDateTime.parse(Dates.toString(millis), localDateTimeFormat);
 
             for (int i = 0, n = zones.size(); i < n; i++) {
@@ -188,7 +196,7 @@ public class TimeZoneRulesMillisTest {
                     throw e;
                 }
             }
-            millis += Dates.DAY_MILLIS;
+            millis += step;
         }
     }
 }

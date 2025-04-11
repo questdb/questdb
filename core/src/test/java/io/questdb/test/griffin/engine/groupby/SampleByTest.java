@@ -1326,6 +1326,9 @@ public class SampleByTest extends AbstractCairoTest {
                         "2021-03-28T01:15:00.000000Z\ta\t31.267026583720984\tnull\n" +
                         "2021-03-28T02:15:00.000000Z\ta\t103.7167928478985\t128.42101395467057\n";
 
+                // Two '2021-03-28T01:10, a' rows is the side effect of the WITH OFFSET clause.
+                // +10 minutes push certain buckets to the gap in the local time, 02:00-03:00
+                // which is mapped by to_utc() function to the "next" UTC hour.
                 String expectedPrague = "k\ts\tlat\tlon\n" +
                         "2021-03-28T00:10:00.000000Z\ta\t144.77803379943109\t15.276535618609202\n" +
                         "2021-03-28T01:10:00.000000Z\ta\tnull\tnull\n" +

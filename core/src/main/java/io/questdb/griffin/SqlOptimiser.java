@@ -48,6 +48,8 @@ import io.questdb.griffin.engine.functions.catalogue.ShowStandardConformingStrin
 import io.questdb.griffin.engine.functions.catalogue.ShowTimeZoneFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLevelCursorFactory;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
+import io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
@@ -5142,9 +5144,9 @@ public class SqlOptimiser implements Mutable {
                 }
 
                 final ExpressionNode tsFloorFunc = expressionNodePool.next();
-                tsFloorFunc.token = "timestamp_floor";
+                tsFloorFunc.token = TimestampFloorFunctionFactory.NAME;
                 tsFloorFunc.type = FUNCTION;
-                tsFloorFunc.paramCount = 4;
+                tsFloorFunc.paramCount = 5;
 
                 CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
                 characterStoreEntry.put('\'').put(sampleBy.token).put('\'');
@@ -5155,24 +5157,20 @@ public class SqlOptimiser implements Mutable {
                 tsFloorIntervalParam.type = CONSTANT;
 
                 final ExpressionNode tsFloorTsParam = expressionNodePool.next();
-                if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_CONVERT_TIME_ZONE) != 0) {
-                    tsFloorTsParam.token = "to_timezone";
-                    tsFloorTsParam.type = FUNCTION;
-                    tsFloorTsParam.paramCount = 2;
-                    final ExpressionNode toTzParam = expressionNodePool.next();
-                    toTzParam.token = timestampColumn;
-                    toTzParam.position = timestamp.position;
-                    toTzParam.paramCount = 0;
-                    toTzParam.type = LITERAL;
-                    tsFloorTsParam.lhs = toTzParam;
-                    tsFloorTsParam.rhs = sampleByTimezoneName;
-                } else {
-                    tsFloorTsParam.token = timestampColumn;
-                    tsFloorTsParam.position = timestamp.position;
-                    tsFloorTsParam.paramCount = 0;
-                    tsFloorTsParam.type = LITERAL;
-                }
+                tsFloorTsParam.token = timestampColumn;
+                tsFloorTsParam.position = timestamp.position;
+                tsFloorTsParam.paramCount = 0;
+                tsFloorTsParam.type = LITERAL;
 
+                if (sampleByTimezoneName != null) {
+                    tsFloorFunc.args.add(sampleByTimezoneName);
+                } else {
+                    final ExpressionNode nullTimezone = expressionNodePool.next();
+                    nullTimezone.type = CONSTANT;
+                    nullTimezone.token = "null";
+                    nullTimezone.precedence = 0;
+                    tsFloorFunc.args.add(nullTimezone);
+                }
                 tsFloorFunc.args.add(sampleByOffset);
                 // If SAMPLE BY FROM ... is present, we need to include it in the timestamp_floor() call.
                 // This value is populated from the FROM clause and anchors the calendar-aligned buckets
@@ -5243,7 +5241,7 @@ public class SqlOptimiser implements Mutable {
                     }
 
                     final ExpressionNode toUtcFunc = expressionNodePool.next();
-                    toUtcFunc.token = "to_utc";
+                    toUtcFunc.token = ToUTCTimestampFunctionFactory.NAME;
                     toUtcFunc.type = FUNCTION;
                     toUtcFunc.paramCount = 2;
                     final ExpressionNode toUtcParam = expressionNodePool.next();
