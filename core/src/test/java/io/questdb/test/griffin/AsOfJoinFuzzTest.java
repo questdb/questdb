@@ -115,13 +115,17 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             long baseTs = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
             for (int i = 0; i < n; i++) {
                 if (i == 0) {
-                    timeFilter.put("where ts != '");
+                    timeFilter.put(" where ts between '");
                 } else {
-                    timeFilter.put(" and ts != '");
+                    timeFilter.put(" or ts between '");
                 }
-                int offsetDays = rnd.nextInt(100);
-                long ts = baseTs + Timestamps.DAY_MICROS * offsetDays;
-                TimestampFormatUtils.appendDateTimeUSec(timeFilter, ts);
+                int startDays = rnd.nextInt(10 * (i + 1));
+                int endDays = startDays + rnd.nextInt(100) + 1;
+                long tsStart = baseTs + Timestamps.DAY_MICROS * startDays;
+                long tsEnd = baseTs + Timestamps.DAY_MICROS * endDays;
+                TimestampFormatUtils.appendDateTimeUSec(timeFilter, tsStart);
+                timeFilter.put("' and '");
+                TimestampFormatUtils.appendDateTimeUSec(timeFilter, tsEnd);
                 timeFilter.put("'");
             }
         }
