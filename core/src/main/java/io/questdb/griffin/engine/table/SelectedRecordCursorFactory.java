@@ -46,6 +46,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
@@ -378,10 +379,10 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         private final SelectedRecord recordB;
         private TimeFrameRecordCursor baseCursor;
 
-        private SelectedTimeFrameCursor(IntList columnCrossIndex, boolean supportsRandomAccesss) {
+        private SelectedTimeFrameCursor(IntList columnCrossIndex, boolean supportsRandomAccess) {
             this.columnCrossIndex = columnCrossIndex;
             this.recordA = new SelectedRecord(columnCrossIndex);
-            if (supportsRandomAccesss) {
+            if (supportsRandomAccess) {
                 this.recordB = new SelectedRecord(columnCrossIndex);
             } else {
                 this.recordB = null;
@@ -390,7 +391,7 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
 
         @Override
         public void close() {
-            baseCursor.close();
+            baseCursor = Misc.free(baseCursor);
         }
 
         @Override
