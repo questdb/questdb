@@ -71,23 +71,23 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                 {true, false}, // exercise filters
                 ProjectionType.values(),
         });
-        try {
-            for (int i = 0; i < allParameterPermutations.length; i++) {
-                Object[] params = allParameterPermutations[i];
-                JoinType joinType = (JoinType) params[0];
-                boolean exerciseIntervals = (boolean) params[1];
-                LimitType limitType = (LimitType) params[2];
-                boolean exerciseFilters = (boolean) params[3];
-                ProjectionType projectionType = (ProjectionType) params[4];
+        for (int i = 0, n = allParameterPermutations.length; i < n; i++) {
+            Object[] params = allParameterPermutations[i];
+            JoinType joinType = (JoinType) params[0];
+            boolean exerciseIntervals = (boolean) params[1];
+            LimitType limitType = (LimitType) params[2];
+            boolean exerciseFilters = (boolean) params[3];
+            ProjectionType projectionType = (ProjectionType) params[4];
+            try {
                 assertResultSetsMatch0(joinType, exerciseIntervals, limitType, exerciseFilters, projectionType, rnd);
+            } catch (AssertionError e) {
+                throw new AssertionError("Failed with parameters: " +
+                        "joinType=" + joinType +
+                        ", exerciseIntervals=" + exerciseIntervals +
+                        ", limitType=" + limitType +
+                        ", exerciseFilters=" + exerciseFilters +
+                        ", projectionType=" + projectionType, e);
             }
-        } catch (AssertionError e) {
-            throw new AssertionError("Failed with parameters: " +
-                    "joinType=" + allParameterPermutations[0][0] +
-                    ", exerciseIntervals=" + allParameterPermutations[0][1] +
-                    ", limitType=" + allParameterPermutations[0][2] +
-                    ", exerciseFilters=" + allParameterPermutations[0][3] +
-                    ", projectionType=" + allParameterPermutations[0][4], e);
         }
     }
 
