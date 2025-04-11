@@ -43,6 +43,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.ArrayDeque;
@@ -194,6 +195,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // Expression clause that is actually part of left/outer join but not in join model.
     // Inner join expressions
     private ExpressionNode outerJoinExpressionClause;
+    private @Nullable ObjList<QueryColumn> pivotColumns = null;
+    private @Nullable ObjList<ExpressionNode> pivotFor = null;
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode sampleBy;
     private ExpressionNode sampleByFrom;
@@ -210,6 +213,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private RecordCursorFactory tableNameFunction;
     private ExpressionNode timestamp;
     private QueryModel unionModel;
+    private @Nullable ObjList<QueryColumn> unpivotColumns = null;
+    private @Nullable ObjList<ExpressionNode> unpivotFor = null;
+    private boolean unpivotIncludeNulls = false;
     private QueryModel updateTableModel;
     private TableToken updateTableToken;
     private ExpressionNode whereClause;
@@ -349,6 +355,20 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         parsedWhere.add(node);
     }
 
+    public void addPivotColumn(QueryColumn column) {
+        if (pivotColumns == null) {
+            pivotColumns = new ObjList<>();
+        }
+        pivotColumns.add(column);
+    }
+
+    public void addPivotFor(ExpressionNode _for) {
+        if (pivotFor == null) {
+            pivotFor = new ObjList<>();
+        }
+        pivotFor.add(_for);
+    }
+
     public void addSampleByFill(ExpressionNode sampleByFill) {
         this.sampleByFill.add(sampleByFill);
     }
@@ -357,6 +377,20 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         if (topDownNameSet.add(alias)) {
             topDownColumns.add(column);
         }
+    }
+
+    public void addUnpivotColumn(QueryColumn column) {
+        if (unpivotColumns == null) {
+            unpivotColumns = new ObjList<>();
+        }
+        unpivotColumns.add(column);
+    }
+
+    public void addUnpivotFor(ExpressionNode _for) {
+        if (unpivotFor == null) {
+            unpivotFor = new ObjList<>();
+        }
+        unpivotFor.add(_for);
     }
 
     public void addUpdateTableColumnMetadata(int columnType, String columnName) {
@@ -472,6 +506,23 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         fillStride = null;
         fillValues = null;
         skipped = false;
+        if (pivotColumns != null) {
+            pivotColumns.clear();
+        }
+        if (pivotFor != null) {
+            pivotFor.clear();
+        }
+        pivotColumns = null;
+        pivotFor = null;
+        if (unpivotColumns != null) {
+            unpivotColumns.clear();
+        }
+        unpivotColumns = null;
+        if (unpivotFor != null) {
+            unpivotFor.clear();
+        }
+        unpivotFor = null;
+        unpivotIncludeNulls = false;
         allowPropagationOfOrderByAdvice = true;
         decls.clear();
         orderDescendingByDesignatedTimestampOnly = false;
@@ -490,6 +541,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public void clearOrderBy() {
         orderBy.clear();
         orderByDirection.clear();
+    }
+
+    public void clearPivot() {
+        pivotFor = null;
+        pivotColumns = null;
     }
 
     public void clearSampleBy() {
@@ -688,7 +744,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(unionModel, that.unionModel)
                 && Objects.equals(updateTableModel, that.updateTableModel)
                 && Objects.equals(updateTableToken, that.updateTableToken)
-                && Objects.equals(decls, that.decls);
+                && Objects.equals(decls, that.decls)
+                && Objects.equals(pivotColumns, that.pivotColumns)
+                && Objects.equals(pivotFor, that.pivotFor)
+                && Objects.equals(unpivotColumns, that.unpivotColumns)
+                && Objects.equals(unpivotFor, that.unpivotFor)
+                && Objects.equals(unpivotIncludeNulls, that.unpivotIncludeNulls);
     }
 
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
@@ -906,6 +967,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return parsedWhere;
     }
 
+    public @Nullable ObjList<QueryColumn> getPivotColumns() {
+        return pivotColumns;
+    }
+
+    public @Nullable ObjList<ExpressionNode> getPivotFor() {
+        return pivotFor;
+    }
+
     public ExpressionNode getPostJoinWhereClause() {
         return postJoinWhereClause;
     }
@@ -985,6 +1054,18 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return unionModel;
     }
 
+    public @Nullable ObjList<QueryColumn> getUnpivotColumns() {
+        return unpivotColumns;
+    }
+
+    public @Nullable ObjList<ExpressionNode> getUnpivotFor() {
+        return unpivotFor;
+    }
+
+    public boolean getUnpivotIncludeNulls() {
+        return unpivotIncludeNulls;
+    }
+
     public ObjList<ExpressionNode> getUpdateExpressions() {
         return updateSetColumns;
     }
@@ -1051,8 +1132,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 isSelectTranslation, selectModelType, nestedModelIsSubQuery,
                 distinct, unionModel, setOperationType,
                 modelPosition, orderByAdviceMnemonic, tableId,
-                isUpdateModel, isMatViewModel, modelType, updateTableModel,
-                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues, decls
+                isUpdateModel, modelType, updateTableModel,
+                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues, decls,
+                allowPropagationOfOrderByAdvice,
+                pivotColumns, pivotFor, unpivotColumns, unpivotFor, unpivotIncludeNulls
         );
     }
 
@@ -1179,6 +1262,29 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.limitLo = baseModel.getLimitLo();
         this.limitHi = baseModel.getLimitHi();
         baseModel.setLimit(null, null);
+    }
+
+    public void moveOrderByFrom(QueryModel model) {
+        orderBy.addAll(model.getOrderBy());
+        orderByDirection.addAll(model.getOrderByDirection());
+        model.clearOrderBy();
+    }
+
+    public void movePivotFrom(QueryModel model) {
+        assert model.getPivotColumns() != null && model.getPivotColumns().size() > 0;
+        assert model.getPivotFor() != null && model.getPivotFor().size() > 0;
+
+        if (pivotColumns == null) {
+            pivotColumns = new ObjList<>(model.getPivotColumns().size());
+        }
+        pivotColumns.addAll(model.getPivotColumns());
+
+        if (pivotFor == null) {
+            pivotFor = new ObjList<>(model.getPivotFor().size());
+        }
+        pivotFor.addAll(model.getPivotFor());
+
+        model.clearPivot();
     }
 
     public void moveSampleByFrom(QueryModel model) {
@@ -1458,6 +1564,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setUnionModel(QueryModel unionModel) {
         this.unionModel = unionModel;
+    }
+
+    public void setUnpivotIncludeNulls(boolean b) {
+        unpivotIncludeNulls = b;
     }
 
     public void setUpdateTableToken(TableToken tableName) {
@@ -1978,6 +2088,34 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 }
             }
             unionModel.toSink0(sink, false, showOrderBy);
+        }
+
+        if (pivotColumns != null && pivotColumns.size() > 0) {
+            sink.putAscii(" pivot ");
+            pivotColumns.toSink(sink);
+            sink.putAscii(" for ");
+
+            assert pivotFor != null;
+            for (int i = 0, n = pivotFor.size(); i < n; i++) {
+                pivotFor.getQuick(i).toSink(sink);
+                if (i + 1 < n) {
+                    sink.putAscii(' ');
+                }
+            }
+        }
+
+        if (unpivotColumns != null && unpivotColumns.size() > 0) {
+            sink.putAscii(" unpivot ");
+            if (unpivotIncludeNulls) {
+                sink.putAscii(" include nulls ");
+            }
+            unpivotColumns.toSink(sink);
+            sink.putAscii(" for ");
+
+            assert unpivotFor != null;
+            for (int i = 0, n = unpivotFor.size(); i < n; i++) {
+                unpivotFor.getQuick(i).toSink(sink);
+            }
         }
     }
 
