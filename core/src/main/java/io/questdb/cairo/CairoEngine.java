@@ -411,12 +411,17 @@ public class CairoEngine implements Closeable, WriterSource {
                             }
                             long baseTableLastTxn = getTableSequencerAPI().lastTxn(baseTableToken);
                             if (state.getLastRefreshBaseTxn() > baseTableLastTxn) {
-                                LOG.info().$("materialized view is out of sync with base table [table=").utf8(matViewDefinition.getBaseTableName())
+                                LOG.info().$("materialized view is ahead of base table and cannot be synchronized [table=")
+                                        .utf8(matViewDefinition.getBaseTableName())
                                         .$(", view=").utf8(tableToken.getTableName())
-                                        .$(", lastRefreshBaseTxn=").$(state.getLastRefreshBaseTxn())
-                                        .$(", baseTableLastTxn=").$(baseTableLastTxn)
+                                        .$(", matViewBaseTxn=").$(state.getLastRefreshBaseTxn())
+                                        .$(", baseTableTxn=").$(baseTableLastTxn)
                                         .I$();
                                 matViewStateStore.enqueueInvalidate(tableToken, "out of sync with base table");
+                                matViewStateStore.enqueueInvalidate(
+                                        tableToken,
+                                        "materialized view is ahead of base table and cannot be synchronized"
+                                );
                             } else {
                                 matViewStateStore.enqueueIncrementalRefresh(tableToken);
                             }
