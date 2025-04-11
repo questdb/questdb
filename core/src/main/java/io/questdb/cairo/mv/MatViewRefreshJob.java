@@ -144,6 +144,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final long rows = baseTableReader.size();
         final long partitionMicros = approxPartitionMicros(baseTableReader.getPartitionedBy());
         final int partitionCount = baseTableReader.getPartitionCount();
+        assert partitionCount != 0 : "partitionCount == 0, would cause div by zero";
         return Math.max(1, (rows * bucketMicros) / (partitionMicros * partitionCount));
     }
 
