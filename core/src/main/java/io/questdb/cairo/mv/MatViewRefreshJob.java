@@ -48,6 +48,7 @@ import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.Job;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -247,7 +248,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         assert state.isLocked();
 
         final int maxRecompileAttempts = configuration.getMatViewMaxRecompileAttempts();
-        final int maxRetriesOnOom = configuration.getMatViewMaxRetriesOnOom();
         final long batchSize = configuration.getMatViewInsertAsSelectBatchSize();
 
         RecordCursorFactory factory = null;
@@ -259,7 +259,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             factory = state.acquireRecordFactory();
             copier = state.getRecordToRowCopier();
 
-            for (int i = 0, n = Math.max(maxRecompileAttempts, maxRetriesOnOom); i < n; i++) {
+            for (int i = 0; i < maxRecompileAttempts; i++) {
                 try {
                     if (factory == null) {
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -311,7 +311,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 } catch (TableReferenceOutOfDateException e) {
                     factory = Misc.free(factory);
                     if (i >= maxRecompileAttempts - 1) {
-                        LOG.info().$("base table is under heavy DDL changes, will reattempt refresh later [view=").$(viewDef.getMatViewToken())
+                        LOG.info().$("base table is under heavy DDL changes, will retry refresh later [view=").$(viewDef.getMatViewToken())
                                 .$(", recompileAttempts=").$(maxRecompileAttempts)
                                 .I$();
                         viewGraph.enqueueIncrementalRefresh(viewDef.getMatViewToken());
@@ -319,9 +319,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     }
                 } catch (Throwable th) {
                     factory = Misc.free(factory);
-                    if (CairoException.isCairoOomError(th) && i < maxRetriesOnOom && intervalStep > 1) {
-                        intervalStep /= 2;
-                        LOG.info().$("query failed with out-of-memory error, retrying with smaller step [view=").$(viewDef.getMatViewToken())
+                    if (CairoException.isCairoOomError(th)) {
+                        LogRecord logRecord = LOG.info().$("query failed with out-of-memory, retrying with ");
+                        if (intervalStep > 1) {
+                            intervalStep /= 2;
+                            logRecord.$("a reduced intervalStep");
+                        } else {
+                            logRecord.$("the smallest intervalStep");
+                        }
+                        logRecord.$(" [view=")
+                                .$(viewDef.getMatViewToken())
                                 .$(", intervalStep=").$(intervalStep)
                                 .$(", error=").$(((CairoException) th).getFlyweightMessage())
                                 .I$();
