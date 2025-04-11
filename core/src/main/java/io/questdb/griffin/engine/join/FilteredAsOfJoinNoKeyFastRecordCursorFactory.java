@@ -141,7 +141,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 if (unfilteredRecordRowId != -1 && slaveRecB.getRowId() != unfilteredRecordRowId) {
                     slaveCursor.recordAt(slaveRecB, unfilteredRecordRowId);
                 }
-                if (unfilteredCursorFrameIndex != -1 && timeFrame.getFrameIndex() != unfilteredCursorFrameIndex) {
+                if (unfilteredCursorFrameIndex != -1 && (timeFrame.getFrameIndex() != unfilteredCursorFrameIndex || !timeFrame.isOpen())) {
                     slaveCursor.jumpTo(unfilteredCursorFrameIndex);
                     slaveCursor.open();
                 }
