@@ -24,7 +24,9 @@
 
 package io.questdb.metrics;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.mp.ValueHolder;
+import io.questdb.std.Chars;
 import io.questdb.std.ObjectFactory;
 
 public class QueryTrace implements ValueHolder<QueryTrace> {
@@ -54,5 +56,9 @@ public class QueryTrace implements ValueHolder<QueryTrace> {
         dest.queryText = queryText;
         dest.timestamp = timestamp;
         dest.error = error;
+    }
+
+    public boolean shouldSubstituteBindVariables(CairoConfiguration config) {
+        return config.isQueryTracingBindVariableSubstitutionEnabled() && Chars.indexOf(queryText, '$') >= 0;
     }
 }

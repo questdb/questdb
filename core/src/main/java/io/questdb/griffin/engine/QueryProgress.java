@@ -142,8 +142,8 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         // as well as already converted to an immutable String, as needed to queue it up for handling
         // at a later time. For this reason, do not assign queryTrace.queryText = sqlText here.
         if (queryTrace != null && engine.getConfiguration().isQueryTracingEnabled()) {
-            // Substitutes bind variables into the query text
-            if (config.isQueryTracingBindVariableSubstitutionEnabled() && Chars.indexOf(sqlText, '$') >= 0) {
+            if (queryTrace.shouldSubstituteBindVariables(engine.getConfiguration())) {
+                // unless we need to change it!
                 queryTrace.queryText = substituteBindVariablesIntoQueryText(sqlText, executionContext);
             }
             queryTrace.executionNanos = durationNanos;
@@ -176,7 +176,6 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     ) {
         int leakedReadersCount = leakedReaders != null ? leakedReaders.size() : 0;
         LogRecord log = null;
-
         CharSequence message = null;
 
         try {
@@ -194,7 +193,6 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             } else {
                 log.$("err");
             }
-
             if (e instanceof FlyweightMessageContainer) {
                 final int pos = ((FlyweightMessageContainer) e).getPosition();
                 final int errno = e instanceof CairoException ? ((CairoException) e).getErrno() : 0;
@@ -227,18 +225,14 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
             final CairoEngine engine = executionContext.getCairoEngine();
             if (queryTrace != null && engine.getConfiguration().isQueryTracingEnabled()) {
-                // Substitutes bind variables into the query text
-                if (engine.getConfiguration().isQueryTracingBindVariableSubstitutionEnabled() && Chars.indexOf(sqlText, '$') >= 0) {
+                if (queryTrace.shouldSubstituteBindVariables(engine.getConfiguration())) {
                     queryTrace.queryText = substituteBindVariablesIntoQueryText(sqlText, executionContext);
                 }
                 queryTrace.executionNanos = durationNanos;
                 queryTrace.isJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED;
                 queryTrace.timestamp = engine.getConfiguration().getMicrosecondClock().getTicks();
                 queryTrace.principal = principal.toString();
-                queryTrace.error = null;
-                if (message != null) {
-                    queryTrace.error = message.toString();
-                }
+                queryTrace.error = message != null ? message.toString() : null;
                 engine.getMessageBus().getQueryTraceQueue().enqueue(queryTrace);
             }
         } catch (Throwable th) {
@@ -414,6 +408,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             log.$(", leaked=").$(leakedReaders.getQuick(i).getTableToken().getTableName());
         }
     }
+
 
     private static String substituteBindVariablesIntoQueryText(@NotNull CharSequence sqlText, @NotNull SqlExecutionContext executionContext) {
         StringSink sink = Misc.getThreadLocalSink();
