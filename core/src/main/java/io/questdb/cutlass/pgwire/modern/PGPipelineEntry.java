@@ -685,8 +685,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 } else {
                     getErrorMessageSink().putAscii("Internal error. Exception type: ").putAscii(th.getClass().getSimpleName());
                 }
-            } // 2025-04-09T16:03:11.792338Z
-            // 2025-04-09T16:03:28.485568Z
+            }
             LOG.error().$(getErrorMessageSink()).$();
         } finally {
             // after execute is complete, bind variable values have been used and no longer needed in the cache

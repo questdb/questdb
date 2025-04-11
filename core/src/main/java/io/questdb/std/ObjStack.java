@@ -27,7 +27,7 @@ package io.questdb.std;
 import java.util.Arrays;
 
 public class ObjStack<T> implements Mutable {
-    private static final int DEFAULT_INITIAL_CAPACITY = 16;
+    public static final int DEFAULT_INITIAL_CAPACITY = 16;
     private final int initialCapacity;
     private T[] elements;
     private int head;
@@ -84,18 +84,31 @@ public class ObjStack<T> implements Mutable {
         }
     }
 
+    /**
+     * The stack is peculiar, it starts off existence with unpopulated array of the
+     * initial capacity. The assumption is that when push() is called, there is guaranteed space
+     * in the array. The resetCapacity() is expected to work when stack is full, e.g. we
+     * should preserve the most recent items and remove the oldest ones. We can do that,
+     * however, we need to ensure there is space in the array for the next push() call, if it was to come.
+     * <p>
+     * We create new array, double of the initial capacity. We copy the exactly initial capacity number of elements from the larger array into the beginning
+     * of the new array. Now we have free space of initial capacity elements at the end of the new array.
+     * We configure, head, tail, mask in such a way, push() will begin to write to the beginning of the
+     * second half of our new array. head = 0, tail = half-new-array-size, mask = new-array-size - 1
+     */
     @SuppressWarnings("unchecked")
     public void resetCapacity() {
-        if (elements.length > initialCapacity) {
+        if (elements.length > initialCapacity * 2) {
             int h = head;
             int n = elements.length;
             int r = n - h;
             T[] old = elements;
-            this.elements = (T[]) new Object[initialCapacity];
+            this.elements = (T[]) new Object[initialCapacity * 2];
             System.arraycopy(old, h, elements, 0, Math.min(initialCapacity, r));
-            mask = initialCapacity - 1;
+            mask = initialCapacity * 2 - 1;
+            head = 0;
+            tail = initialCapacity;
         }
-        head = tail = 0;
     }
 
     public int size() {

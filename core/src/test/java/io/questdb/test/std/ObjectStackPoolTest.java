@@ -25,8 +25,10 @@
 package io.questdb.test.std;
 
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.ObjectStackPool;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -60,12 +62,12 @@ public class ObjectStackPoolTest {
         pool.clear();
 
         // The stack should be reset (capacity reduced) but outieCount should remain unchanged
-        assertEquals("Size should be 0 after clear", 0, pool.getSize());
+        assertEquals("Size should be 0 after clear", INITIAL_CAPACITY, pool.getSize());
         assertEquals("OutieCount should remain unchanged", 2, pool.getOutieCount());
     }
 
     @Test
-    public void testExpandAndRelease() {
+    public void testExpandAndReleasePow2Capacity() {
         // Create a pool with small initial size
         ObjectStackPool<TestMutable> smallPool = new ObjectStackPool<>(factory, 4);
 
@@ -82,6 +84,31 @@ public class ObjectStackPoolTest {
 
         // Check final state - only up to initialSize objects should be in the pool
         assertEquals("Pool should contain initial size objects", smallPool.getInitialCapacity() * 4, smallPool.getSize());
+        assertEquals("OutieCount should be 0", 0, smallPool.getOutieCount());
+    }
+
+    @Test
+    public void testExpandAndReleasePow() {
+        // Create a pool with small initial size
+        // not power of 2 capacity
+        ObjectStackPool<TestMutable> smallPool = new ObjectStackPool<>(factory, 5);
+        // ceil pow2 is 8, however, this is a pool, not a pure stack
+        // when pool is filled with 8 mutables, its capacity doubles (it doubles after push, not before)
+        Assert.assertEquals(16, smallPool.getCapacity());
+
+        // Get 10 objects to force expansion
+        TestMutable[] objects = new TestMutable[10];
+        for (int i = 0; i < objects.length; i++) {
+            objects[i] = smallPool.next();
+        }
+
+        // Release all objects in reverse order
+        for (int i = objects.length - 1; i >= 0; i--) {
+            smallPool.release(objects[i]);
+        }
+
+        // Check final state - only up to initialSize objects should be in the pool
+        assertEquals("Pool should contain initial size objects", smallPool.getInitialCapacity() * 2, smallPool.getSize());
         assertEquals("OutieCount should be 0", 0, smallPool.getOutieCount());
     }
 
@@ -293,22 +320,31 @@ public class ObjectStackPoolTest {
 
     @Test
     public void testResetCapacity() {
-        // Get some objects
-        TestMutable obj1 = pool.next();
-        TestMutable ignored = pool.next();
+        var pool = new ObjectStackPool<>(factory, INITIAL_CAPACITY);
+        // extract 5x INITIAL CAPACITY
+        var list = new ObjList<TestMutable>();
+        for (int i = 0, n = INITIAL_CAPACITY * 5; i < n; i++) {
+            list.add(pool.next());
+        }
+
+        for (int i = 0, n = list.size(); i < n; i++) {
+            pool.release(list.getQuick(i));
+        }
 
         // Reset capacity - this shrinks the pool
         pool.resetCapacity();
 
         // The stack should be empty after capacity reset, but outieCount remains the same
-        assertEquals("Size should be 0 after resetCapacity", 0, pool.getSize());
-        assertEquals("OutieCount should remain unchanged", 2, pool.getOutieCount());
+        assertEquals("Size should be initial capacity after resetCapacity", INITIAL_CAPACITY, pool.getSize());
+        assertEquals("OutieCount should remain unchanged", 0, pool.getOutieCount());
 
-        // When we release objects after resetCapacity, they should be added back to the pool
-        // up to initialSize
-        pool.release(obj1);
-        assertEquals("Size should increase after release", 1, pool.getSize());
-        assertEquals("OutieCount should decrease", 1, pool.getOutieCount());
+        // after partial pool consumption and capacity reset, we should be able to extract at least
+        // INITIAL CAPACITY number of elements and more
+        for (int i = 0, n = INITIAL_CAPACITY * 4; i < n; i++) {
+            Assert.assertNotNull(pool.next());
+        }
+        pool.resetCapacity();
+        assertEquals("Size should be initial capacity after resetCapacity", INITIAL_CAPACITY, pool.getSize());
     }
 
     /**

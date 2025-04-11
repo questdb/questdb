@@ -155,6 +155,25 @@ public class ObjStackTest {
     }
 
     @Test
+    public void testResetCapacity() {
+        ObjStack<Integer> s = new ObjStack<>();
+        int n = ObjStack.DEFAULT_INITIAL_CAPACITY * 2;
+        for (int i = 0; i < n; i++) {
+            s.push(i);
+        }
+
+        Assert.assertEquals(n, s.size());
+        s.resetCapacity();
+        Assert.assertEquals(ObjStack.DEFAULT_INITIAL_CAPACITY, s.size());
+
+        // we must be able to pop the latest items out
+        for (int i = n - 1; i >= n / 2; i--) {
+            Assert.assertEquals(i, s.pop().intValue());
+        }
+        Assert.assertEquals(0, s.size());
+    }
+
+    @Test
     public void updateTest() {
         ObjStack<Integer> s = new ObjStack<>();
         for (int i = 0; i < 10; i++) {

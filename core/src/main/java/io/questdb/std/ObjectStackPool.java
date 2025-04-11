@@ -52,7 +52,7 @@ public class ObjectStackPool<T extends Mutable> implements Mutable {
         // take capacity of the stack, stack will ceil the initial capacity value to the next power of 2
         this.initialCapacity = this.stack.getCapacity();
         this.outieCount = 0;
-        fill(initialCapacity);
+        fill(this.initialCapacity);
     }
 
     @Override
