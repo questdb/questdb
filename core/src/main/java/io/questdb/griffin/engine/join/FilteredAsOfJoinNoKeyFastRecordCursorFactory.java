@@ -25,8 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.SingleRecordSink;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -37,39 +36,34 @@ import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.JoinContext;
-import io.questdb.std.MemoryTag;
+import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
 
-public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final AsOfJoinKeyedFastRecordCursor cursor;
-    private final RecordSink masterKeySink;
-    private final RecordSink slaveKeySink;
+public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    private final FilteredAsOfJoinKeyedFastRecordCursor cursor;
+    private final Function slaveRecordFilter;
+    private final boolean unwrapSlave;
 
-    public AsOfJoinFastRecordCursorFactory(
+    public FilteredAsOfJoinNoKeyFastRecordCursorFactory(
             CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
-            RecordSink masterKeySink,
             RecordCursorFactory slaveFactory,
-            RecordSink slaveKeySink,
+            Function slaveRecordFilter,
             int columnSplit,
-            JoinContext joinContext) {
-        super(metadata, joinContext, masterFactory, slaveFactory);
+            boolean unwrapSlave) {
+        super(metadata, null, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
-        this.masterKeySink = masterKeySink;
-        this.slaveKeySink = slaveKeySink;
-        long maxSinkTargetHeapSize = (long) configuration.getSqlHashJoinValuePageSize() * configuration.getSqlHashJoinValueMaxPages();
-        this.cursor = new AsOfJoinKeyedFastRecordCursor(
+        this.slaveRecordFilter = slaveRecordFilter;
+        this.cursor = new FilteredAsOfJoinKeyedFastRecordCursor(
                 columnSplit,
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                 masterFactory.getMetadata().getTimestampIndex(),
-                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                 slaveFactory.getMetadata().getTimestampIndex(),
-                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                 configuration.getSqlAsOfJoinLookAhead()
         );
+        this.unwrapSlave = unwrapSlave;
     }
 
     @Override
@@ -83,6 +77,11 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
         TimeFrameRecordCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
+            if (unwrapSlave && slaveCursor instanceof SelectedRecordCursorFactory.SelectedTimeFrameCursor) {
+                slaveRecordFilter.init(((SelectedRecordCursorFactory.SelectedTimeFrameCursor) slaveCursor).unwrap(), executionContext);
+            } else {
+                slaveRecordFilter.init(slaveCursor, executionContext);
+            }
             cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
@@ -104,8 +103,8 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("AsOf Join Fast Scan");
-        sink.attr("condition").val(joinContext);
+        sink.type("Filtered AsOf Join Fast Scan");
+        sink.attr("filter").val(slaveRecordFilter);
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
@@ -115,35 +114,23 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
         Misc.freeIfCloseable(getMetadata());
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
+        Misc.free(slaveRecordFilter);
     }
 
-    private class AsOfJoinKeyedFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {
-        private final SingleRecordSink masterSinkTarget;
-        private final SingleRecordSink slaveSinkTarget;
+    private class FilteredAsOfJoinKeyedFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {
         private SqlExecutionCircuitBreaker circuitBreaker;
-        private boolean origHasSlave;
-        private int origSlaveFrameIndex = -1;
-        private long origSlaveRowId = -1;
+        private long highestKnownSlaveRowIdWithNoMatch = 0;
+        private int unfilteredCursorFrameIndex = -1;
+        private long unfilteredRecordRowId = -1;
 
-        public AsOfJoinKeyedFastRecordCursor(
+        public FilteredAsOfJoinKeyedFastRecordCursor(
                 int columnSplit,
                 Record nullRecord,
                 int masterTimestampIndex,
-                SingleRecordSink masterSinkTarget,
                 int slaveTimestampIndex,
-                SingleRecordSink slaveSinkTarget,
                 int lookahead
         ) {
             super(columnSplit, nullRecord, masterTimestampIndex, slaveTimestampIndex, lookahead);
-            this.masterSinkTarget = masterSinkTarget;
-            this.slaveSinkTarget = slaveSinkTarget;
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            masterSinkTarget.close();
-            slaveSinkTarget.close();
         }
 
         @Override
@@ -156,13 +143,21 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 return false;
             }
 
-            if (origSlaveRowId != -1) {
-                slaveCursor.recordAt(slaveRecB, Rows.toRowID(origSlaveFrameIndex, origSlaveRowId));
-            }
-            record.hasSlave(origHasSlave);
             final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
+            TimeFrame timeFrame = slaveCursor.getTimeFrame();
             if (masterTimestamp >= lookaheadTimestamp) {
+                if (unfilteredRecordRowId != -1 && slaveRecB.getRowId() != unfilteredRecordRowId) {
+                    slaveCursor.recordAt(slaveRecB, unfilteredRecordRowId);
+                }
+                if (unfilteredCursorFrameIndex != -1 && (timeFrame.getFrameIndex() != unfilteredCursorFrameIndex || !timeFrame.isOpen())) {
+                    slaveCursor.jumpTo(unfilteredCursorFrameIndex);
+                    slaveCursor.open();
+                }
+
                 nextSlave(masterTimestamp);
+
+                unfilteredRecordRowId = slaveRecB.getRowId();
+                unfilteredCursorFrameIndex = timeFrame.getFrameIndex();
             }
 
             // we have to set the `isMasterHasNextPending` only now since `nextSlave()` may throw DataUnavailableException
@@ -170,84 +165,92 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             // if we are here then it's clear nextSlave() did not throw DataUnavailableException.
             isMasterHasNextPending = true;
 
-            boolean hasSlave = record.hasSlave();
-            origHasSlave = hasSlave;
-            if (!hasSlave) {
-                // the non-keyd algo did not find a matching record in the slave table.
+            if (!record.hasSlave()) {
+                // the non-filtering algo did not find a matching record in the slave table.
                 // this means the slave table does not have a single record with a timestamp that is less than or equal
                 // to the master record's timestamp.
-                // thus it cannot possibly have a record with a matching key. since matching timestamps is a prerequisite
-                // before we even try to match keys -> we can safely skip the key matching part and report no match.
                 return true;
             }
 
-            // ok, the non-keyed matcher found a record with a matching timestamp.
-            // we have to make sure the JOIN keys match as well.
-            masterSinkTarget.clear();
-            masterKeySink.copy(masterRecord, masterSinkTarget);
+            if (slaveRecordFilter.getBool(slaveRecB)) {
+                // we have a match, that's awesome, no need to traverse the slave cursor!
+                return true;
+            }
 
-            // make sure the cursor points to the right frame - since `nextSlave()` might have moved it under our feet
-            TimeFrame timeFrame = slaveCursor.getTimeFrame();
+            // ok, the current record in the slave cursor does not match the filter, let's try to find a match
+            // first, we have to set the time frame cursor to the record found by the non-filtering algo
+            // and then we have to traverse the slave cursor backwards until we find a match
             long rowId = slaveRecB.getRowId();
-            int slaveFrameIndex = Rows.toPartitionIndex(rowId);
-            origSlaveFrameIndex = slaveFrameIndex;
-            int cursorFrameIndex = timeFrame.getFrameIndex();
-            slaveCursor.jumpTo(slaveFrameIndex);
+            final int initialFilteredFrameIndex = Rows.toPartitionIndex(rowId);
+            final long initialFilteredRowId = Rows.toLocalRowID(rowId);
+
+            slaveCursor.jumpTo(initialFilteredFrameIndex);
             slaveCursor.open();
 
-            long rowLo = timeFrame.getRowLo();
-            long keyedRowId = Rows.toLocalRowID(rowId);
-            origSlaveRowId = keyedRowId;
-            int keyedFrameIndex = timeFrame.getFrameIndex();
-            for (; ; ) {
-                slaveSinkTarget.clear();
-                slaveKeySink.copy(slaveRecB, slaveSinkTarget);
-                if (masterSinkTarget.memeq(slaveSinkTarget)) {
-                    // we have a match, that's awesome, no need to traverse the slave cursor!
-                    break;
-                }
+            long currentFrameLo = timeFrame.getRowLo();
+            long filteredRowId = initialFilteredRowId;
+            int filteredFrameIndex = initialFilteredFrameIndex;
 
+            int stopAtFrameIndex = Rows.toPartitionIndex(highestKnownSlaveRowIdWithNoMatch);
+            long stopUnderRowId = (stopAtFrameIndex == filteredFrameIndex) ? Rows.toLocalRowID(highestKnownSlaveRowIdWithNoMatch) : 0;
+
+            for (; ; ) {
                 // let's try to move backwards in the slave cursor until we have a match
-                keyedRowId--;
-                if (keyedRowId < rowLo) {
+                filteredRowId--;
+
+                if (filteredRowId < currentFrameLo) {
                     // ops, we exhausted this frame, let's try the previous one
                     if (!slaveCursor.prev()) {
                         // there is no previous frame, we are done, no match :(
                         // if we are here, chances are we are also pretty slow because we are scanning the entire slave cursor
-                        // until we either exhaust the cursor or find a matching key.
+                        // until we either exhaust the cursor or find a matching record
                         record.hasSlave(false);
+
+                        // Remember that there is no matching slave record for a given initial rowId.
+                        // So the next time we can abort the slave cursor traversal before we reach the end of the cursor.
+                        // We increment the initial rowId by 1, because the early exit guard is exclusive.
+                        highestKnownSlaveRowIdWithNoMatch = Rows.toRowID(initialFilteredFrameIndex, initialFilteredRowId + 1);
+                        // note: we do not check for overflow here. localRowId has 44 bits, this is enough to store
+                        // 17.5 trillion rows. we don't expect to ever reach this limit within a single partition.
                         break;
                     }
-                    slaveCursor.open();
 
-                    keyedFrameIndex = timeFrame.getFrameIndex();
-                    keyedRowId = timeFrame.getRowHi() - 1;
-                    rowLo = timeFrame.getRowLo();
+                    slaveCursor.open();
+                    filteredFrameIndex = timeFrame.getFrameIndex();
+                    filteredRowId = timeFrame.getRowHi() - 1;
+                    currentFrameLo = timeFrame.getRowLo();
+                    stopUnderRowId = (stopAtFrameIndex == filteredFrameIndex) ? Rows.toLocalRowID(highestKnownSlaveRowIdWithNoMatch) : 0;
                 }
-                slaveCursor.recordAt(slaveRecB, Rows.toRowID(keyedFrameIndex, keyedRowId));
+
+                if (filteredRowId < stopUnderRowId) {
+                    record.hasSlave(false);
+                    highestKnownSlaveRowIdWithNoMatch = Rows.toRowID(initialFilteredFrameIndex, initialFilteredRowId + 1);
+                    break;
+                }
+
+                slaveCursor.recordAt(slaveRecB, Rows.toRowID(filteredFrameIndex, filteredRowId));
+                if (slaveRecordFilter.getBool(slaveRecB)) {
+                    // we have a match, that's awesome, no need to traverse the slave cursor!
+                    break;
+                }
                 circuitBreaker.statefulThrowExceptionIfTripped();
             }
 
-            // rewind the slave cursor to the original position so the next call to `nextSlave()` will not be affected
-            slaveCursor.jumpTo(cursorFrameIndex);
-            assert slaveFrameIndex == timeFrame.getFrameIndex();
-            slaveCursor.open();
             return true;
         }
 
         public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor);
-            masterSinkTarget.reopen();
-            slaveSinkTarget.reopen();
             this.circuitBreaker = circuitBreaker;
         }
 
         @Override
         public void toTop() {
             super.toTop();
-            origSlaveFrameIndex = -1;
-            origSlaveRowId = -1;
-            origHasSlave = false;
+            slaveRecordFilter.toTop();
+            unfilteredRecordRowId = -1;
+            unfilteredCursorFrameIndex = -1;
+            highestKnownSlaveRowIdWithNoMatch = 0;
         }
     }
 }

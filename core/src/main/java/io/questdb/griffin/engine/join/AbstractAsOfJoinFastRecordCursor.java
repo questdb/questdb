@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.join;
 
+import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.std.Misc;
@@ -113,6 +114,13 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         return masterCursor.size();
     }
 
+    public void skipRows(Counter rowCount) throws DataUnavailableException {
+        // isMasterHasNextPending is false is only possible when slave cursor navigation inside hasNext() threw DataUnavailableException
+        // and in such case we expect hasNext() to be called again, rather than skipRows()
+        assert isMasterHasNextPending;
+        masterCursor.skipRows(rowCount);
+    }
+
     @Override
     public void toTop() {
         lookaheadTimestamp = Long.MIN_VALUE;
@@ -140,22 +148,26 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
                 if (lo < mid) {
                     lo = mid;
                 } else {
+                    // special case: when lo == mid, we're down to two elements
+                    // check if the higher element exceeds the master timestamp
                     slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, hi));
                     if (slaveRecA.getTimestamp(slaveTimestampIndex) > masterTimestamp) {
-                        return lo;
+                        return lo; // hi's timestamp exceeds master, so return lo
                     }
-                    return hi;
+                    return hi; // Both elements are <= master, return the higher one
                 }
             } else {
                 hi = mid;
             }
         }
 
+        // loop exited with lo == hi, verify the final candidate
         slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, lo));
         if (slaveRecA.getTimestamp(slaveTimestampIndex) > masterTimestamp) {
+            // current element exceeds master, return previous index
             return lo - 1;
         }
-        return lo;
+        return lo; // current element is <= master, return it
     }
 
     /**
@@ -222,14 +234,17 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
 
     protected boolean openSlaveFrame(TimeFrame frame, long masterTimestamp) {
         while (true) {
+
+            // Case 1: Process a frame that was previously marked for opening
             if (isSlaveOpenPending) {
                 if (slaveCursor.open() < 1) {
-                    // Empty frame, scan further.
+                    // Empty frame, scan further -> case 2
                     isSlaveOpenPending = false;
                     continue;
                 }
                 // We're lucky! The frame is non-empty.
                 isSlaveOpenPending = false;
+
                 if (isSlaveForwardScan) {
                     if (masterTimestamp < frame.getTimestampLo()) {
                         // The frame is after the master timestamp, we need the previous frame.
@@ -248,6 +263,9 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
                 return true;
             }
 
+            // Case 2: Scan for a frame to open based on scan direction.
+            // This uses only estimated timestamp boundaries since we don't know
+            // the precise boundaries until we open the frame.
             if (isSlaveForwardScan) {
                 if (!slaveCursor.next() || masterTimestamp < frame.getTimestampEstimateLo()) {
                     // We've reached the last frame or a frame after the searched timestamp.

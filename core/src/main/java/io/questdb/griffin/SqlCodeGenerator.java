@@ -191,6 +191,7 @@ import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.FilteredAsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCursorFactory;
@@ -2456,15 +2457,71 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             );
                                         }
                                     } else {
-                                        if (slave.supportsTimeFrameCursor()) {
-                                            master = new AsOfJoinNoKeyFastRecordCursorFactory(
-                                                    configuration,
-                                                    createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                                    master,
-                                                    slave,
-                                                    masterMetadata.getColumnCount()
-                                            );
-                                        } else {
+                                        boolean created = false;
+                                        if (fastAsOfJoins) {
+                                            if (slave.supportsTimeFrameCursor()) {
+                                                master = new AsOfJoinNoKeyFastRecordCursorFactory(
+                                                        configuration,
+                                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                        master,
+                                                        slave,
+                                                        masterMetadata.getColumnCount()
+                                                );
+                                                created = true;
+                                            }
+
+                                            if (!created && slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
+                                                RecordCursorFactory slaveBase = slave.getBaseFactory();
+                                                Function stolenFilter = slave.getFilter();
+                                                slave.halfClose();
+
+                                                Misc.free(slave.getCompiledFilter());
+                                                Misc.free(slave.getBindVarMemory());
+                                                Misc.freeObjList(slave.getBindVarFunctions());
+
+                                                master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(configuration, createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata), master, slaveBase, stolenFilter, masterMetadata.getColumnCount(), false);
+                                                created = true;
+                                            }
+
+                                            if (!created && slave instanceof SelectedRecordCursorFactory) {
+                                                SelectedRecordCursorFactory selectedRecordCursorFactory = (SelectedRecordCursorFactory) slave;
+                                                RecordCursorFactory selectedRecordCursorFactoryBase = selectedRecordCursorFactory.getBaseFactory();
+                                                // We know selectedRecordCursorFactoryBase does not support supportsTimeFrameCursor, because
+                                                // SelectedRecordCursorFactory forwards this call to its base factory and if we are in this branch
+                                                // then slave.supportsTimeFrameCursor() returned false in one the previous branches.
+                                                // there is still chance that selectedRecordCursorFactoryBase is just a filter
+                                                // and its own base supports timeFrameCursor. let's see.
+                                                if (selectedRecordCursorFactoryBase.supportsFilterStealing()) {
+                                                    // ok, cool, is used only as a filter.
+                                                    RecordCursorFactory filterStealingBase = selectedRecordCursorFactoryBase.getBaseFactory();
+                                                    if (filterStealingBase.supportsTimeFrameCursor()) {
+                                                        Function stolenFilter = selectedRecordCursorFactoryBase.getFilter();
+                                                        selectedRecordCursorFactoryBase.halfClose();
+                                                        selectedRecordCursorFactory.replaceBaseFactory(filterStealingBase);
+
+                                                        Misc.free(selectedRecordCursorFactoryBase.getCompiledFilter());
+                                                        Misc.free(selectedRecordCursorFactoryBase.getBindVarMemory());
+                                                        Misc.freeObjList(selectedRecordCursorFactoryBase.getBindVarFunctions());
+
+                                                        master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
+                                                                configuration,
+                                                                // note: we use the original slaveMetadata here, so if the SelectedRecordCursorFactory
+                                                                // renamed a column it's still propagated to the join metadata.
+                                                                createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                                master,
+                                                                selectedRecordCursorFactory,
+                                                                stolenFilter,
+                                                                masterMetadata.getColumnCount(),
+                                                                true
+                                                        );
+                                                        created = true;
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // slow path: this always works, but can be quite slow, especially with large slave tables
+                                        if (!created) {
                                             master = new AsOfJoinNoKeyRecordCursorFactory(
                                                     createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
                                                     master,

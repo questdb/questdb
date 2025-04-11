@@ -58,7 +58,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     // only native partition frames are reentered
     private long reenterPageFrameRowLimit;
     private PartitionDecoder reenterParquetDecoder;
-    private boolean reenterPartitionFrame = false;
+    private boolean reenterPartitionFrame = false; // true when the current Partition Frame is not entirely exhausted
     private long reenterPartitionHi;
     private int reenterPartitionIndex;
     private long reenterPartitionLo;
