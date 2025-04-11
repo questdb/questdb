@@ -35,10 +35,10 @@ public interface TimestampSampler extends Sinkable {
     }
 
     default long nextTimestamp(long timestamp) {
-        return nextTimestamp(timestamp, 1, Long.MAX_VALUE);
+        return nextTimestamp(timestamp, 1);
     }
 
-    long nextTimestamp(long timestamp, int numSteps, long maxTimestamp);
+    long nextTimestamp(long timestamp, int numSteps);
 
     long previousTimestamp(long timestamp);
 

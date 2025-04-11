@@ -53,15 +53,8 @@ public class YearTimestampSampler implements TimestampSampler {
     }
 
     @Override
-    public long nextTimestamp(long timestamp, int numSteps, long maxTimestamp) {
-        long result = timestamp;
-        for (int i = 0; i < numSteps; i++) {
-            result = addYears(result, stepYears);
-            if (result == maxTimestamp) {
-                break;
-            }
-        }
-        return result;
+    public long nextTimestamp(long timestamp, int numSteps) {
+        return addYears(timestamp, numSteps * stepYears);
     }
 
     @Override
@@ -103,14 +96,14 @@ public class YearTimestampSampler implements TimestampSampler {
         sink.putAscii("YearTsSampler");
     }
 
-    private long addYears(long timestamp, int bucket) {
-        if (bucket == 0) {
+    private long addYears(long timestamp, int numYears) {
+        if (numYears == 0) {
             return timestamp;
         }
         final int y = Timestamps.getYear(timestamp);
-        final boolean leap = Timestamps.isLeapYear(y + bucket);
+        final boolean leap = Timestamps.isLeapYear(y + numYears);
         final int maxDay = Math.min(startDay, Timestamps.getDaysPerMonth(startMonth, leap)) - 1;
-        return Timestamps.yearMicros(y + bucket, leap)
+        return Timestamps.yearMicros(y + numYears, leap)
                 + Timestamps.monthOfYearMicros(startMonth, leap)
                 + maxDay * Timestamps.DAY_MICROS
                 + startHour * Timestamps.HOUR_MICROS

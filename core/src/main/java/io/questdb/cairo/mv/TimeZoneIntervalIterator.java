@@ -104,7 +104,7 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
         }
 
         utcTimestampLo = utcTimestampHi;
-        localTimestampHi = sampler.nextTimestamp(localTimestampHi, step, localMaxTimestamp);
+        localTimestampHi = Math.min(sampler.nextTimestamp(localTimestampHi, step), localMaxTimestamp);
         if (localTimestampHi == localMaxTimestamp) {
             utcTimestampHi = utcMaxTimestamp;
             return true;

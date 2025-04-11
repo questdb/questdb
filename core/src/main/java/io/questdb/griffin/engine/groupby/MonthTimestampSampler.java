@@ -54,15 +54,8 @@ public class MonthTimestampSampler implements TimestampSampler {
     }
 
     @Override
-    public long nextTimestamp(long timestamp, int numSteps, long maxTimestamp) {
-        long result = timestamp;
-        for (int i = 0; i < numSteps; i++) {
-            result = addMonth(result, stepMonths);
-            if (result == maxTimestamp) {
-                break;
-            }
-        }
-        return result;
+    public long nextTimestamp(long timestamp, int numSteps) {
+        return addMonth(timestamp, numSteps * stepMonths);
     }
 
     @Override

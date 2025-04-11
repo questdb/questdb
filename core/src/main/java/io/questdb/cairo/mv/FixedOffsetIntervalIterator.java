@@ -67,7 +67,7 @@ public class FixedOffsetIntervalIterator implements SampleByIntervalIterator {
             return false;
         }
         timestampLo = timestampHi;
-        timestampHi = sampler.nextTimestamp(timestampHi, step, maxTimestamp);
+        timestampHi = Math.min(sampler.nextTimestamp(timestampHi, step), maxTimestamp);
         return true;
     }
 

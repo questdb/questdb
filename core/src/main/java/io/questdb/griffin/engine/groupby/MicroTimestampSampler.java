@@ -51,8 +51,8 @@ public class MicroTimestampSampler implements TimestampSampler {
     }
 
     @Override
-    public long nextTimestamp(long timestamp, int numSteps, long maxTimestamp) {
-        return Math.min(timestamp + numSteps * bucketSize, maxTimestamp);
+    public long nextTimestamp(long timestamp, int numSteps) {
+        return timestamp + numSteps * bucketSize;
     }
 
     @Override
