@@ -37,6 +37,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.util.Properties;
 
 import static io.questdb.test.cutlass.pgwire.BasePGTest.assertResultSet;
@@ -63,12 +64,12 @@ public class QueryTracingSubstitutionTest extends AbstractBootstrapTest {
                         stmt.setLong(7, 987654L);
                         stmt.setShort(8, (short) 11111);
                         stmt.setString(9, "test");
-                        stmt.setTimestamp(10, new java.sql.Timestamp(0));
+                        stmt.setTimestamp(10, java.sql.Timestamp.from(Instant.EPOCH));
 
                         try (final ResultSet resultSet = stmt.executeQuery()) {
                             assertResultSet(
                                     "$1[BIT],$2[SMALLINT],$3[VARCHAR],$4[DOUBLE],$5[REAL],$6[INTEGER],$7[BIGINT],$8[SMALLINT],$9[VARCHAR],$10[VARCHAR]\n" +
-                                            "true,111,1970-01-01 +01,123.456,123.456,987654,987654,11111,test,1970-01-01 01:00:00+00\n",
+                                            "true,111,1970-01-01 +01,123.456,123.456,987654,987654,11111,test,1970-01-01 01:00:00+01\n",
                                     Misc.getThreadLocalSink(),
                                     resultSet
                             );
