@@ -64,6 +64,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     // transient field, unoptimized AS SELECT model, used in toSink()
     private QueryModel selectModel;
     private CharSequence selectText;
+    private int selectTextPosition;
     private ExpressionNode tableNameExpr;
     private ExpressionNode timestampExpr;
     private int ttlHoursOrMonths;
@@ -85,8 +86,9 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             return new CreateTableOperationImpl(
                     Chars.toString(sqlText),
                     Chars.toString(tableNameExpr.token),
-                    Chars.toString(selectText),
                     tableNameExpr.position,
+                    Chars.toString(selectText),
+                    selectTextPosition,
                     ignoreIfExists,
                     getPartitionByFromExpr(),
                     timestampExpr != null ? Chars.toString(timestampExpr.token) : null,
@@ -152,6 +154,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         tableNameExpr = null;
         timestampExpr = null;
         selectText = null;
+        selectTextPosition = 0;
         selectModel = null;
         volumeAlias = null;
         ttlHoursOrMonths = 0;
@@ -258,8 +261,9 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         this.selectModel = selectModel;
     }
 
-    public void setSelectText(CharSequence selectText) {
+    public void setSelectText(CharSequence selectText, int selectTextPosition) {
         this.selectText = selectText;
+        this.selectTextPosition = selectTextPosition;
     }
 
     public void setTableNameExpr(ExpressionNode expr) {
