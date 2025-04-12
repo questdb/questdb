@@ -142,7 +142,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             }
             // let's exercise symbol columns too,
             // symbols and symbol sources can be tricky
-            filter.put(" and s != 'nope' ");
+            filter.put(" and s = 's_0' ");
         }
 
         String projection = "";

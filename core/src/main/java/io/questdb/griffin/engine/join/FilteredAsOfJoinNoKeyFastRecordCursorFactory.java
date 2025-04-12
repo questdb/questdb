@@ -77,12 +77,17 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
         TimeFrameRecordCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
+            Record filterRecord;
             if (unwrapSlave && slaveCursor instanceof SelectedRecordCursorFactory.SelectedTimeFrameCursor) {
-                slaveRecordFilter.init(((SelectedRecordCursorFactory.SelectedTimeFrameCursor) slaveCursor).unwrap(), executionContext);
+                SelectedRecordCursorFactory.SelectedTimeFrameCursor selected = (SelectedRecordCursorFactory.SelectedTimeFrameCursor) slaveCursor;
+                TimeFrameRecordCursor unwrappedCursor = selected.unwrap();
+                slaveRecordFilter.init(unwrappedCursor, executionContext);
+                filterRecord = unwrappedCursor.getRecordB();
             } else {
                 slaveRecordFilter.init(slaveCursor, executionContext);
+                filterRecord = slaveCursor.getRecordB();
             }
-            cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
+            cursor.of(masterCursor, slaveCursor, filterRecord, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
@@ -119,6 +124,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
 
     private class FilteredAsOfJoinKeyedFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private Record filterRecord;
         private long highestKnownSlaveRowIdWithNoMatch = 0;
         private int unfilteredCursorFrameIndex = -1;
         private long unfilteredRecordRowId = -1;
@@ -172,7 +178,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 return true;
             }
 
-            if (slaveRecordFilter.getBool(slaveRecB)) {
+            if (slaveRecordFilter.getBool(filterRecord)) {
                 // we have a match, that's awesome, no need to traverse the slave cursor!
                 return true;
             }
@@ -229,7 +235,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 }
 
                 slaveCursor.recordAt(slaveRecB, Rows.toRowID(filteredFrameIndex, filteredRowId));
-                if (slaveRecordFilter.getBool(slaveRecB)) {
+                if (slaveRecordFilter.getBool(filterRecord)) {
                     // we have a match, that's awesome, no need to traverse the slave cursor!
                     break;
                 }
@@ -239,9 +245,10 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             return true;
         }
 
-        public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+        public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, Record filterRecord, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor);
             this.circuitBreaker = circuitBreaker;
+            this.filterRecord = filterRecord;
         }
 
         @Override
