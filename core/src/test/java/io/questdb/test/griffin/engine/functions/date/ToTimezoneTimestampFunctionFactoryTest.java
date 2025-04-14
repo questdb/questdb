@@ -54,8 +54,20 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
             );
             assertToTimezone(
                     "to_timezone\n" +
+                            "2021-03-28T01:00:00.000000Z\n",
+                    "2021-03-28T00:00:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToTimezone(
+                    "to_timezone\n" +
                             "2021-03-28T01:01:00.000000Z\n",
                     "2021-03-28T00:01:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToTimezone(
+                    "to_timezone\n" +
+                            "2021-03-28T03:00:00.000000Z\n",
+                    "2021-03-28T01:00:00.000000Z",
                     "Europe/Berlin"
             );
             assertToTimezone(
@@ -80,14 +92,32 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
             );
             assertToTimezone(
                     "to_timezone\n" +
+                            "2021-10-31T02:00:00.000000Z\n",
+                    "2021-10-31T00:00:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToTimezone(
+                    "to_timezone\n" +
                             "2021-10-31T02:01:00.000000Z\n",
                     "2021-10-31T00:01:00.000000Z",
                     "Europe/Berlin"
             );
             assertToTimezone(
                     "to_timezone\n" +
+                            "2021-10-31T02:00:00.000000Z\n",
+                    "2021-10-31T01:00:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToTimezone(
+                    "to_timezone\n" +
                             "2021-10-31T02:01:00.000000Z\n",
                     "2021-10-31T01:01:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToTimezone(
+                    "to_timezone\n" +
+                            "2021-10-31T03:00:00.000000Z\n",
+                    "2021-10-31T02:00:00.000000Z",
                     "Europe/Berlin"
             );
             assertToTimezone(

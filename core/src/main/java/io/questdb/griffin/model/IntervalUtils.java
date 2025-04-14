@@ -139,9 +139,9 @@ public final class IntervalUtils {
     }
 
     public static int findInterval(LongList intervals, long timestamp) {
-        assert intervals.size() % 2 == 0 : "intervals contains an odd number of numbers";
+        assert intervals.size() % 2 == 0 : "interval list has an odd size";
         int left = 0;
-        int right = intervals.size() / 2 - 1;
+        int right = (intervals.size() >>> 1) - 1;
         while (left <= right) {
             int mid = (left + right) >>> 1;
             long lo = getEncodedPeriodLo(intervals, mid << 1);

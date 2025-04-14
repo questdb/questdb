@@ -226,12 +226,12 @@ public class TimeZoneIntervalIteratorTest {
         );
 
         // both min and max timestamps must be aligned at the backward shift, not at 00:45-01:45
-        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-10-30T23:45:00.000000Z"), iterator.getMinTimestamp());
-        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-10-31T02:15:00.000000Z"), iterator.getMaxTimestamp());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-10-31T00:00:00.000000Z"), iterator.getMinTimestamp());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-10-31T02:00:00.000000Z"), iterator.getMaxTimestamp());
 
         Assert.assertTrue(iterator.next());
-        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-10-30T23:45:00.000000Z"), iterator.getTimestampLo());
-        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-10-31T02:15:00.000000Z"), iterator.getTimestampHi());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-10-31T00:00:00.000000Z"), iterator.getTimestampLo());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-10-31T02:00:00.000000Z"), iterator.getTimestampHi());
 
         Assert.assertFalse(iterator.next());
     }
@@ -258,6 +258,14 @@ public class TimeZoneIntervalIteratorTest {
 
         Assert.assertTrue(iterator.next());
         Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-10-30T23:45:00.000000Z"), iterator.getTimestampLo());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-10-31T00:00:00.000000Z"), iterator.getTimestampHi());
+
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-10-31T00:00:00.000000Z"), iterator.getTimestampLo());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-10-31T02:00:00.000000Z"), iterator.getTimestampHi());
+
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-10-31T02:00:00.000000Z"), iterator.getTimestampLo());
         Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-10-31T02:15:00.000000Z"), iterator.getTimestampHi());
 
         Assert.assertTrue(iterator.next());
@@ -291,9 +299,13 @@ public class TimeZoneIntervalIteratorTest {
         Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T00:00:00.000000Z"), iterator.getTimestampLo());
         Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T00:30:00.000000Z"), iterator.getTimestampHi());
 
-        // DST edge is here
         Assert.assertTrue(iterator.next());
         Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T00:30:00.000000Z"), iterator.getTimestampLo());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T01:00:00.000000Z"), iterator.getTimestampHi());
+
+        // DST edge is here
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T01:00:00.000000Z"), iterator.getTimestampLo());
         Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T01:30:00.000000Z"), iterator.getTimestampHi());
 
         Assert.assertTrue(iterator.next());
@@ -307,6 +319,29 @@ public class TimeZoneIntervalIteratorTest {
         Assert.assertTrue(iterator.next());
         Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T02:30:00.000000Z"), iterator.getTimestampLo());
         Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2021-03-28T03:00:00.000000Z"), iterator.getTimestampHi());
+
+        Assert.assertFalse(iterator.next());
+    }
+
+    @Test
+    public void testTimeZoneWithDstSingleRow() throws Exception {
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(30, 'm', 0);
+        iterator.of(
+                sampler,
+                Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "Europe/London"),
+                0,
+                TimestampFormatUtils.parseTimestamp("2024-10-27T01:00:00.600000Z"),
+                TimestampFormatUtils.parseTimestamp("2024-10-27T01:00:00.600000Z"),
+                2
+        );
+
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2024-10-27T00:00:00.000000Z"), iterator.getMinTimestamp());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2024-10-27T02:00:00.000000Z"), iterator.getMaxTimestamp());
+
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2024-10-27T00:00:00.000000Z"), iterator.getTimestampLo());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2024-10-27T02:00:00.000000Z"), iterator.getTimestampHi());
 
         Assert.assertFalse(iterator.next());
     }

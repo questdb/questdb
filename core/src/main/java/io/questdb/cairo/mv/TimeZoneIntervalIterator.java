@@ -111,15 +111,15 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
         }
         // Make sure to adjust the right boundary in case if we ended up
         // in a gap or a backward shift interval.
-        for (int n = localShifts.size() / 2; shiftIndex < n; shiftIndex++) {
+        for (int n = (localShifts.size() >>> 1); shiftIndex < n; shiftIndex++) {
             final int idx = shiftIndex << 1;
             final long shiftLo = IntervalUtils.getEncodedPeriodLo(localShifts, idx);
-            if (localTimestampHi < shiftLo) {
+            if (localTimestampHi <= shiftLo) {
                 break;
             }
             final long shiftHi = IntervalUtils.getEncodedPeriodHi(localShifts, idx);
-            if (localTimestampHi <= shiftHi) { // localTimestampHi >= shiftLo is already true
-                localTimestampHi = sampler.nextTimestamp(sampler.round(shiftHi));
+            if (localTimestampHi <= shiftHi) { // localTimestampHi > shiftLo is already true
+                localTimestampHi = sampler.nextTimestamp(sampler.round(shiftHi - 1));
                 shiftOffset = tzRules.getLocalOffset(shiftHi);
                 shiftIndex++;
                 break;
@@ -162,7 +162,9 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
             } else { // forward shift (gap)
                 final long localStart = ts + offsetBefore;
                 final long localEnd = localStart + duration;
-                localShifts.add(localStart, localEnd);
+                // We don't want the gap to be used as the iterated interval, so increment
+                // the right boundary to force the next sample by bucket to be included.
+                localShifts.add(localStart, localEnd + 1);
             }
             ts = tzRules.getNextDST(ts);
         }
@@ -192,7 +194,7 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
         final int idx = IntervalUtils.findInterval(localShifts, localTs);
         if (idx != -1) {
             final long shiftHi = IntervalUtils.getEncodedPeriodHi(localShifts, idx << 1);
-            return sampler.nextTimestamp(sampler.round(shiftHi));
+            return sampler.nextTimestamp(sampler.round(shiftHi - 1));
         }
         return localTs;
     }
@@ -201,7 +203,7 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
         final int idx = IntervalUtils.findInterval(localShifts, localTs);
         if (idx != -1) {
             final long shiftLo = IntervalUtils.getEncodedPeriodLo(localShifts, idx << 1);
-            return sampler.round(shiftLo - 1);
+            return sampler.round(shiftLo);
         }
         return localTs;
     }
