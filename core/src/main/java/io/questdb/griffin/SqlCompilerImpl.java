@@ -57,10 +57,13 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.VacuumColumnVersions;
+import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
-import io.questdb.cairo.mv.MatViewRefreshState;
+import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateReader;
+import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -1373,9 +1376,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(lexer.lastTokenPosition(), "'resume' or 'suspend'").put(" expected");
             }
         } catch (CairoException e) {
-            LOG.info().$("could not alter materialized view [table=").$(matViewToken.getTableName())
+            LOG.info().$("could not alter materialized view [view=").$(matViewToken.getTableName())
+                    .$(", msg=").$(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
-                    .$(", ex=").$(e.getFlyweightMessage())
                     .I$();
             if (e.getPosition() == 0) {
                 e.position(lexer.lastTokenPosition());
@@ -1646,8 +1649,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         } catch (CairoException e) {
             LOG.info().$("could not alter table [table=").$(tableToken.getTableName())
+                    .$(", msg=").$(e.getFlyweightMessage())
                     .$(", errno=").$(e.getErrno())
-                    .$(", ex=").$(e.getFlyweightMessage())
                     .I$();
             if (e.getPosition() == 0) {
                 e.position(lexer.lastTokenPosition());
@@ -2076,7 +2079,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to refresh materialized view");
         }
 
-        final MatViewGraph matViewGraph = engine.getMatViewGraph();
+        final MatViewStateStore matViewGraph = engine.getMatViewStateStore();
         executionContext.getSecurityContext().authorizeMatViewRefresh(matViewToken);
         if (incremental) {
             matViewGraph.enqueueIncrementalRefresh(matViewToken);
@@ -2761,7 +2764,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         Misc.free(newFactory);
                     }
 
-                    engine.getMatViewGraph().createView(matViewDefinition);
                     createMatViewOp.updateOperationFutureTableToken(matViewToken);
                 } else {
                     throw SqlException.$(createTableOp.getTableNamePosition(), "materialized view requires a SELECT statement");
@@ -4017,16 +4019,25 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         }
 
                         if (tableToken.isMatView()) {
-                            try (BlockFileWriter writer = new BlockFileWriter(ff, configuration.getCommitMode())) {
+                            try (
+                                    BlockFileReader matViewFileReader = new BlockFileReader(configuration);
+                                    BlockFileWriter matViewFileWriter = new BlockFileWriter(ff, configuration.getCommitMode())
+                            ) {
                                 MatViewGraph graph = engine.getMatViewGraph();
-                                MatViewRefreshState state = graph.getViewRefreshState(tableToken);
-                                writer.of(auxPath.trimTo(tableRootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                                MatViewRefreshState.append(state, writer);
-                                MatViewDefinition matViewDefinition = (state != null)
-                                        ? state.getViewDefinition() : graph.getViewDefinition(tableToken);
+                                final MatViewDefinition matViewDefinition = graph.getViewDefinition(tableToken);
                                 if (matViewDefinition != null) {
-                                    writer.of(auxPath.trimTo(tableRootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
-                                    MatViewDefinition.append(matViewDefinition, writer);
+                                    // srcPath is unused at this point, so we can overwrite it
+                                    final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, srcPath, tableToken.getDirName());
+                                    if (isMatViewStateExists) {
+                                        matViewFileReader.of(srcPath.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                                        MatViewStateReader matViewStateReader = new MatViewStateReader().of(matViewFileReader, tableToken);
+                                        matViewFileWriter.of(auxPath.trimTo(tableRootLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                                        MatViewState.append(matViewStateReader, matViewFileWriter);
+                                        matViewFileWriter.of(auxPath.trimTo(tableRootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                                        MatViewDefinition.append(matViewDefinition, matViewFileWriter);
+                                    } else {
+                                        LOG.info().$("materialized view state for backup not found [view=").$(tableToken).I$();
+                                    }
                                 } else {
                                     LOG.info().$("materialized view definition for backup not found [view=").$(tableToken).I$();
                                 }
@@ -4096,7 +4107,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             } catch (CairoException e) {
                 LOG.info()
                         .$("could not backup [table=").utf8(tableName)
-                        .$(", ex=").$(e.getFlyweightMessage())
+                        .$(", msg=").$(e.getFlyweightMessage())
                         .$(", errno=").$(e.getErrno())
                         .I$();
                 auxPath.of(cachedBackupTmpRoot).concat(tableToken).slash$();
