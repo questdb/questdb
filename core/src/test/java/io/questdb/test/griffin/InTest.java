@@ -45,9 +45,9 @@ public class InTest extends AbstractCairoTest {
 
         // '' literal is treated as a zero char
         assertQuery(
-                "ts\tcast\n" +
-                        "2020-01-01T00:00:00.000000Z\t0\n",
-                "select ts, ch::byte from tab2 where ch in ('')",
+                "ts\tch\n" +
+                        "2020-01-01T00:00:00.000000Z\t\n",
+                "select ts, ch from tab2 where ch in ('')",
                 "create table tab2 as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, (x-1)::char ch from long_sequence(9))" +
                         " timestamp(ts) PARTITION BY MONTH",
                 "ts",
@@ -57,9 +57,9 @@ public class InTest extends AbstractCairoTest {
 
         // empty varchar is also treated as a zero char
         assertQuery(
-                "ts\tcast\n" +
-                        "2020-01-01T00:00:00.000000Z\t0\n",
-                "select ts, ch::byte from tab3 where ch in (''::varchar)",
+                "ts\tch\n" +
+                        "2020-01-01T00:00:00.000000Z\t\n",
+                "select ts, ch from tab3 where ch in (''::varchar)",
                 "create table tab3 as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, (x-1)::char ch from long_sequence(9))" +
                         " timestamp(ts) PARTITION BY MONTH",
                 "ts",

@@ -96,7 +96,7 @@ public class TelemetryConfigLogger implements Closeable {
 
     private void tryAddColumn(SqlCompiler compiler, SqlExecutionContext executionContext, CharSequence columnDetails) {
         try {
-            CompiledQuery cc = compiler.query().$("ALTER TABLE ").$(TELEMETRY_CONFIG_TABLE_NAME).$(" ADD COLUMN ").$(columnDetails).compile(executionContext);
+            CompiledQuery cc = compiler.query().$("ALTER TABLE ").$(TELEMETRY_CONFIG_TABLE_NAME).$(" ADD COLUMN IF NOT EXISTS ").$(columnDetails).compile(executionContext);
             try (OperationFuture fut = cc.execute(tempSequence)) {
                 fut.await();
             }
