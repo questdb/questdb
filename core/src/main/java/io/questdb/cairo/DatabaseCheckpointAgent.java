@@ -264,6 +264,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         }
                                     } else {
                                         LOG.info().$("skipping, materialized view is concurrently dropped [view=").$(tableToken).I$();
+                                        break;
                                     }
                                 }
 
