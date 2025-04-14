@@ -666,20 +666,6 @@ public class PropServerConfigurationTest {
                 "Replaced by `http.min.net.connection.rcvbuf` and `http.net.connection.rcvbuf`"));
     }
 
-    @Test(expected = ServerConfigurationException.class)
-    public void testDoubleCastScaleGreaterThanMax() throws Exception {
-        Properties properties = new Properties();
-        properties.setProperty("cairo.sql.double.cast.scale", Integer.toString(Numbers.MAX_DOUBLE_SCALE + 1));
-        newPropServerConfiguration(properties);
-    }
-
-    @Test(expected = ServerConfigurationException.class)
-    public void testDoubleScaleGreaterThanMax() throws Exception {
-        Properties properties = new Properties();
-        properties.setProperty("http.json.query.double.scale", Integer.toString(Numbers.MAX_DOUBLE_SCALE + 1));
-        newPropServerConfiguration(properties);
-    }
-
     @Test
     public void testEmptyTimestampTimezone() throws Exception {
         Properties properties = new Properties();
@@ -759,20 +745,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(60_000, configuration.getCairoConfiguration().getO3MaxLag());
         Assert.assertTrue(configuration.getCairoConfiguration().getTextConfiguration().isUseLegacyStringDefault());
         Assert.assertEquals(3000, configuration.getCairoConfiguration().getTelemetryConfiguration().getDbSizeEstimateTimeout());
-    }
-
-    @Test(expected = ServerConfigurationException.class)
-    public void testFloatCastScaleGreaterThanMax() throws Exception {
-        Properties properties = new Properties();
-        properties.setProperty("cairo.sql.float.cast.scale", Integer.toString(Numbers.MAX_FLOAT_SCALE + 1));
-        newPropServerConfiguration(properties);
-    }
-
-    @Test(expected = ServerConfigurationException.class)
-    public void testFloatScaleGreaterThanMax() throws Exception {
-        Properties properties = new Properties();
-        properties.setProperty("http.json.query.float.scale", Integer.toString(Numbers.MAX_FLOAT_SCALE + 1));
-        newPropServerConfiguration(properties);
     }
 
     @Test

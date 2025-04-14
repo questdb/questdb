@@ -102,9 +102,9 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql("ts\tcol\n" +
-                            "2024-05-14T16:00:00.000000Z\t0.0000\n" +
-                            "2024-05-14T16:00:01.000000Z\t0.1000\n" +
-                            "2024-05-14T16:00:02.000000Z\t3.1000\n" +
+                            "2024-05-14T16:00:00.000000Z\t0.0\n" +
+                            "2024-05-14T16:00:01.000000Z\t0.1\n" +
+                            "2024-05-14T16:00:02.000000Z\t3.1\n" +
                             "2024-05-14T16:00:02.000000Z\t-9.223372E18\n" +
                             "2024-05-14T16:00:02.000000Z\t-3.4E38\n" +
                             "2024-05-14T16:00:02.000000Z\t3.4E38\n" +
@@ -544,9 +544,9 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             assertSql(
                     "timestamp\td\n" +
-                            "2044-02-24T00:00:00.000000Z\t1.0000\n" +
-                            "2044-02-25T00:00:00.000000Z\t1.0000\n" +
-                            "2044-02-25T00:00:00.000000Z\t1.2000\n",
+                            "2044-02-24T00:00:00.000000Z\t1.0\n" +
+                            "2044-02-25T00:00:00.000000Z\t1.0\n" +
+                            "2044-02-25T00:00:00.000000Z\t1.2\n",
                     "select timestamp, d from x order by timestamp, d limit -3"
             );
         });
