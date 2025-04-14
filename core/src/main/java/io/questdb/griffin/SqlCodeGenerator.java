@@ -2494,21 +2494,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             if (!created && slave.isProjection()) {
                                                 RecordCursorFactory projectionBase = slave.getBaseFactory();
                                                 // We know projectionBase does not support supportsTimeFrameCursor, because
-                                                // SelectedRecordCursorFactory forwards this call to its base factory and if we are in this branch
+                                                // Projections forward this call to its base factory and if we are in this branch
                                                 // then slave.supportsTimeFrameCursor() returned false in one the previous branches.
-                                                // there is still chance that projectionBase is just a filter
+                                                // There is still chance that projectionBase is just a filter
                                                 // and its own base supports timeFrameCursor. let's see.
                                                 if (projectionBase.supportsFilterStealing()) {
                                                     // ok, cool, is used only as a filter.
                                                     RecordCursorFactory filterStealingBase = projectionBase.getBaseFactory();
                                                     if (filterStealingBase.supportsTimeFrameCursor()) {
                                                         IntList stolenCrossIndex = slave.getColumnCrossIndex();
+                                                        assert stolenCrossIndex != null;
                                                         Function stolenFilter = projectionBase.getFilter();
-                                                        projectionBase.halfClose();
+                                                        assert stolenFilter != null;
 
                                                         Misc.free(projectionBase.getCompiledFilter());
                                                         Misc.free(projectionBase.getBindVarMemory());
                                                         Misc.freeObjList(projectionBase.getBindVarFunctions());
+                                                        projectionBase.halfClose();
 
                                                         master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
                                                                 configuration,
