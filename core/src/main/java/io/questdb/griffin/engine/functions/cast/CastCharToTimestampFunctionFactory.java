@@ -25,12 +25,13 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastCharToTimestampFunctionFactory implements FunctionFactory {
@@ -57,8 +58,12 @@ public class CastCharToTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public long getTimestamp(Record rec) {
-            final byte v = (byte) (arg.getChar(rec) - '0');
-            return v > -1 && v < 10 ? v : Numbers.LONG_NULL;
+            char c = arg.getChar(rec);
+            final byte v = (byte) (c - '0');
+            if (v > -1 && v < 10) {
+                return v;
+            }
+            throw ImplicitCastException.inconvertibleValue(c, ColumnType.CHAR, ColumnType.TIMESTAMP);
         }
     }
 }

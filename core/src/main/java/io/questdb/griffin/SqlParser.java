@@ -2915,6 +2915,11 @@ public class SqlParser {
             throw SqlException.position(lexer.lastTokenPosition()).put("table name expected");
         }
 
+        // subquery is expected to be handled outside
+        if (expr.type != ExpressionNode.LITERAL && expr.type != ExpressionNode.CONSTANT && expr.type != ExpressionNode.FUNCTION) {
+            throw SqlException.$(expr.position, "function, literal or constant is expected");
+        }
+
         // check if it's a decl
         if (model.getDecls().contains(expr.token)) {
             if (expr.type == ExpressionNode.LITERAL) {
