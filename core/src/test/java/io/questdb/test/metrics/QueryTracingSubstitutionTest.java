@@ -31,6 +31,7 @@ import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import org.junit.Assert;
 import org.junit.Test;
+import org.postgresql.util.PSQLException;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -85,6 +86,55 @@ public class QueryTracingSubstitutionTest extends AbstractBootstrapTest {
                                     printToSink(sink, resultSet, null);
                                     Assert.assertFalse(sink.toString().contains("$"));
                                     break;
+                                }
+                            }
+                        } catch (AssertionError e) {
+                            if (sleepMillis >= 6400) {
+                                throw e;
+                            }
+                            sleepMillis *= 2;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWeCanLogTimedOutQueries() throws Exception {
+        assertMemoryLeak(() -> {
+            createDummyConfiguration("pg.select.cache.enabled=true", "query.tracing.enabled=true", "query.tracing.bind.variable.substitution.enabled=true", "query.timeout=1");
+            try (final ServerMain serverMain = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
+                serverMain.start();
+
+                try (Connection connection = getConnection(serverMain)) {
+                    try (final PreparedStatement stmt = connection.prepareStatement("CREATE TABLE foo AS (SELECT x FROM long_sequence(10_000_000));")) {
+                        stmt.execute();
+                    }
+
+                    try (final PreparedStatement stmt = connection.prepareStatement("select avg(x) FROM foo;")) {
+                        try (final ResultSet resultSet = stmt.executeQuery()) {
+                            assertResultSet("abc",
+                                    Misc.getThreadLocalSink(),
+                                    resultSet);
+                        } catch (PSQLException ex) {
+                            Assert.assertTrue(ex.getMessage().contains("timeout, query aborted"));
+                        }
+                    }
+
+                    int sleepMillis = 100;
+                    while (true) {
+                        //noinspection BusyWait
+                        Thread.sleep(sleepMillis);
+                        try {
+                            try (final PreparedStatement stmt = connection.prepareStatement("_query_trace;")) {
+                                try (final ResultSet resultSet = stmt.executeQuery()) {
+                                    StringSink sink = Misc.getThreadLocalSink();
+                                    printToSink(sink, resultSet, null);
+                                    String output = sink.toString();
+                                    Assert.assertTrue(output.contains("select avg(x) FROM foo"));
+                                    Assert.assertTrue(output.contains("admin,timeout, query aborted"));
+                                    return;
                                 }
                             }
                         } catch (AssertionError e) {
