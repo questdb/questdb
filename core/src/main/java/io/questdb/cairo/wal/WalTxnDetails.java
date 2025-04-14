@@ -211,21 +211,20 @@ public class WalTxnDetails implements QuietCloseable {
     public int calculateInsertTransactionBlock(long seqTxn, TableWriterPressureControl pressureControl, long maxBlockRecordCount) {
         int blockSize = 1;
         long lastSeqTxn = getLastSeqTxn();
-        long totalRowCount = 0;
+        long totalRowCount = getSegmentRowHi(seqTxn) - getSegmentRowLo(seqTxn);
         maxBlockRecordCount = Math.min(maxBlockRecordCount, pressureControl.getMaxBlockRowCount() - 1);
 
         long lastWalSegment = getWalSegment(seqTxn);
-        boolean allInOrder = true;
+        boolean allInOrder = getTxnInOrder(seqTxn);
         long minTs = Long.MAX_VALUE;
         long maxTs = Long.MIN_VALUE;
 
-        for (long nextTxn = seqTxn; nextTxn < lastSeqTxn; nextTxn++) {
+        for (long nextTxn = seqTxn + 1; nextTxn <= lastSeqTxn; nextTxn++) {
             long currentWalSegment = getWalSegment(nextTxn);
             if (allInOrder) {
                 if (currentWalSegment != lastWalSegment) {
                     if (totalRowCount >= maxBlockRecordCount / 10) {
                         // Big enough chunk of all in order data in same segment
-                        blockSize--;
                         break;
                     }
                     allInOrder = false;
@@ -235,8 +234,7 @@ public class WalTxnDetails implements QuietCloseable {
                     maxTs = Math.max(maxTs, getMaxTimestamp(nextTxn));
                 }
             }
-            long txnRowCount = getSegmentRowHi(nextTxn) - getSegmentRowLo(nextTxn);
-            totalRowCount += txnRowCount;
+            totalRowCount += getSegmentRowHi(nextTxn) - getSegmentRowLo(nextTxn);
             lastWalSegment = currentWalSegment;
 
             if (getCommitToTimestamp(nextTxn) == FORCE_FULL_COMMIT || totalRowCount > maxBlockRecordCount) {
@@ -342,10 +340,6 @@ public class WalTxnDetails implements QuietCloseable {
 
     public byte getWalTxnType(long seqTxn) {
         return (byte) Numbers.decodeHighInt(transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ROW_IN_ORDER_DATA_TYPE)));
-    }
-
-    public boolean hasRecord(long seqTxn) {
-        return (seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE < transactionMeta.size();
     }
 
     public boolean isLastSegmentUsage(long seqTxn) {
@@ -600,7 +594,7 @@ public class WalTxnDetails implements QuietCloseable {
                 txnsToLoad = txn;
 
                 // We specify min as 0, so we expect the highest bit to be 0
-                Vect.radixSortLongIndexAscInPlaceBounded(
+                Vect.radixSortLongIndexAscChecked(
                         txnOrder.getAddress(),
                         txnsToLoad,
                         txnOrder.getAddress() + txnsToLoad * 2L * Long.BYTES,
@@ -936,7 +930,7 @@ public class WalTxnDetails implements QuietCloseable {
                 txnOrder.add(i);
             }
 
-            Vect.radixSortLongIndexAscInPlaceBounded(
+            Vect.radixSortLongIndexAscChecked(
                     txnOrder.getAddress(),
                     count,
                     txnOrder.getAddress() + count * 2L * Long.BYTES,

@@ -33,6 +33,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.wal.SymbolMapDiff;
@@ -46,6 +47,8 @@ import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
@@ -92,6 +95,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -114,6 +118,26 @@ public class WalWriterTest extends AbstractCairoTest {
     @Test
     public void apply1RowCommitsManyWritersExceedsBlockSortRanges() throws Exception {
         testApply1RowCommitManyWriters(Timestamps.YEAR_10000 / 300, 265, 16);
+    }
+
+    @Test
+    public void test1RowCommitEqualSize() throws Exception {
+        // Force 1 by 1 commit application
+        setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, 1);
+
+        assertMemoryLeak(() -> {
+            execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL dedup upsert keys (ts, id)");
+            TableToken tableToken = engine.verifyTableName("sm");
+
+            execute("insert into " + tableToken.getTableName() + "(id, ts) values (1, '2022-02-24')");
+            execute("insert into " + tableToken.getTableName() + "(id, ts) values (2, '2022-02-24')");
+            drainWalQueue();
+
+            assertSqlCursors("sm", "select * from sm order by id");
+            assertSql("count\tmin\tmax\n" +
+                    "2\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:00:00.000000Z\n", "select count(*), min(ts), max(ts) from sm");
+        });
     }
 
     @Test
@@ -953,6 +977,78 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterWithParallelTableRename() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table alter_rename0 (i int, s symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("create table alter_rename1 (i int, s symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            TableToken token0 = engine.verifyTableName("alter_rename0");
+            TableToken token1 = engine.verifyTableName("alter_rename1");
+
+            AtomicBoolean stop = new AtomicBoolean(false);
+            CountDownLatch countDownLatch = new CountDownLatch(2);
+            AtomicInteger errors = new AtomicInteger();
+
+            Thread alterThread = new Thread(() -> {
+                try {
+                    countDownLatch.countDown();
+                    for (int i = 0; i < 100; i++) {
+                        try {
+                            execute("alter table alter_rename0 alter column s symbol capacity 1024");
+                        } catch (SqlException e) {
+                            if (!e.isTableDoesNotExist()) {
+                                throw e;
+                            }
+                            i--;
+                        } catch (CairoException e) {
+                            if (!e.isTableDoesNotExist()) {
+                                throw e;
+                            }
+                            i--;
+                        }
+                        drainWalQueue();
+                    }
+                } catch (Throwable e) {
+                    errors.incrementAndGet();
+                    throw new RuntimeException(e);
+                } finally {
+                    Path.clearThreadLocals();
+                    stop.set(true);
+                }
+            });
+            alterThread.start();
+
+            Thread renameThread = new Thread(() -> {
+                try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
+                        .with(AllowAllSecurityContext.INSTANCE);
+                     SqlCompiler compiler = engine.getSqlCompiler()) {
+                    countDownLatch.countDown();
+                    while (!stop.get()) {
+                        execute(compiler, "rename table alter_rename0 to alter_rename_tmp", sqlExecutionContext);
+                        execute(compiler, "rename table alter_rename1 to alter_rename0", sqlExecutionContext);
+                        execute(compiler, "rename table alter_rename_tmp to alter_rename1", sqlExecutionContext);
+                    }
+                } catch (Throwable th) {
+                    errors.incrementAndGet();
+                    throw new RuntimeException(th);
+                } finally {
+                    Path.clearThreadLocals();
+                    stop.set(true);
+                }
+            });
+            renameThread.start();
+
+
+            alterThread.join();
+            renameThread.join();
+
+            Assert.assertEquals(0, errors.get());
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token0));
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token1));
+
+        });
+    }
+
+    @Test
     public void testApplyManySmallCommits2Writers() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
@@ -1666,14 +1762,14 @@ public class WalWriterTest extends AbstractCairoTest {
                     .col("b", ColumnType.SYMBOL)
                     .timestamp("ts").noWal();
             TableToken tableToken = createTable(model);
-            TableToken _unused = createTable(copyModel);
+            createTable(copyModel);
 
             final int rowsToInsertTotal = 100;
             Rnd rnd = new Rnd();
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
                     WalWriter walWriter = engine.getWalWriter(tableToken);
-                    TableWriter copyWriter = getWriter(tableCopyName);
+                    TableWriter copyWriter = getWriter(tableCopyName)
             ) {
                 for (int i = 0; i < rowsToInsertTotal; i++) {
                     boolean invalidate = rnd.nextBoolean();
@@ -3576,50 +3672,132 @@ public class WalWriterTest extends AbstractCairoTest {
 
             assertTableExistence(true, tableToken);
 
-            engine.setWalDirectoryPolicy(new WalDirectoryPolicy() {
-                @Override
-                public void initDirectory(Path dirPath) {
-                    final File segmentDirFile = new File(dirPath.toString());
-                    final File customInitFile = new File(segmentDirFile, "customInitFile");
-                    try {
-                        //noinspection ResultOfMethodCallIgnored
-                        customInitFile.createNewFile();
-                    } catch (IOException e) {
-                        throw new RuntimeException(e);
+            WalDirectoryPolicy oldPolicy = engine.getWalDirectoryPolicy();
+            try {
+                engine.setWalDirectoryPolicy(new WalDirectoryPolicy() {
+                    @Override
+                    public void initDirectory(Path dirPath) {
+                        final File segmentDirFile = new File(dirPath.toString());
+                        final File customInitFile = new File(segmentDirFile, "customInitFile");
+                        try {
+                            //noinspection ResultOfMethodCallIgnored
+                            customInitFile.createNewFile();
+                        } catch (IOException e) {
+                            throw new RuntimeException(e);
+                        }
                     }
+
+                    @Override
+                    public boolean isInUse(Path path) {
+                        return false;
+                    }
+
+                    @Override
+                    public void rollbackDirectory(Path path) {
+                        // do nothing
+                    }
+
+                    @Override
+                    public boolean truncateFilesOnClose() {
+                        return true;
+                    }
+                });
+
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    for (int i = 0; i < 10; i++) {
+                        TableWriter.Row row = walWriter.newRow(0);
+                        row.putByte(0, (byte) i);
+                        row.append();
+                    }
+
+                    walWriter.commit();
                 }
 
-                @Override
-                public boolean isInUse(Path path) {
-                    return false;
-                }
+                assertWalExistence(true, tableToken, 1);
+                File segmentDir = assertSegmentExistence(true, tableToken, 1, 0);
 
-                @Override
-                public void rollbackDirectory(Path path) {
-                    // do nothing
-                }
-
-                @Override
-                public boolean truncateFilesOnClose() {
-                    return true;
-                }
-            });
-
-            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
-                for (int i = 0; i < 10; i++) {
-                    TableWriter.Row row = walWriter.newRow(0);
-                    row.putByte(0, (byte) i);
-                    row.append();
-                }
-
-                walWriter.commit();
+                final File customInitFile = new File(segmentDir, "customInitFile");
+                assertTrue(customInitFile.exists());
+            } finally {
+                engine.setWalDirectoryPolicy(oldPolicy);
             }
+        });
+    }
 
-            assertWalExistence(true, tableToken, 1);
-            File segmentDir = assertSegmentExistence(true, tableToken, 1, 0);
+    @Test
+    public void testWalSegmentKeepsPendingOnClose() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "testWalSegmentKeepsPendingOnClose";
+            TableToken tableToken;
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                    .col("a", ColumnType.BYTE)
+                    .timestamp("ts")
+                    .wal();
+            tableToken = createTable(model);
 
-            final File customInitFile = new File(segmentDir, "customInitFile");
-            assertTrue(customInitFile.exists());
+            assertTableExistence(true, tableToken);
+            String pending = "custom.pending";
+            WalDirectoryPolicy oldPolicy = engine.getWalDirectoryPolicy();
+            try {
+                engine.setWalDirectoryPolicy(new WalDirectoryPolicy() {
+                    @Override
+                    public void initDirectory(Path dirPath) {
+                        final File segmentDirFile = new File(dirPath.toString());
+                        final File customInitFile = new File(segmentDirFile, pending);
+                        try {
+                            //noinspection ResultOfMethodCallIgnored
+                            customInitFile.createNewFile();
+                        } catch (IOException e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+
+                    @Override
+                    public boolean isInUse(Path path) {
+                        return true;
+                    }
+
+                    @Override
+                    public void rollbackDirectory(Path path) {
+                        final File segmentDirFile = new File(path.toString());
+                        final File customInitFile = new File(segmentDirFile, pending);
+                        customInitFile.delete();
+                    }
+
+                    @Override
+                    public boolean truncateFilesOnClose() {
+                        return true;
+                    }
+                });
+
+                try (WalWriter wal1 = engine.getWalWriter(tableToken);
+                     WalWriter wal2 = engine.getWalWriter(tableToken)
+                ) {
+                    for (int i = 0; i < 10; i++) {
+                        TableWriter.Row row = wal1.newRow(0);
+                        row.putByte(0, (byte) i);
+                        row.append();
+                    }
+                    wal1.commit();
+
+                    // wal2 without commits
+                    wal2.truncateSoft();
+                }
+
+                assertWalExistence(true, tableToken, 1);
+                File segmentDir = assertSegmentExistence(true, tableToken, 1, 0);
+
+                final File pendingFile = new File(segmentDir, pending);
+                assertTrue(pendingFile.exists());
+
+                assertWalExistence(true, tableToken, 2);
+                File segmentDir2 = assertSegmentExistence(true, tableToken, 2, 0);
+
+                final File pendingFile2 = new File(segmentDir2, pending);
+                assertTrue(pendingFile2.exists());
+            } finally {
+                engine.setWalDirectoryPolicy(oldPolicy);
+            }
         });
     }
 
@@ -3642,6 +3820,7 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
+    @SuppressWarnings("SameParameterValue")
     private static void checkWalEvents(TableToken tableToken, long refreshTxn, boolean newFormat) {
         try (Path path = new Path();
              WalEventReader walEventReader = new WalEventReader(configuration.getFilesFacade());
@@ -3737,6 +3916,7 @@ public class WalWriterTest extends AbstractCairoTest {
         }
     }
 
+    @SuppressWarnings("SameParameterValue")
     private TableToken createPopulateTable(String tableName, long refreshTxn, boolean newFormat) {
         TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
                 .col("a", ColumnType.BYTE)
@@ -3810,7 +3990,7 @@ public class WalWriterTest extends AbstractCairoTest {
             Utf8StringSink sink = new Utf8StringSink();
             StringSink stringSink = new StringSink();
 
-            Rnd rnd = TestUtils.generateRandom(LOG, 672802496975500L, 1742393295792L);
+            Rnd rnd = TestUtils.generateRandom(LOG);
 
             ObjList<WalWriter> writerObjList = new ObjList<>();
             for (int c = 0; c < walWriterCount; c++) {
@@ -3861,12 +4041,16 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            assertSql("count\tmin\tmax\n" +
-                    totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - tsStep) + "\n", "select count(*), min(ts), max(ts) from sm");
+            assertSql(
+                    "count\tmin\tmax\n" +
+                            totalRows + "\t2022-02-24T00:00:00.000000Z\t" + Timestamps.toUSecString(ts - tsStep) + "\n", "select count(*), min(ts), max(ts) from sm"
+            );
             assertSqlCursors("sm", "select * from sm order by id");
             assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(s as int)");
             assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id <> cast(v as int)");
             assertSql("id\tts\ty\ts\tv\tm\n", "select * from sm WHERE id % " + symbolCount + " <> cast(m as int)");
+
+            Assert.assertTrue(engine.getTableSequencerAPI().getTxnTracker(tableToken).getMemPressureControl().getMaxBlockRowCount() > 1000);
 
         });
     }

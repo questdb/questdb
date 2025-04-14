@@ -732,6 +732,15 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplicitCastStrIPv4() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "column\n" +
+                        "253.253.253.253\n",
+                "select ~ ipv4 '2.2.2.2'"
+        ));
+    }
+
+    @Test
     public void testExplicitCastStrToIPv4() throws Exception {
         assertMemoryLeak(() -> assertSql(
                 "cast\n" +
@@ -982,6 +991,33 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testIPv4BitwiseAndChar() throws Exception {
+        assertException(
+                "select ipv4 '1.1.1.1' & '0'",
+                22,
+                "there is no matching operator `&` with the argument types: IPv4 & CHAR"
+        );
+
+        assertException(
+                "select ipv4 '1.1.1.1' | '0'",
+                22,
+                "there is no matching operator `|` with the argument types: IPv4 | CHAR"
+        );
+
+        assertException(
+                "select '0' & ipv4 '1.1.1.1'",
+                11,
+                "there is no matching operator `&` with the argument types: CHAR & IPv4"
+        );
+
+        assertException(
+                "select '0' | ipv4 '1.1.1.1'",
+                11,
+                "there is no matching operator `|` with the argument types: CHAR | IPv4"
+        );
+    }
+
+    @Test
     public void testIPv4BitwiseAndConst() throws Exception {
         assertMemoryLeak(() -> assertSql(
                 "column\n" +
@@ -1027,11 +1063,6 @@ public class IPv4Test extends AbstractCairoTest {
                 29,
                 "invalid IPv4 constant"
         );
-    }
-
-    @Test
-    public void testIPv4BitwiseAndFailsStr() throws Exception {
-        assertException("select '1.1.1.1' & '0.0.1.1'", 0, "inconvertible value: `1.1.1.1` [STRING -> LONG]");
     }
 
     @Test
@@ -1151,6 +1182,18 @@ public class IPv4Test extends AbstractCairoTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testIPv4BitwiseAndStr() throws Exception {
+        assertMemoryLeak(() -> assertQuery(
+                "column\n" +
+                        "0.0.1.1\n",
+                "select '1.1.1.1' & '0.0.1.1'",
+                null,
+                true,
+                true
+        ));
     }
 
     @Test
@@ -1539,8 +1582,15 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
-    public void testIPv4BitwiseOrFailsStr() throws Exception {
-        assertException("select '1.1.1.1' | '0.0.1.1'", 0, "inconvertible value: `1.1.1.1` [STRING -> LONG]");
+    public void testIPv4BitwiseOrStr() throws Exception {
+        assertMemoryLeak(() -> assertQuery(
+                "column\n" +
+                        "1.1.1.1\n",
+                "select '1.1.1.1' | '0.0.1.1'",
+                null,
+                true,
+                true
+        ));
     }
 
     @Test
@@ -2429,6 +2479,16 @@ public class IPv4Test extends AbstractCairoTest {
                     "select isOrdered(ip) from test"
             );
         });
+    }
+
+    @Test
+    public void testIPv4MinusIPv4Char() throws Exception {
+        assertMemoryLeak(() -> assertQuery(
+                "column\n" +
+                        "1.1.0.248\n",
+                "select ipv4 '1.1.1.1' - '9'",
+                true
+        ));
     }
 
     @Test
@@ -4128,7 +4188,7 @@ public class IPv4Test extends AbstractCairoTest {
         assertMemoryLeak(() -> assertSql(
                 "column\n" +
                         "1.1.0.252\n",
-                "select '1.1.1.1' - 5"
+                "select ipv4 '1.1.1.1' - 5"
         ));
     }
 
@@ -4155,7 +4215,7 @@ public class IPv4Test extends AbstractCairoTest {
         assertMemoryLeak(() -> assertSql(
                 "column\n" +
                         "1.1.1.6\n",
-                "select '1.1.1.1' + 5"
+                "select ipv4 '1.1.1.1' + 5"
         ));
     }
 
@@ -4524,15 +4584,6 @@ public class IPv4Test extends AbstractCairoTest {
                 "column\n" +
                         "false\n",
                 "select ipv4 '2.2.2.2' <= '1.1.1.1'"
-        ));
-    }
-
-    @Test
-    public void testImplicitCastStrIPv43() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "column\n" +
-                        "253.253.253.253\n",
-                "select ~ '2.2.2.2'"
         ));
     }
 
@@ -5063,7 +5114,7 @@ public class IPv4Test extends AbstractCairoTest {
         assertMemoryLeak(() -> assertSql(
                 "column\n" +
                         "1.1.1.6\n",
-                "select 5 + '1.1.1.1'"
+                "select 5 + ipv4 '1.1.1.1'"
         ));
     }
 

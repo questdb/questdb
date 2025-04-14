@@ -32,7 +32,7 @@ macro_rules! impl_primitive_type_driver {
             pub struct [<$tag Driver>];
 
             impl ColumnDriver for [<$tag Driver>] {
-                fn col_sizes_for_size(&self, col: &MappedColumn, row_count: u64) -> CoreResult<(u64, Option<u64>)> {
+                fn col_sizes_for_row_count(&self, col: &MappedColumn, row_count: u64) -> CoreResult<(u64, Option<u64>)> {
                     assert!(!ColumnTypeTag::$tag.is_var_size());
                     let row_size = ColumnTypeTag::$tag.fixed_size().expect("fixed size column") as u64;
                     let data_size = row_size * row_count;
@@ -97,11 +97,11 @@ mod tests {
         // Empty column
         let col = map_col("int_col0", ColumnTypeTag::Int.into_type());
 
-        let (data_size, aux_size) = IntDriver.col_sizes_for_size(&col, 0).unwrap();
+        let (data_size, aux_size) = IntDriver.col_sizes_for_row_count(&col, 0).unwrap();
         assert_eq!(data_size, 0);
         assert_eq!(aux_size, None);
 
-        let err = IntDriver.col_sizes_for_size(&col, 1).unwrap_err();
+        let err = IntDriver.col_sizes_for_row_count(&col, 1).unwrap_err();
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         let msg = format!("{:#}", err);
         eprintln!("{}", msg);
@@ -113,15 +113,15 @@ mod tests {
     #[test]
     fn test_int_col1() {
         let col = map_col("int_col1", ColumnTypeTag::Int.into_type());
-        let (data_size, aux_size) = IntDriver.col_sizes_for_size(&col, 0).unwrap();
+        let (data_size, aux_size) = IntDriver.col_sizes_for_row_count(&col, 0).unwrap();
         assert_eq!(data_size, 0);
         assert_eq!(aux_size, None);
 
-        let (data_size, aux_size) = IntDriver.col_sizes_for_size(&col, 1).unwrap();
+        let (data_size, aux_size) = IntDriver.col_sizes_for_row_count(&col, 1).unwrap();
         assert_eq!(data_size, 4);
         assert_eq!(aux_size, None);
 
-        let err = IntDriver.col_sizes_for_size(&col, 2).unwrap_err();
+        let err = IntDriver.col_sizes_for_row_count(&col, 2).unwrap_err();
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         let msg = format!("{:#}", err);
         // eprintln!("{}", msg);
@@ -133,15 +133,17 @@ mod tests {
     #[test]
     fn test_timestamp_col1() {
         let col = map_col("timestamp_col1", ColumnTypeTag::Timestamp.into_type());
-        let (data_size, aux_size) = TimestampDriver.col_sizes_for_size(&col, 0).unwrap();
+        let (data_size, aux_size) = TimestampDriver.col_sizes_for_row_count(&col, 0).unwrap();
         assert_eq!(data_size, 0);
         assert_eq!(aux_size, None);
 
-        let (data_size, aux_size) = TimestampDriver.col_sizes_for_size(&col, 1).unwrap();
+        let (data_size, aux_size) = TimestampDriver.col_sizes_for_row_count(&col, 1).unwrap();
         assert_eq!(data_size, 8);
         assert_eq!(aux_size, None);
 
-        let err = TimestampDriver.col_sizes_for_size(&col, 2).unwrap_err();
+        let err = TimestampDriver
+            .col_sizes_for_row_count(&col, 2)
+            .unwrap_err();
         assert!(matches!(err.reason(), CoreErrorReason::InvalidLayout));
         let msg = format!("{:#}", err);
         // eprintln!("{}", msg);
