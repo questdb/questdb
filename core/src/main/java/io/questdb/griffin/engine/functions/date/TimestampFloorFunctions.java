@@ -36,8 +36,8 @@ import io.questdb.std.datetime.microtime.Timestamps;
  * Functions used by both data_trunc() and timestamp_floor() as these functions have overlapping behaviour.
  */
 final class TimestampFloorFunctions {
-    private TimestampFloorFunctions() {
 
+    private TimestampFloorFunctions() {
     }
 
     abstract static class AbstractTimestampFloorFunction extends TimestampFunction implements UnaryFunction {
@@ -60,7 +60,7 @@ final class TimestampFloorFunctions {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("timestamp_floor('").val(getUnit()).val("',").val(getArg()).val(')');
+            sink.val(TimestampFloorFunctionFactory.NAME).val("('").val(getUnit()).val("',").val(getArg()).val(')');
         }
 
         abstract protected long floor(long timestamp);

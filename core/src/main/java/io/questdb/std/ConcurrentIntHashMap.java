@@ -76,14 +76,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.function.LongFunction;
+import java.util.function.IntFunction;
 
 /**
- * Same as {@link ConcurrentHashMap}, but with primitive type long keys.
+ * Same as {@link ConcurrentHashMap}, but with primitive type int keys.
  */
 @SuppressWarnings("SynchronizationOnLocalVariableOrMethodParameter")
-public class ConcurrentLongHashMap<V> implements Serializable {
-    static final long EMPTY_KEY = Long.MIN_VALUE;
+public class ConcurrentIntHashMap<V> implements Serializable {
+    static final int EMPTY_KEY = Integer.MIN_VALUE;
 
     /*
      * Overview:
@@ -454,7 +454,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
             new ObjectStreamField("segmentShift", Integer.TYPE)
     };
     private static final long serialVersionUID = 7249069246763182397L;
-    private final java.lang.ThreadLocal<Traverser<V>> tlTraverser = ThreadLocal.withInitial(Traverser::new);
+    private final ThreadLocal<Traverser<V>> tlTraverser = ThreadLocal.withInitial(Traverser::new);
     /**
      * The array of bins. Lazily initialized upon first insertion.
      * Size is always a power of two. Accessed directly by iterators.
@@ -513,7 +513,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      *                                  negative or the load factor or concurrencyLevel are
      *                                  nonpositive
      */
-    public ConcurrentLongHashMap(int initialCapacity, float loadFactor) {
+    public ConcurrentIntHashMap(int initialCapacity, float loadFactor) {
         if (!(loadFactor > 0.0f) || initialCapacity < 0)
             throw new IllegalArgumentException();
         if (initialCapacity < 1)   // Use at least as many bins
@@ -528,7 +528,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      *
      * @param m the map
      */
-    public ConcurrentLongHashMap(ConcurrentLongHashMap<? extends V> m) {
+    public ConcurrentIntHashMap(ConcurrentIntHashMap<? extends V> m) {
         this.sizeCtl = DEFAULT_CAPACITY;
         putAll(m);
     }
@@ -536,7 +536,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
     /**
      * Creates a new, empty map with the default initial table size (16).
      */
-    public ConcurrentLongHashMap() {
+    public ConcurrentIntHashMap() {
     }
 
     /**
@@ -549,7 +549,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      * @throws IllegalArgumentException if the initial capacity of
      *                                  elements is negative
      */
-    public ConcurrentLongHashMap(int initialCapacity) {
+    public ConcurrentIntHashMap(int initialCapacity) {
         if (initialCapacity < 0)
             throw new IllegalArgumentException();
         this.sizeCtl = ((initialCapacity >= (MAXIMUM_CAPACITY >>> 1)) ?
@@ -565,7 +565,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      * @since 1.8
      */
     public static KeySetView<Boolean> newKeySet() {
-        return new KeySetView<>(new ConcurrentLongHashMap<>(), Boolean.TRUE);
+        return new KeySetView<>(new ConcurrentIntHashMap<>(), Boolean.TRUE);
     }
 
     /**
@@ -580,7 +580,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      * @since 1.8
      */
     public static KeySetView<Boolean> newKeySet(int initialCapacity) {
-        return new KeySetView<>(new ConcurrentLongHashMap<>(initialCapacity), Boolean.TRUE);
+        return new KeySetView<>(new ConcurrentIntHashMap<>(initialCapacity), Boolean.TRUE);
     }
 
     /**
@@ -637,7 +637,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      * @throws RuntimeException         or Error if the remappingFunction does so,
      *                                  in which case the mapping is unchanged
      */
-    public V compute(long key, BiLongFunction<? super V, ? extends V> remappingFunction) {
+    public V compute(int key, BiIntFunction<? super V, ? extends V> remappingFunction) {
         if (key < 0)
             throw new IllegalArgumentException();
         if (remappingFunction == null)
@@ -761,7 +761,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      * @throws RuntimeException         or Error if the mappingFunction does so,
      *                                  in which case the mapping is left unestablished
      */
-    public V computeIfAbsent(long key, Object token, BiLongFunction<Object, ? extends V> mappingFunction) {
+    public V computeIfAbsent(int key, Object token, BiIntFunction<Object, ? extends V> mappingFunction) {
         if (key < 0)
             throw new IllegalArgumentException();
         if (mappingFunction == null)
@@ -863,7 +863,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      * @throws RuntimeException         or Error if the mappingFunction does so,
      *                                  in which case the mapping is left unestablished
      */
-    public V computeIfAbsent(long key, LongFunction<? extends V> mappingFunction) {
+    public V computeIfAbsent(int key, IntFunction<? extends V> mappingFunction) {
         if (key < 0)
             throw new IllegalArgumentException();
         if (mappingFunction == null)
@@ -962,7 +962,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      * @throws RuntimeException         or Error if the remappingFunction does so,
      *                                  in which case the mapping is unchanged
      */
-    public V computeIfPresent(long key, BiLongFunction<? super V, ? extends V> remappingFunction) {
+    public V computeIfPresent(int key, BiIntFunction<? super V, ? extends V> remappingFunction) {
         if (key < 0)
             throw new IllegalArgumentException();
         if (remappingFunction == null)
@@ -1040,7 +1040,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      * {@code equals} method; {@code false} otherwise
      * @throws NullPointerException if the specified key is null
      */
-    public boolean containsKey(long key) {
+    public boolean containsKey(int key) {
         return get(key) != null;
     }
 
@@ -1083,7 +1083,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      * @return the set view
      */
     @NotNull
-    public Set<LongEntry<V>> entrySet() {
+    public Set<IntEntry<V>> entrySet() {
         EntrySetView<V> es;
         return (es = entrySet) != null ? es : (entrySet = new EntrySetView<>(this));
     }
@@ -1100,9 +1100,9 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      */
     public boolean equals(Object o) {
         if (o != this) {
-            if (!(o instanceof ConcurrentLongHashMap))
+            if (!(o instanceof ConcurrentIntHashMap))
                 return false;
-            ConcurrentLongHashMap<?> m = (ConcurrentLongHashMap<?>) o;
+            ConcurrentIntHashMap<?> m = (ConcurrentIntHashMap<?>) o;
             Traverser<V> it = getTraverser(table);
             for (Node<V> p; (p = it.advance()) != null; ) {
                 V val = p.val;
@@ -1110,8 +1110,8 @@ public class ConcurrentLongHashMap<V> implements Serializable {
                 if (v == null || (v != val && !v.equals(val)))
                     return false;
             }
-            for (LongEntry<?> e : m.entrySet()) {
-                long mk;
+            for (IntEntry<?> e : m.entrySet()) {
+                int mk;
                 Object mv, v;
                 if ((mk = e.getKey()) == EMPTY_KEY ||
                         (mv = e.getValue()) == null ||
@@ -1135,7 +1135,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      * @return value to which specified key is mapped
      * @throws NullPointerException if the specified key is null
      */
-    public V get(long key) {
+    public V get(int key) {
         Node<V>[] tab;
         Node<V> e, p;
         int n, eh;
@@ -1166,7 +1166,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      * @return the mapping for the key, if present; else the default value
      * @throws NullPointerException if the specified key is null
      */
-    public V getOrDefault(long key, V defaultValue) {
+    public V getOrDefault(int key, V defaultValue) {
         V v;
         return (v = get(key)) == null ? defaultValue : v;
     }
@@ -1264,7 +1264,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      * {@code null} if there was no mapping for {@code key}
      * @throws NullPointerException if the specified key or value is null
      */
-    public V put(long key, V value) {
+    public V put(int key, V value) {
         return putVal(key, value, false);
     }
 
@@ -1275,9 +1275,9 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      *
      * @param m mappings to be stored in this map
      */
-    public void putAll(@NotNull ConcurrentLongHashMap<? extends V> m) {
+    public void putAll(@NotNull ConcurrentIntHashMap<? extends V> m) {
         tryPresize(m.size());
-        for (LongEntry<? extends V> e : m.entrySet())
+        for (IntEntry<? extends V> e : m.entrySet())
             putVal(e.getKey(), e.getValue(), false);
     }
 
@@ -1288,11 +1288,11 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      * or {@code null} if there was no mapping for the key
      * @throws NullPointerException if the specified key or value is null
      */
-    public V putIfAbsent(long key, V value) {
+    public V putIfAbsent(int key, V value) {
         return putVal(key, value, true);
     }
 
-    public boolean remove(long key, V value) {
+    public boolean remove(int key, V value) {
         return value != null && replaceNode(key, null, value) != null;
     }
 
@@ -1305,13 +1305,13 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      * {@code null} if there was no mapping for {@code key}
      * @throws NullPointerException if the specified key is null
      */
-    public V remove(long key) {
+    public V remove(int key) {
         return replaceNode(key, null, null);
     }
 
     // Hashtable legacy methods
 
-    public boolean replace(long key, @NotNull V oldValue, @NotNull V newValue) {
+    public boolean replace(int key, @NotNull V oldValue, @NotNull V newValue) {
         return replaceNode(key, newValue, oldValue) != null;
     }
 
@@ -1324,7 +1324,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      * or {@code null} if there was no mapping for the key
      * @throws NullPointerException if the specified key or value is null
      */
-    public V replace(long key, @NotNull V value) {
+    public V replace(int key, @NotNull V value) {
         return replaceNode(key, value, null);
     }
 
@@ -1356,7 +1356,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
         Node<V> p;
         if ((p = it.advance()) != null) {
             for (; ; ) {
-                long k = p.key;
+                int k = p.key;
                 V v = p.val;
                 sb.append(k);
                 sb.append('=');
@@ -1407,8 +1407,8 @@ public class ConcurrentLongHashMap<V> implements Serializable {
 
     /* ---------------- Table Initialization and Resizing -------------- */
 
-    private static int keyHashCode(final long key) {
-        return Hash.hashLong32(key);
+    private static int keyHashCode(int key) {
+        return key;
     }
 
     private static long mix64(long z) {
@@ -1678,7 +1678,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
                             }
                             for (Node<V> p = f; p != lastRun; p = p.next) {
                                 int ph = p.hash;
-                                long pk = p.key;
+                                int pk = p.key;
                                 V pv = p.val;
                                 if ((ph & n) == 0)
                                     ln = new Node<>(ph, pk, pv, ln);
@@ -1851,7 +1851,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      * Returns k.compareTo(x) if x matches kc (k's screened comparable
      * class), else 0.
      */
-    static int compareComparables(long k, long x) {
+    static int compareComparables(int k, long x) {
         return Long.compare(k, x);
     }
 
@@ -1961,7 +1961,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
     /**
      * Implementation for put and putIfAbsent
      */
-    final V putVal(long key, V value, boolean onlyIfAbsent) {
+    final V putVal(int key, V value, boolean onlyIfAbsent) {
         if (key < 0) throw new IllegalArgumentException();
         if (value == null) throw new NullPointerException();
         int hash = spread(keyHashCode(key));
@@ -2034,7 +2034,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      * Replaces node value with v, conditional upon match of cv if
      * non-null.  If resulting value is null, delete.
      */
-    final V replaceNode(long key, V value, V cv) {
+    final V replaceNode(int key, V value, V cv) {
         int hash = spread(keyHashCode(key));
         for (Node<V>[] tab = table; ; ) {
             Node<V> f;
@@ -2113,10 +2113,10 @@ public class ConcurrentLongHashMap<V> implements Serializable {
         return sum;
     }
 
-    public interface LongEntry<V> {
+    public interface IntEntry<V> {
         boolean equals(Object var1);
 
-        long getKey();
+        int getKey();
 
         V getValue();
 
@@ -2131,7 +2131,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      */
     static class BaseIterator<V> extends Traverser<V> {
         Node<V> lastReturned;
-        ConcurrentLongHashMap<V> map;
+        ConcurrentIntHashMap<V> map;
 
         public final boolean hasNext() {
             return next != null;
@@ -2145,7 +2145,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
             map.replaceNode(p.key, null, null);
         }
 
-        void of(ConcurrentLongHashMap<V> map) {
+        void of(ConcurrentIntHashMap<V> map) {
             Node<V>[] tab = map.table;
             int l = tab == null ? 0 : tab.length;
             super.of(tab, l, l);
@@ -2158,12 +2158,12 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      * Base class for views.
      */
     abstract static class CollectionView<V, E>
-            implements Collection<E>, java.io.Serializable {
+            implements Collection<E>, Serializable {
         private static final String oomeMsg = "Required array size too large";
         private static final long serialVersionUID = 7249069246763182397L;
-        final ConcurrentLongHashMap<V> map;
+        final ConcurrentIntHashMap<V> map;
 
-        CollectionView(ConcurrentLongHashMap<V> map) {
+        CollectionView(ConcurrentIntHashMap<V> map) {
             this.map = map;
         }
 
@@ -2192,7 +2192,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
          *
          * @return the map backing this view
          */
-        public ConcurrentLongHashMap<V> getMap() {
+        public ConcurrentIntHashMap<V> getMap() {
             return map;
         }
 
@@ -2340,14 +2340,14 @@ public class ConcurrentLongHashMap<V> implements Serializable {
     }
 
     static final class EntryIterator<V> extends BaseIterator<V>
-            implements Iterator<LongEntry<V>> {
+            implements Iterator<IntEntry<V>> {
 
         @Override
-        public LongEntry<V> next() {
+        public IntEntry<V> next() {
             Node<V> p;
             if ((p = next) == null)
                 throw new NoSuchElementException();
-            long k = p.key;
+            int k = p.key;
             V v = p.val;
             lastReturned = p;
             advance();
@@ -2360,25 +2360,25 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      * entries.  This class cannot be directly instantiated. See
      * {@link #entrySet()}.
      */
-    static final class EntrySetView<V> extends CollectionView<V, LongEntry<V>>
-            implements Set<LongEntry<V>>, java.io.Serializable {
+    static final class EntrySetView<V> extends CollectionView<V, IntEntry<V>>
+            implements Set<IntEntry<V>>, Serializable {
         private static final long serialVersionUID = 2249069246763182397L;
 
         private final ThreadLocal<EntryIterator<V>> tlEntryIterator = ThreadLocal.withInitial(EntryIterator::new);
 
-        EntrySetView(ConcurrentLongHashMap<V> map) {
+        EntrySetView(ConcurrentIntHashMap<V> map) {
             super(map);
         }
 
         @Override
-        public boolean add(LongEntry<V> e) {
+        public boolean add(IntEntry<V> e) {
             return map.putVal(e.getKey(), e.getValue(), false) == null;
         }
 
         @Override
-        public boolean addAll(@NotNull Collection<? extends LongEntry<V>> c) {
+        public boolean addAll(@NotNull Collection<? extends IntEntry<V>> c) {
             boolean added = false;
-            for (LongEntry<V> e : c) {
+            for (IntEntry<V> e : c) {
                 if (add(e))
                     added = true;
             }
@@ -2387,11 +2387,11 @@ public class ConcurrentLongHashMap<V> implements Serializable {
 
         @Override
         public boolean contains(Object o) {
-            long k;
+            int k;
             Object v, r;
-            LongEntry<?> e;
-            return ((o instanceof LongEntry) &&
-                    (k = (e = (LongEntry<?>) o).getKey()) != EMPTY_KEY &&
+            IntEntry<?> e;
+            return ((o instanceof IntEntry) &&
+                    (k = (e = (IntEntry<?>) o).getKey()) != EMPTY_KEY &&
                     (r = map.get(k)) != null &&
                     (v = e.getValue()) != null &&
                     (v == r || v.equals(r)));
@@ -2422,7 +2422,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
          * @return an iterator over the entries of the backing map
          */
         @NotNull
-        public Iterator<LongEntry<V>> iterator() {
+        public Iterator<IntEntry<V>> iterator() {
             EntryIterator<V> it = tlEntryIterator.get();
             it.of(map);
             return it;
@@ -2430,11 +2430,11 @@ public class ConcurrentLongHashMap<V> implements Serializable {
 
         @Override
         public boolean remove(Object o) {
-            long k;
+            int k;
             Object v;
-            LongEntry<?> e;
-            return ((o instanceof LongEntry) &&
-                    (k = (e = (LongEntry<?>) o).getKey()) != EMPTY_KEY &&
+            IntEntry<?> e;
+            return ((o instanceof IntEntry) &&
+                    (k = (e = (IntEntry<?>) o).getKey()) != EMPTY_KEY &&
                     (v = e.getValue()) != null &&
                     map.remove(k, (V) v));
         }
@@ -2452,7 +2452,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
         }
 
         @Override
-        Node<V> find(int h, long k) {
+        Node<V> find(int h, int k) {
             // loop to avoid arbitrarily deep recursion on forwarding nodes
             outer:
             for (Node<V>[] tab = nextTable; ; ) {
@@ -2481,11 +2481,11 @@ public class ConcurrentLongHashMap<V> implements Serializable {
 
     public static final class KeyIterator<V> extends BaseIterator<V> {
 
-        public long next() {
+        public int next() {
             Node<V> p;
             if ((p = next) == null)
                 throw new NoSuchElementException();
-            long k = p.key;
+            int k = p.key;
             lastReturned = p;
             advance();
             return k;
@@ -2503,13 +2503,13 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      *
      * @since 1.8
      */
-    public static class KeySetView<V> implements java.io.Serializable {
+    public static class KeySetView<V> implements Serializable {
         private static final long serialVersionUID = 7249069246763182397L;
-        private final ConcurrentLongHashMap<V> map;
+        private final ConcurrentIntHashMap<V> map;
         private final ThreadLocal<KeyIterator<V>> tlKeyIterator = ThreadLocal.withInitial(KeyIterator::new);
         private final V value;
 
-        KeySetView(ConcurrentLongHashMap<V> map, V value) {  // non-public
+        KeySetView(ConcurrentIntHashMap<V> map, V value) {  // non-public
             this.map = map;
             this.value = value;
         }
@@ -2524,7 +2524,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
          * @throws UnsupportedOperationException if no default mapped value
          *                                       for additions was provided
          */
-        public boolean add(long k) {
+        public boolean add(int k) {
             V v;
             if ((v = value) == null)
                 throw new UnsupportedOperationException();
@@ -2535,7 +2535,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
             map.clear();
         }
 
-        public boolean contains(long k) {
+        public boolean contains(int k) {
             return map.containsKey(k);
         }
 
@@ -2564,7 +2564,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
             KeyIterator<V> it = iterator();
             if (it.hasNext()) {
                 do {
-                    long k = it.next();
+                    int k = it.next();
                     h += keyHashCode(k);
                 } while (it.hasNext());
             }
@@ -2594,7 +2594,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
          * @return {@code true} if the backing map contained the specified key
          * @throws NullPointerException if the specified key is null
          */
-        public boolean remove(long k) {
+        public boolean remove(int k) {
             return map.remove(k) != null;
         }
 
@@ -2609,7 +2609,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
             KeyIterator<V> it = iterator();
             if (it.hasNext()) {
                 for (; ; ) {
-                    long k = it.next();
+                    int k = it.next();
                     sb.append(k);
                     if (!it.hasNext())
                         break;
@@ -2623,7 +2623,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
             KeyIterator<V> it = iterator();
             if (it.hasNext()) {
                 do {
-                    long k = it.next();
+                    int k = it.next();
                     if (!contains(k))
                         return false;
                 } while (it.hasNext());
@@ -2635,12 +2635,12 @@ public class ConcurrentLongHashMap<V> implements Serializable {
     /**
      * Exported Entry for EntryIterator
      */
-    static final class MapEntry<V> implements LongEntry<V> {
-        final long key; // != EMPTY_KEY
-        final ConcurrentLongHashMap<V> map;
+    static final class MapEntry<V> implements IntEntry<V> {
+        final int key; // != EMPTY_KEY
+        final ConcurrentIntHashMap<V> map;
         V val;       // non-null
 
-        MapEntry(long key, V val, ConcurrentLongHashMap<V> map) {
+        MapEntry(int key, V val, ConcurrentIntHashMap<V> map) {
             this.key = key;
             this.val = val;
             this.map = map;
@@ -2648,18 +2648,18 @@ public class ConcurrentLongHashMap<V> implements Serializable {
 
         @Override
         public boolean equals(Object o) {
-            long k;
+            int k;
             Object v;
-            LongEntry<?> e;
-            return ((o instanceof LongEntry) &&
-                    (k = (e = (LongEntry<?>) o).getKey()) != EMPTY_KEY &&
+            IntEntry<?> e;
+            return ((o instanceof IntEntry) &&
+                    (k = (e = (IntEntry<?>) o).getKey()) != EMPTY_KEY &&
                     (v = e.getValue()) != null &&
                     (k == key) &&
                     (v == val || v.equals(val)));
         }
 
         @Override
-        public long getKey() {
+        public int getKey() {
             return key;
         }
 
@@ -2704,13 +2704,13 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      * are special, and contain null keys and values (but are never
      * exported).  Otherwise, keys and vals are never null.
      */
-    static class Node<V> implements LongEntry<V> {
+    static class Node<V> implements IntEntry<V> {
         final int hash;
-        final long key;
+        final int key;
         volatile Node<V> next;
         volatile V val;
 
-        Node(int hash, long key, V val, Node<V> next) {
+        Node(int hash, int key, V val, Node<V> next) {
             this.hash = hash;
             this.key = key;
             this.val = val;
@@ -2719,18 +2719,18 @@ public class ConcurrentLongHashMap<V> implements Serializable {
 
         @Override
         public final boolean equals(Object o) {
-            long k;
+            int k;
             Object v, u;
-            LongEntry<?> e;
-            return ((o instanceof LongEntry) &&
-                    (k = (e = (LongEntry<?>) o).getKey()) != EMPTY_KEY &&
+            IntEntry<?> e;
+            return ((o instanceof IntEntry) &&
+                    (k = (e = (IntEntry<?>) o).getKey()) != EMPTY_KEY &&
                     (v = e.getValue()) != null &&
                     (k == key) &&
                     (v == (u = val) || v.equals(u)));
         }
 
         @Override
-        public final long getKey() {
+        public final int getKey() {
             return key;
         }
 
@@ -2757,7 +2757,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
         /**
          * Virtualized support for map.get(); overridden in subclasses.
          */
-        Node<V> find(int h, long k) {
+        Node<V> find(int h, int k) {
             Node<V> e = this;
             if (k != EMPTY_KEY) {
                 do {
@@ -2778,7 +2778,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
         }
 
         @Override
-        Node<V> find(int h, long k) {
+        Node<V> find(int h, int k) {
             return null;
         }
     }
@@ -2792,7 +2792,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
         final float loadFactor;
 
         Segment() {
-            this.loadFactor = ConcurrentLongHashMap.LOAD_FACTOR;
+            this.loadFactor = ConcurrentIntHashMap.LOAD_FACTOR;
         }
     }
 
@@ -2952,11 +2952,11 @@ public class ConcurrentLongHashMap<V> implements Serializable {
                     x.red = false;
                     r = x;
                 } else {
-                    long k = x.key;
+                    int k = x.key;
                     int h = x.hash;
                     for (TreeNode<V> p = r; ; ) {
                         int dir, ph;
-                        long pk = p.key;
+                        int pk = p.key;
                         if ((ph = p.hash) > h)
                             dir = -1;
                         else if (ph < h)
@@ -3234,7 +3234,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
          * search when lock not available.
          */
         @Override
-        Node<V> find(int h, long k) {
+        Node<V> find(int h, int k) {
             if (k != EMPTY_KEY) {
                 for (Node<V> e = first; e != null; ) {
                     int s;
@@ -3266,11 +3266,11 @@ public class ConcurrentLongHashMap<V> implements Serializable {
          *
          * @return null if added
          */
-        TreeNode<V> putTreeVal(int h, long k, V v) {
+        TreeNode<V> putTreeVal(int h, int k, V v) {
             boolean searched = false;
             for (TreeNode<V> p = root; ; ) {
                 int dir, ph;
-                long pk;
+                int pk;
                 if (p == null) {
                     first = root = new TreeNode<>(h, k, v, null, null);
                     break;
@@ -3465,13 +3465,13 @@ public class ConcurrentLongHashMap<V> implements Serializable {
         boolean red;
         TreeNode<V> right;
 
-        TreeNode(int hash, long key, V val, Node<V> next, TreeNode<V> parent) {
+        TreeNode(int hash, int key, V val, Node<V> next, TreeNode<V> parent) {
             super(hash, key, val, next);
             this.parent = parent;
         }
 
         @Override
-        Node<V> find(int h, long k) {
+        Node<V> find(int h, int k) {
             return findTreeNode(h, k);
         }
 
@@ -3479,12 +3479,12 @@ public class ConcurrentLongHashMap<V> implements Serializable {
          * Returns the TreeNode (or null if not found) for the given key
          * starting at given root.
          */
-        TreeNode<V> findTreeNode(int h, long k) {
+        TreeNode<V> findTreeNode(int h, int k) {
             if (k != EMPTY_KEY) {
                 TreeNode<V> p = this;
                 do {
                     int ph, dir;
-                    long pk;
+                    int pk;
                     TreeNode<V> q;
                     TreeNode<V> pl = p.left, pr = p.right;
                     if ((ph = p.hash) > h)
@@ -3530,11 +3530,11 @@ public class ConcurrentLongHashMap<V> implements Serializable {
      * directly instantiated. See {@link #values()}.
      */
     static final class ValuesView<V> extends CollectionView<V, V>
-            implements Collection<V>, java.io.Serializable {
+            implements Collection<V>, Serializable {
         private static final long serialVersionUID = 2249069246763182397L;
         private final ThreadLocal<ValueIterator<V>> tlValueIterator = ThreadLocal.withInitial(ValueIterator::new);
 
-        ValuesView(ConcurrentLongHashMap<V> map) {
+        ValuesView(ConcurrentIntHashMap<V> map) {
             super(map);
         }
 
@@ -3587,7 +3587,7 @@ public class ConcurrentLongHashMap<V> implements Serializable {
 
     static {
         try {
-            Class<?> k = ConcurrentLongHashMap.class;
+            Class<?> k = ConcurrentIntHashMap.class;
             SIZECTL = Unsafe.getUnsafe().objectFieldOffset
                     (k.getDeclaredField("sizeCtl"));
             TRANSFERINDEX = Unsafe.getUnsafe().objectFieldOffset
