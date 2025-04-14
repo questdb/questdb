@@ -124,9 +124,10 @@ public class TimestampFormatUtils {
     // YYYY-MM-DDThh:mm:ss.mmmuuuZ
     public static void appendDateTimeUSec(@NotNull CharSink<?> sink, long micros) {
         if (micros == Long.MIN_VALUE) {
-            return;
+            sink.put("null");
+        } else {
+            USEC_UTC_FORMAT.format(micros, DateFormatUtils.EN_LOCALE, "Z", sink);
         }
-        USEC_UTC_FORMAT.format(micros, DateFormatUtils.EN_LOCALE, "Z", sink);
     }
 
     public static void appendEra(@NotNull CharSink<?> sink, int year, @NotNull DateLocale locale) {

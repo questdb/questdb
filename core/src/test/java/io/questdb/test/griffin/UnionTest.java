@@ -34,15 +34,26 @@ import java.util.Arrays;
 public class UnionTest extends AbstractCairoTest {
 
     @Test
-    public void testCastingBehaviour() throws Exception {
+    public void testConversionsFromInt() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE foo (ts TIMESTAMP, colA DOUBLE) timestamp(ts) PARTITION BY DAY WAL;");
-            execute("INSERT INTO foo (ts, colA) SELECT '2025-04-09 17:20:00.000' AS ts, null::int as colA;");
+            execute("CREATE TABLE foo (ts TIMESTAMP, colA DOUBLE, colB FLOAT, colC TIMESTAMP, colD DATE, colE LONG) timestamp(ts) PARTITION BY DAY WAL;");
+            execute("INSERT INTO foo (ts, colA, colB, colC, colD, colE) " +
+                    "SELECT '2025-04-09 17:20:00.000' AS ts, " +
+                    "null::int as colA, " +
+                    "null::int as colB, " +
+                    "null::int as colC, " +
+                    "null::int as colD, " +
+                    "null::int as colE;");
             drainWalQueue();
 
-            assertSql("ts\tcolA\n" +
-                    "2025-04-09T17:20:00.000000Z\tnull\n", "foo;");
-
+            assertQueryNoLeakCheck(
+                    "ts\tcolA\tcolB\tcolC\tcolD\tcolE\n" +
+                            "2025-04-09T17:20:00.000000Z\tnull\tnull\tnull\tnull\tnull\n",
+                    "foo;",
+                    "ts###ASC",
+                    true,
+                    true
+            );
         });
     }
 
