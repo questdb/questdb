@@ -6384,31 +6384,31 @@ public class SampleByTest extends AbstractCairoTest {
                         "RXGZ\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-03T18:00:00.000000Z\n",
                 "select b, sum(a), sum(c), sum(d), sum(e), sum(f), sum(g), k from x sample by 3h fill(linear)",
                 "create table x as " +
-                "(" +
-                "select" +
-                " rnd_float(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " rnd_double(0)*100 c," +
-                " abs(rnd_int()) d," +
-                " rnd_byte(2, 50) e," +
-                " abs(rnd_short()) f," +
-                " abs(rnd_long()) g," +
-                " timestamp_sequence(172800000000, 3600000000) k" +
-                " from" +
-                " long_sequence(20)" +
-                ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
-                "select" +
-                " rnd_float(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " rnd_double(0)*100 c," +
-                " abs(rnd_int()) d," +
-                " rnd_byte(2, 50) e," +
-                " abs(rnd_short()) f," +
-                " abs(rnd_long()) g," +
-                " timestamp_sequence(277200000000, 3600000000) k" +
-                " from" +
-                " long_sequence(5)" +
-                ") timestamp(k)",
+                        "(" +
+                        "select" +
+                        " rnd_float(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " rnd_double(0)*100 c," +
+                        " abs(rnd_int()) d," +
+                        " rnd_byte(2, 50) e," +
+                        " abs(rnd_short()) f," +
+                        " abs(rnd_long()) g," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
+                        "select" +
+                        " rnd_float(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " rnd_double(0)*100 c," +
+                        " abs(rnd_int()) d," +
+                        " rnd_byte(2, 50) e," +
+                        " abs(rnd_short()) f," +
+                        " abs(rnd_long()) g," +
+                        " timestamp_sequence(277200000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ") timestamp(k)",
                 "b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n" +
                         "HYRX\t11.42798\t42.17768841969397\t426455968\t42\t4924\t4086802474270249591\t1970-01-03T00:00:00.000000Z\n" +
                         "\t42.243565\t70.94360487171201\t1631244228\t50\t10900\t8349358446893356086\t1970-01-03T00:00:00.000000Z\n" +
