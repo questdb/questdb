@@ -2486,7 +2486,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         slaveBase,
                                                         stolenFilter,
                                                         masterMetadata.getColumnCount(),
-                                                        slaveMetadata,
+                                                        NullRecordFactory.getInstance(slaveMetadata),
                                                         null);
                                                 created = true;
                                             }
@@ -2517,7 +2517,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                                 filterStealingBase,
                                                                 stolenFilter,
                                                                 masterMetadata.getColumnCount(),
-                                                                slaveMetadata, stolenCrossIndex
+                                                                NullRecordFactory.getInstance(slaveMetadata),
+                                                                stolenCrossIndex
                                                         );
                                                         created = true;
                                                     }

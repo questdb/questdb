@@ -40,6 +40,7 @@ import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
@@ -48,20 +49,20 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
     private final Function slaveRecordFilter;
 
     public FilteredAsOfJoinNoKeyFastRecordCursorFactory(
-            CairoConfiguration configuration,
-            RecordMetadata metadata,
-            RecordCursorFactory masterFactory,
-            RecordCursorFactory slaveFactory,
-            Function slaveRecordFilter,
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
+            @NotNull RecordCursorFactory masterFactory,
+            @NotNull RecordCursorFactory slaveFactory,
+            @NotNull Function slaveRecordFilter,
             int columnSplit,
-            RecordMetadata slaveMetadata,
+            @NotNull Record slaveNullRecord,
             @Nullable IntList slaveColumnCrossIndex) {
         super(metadata, null, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
         this.slaveRecordFilter = slaveRecordFilter;
         this.cursor = new FilteredAsOfJoinKeyedFastRecordCursor(
                 columnSplit,
-                NullRecordFactory.getInstance(slaveMetadata),
+                slaveNullRecord,
                 masterFactory.getMetadata().getTimestampIndex(),
                 slaveFactory.getMetadata().getTimestampIndex(),
                 configuration.getSqlAsOfJoinLookAhead()
@@ -86,7 +87,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             TimeFrameRecordCursor baseTimeFrameCursor = slaveFactory.getTimeFrameCursor(executionContext);
             Record filterRecord = baseTimeFrameCursor.getRecordB();
             slaveRecordFilter.init(baseTimeFrameCursor, executionContext);
-            slaveCursor = selectedTimeFrameCursor == null ? baseTimeFrameCursor : selectedTimeFrameCursor.wrap(baseTimeFrameCursor);
+            slaveCursor = selectedTimeFrameCursor == null ? baseTimeFrameCursor : selectedTimeFrameCursor.of(baseTimeFrameCursor);
             cursor.of(masterCursor, slaveCursor, filterRecord, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {

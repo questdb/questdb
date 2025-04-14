@@ -159,7 +159,7 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         if (timeFrameCursor == null) {
             timeFrameCursor = new SelectedTimeFrameCursor(columnCrossIndex, base.recordCursorSupportsRandomAccess());
         }
-        return timeFrameCursor.wrap(baseCursor);
+        return timeFrameCursor.of(baseCursor);
     }
 
     @Override
@@ -446,6 +446,15 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
             return baseCursor.next();
         }
 
+        public SelectedTimeFrameCursor of(TimeFrameRecordCursor baseCursor) {
+            this.baseCursor = baseCursor;
+            recordA.of(baseCursor.getRecord());
+            if (recordB != null) {
+                recordB.of(baseCursor.getRecordB());
+            }
+            return this;
+        }
+
         @Override
         public long open() throws DataUnavailableException {
             return baseCursor.open();
@@ -465,19 +474,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         @Override
         public void toTop() {
             baseCursor.toTop();
-        }
-
-        public TimeFrameRecordCursor unwrap() {
-            return baseCursor;
-        }
-
-        public SelectedTimeFrameCursor wrap(TimeFrameRecordCursor baseCursor) {
-            this.baseCursor = baseCursor;
-            recordA.of(baseCursor.getRecord());
-            if (recordB != null) {
-                recordB.of(baseCursor.getRecordB());
-            }
-            return this;
         }
     }
 }
