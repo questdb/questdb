@@ -256,6 +256,14 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
             frameSequence.getReduceStartedCounter().incrementAndGet();
             frameSequence.getReducer().reduce(workerId, record, task, circuitBreaker, stealingFrameSequence);
         } else {
+            LOG.error()
+                    .$("reduce cancelled [cbState=").$(cbState)
+                    .$(", id=").$(frameSequence.getId())
+                    .$(", taskType=").$(task.getType())
+                    .$(", frameIndex=").$(task.getFrameIndex())
+                    .$(", frameCount=").$(frameSequence.getFrameCount())
+                    .$(", cancelledFlag=").$(circuitBreaker.getCancelledFlag())
+                    .I$();
             frameSequence.cancel(cbState);
         }
     }

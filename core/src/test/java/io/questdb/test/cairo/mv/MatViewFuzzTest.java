@@ -49,6 +49,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 1);
         AbstractCairoTest.setUpStatic();
     }
 
@@ -57,6 +58,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         super.setUp();
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 1);
     }
 
     @Test
@@ -197,7 +199,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     @Test
     public void testManyTablesView() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = fuzzer.generateRandom(LOG);
+            Rnd rnd = fuzzer.generateRandom(LOG, 1322036736192L, 1744583437751L);
             setFuzzParams(rnd, 0);
             setFuzzProperties(rnd);
             runMvFuzz(rnd, getTestName(), 1 + rnd.nextInt(4));
@@ -310,7 +312,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
         runRefreshJobAndDrainWalQueue();
         fuzzer.checkNoSuspendedTables();
-
 
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             for (int i = 0; i < tableCount; i++) {
