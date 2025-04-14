@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -50,8 +52,12 @@ public class CastCharToFloatFunctionFactory implements FunctionFactory {
 
         @Override
         public float getFloat(Record rec) {
-            final byte v = (byte) (arg.getChar(rec) - '0');
-            return v > -1 && v < 10 ? v : Float.NaN;
+            char c = arg.getChar(rec);
+            final byte v = (byte) (c - '0');
+            if (v > -1 && v < 10) {
+                return v;
+            }
+            throw ImplicitCastException.inconvertibleValue(c, ColumnType.CHAR, ColumnType.FLOAT);
         }
     }
 }

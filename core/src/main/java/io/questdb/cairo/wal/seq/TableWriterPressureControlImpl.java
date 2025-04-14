@@ -79,7 +79,7 @@ public class TableWriterPressureControlImpl implements TableWriterPressureContro
 
     @Override
     public void onBlockApplyError() {
-        maxBlockRowCount = inflightBlockRowCount / TXN_COUNT_SCALE_DOWN_FACTOR;
+        maxBlockRowCount = Math.max(1, inflightBlockRowCount / TXN_COUNT_SCALE_DOWN_FACTOR);
         inflightBlockRowCount = 1;
     }
 

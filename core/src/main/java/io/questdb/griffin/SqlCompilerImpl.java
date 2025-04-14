@@ -1567,7 +1567,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 columnIndex
                         );
                     } else {
-                        throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'cache' or 'nocache' expected").put(" found '").put(tok).put('\'');
+                        throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'symbol', 'cache' or 'nocache' expected").put(" found '").put(tok).put('\'');
                     }
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
@@ -3701,7 +3701,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (executionContext.getTableStatus(path, tableName) != TableUtils.TABLE_EXISTS) {
             throw SqlException.tableDoesNotExist(position, tableName);
         }
-        return executionContext.getTableTokenIfExists(tableName);
+        TableToken token = executionContext.getTableTokenIfExists(tableName);
+        if (token == null) {
+            throw SqlException.tableDoesNotExist(position, tableName);
+        }
+        return token;
     }
 
     private void validateAndOptimiseInsertAsSelect(SqlExecutionContext executionContext, InsertModel model) throws SqlException {
