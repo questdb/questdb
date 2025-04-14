@@ -207,6 +207,8 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
 
                 if (filteredRowId < currentFrameLo) {
                     // ops, we exhausted this frame, let's try the previous one
+                    circuitBreaker.statefulThrowExceptionIfTripped(); // check if we are still alive
+
                     if (!slaveCursor.prev()) {
                         // there is no previous frame, we are done, no match :(
                         // if we are here, chances are we are also pretty slow because we are scanning the entire slave cursor
@@ -227,6 +229,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                     filteredRowId = timeFrame.getRowHi() - 1;
                     currentFrameLo = timeFrame.getRowLo();
                     stopUnderRowId = (stopAtFrameIndex == filteredFrameIndex) ? Rows.toLocalRowID(highestKnownSlaveRowIdWithNoMatch) : 0;
+                    slaveCursor.recordAt(slaveRecB, Rows.toRowID(filteredFrameIndex, filteredRowId));
                 }
 
                 if (filteredRowId < stopUnderRowId) {
@@ -235,12 +238,11 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                     break;
                 }
 
-                slaveCursor.recordAt(slaveRecB, Rows.toRowID(filteredFrameIndex, filteredRowId));
+                slaveCursor.recordAtLocalRowId(slaveRecB, filteredRowId);
                 if (slaveRecordFilter.getBool(filterRecord)) {
                     // we have a match, that's awesome, no need to traverse the slave cursor!
                     break;
                 }
-                circuitBreaker.statefulThrowExceptionIfTripped();
             }
 
             return true;

@@ -202,6 +202,12 @@ public class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     }
 
     @Override
+    public void recordAtLocalRowId(Record record, long localRowId) {
+        final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
+        frameMemoryRecord.setRowIndex(localRowId);
+    }
+
+    @Override
     public void toTop() {
         timeFrame.clear();
         if (!isFrameCacheBuilt) {

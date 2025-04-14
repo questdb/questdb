@@ -472,6 +472,12 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public void recordAtLocalRowId(Record record, long localRowId) {
+            record = ((SelectedRecord) record).getBaseRecord();
+            baseCursor.recordAtLocalRowId(record, localRowId);
+        }
+
+        @Override
         public void toTop() {
             baseCursor.toTop();
         }
