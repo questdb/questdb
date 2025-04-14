@@ -1326,12 +1326,8 @@ public class SampleByTest extends AbstractCairoTest {
                         "2021-03-28T01:15:00.000000Z\ta\t31.267026583720984\tnull\n" +
                         "2021-03-28T02:15:00.000000Z\ta\t103.7167928478985\t128.42101395467057\n";
 
-                // Two '2021-03-28T01:10, a' rows is the side effect of the WITH OFFSET clause.
-                // +10 minutes push certain buckets to the gap in the local time, 02:00-03:00
-                // which is mapped by to_utc() function to the "next" UTC hour.
                 String expectedPrague = "k\ts\tlat\tlon\n" +
-                        "2021-03-28T00:10:00.000000Z\ta\t144.77803379943109\t15.276535618609202\n" +
-                        "2021-03-28T01:10:00.000000Z\ta\tnull\tnull\n" +
+                        "2021-03-28T00:10:00.000000Z\ta\t144.77803379943109\tnull\n" +
                         "2021-03-28T01:10:00.000000Z\ta\t137.95662156473048\tnull\n" +
                         "2021-03-28T02:10:00.000000Z\ta\tnull\t128.42101395467057\n";
 
@@ -1608,8 +1604,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "2021-03-27T22:15:00.000000Z\t2021-03-27T21:15:00.000000Z\ta\t179.5841357536068\t2021-03-27T21:51:00.000000Z\n" +
                         "2021-03-27T23:15:00.000000Z\t2021-03-27T22:15:00.000000Z\ta\t77.68770182183965\t2021-03-27T22:56:00.000000Z\n" +
                         "2021-03-28T00:15:00.000000Z\t2021-03-27T23:15:00.000000Z\ta\tnull\t2021-03-27T23:48:00.000000Z\n" +
-                        "2021-03-28T01:15:00.000000Z\t2021-03-28T00:15:00.000000Z\ta\t3.6703591550328163\t2021-03-28T00:27:00.000000Z\n" +
-                        "2021-03-28T03:15:00.000000Z\t2021-03-28T01:15:00.000000Z\ta\t94.70222369149758\t2021-03-28T01:06:00.000000Z\n" +
+                        "2021-03-28T01:15:00.000000Z\t2021-03-28T00:15:00.000000Z\ta\t3.6703591550328163\t2021-03-28T01:06:00.000000Z\n" +
                         "2021-03-28T03:15:00.000000Z\t2021-03-28T01:15:00.000000Z\ta\tnull\t2021-03-28T02:11:00.000000Z\n" +
                         "2021-03-28T04:15:00.000000Z\t2021-03-28T02:15:00.000000Z\ta\tnull\t2021-03-28T02:37:00.000000Z\n" +
                         "2021-03-28T05:15:00.000000Z\t2021-03-28T03:15:00.000000Z\ta\t38.20430552091481\t2021-03-28T03:16:00.000000Z\n",
@@ -3700,6 +3695,37 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByDstForwardShift() throws Exception {
+        // Although '00:15' offset here pushes certain bucket timestamps to the gap hour
+        // in 'Europe/Prague' time zone (2021-03-28T02:00 - 2021-03-28T03:00), timestamp_floor()
+        // function used in sample by rewrite should assign them to the previous bucket, so
+        // that there are no duplicate timestamps returned after backward conversion to UTC.
+        assertQuery(
+                "k\ts\tlat\tlon\n" +
+                        "2021-03-28T00:15:00.000000Z\ta\t144.77803379943109\tnull\n" +
+                        "2021-03-28T01:15:00.000000Z\ta\t31.267026583720984\tnull\n" +
+                        "2021-03-28T02:15:00.000000Z\ta\t103.7167928478985\t128.42101395467057\n",
+                "select k, s, first(lat) lat, last(lon) lon " +
+                        "from x " +
+                        "where s in ('a') " +
+                        "sample by 1h align to calendar time zone 'Europe/Prague' with offset '00:15'",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        "   rnd_double(1)*180 lat," +
+                        "   rnd_double(1)*180 lon," +
+                        "   rnd_symbol('a') s," +
+                        "   timestamp_sequence('2021-03-28T00:59:00.00000Z', 60*1000000L) k" +
+                        "   from" +
+                        "   long_sequence(100)" +
+                        "), index(s) timestamp(k) partition by DAY",
+                "k",
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testSampleByFilteredByIndex() throws Exception {
         assertQuery(
                 "time\ts1\tdd\n" +
@@ -4030,7 +4056,6 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByFromToBindVariables() throws Exception {
         assertMemoryLeak(() -> {
-
             execute(FROM_TO_DDL, sqlExecutionContext);
 
             snapshotMemoryUsage();
@@ -12623,20 +12648,24 @@ public class SampleByTest extends AbstractCairoTest {
 
             String query2 = "select ts, avg(x) from fromto\n" +
                     "sample by 1w fill(null)";
-            assertSql(
+            assertQueryNoLeakCheck(
                     "ts\tavg\n" +
                             "2017-12-28T00:00:00.000000Z\t72.5\n" +
                             "2018-01-04T00:00:00.000000Z\t312.5\n",
-                    query2
+                    query2,
+                    "ts",
+                    true
             );
 
             String query3 = query1.replace("1w", "2w");
-            assertSql(
+            assertQueryNoLeakCheck(
                     "ts\tavg\n" +
                             "2017-12-20T00:00:00.000000Z\t48.5\n" +
                             "2018-01-03T00:00:00.000000Z\t288.5\n" +
                             "2018-01-17T00:00:00.000000Z\tnull\n",
-                    query3
+                    query3,
+                    "ts",
+                    true
             );
         });
     }

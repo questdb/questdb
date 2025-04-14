@@ -130,17 +130,27 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
             for (int i = Math.max(0, cutoffYear - L1_CACHE_YEAR_LO), n = transitionsL1Cache.length; i < n; i++) {
                 transitionsL1Cache[i] = computeTransitions(i + L1_CACHE_YEAR_LO);
             }
-            transitionsL2Cache = new ConcurrentIntHashMap<>();
         } else {
             transitionsL1Cache = null;
-            transitionsL2Cache = null;
         }
+
+        transitionsL2Cache = ruleCount > 0 ? new ConcurrentIntHashMap<>() : null;
     }
 
     @Override
-    public long getLocalOffset(long localEpoch) {
-        final int y = getYear(localEpoch);
-        return getLocalOffset(localEpoch, y);
+    public long getGapDuration(long localEpoch) {
+        if (standardOffset != Long.MIN_VALUE) {
+            return 0; // no offset switches, no gaps
+        }
+
+        if (ruleCount > 0 && localEpoch > localCutoffTransition) {
+            return gapDurationFromRules(localEpoch);
+        }
+
+        if (localEpoch > localCutoffTransition) {
+            return 0; // no offset switches, no gaps
+        }
+        return gapDurationFromHistory(localEpoch);
     }
 
     @Override
@@ -157,6 +167,12 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
             return lastWall;
         }
         return localOffsetFromHistory(localEpoch);
+    }
+
+    @Override
+    public long getLocalOffset(long localEpoch) {
+        final int y = getYear(localEpoch);
+        return getLocalOffset(localEpoch, y);
     }
 
     @Override
@@ -296,6 +312,42 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
         return Long.MAX_VALUE;
     }
 
+    private long gapDurationFromHistory(long localEpoch) {
+        int index = localHistoricTransitions.binarySearch(localEpoch, Vect.BIN_SEARCH_SCAN_UP);
+        if (index == -1) {
+            return 0; // no offset switches, no gaps
+        }
+
+        if (index < 0) {
+            index = -index - 2;
+        }
+
+        // check if the timestamp is within transition boundaries
+        if ((index & 1) == 0) {
+            // check if it's a gap transition
+            int offsetBefore = wallOffsets[index / 2];
+            int offsetAfter = wallOffsets[(index / 2) + 1];
+            return Math.max(0, (offsetAfter - offsetBefore) * multiplier);
+        }
+        return 0;
+    }
+
+    private long gapDurationFromRules(long localEpoch) {
+        final int year = getYear(localEpoch);
+        final Transition[] transitions = getTransitions(year);
+        for (int i = 0, n = transitions.length; i < n; i++) {
+            final Transition tr = transitions[i];
+            // check for gap transitions
+            final long localBefore = tr.transition + tr.offsetBefore;
+            final long localAfter = tr.transition + tr.offsetAfter;
+            // check if the timestamp is within transition boundaries
+            if (localEpoch >= localBefore && localEpoch < localAfter) {
+                return tr.offsetAfter - tr.offsetBefore;
+            }
+        }
+        return 0;
+    }
+
     private long getDSTFromRule(int year, int i) {
         final Transition[] transitions = getTransitions(year);
         return transitions[i].transition;
@@ -324,7 +376,8 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
         }
 
         // (index + 1) & ~0x1 aligns the index to 2, similar to how it's done in Bytes#align2b()
-        return wallOffsets[((index + 1) & ~0x1) / 2] * multiplier;
+        index = (index + 1) & ~0x1;
+        return wallOffsets[index / 2] * multiplier;
     }
 
     private long localOffsetFromRules(long localEpoch, int year) {
@@ -332,14 +385,14 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
         long offsetAfterUs = 0;
         for (int i = 0, n = transitions.length; i < n; i++) {
             final Transition tr = transitions[i];
-            final long localTransition = tr.transition + tr.offsetBeforeMicros;
+            final long localTransition = tr.transition + tr.offsetBefore;
             // in case of gap transition, e.g. +01:00 to +02:00, use the "before" offset
             // for non-existing local timestamps
-            final long gapDuration = Math.max(tr.offsetAfterMicros - tr.offsetBeforeMicros, 0);
+            final long gapDuration = Math.max(tr.offsetAfter - tr.offsetBefore, 0);
             if (localEpoch < localTransition || localEpoch < localTransition + gapDuration) {
-                return tr.offsetBeforeMicros;
+                return tr.offsetBefore;
             }
-            offsetAfterUs = tr.offsetAfterMicros;
+            offsetAfterUs = tr.offsetAfter;
         }
         return offsetAfterUs;
     }
@@ -362,9 +415,9 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
         for (int i = 0, n = transitions.length; i < n; i++) {
             final Transition tr = transitions[i];
             if (utcEpoch < tr.transition) {
-                return tr.offsetBeforeMicros;
+                return tr.offsetBefore;
             }
-            offsetAfterUs = tr.offsetAfterMicros;
+            offsetAfterUs = tr.offsetAfter;
         }
         return offsetAfterUs;
     }
