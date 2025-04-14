@@ -229,6 +229,10 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                     filteredRowId = timeFrame.getRowHi() - 1;
                     currentFrameLo = timeFrame.getRowLo();
                     stopUnderRowId = (stopAtFrameIndex == filteredFrameIndex) ? Rows.toLocalRowID(highestKnownSlaveRowIdWithNoMatch) : 0;
+
+                    // invariant: when exiting from this branch then either we fully exhausted the slave cursor
+                    // or slaveRecB is set to the current filteredFrameIndex so the outside loop can continue
+                    // searching for a match by just moving filteredRowId down
                     slaveCursor.recordAt(slaveRecB, Rows.toRowID(filteredFrameIndex, filteredRowId));
                 }
 
