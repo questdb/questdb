@@ -2479,41 +2479,45 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 Misc.free(slave.getBindVarMemory());
                                                 Misc.freeObjList(slave.getBindVarFunctions());
 
-                                                master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(configuration, createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata), master, slaveBase, stolenFilter, masterMetadata.getColumnCount(), false);
+                                                master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
+                                                        configuration,
+                                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                        master,
+                                                        slaveBase,
+                                                        stolenFilter,
+                                                        masterMetadata.getColumnCount(),
+                                                        slaveMetadata,
+                                                        null);
                                                 created = true;
                                             }
 
-                                            if (!created && slave instanceof SelectedRecordCursorFactory) {
-                                                SelectedRecordCursorFactory selectedRecordCursorFactory = (SelectedRecordCursorFactory) slave;
-                                                RecordCursorFactory selectedRecordCursorFactoryBase = selectedRecordCursorFactory.getBaseFactory();
-                                                // We know selectedRecordCursorFactoryBase does not support supportsTimeFrameCursor, because
+                                            if (!created && slave.isProjection()) {
+                                                RecordCursorFactory projectionBase = slave.getBaseFactory();
+                                                // We know projectionBase does not support supportsTimeFrameCursor, because
                                                 // SelectedRecordCursorFactory forwards this call to its base factory and if we are in this branch
                                                 // then slave.supportsTimeFrameCursor() returned false in one the previous branches.
-                                                // there is still chance that selectedRecordCursorFactoryBase is just a filter
+                                                // there is still chance that projectionBase is just a filter
                                                 // and its own base supports timeFrameCursor. let's see.
-                                                if (selectedRecordCursorFactoryBase.supportsFilterStealing()) {
+                                                if (projectionBase.supportsFilterStealing()) {
                                                     // ok, cool, is used only as a filter.
-                                                    RecordCursorFactory filterStealingBase = selectedRecordCursorFactoryBase.getBaseFactory();
+                                                    RecordCursorFactory filterStealingBase = projectionBase.getBaseFactory();
                                                     if (filterStealingBase.supportsTimeFrameCursor()) {
-                                                        Function stolenFilter = selectedRecordCursorFactoryBase.getFilter();
-                                                        selectedRecordCursorFactoryBase.halfClose();
-                                                        selectedRecordCursorFactory.replaceBaseFactory(filterStealingBase);
+                                                        IntList stolenCrossIndex = slave.getColumnCrossIndex();
+                                                        Function stolenFilter = projectionBase.getFilter();
+                                                        projectionBase.halfClose();
 
-                                                        Misc.free(selectedRecordCursorFactoryBase.getCompiledFilter());
-                                                        Misc.free(selectedRecordCursorFactoryBase.getBindVarMemory());
-                                                        Misc.freeObjList(selectedRecordCursorFactoryBase.getBindVarFunctions());
+                                                        Misc.free(projectionBase.getCompiledFilter());
+                                                        Misc.free(projectionBase.getBindVarMemory());
+                                                        Misc.freeObjList(projectionBase.getBindVarFunctions());
 
                                                         master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
                                                                 configuration,
                                                                 createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
                                                                 master,
-                                                                selectedRecordCursorFactory,
+                                                                filterStealingBase,
                                                                 stolenFilter,
                                                                 masterMetadata.getColumnCount(),
-                                                                // the filter must be executed before the selected projection ->
-                                                                // -> FilteredAsOfJoinNoKeyFastRecordCursorFactory must unwrap the selectedRecordCursorFactory
-                                                                // before applying/initializing the filter
-                                                                true
+                                                                slaveMetadata, stolenCrossIndex
                                                         );
                                                         created = true;
                                                     }

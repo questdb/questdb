@@ -37,15 +37,15 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.Nullable;
 
 public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final FilteredAsOfJoinKeyedFastRecordCursor cursor;
+    private final SelectedRecordCursorFactory.SelectedTimeFrameCursor selectedTimeFrameCursor;
     private final Function slaveRecordFilter;
-    // the unwrapForFilter flag is used to determine if we should attempt to unwrap/peel the slave cursor
-    // to get the underlying record before applying the filter. this is needed after some filter-stealing transformations.
-    private final boolean unwrapForFilter;
 
     public FilteredAsOfJoinNoKeyFastRecordCursorFactory(
             CairoConfiguration configuration,
@@ -54,18 +54,23 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             RecordCursorFactory slaveFactory,
             Function slaveRecordFilter,
             int columnSplit,
-            boolean unwrapForFilter) {
+            RecordMetadata slaveMetadata,
+            @Nullable IntList slaveColumnCrossIndex) {
         super(metadata, null, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
         this.slaveRecordFilter = slaveRecordFilter;
         this.cursor = new FilteredAsOfJoinKeyedFastRecordCursor(
                 columnSplit,
-                NullRecordFactory.getInstance(slaveFactory.getMetadata()),
+                NullRecordFactory.getInstance(slaveMetadata),
                 masterFactory.getMetadata().getTimestampIndex(),
                 slaveFactory.getMetadata().getTimestampIndex(),
                 configuration.getSqlAsOfJoinLookAhead()
         );
-        this.unwrapForFilter = unwrapForFilter;
+        if (slaveColumnCrossIndex != null && SelectedRecordCursorFactory.isCrossedIndex(slaveColumnCrossIndex)) {
+            this.selectedTimeFrameCursor = new SelectedRecordCursorFactory.SelectedTimeFrameCursor(slaveColumnCrossIndex, slaveFactory.recordCursorSupportsRandomAccess());
+        } else {
+            this.selectedTimeFrameCursor = null;
+        }
     }
 
     @Override
@@ -78,16 +83,10 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         TimeFrameRecordCursor slaveCursor = null;
         try {
-            slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
-            Record filterRecord;
-            if (unwrapForFilter && slaveCursor instanceof SelectedRecordCursorFactory.SelectedTimeFrameCursor) {
-                TimeFrameRecordCursor unwrappedCursor = ((SelectedRecordCursorFactory.SelectedTimeFrameCursor) slaveCursor).unwrap();
-                slaveRecordFilter.init(unwrappedCursor, executionContext);
-                filterRecord = unwrappedCursor.getRecordB();
-            } else {
-                slaveRecordFilter.init(slaveCursor, executionContext);
-                filterRecord = slaveCursor.getRecordB();
-            }
+            TimeFrameRecordCursor baseTimeFrameCursor = slaveFactory.getTimeFrameCursor(executionContext);
+            Record filterRecord = baseTimeFrameCursor.getRecordB();
+            slaveRecordFilter.init(baseTimeFrameCursor, executionContext);
+            slaveCursor = selectedTimeFrameCursor == null ? baseTimeFrameCursor : selectedTimeFrameCursor.wrap(baseTimeFrameCursor);
             cursor.of(masterCursor, slaveCursor, filterRecord, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {

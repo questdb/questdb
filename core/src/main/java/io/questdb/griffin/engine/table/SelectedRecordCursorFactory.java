@@ -64,12 +64,16 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         this.base = base;
         this.columnCrossIndex = columnCrossIndex;
         this.cursor = new SelectedRecordCursor(columnCrossIndex, base.recordCursorSupportsRandomAccess());
+        this.crossedIndex = isCrossedIndex(columnCrossIndex);
+    }
+
+    public static boolean isCrossedIndex(IntList columnCrossIndex) {
         for (int i = 0, n = columnCrossIndex.size(); i < n; i++) {
             if (columnCrossIndex.get(i) != i) {
-                crossedIndex = true;
-                break;
+                return true;
             }
         }
+        return false;
     }
 
     @Override
@@ -97,6 +101,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     @Nullable
     public MemoryCARW getBindVarMemory() {
         return base.getBindVarMemory();
+    }
+
+    @Override
+    public IntList getColumnCrossIndex() {
+        return columnCrossIndex;
     }
 
     @Override
@@ -161,6 +170,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     public boolean implementsLimit() {
         return base.implementsLimit();
+    }
+
+    @Override
+    public boolean isProjection() {
+        return true;
     }
 
     @Override
@@ -379,7 +393,7 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         private final SelectedRecord recordB;
         private TimeFrameRecordCursor baseCursor;
 
-        private SelectedTimeFrameCursor(IntList columnCrossIndex, boolean supportsRandomAccess) {
+        public SelectedTimeFrameCursor(IntList columnCrossIndex, boolean supportsRandomAccess) {
             this.columnCrossIndex = columnCrossIndex;
             this.recordA = new SelectedRecord(columnCrossIndex);
             if (supportsRandomAccess) {
@@ -453,6 +467,10 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
             baseCursor.toTop();
         }
 
+        public TimeFrameRecordCursor unwrap() {
+            return baseCursor;
+        }
+
         public SelectedTimeFrameCursor wrap(TimeFrameRecordCursor baseCursor) {
             this.baseCursor = baseCursor;
             recordA.of(baseCursor.getRecord());
@@ -460,10 +478,6 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
                 recordB.of(baseCursor.getRecordB());
             }
             return this;
-        }
-
-        public TimeFrameRecordCursor unwrap() {
-            return baseCursor;
         }
     }
 }
