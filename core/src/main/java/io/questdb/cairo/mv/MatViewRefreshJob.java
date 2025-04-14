@@ -51,6 +51,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -248,7 +249,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     ) throws SqlException {
         assert state.isLocked();
 
-        final int maxRecompileAttempts = configuration.getMatViewMaxRecompileAttempts();
+        final int maxRetries = configuration.getMatViewMaxRefreshRetries();
         final long batchSize = configuration.getMatViewInsertAsSelectBatchSize();
 
         RecordCursorFactory factory = null;
@@ -260,7 +261,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             factory = state.acquireRecordFactory();
             copier = state.getRecordToRowCopier();
 
-            for (int i = 1; i <= maxRecompileAttempts; i++) {
+            for (int i = 0; i <= maxRetries; i++) {
                 try {
                     if (factory == null) {
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -311,27 +312,28 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     break;
                 } catch (TableReferenceOutOfDateException e) {
                     factory = Misc.free(factory);
-                    if (i >= maxRecompileAttempts) {
+                    if (i == maxRetries) {
                         LOG.info().$("base table is under heavy DDL changes, will retry refresh later [view=").$(viewDef.getMatViewToken())
-                                .$(", recompileAttempts=").$(maxRecompileAttempts)
+                                .$(", recompileAttempts=").$(maxRetries)
                                 .I$();
                         viewGraph.enqueueIncrementalRefresh(viewDef.getMatViewToken());
                         return false;
                     }
                 } catch (Throwable th) {
                     factory = Misc.free(factory);
-                    if (CairoException.isCairoOomError(th) && i < maxRecompileAttempts && intervalStep > 1) {
+                    if (CairoException.isCairoOomError(th) && i < maxRetries && intervalStep > 1) {
                         intervalStep /= 2;
                         LOG.info().$("query failed with out-of-memory, retrying with a reduced intervalStep")
                                 .$(" [view=").$(viewDef.getMatViewToken())
                                 .$(", intervalStep=").$(intervalStep)
                                 .$(", error=").$(((CairoException) th).getFlyweightMessage())
                                 .I$();
-                        continue;
+                    } else {
+                        refreshFailState(state, refreshTimestamp, th.getMessage());
+                        throw th;
                     }
-                    refreshFailState(state, refreshTimestamp, th.getMessage());
-                    throw th;
                 }
+                Os.sleep(200);
             }
 
             tableWriter.commit();

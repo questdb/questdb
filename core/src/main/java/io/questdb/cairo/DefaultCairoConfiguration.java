@@ -479,7 +479,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getMatViewMaxRecompileAttempts() {
+    public int getMatViewMaxRefreshRetries() {
         return 10;
     }
 

@@ -294,7 +294,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testStressSqlRecompilation() throws Exception {
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_SQL_MAX_RECOMPILE_ATTEMPTS, 1);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 1);
         assertMemoryLeak(() -> {
             Rnd rnd = fuzzer.generateRandom(LOG);
             setFuzzParams(rnd, 0);

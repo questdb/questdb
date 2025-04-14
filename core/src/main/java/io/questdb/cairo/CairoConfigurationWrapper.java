@@ -442,8 +442,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getMatViewMaxRecompileAttempts() {
-        return getDelegate().getMatViewMaxRecompileAttempts();
+    public int getMatViewMaxRefreshRetries() {
+        return getDelegate().getMatViewMaxRefreshRetries();
     }
 
     @Override

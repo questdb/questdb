@@ -267,7 +267,7 @@ public interface CairoConfiguration {
 
     long getMatViewInsertAsSelectBatchSize();
 
-    int getMatViewMaxRecompileAttempts();
+    int getMatViewMaxRefreshRetries();
 
     long getMatViewMinRefreshInterval();
 
