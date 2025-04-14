@@ -2085,11 +2085,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             execute("CREATE TABLE char_cast (c1 char, c2 short, c3 int, c4 long, c5 float, c6 double);");
-            execute("INSERT INTO char_cast VALUES('A', 1, 1, 1, 1, 1)");
+            execute("INSERT INTO char_cast VALUES('9', 1, 1, 1, 1, 1)");
 
             assertQuery(
                     "c1\n" +
-                            "A\n",
+                            "9\n",
                     "SELECT c1 FROM char_cast where c1 > c2 and c1 > c3 and c1 > c4 and c1 > c5 and c1 > c6",
                     null,
                     true,
@@ -2121,6 +2121,52 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     "SELECT count(c1) FROM ipv4_str",
                     null,
                     false,
+                    true
+            );
+        });
+
+        assertMemoryLeak(() -> {
+            assertQuery(
+                    "column\n" +
+                            "1\n",
+                    "SELECT '2' - 1;",
+                    null,
+                    true,
+                    true
+            );
+
+            assertQuery(
+                    "column\n" +
+                            "255\n",
+                    "SELECT '256' - 1;",
+                    null,
+                    true,
+                    true
+            );
+
+            assertException(
+                    "SELECT 'm' -1",
+                    0,
+                    "inconvertible value: m [CHAR -> INT]"
+            );
+
+            assertException(
+                    "select ~'m'",
+                    0,
+                    "inconvertible value: m [CHAR -> INT]"
+            );
+        });
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (c1 int);");
+            execute("INSERT INTO x VALUES(10)");
+
+            assertQuery(
+                    "column\n" +
+                            "-9\n",
+                    "SELECT '1' - c1 FROM x",
+                    null,
+                    true,
                     true
             );
         });

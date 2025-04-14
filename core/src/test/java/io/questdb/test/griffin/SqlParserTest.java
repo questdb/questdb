@@ -9990,6 +9990,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "function, literal or constant is expected",
                 modelOf("tab").col("x", ColumnType.INT)
         );
+        assertSyntaxError(
+                "select x from tab() select * from query_activity()",
+                20,
+                "function, literal or constant is expected",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
     }
 
     @Test
