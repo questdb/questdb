@@ -328,12 +328,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 .$(", intervalStep=").$(intervalStep)
                                 .$(", error=").$(((CairoException) th).getFlyweightMessage())
                                 .I$();
-                    } else {
-                        refreshFailState(state, refreshTimestamp, th.getMessage());
-                        throw th;
+                        Os.sleep(200);
+                        continue;
                     }
+                    refreshFailState(state, refreshTimestamp, th.getMessage());
+                    throw th;
                 }
-                Os.sleep(200);
             }
 
             tableWriter.commit();
