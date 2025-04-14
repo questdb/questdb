@@ -24,10 +24,12 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewGraph;
-import io.questdb.cairo.mv.MatViewRefreshState;
+import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
@@ -87,7 +89,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private final GrowOnlyTableNameRegistryStore tableNameRegistryStore; // protected with #lock
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private ColumnVersionReader columnVersionReader = null;
-    private Path partitionCleanPath;  // To be used exclusively as parameter for `removePartitionDirsNotAttached`.
+    private Path partitionCleanPath; // To be used exclusively as parameter for `removePartitionDirsNotAttached`.
     private DateFormat partitionDirFmt;
     private int pathTableLen;
     private TableReaderMetadata tableMetadata = null;
@@ -165,8 +167,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
 
             try {
                 path.of(checkpointRoot).concat(configuration.getDbDirectory());
-                int checkpointDbLen = path.size();
-                // delete  contents of the checkpoint's "db" dir.
+                final int checkpointDbLen = path.size();
+                // delete contents of the checkpoint's "db" dir.
                 if (ff.exists(path.slash$())) {
                     path.trimTo(checkpointDbLen).$();
                     if (!ff.rmdir(path)) {
@@ -193,15 +195,18 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     tableNameRegistryStore.of(path, 0);
                     path.trimTo(checkpointDbLen).$();
 
-                    ObjHashSet<TableToken> tables = new ObjHashSet<>();
-                    ObjList<TableToken> ordered = new ObjList<>();
+                    final ObjHashSet<TableToken> tables = new ObjHashSet<>();
+                    final ObjList<TableToken> ordered = new ObjList<>();
                     engine.getTableTokens(tables, false);
                     engine.getMatViewGraph().orderByDependentViews(tables, ordered);
 
                     try (
                             MemoryCMARW mem = Vm.getCMARWInstance();
-                            BlockFileWriter writer = new BlockFileWriter(ff, configuration.getCommitMode())
+                            BlockFileReader matViewFileReader = new BlockFileReader(configuration);
+                            BlockFileWriter matViewFileWriter = new BlockFileWriter(ff, configuration.getCommitMode())
                     ) {
+                        MatViewStateReader matViewStateReader = null;
+
                         // Copy metadata files for all tables.
                         for (int t = 0, n = ordered.size(); t < n; t++) {
                             TableToken tableToken = ordered.get(t);
@@ -215,7 +220,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                             LOG.info().$("creating table checkpoint [table=").$(tableToken).I$();
 
                             path.trimTo(checkpointDbLen).concat(tableToken);
-                            int rootLen = path.size();
+                            final int rootLen = path.size();
                             if (isWalTable) {
                                 path.concat(WalUtils.SEQ_DIR);
                             }
@@ -234,18 +239,32 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                 // in the table copy (otherwise, such situation may lead to lost view refresh data).
                                 if (tableToken.isMatView()) {
                                     final MatViewGraph graph = engine.getMatViewGraph();
-                                    final MatViewRefreshState state = graph.getViewRefreshState(tableToken);
-                                    final MatViewDefinition matViewDefinition = (state != null)
-                                            ? state.getViewDefinition() : graph.getViewDefinition(tableToken);
+                                    final MatViewDefinition matViewDefinition = graph.getViewDefinition(tableToken);
                                     if (matViewDefinition != null) {
-                                        writer.of(path.trimTo(rootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                                        MatViewRefreshState.append(state, writer);
-                                        writer.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
-                                        MatViewDefinition.append(matViewDefinition, writer);
+                                        matViewFileWriter.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
+                                        MatViewDefinition.append(matViewDefinition, matViewFileWriter);
+                                        LOG.info().$("materialized view definition included in the checkpoint [view=").$(tableToken).I$();
+                                        // the following call overwrites the path
+                                        final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, tableToken.getDirName());
+                                        if (isMatViewStateExists) {
+                                            matViewFileReader.of(path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                                            if (matViewStateReader == null) {
+                                                matViewStateReader = new MatViewStateReader();
+                                            }
+                                            matViewStateReader.of(matViewFileReader, tableToken);
+                                            // restore the path
+                                            path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken);
 
-                                        LOG.info().$("materialized view definition and state included in the checkpoint [view=").$(tableToken).I$();
+                                            matViewFileWriter.of(path.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                                            MatViewState.append(matViewStateReader, matViewFileWriter);
+
+                                            LOG.info().$("materialized view state included in the checkpoint [view=").$(tableToken).I$();
+                                        } else {
+                                            LOG.info().$("materialized view state not found [view=").$(tableToken).I$();
+                                        }
                                     } else {
-                                        LOG.info().$("materialized view definition or state not found [view=").$(tableToken).I$();
+                                        LOG.info().$("skipping, materialized view is concurrently dropped [view=").$(tableToken).I$();
+                                        break;
                                     }
                                 }
 
@@ -268,6 +287,9 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
                                         continue;
                                     }
+
+                                    // restore the path
+                                    path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken);
 
                                     // Copy _meta file.
                                     path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME);
