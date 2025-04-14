@@ -552,27 +552,29 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     lastCommittedRows += walRowCount;
                 }
 
-                for (long s = lastCommittedSeqTxn; s >= seqTxn; s--) {
-                    byte txnType = txnDetails.getWalTxnType(s);
-                    if (txnType == MAT_VIEW_DATA) {
-                        try {
-                            final Path path = Path.PATH2.get();
-                            final TableToken token = writer.getTableToken();
-                            path.of(engine.getConfiguration().getDbRoot()).concat(token);
-                            updateMatViewRefreshState(
-                                    path,
-                                    txnDetails.getMatViewRefreshTxn(s),
-                                    txnDetails.getMatViewRefreshTimestamp(s),
-                                    false,
-                                    null
-                            );
-                        } catch (CairoException e) {
-                            LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
-                                    .$(", msg=").$(e.getFlyweightMessage())
-                                    .$(", errno=").$(e.getErrno())
-                                    .I$();
+                if (writer.getTableToken().isMatView()) {
+                    for (long s = lastCommittedSeqTxn; s >= seqTxn; s--) {
+                        byte txnType = txnDetails.getWalTxnType(s);
+                        if (txnType == MAT_VIEW_DATA) {
+                            try {
+                                final Path path = Path.PATH2.get();
+                                final TableToken token = writer.getTableToken();
+                                path.of(engine.getConfiguration().getDbRoot()).concat(token);
+                                updateMatViewRefreshState(
+                                        path,
+                                        txnDetails.getMatViewRefreshTxn(s),
+                                        txnDetails.getMatViewRefreshTimestamp(s),
+                                        false,
+                                        null
+                                );
+                            } catch (CairoException e) {
+                                LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
+                                        .$(", msg=").$(e.getFlyweightMessage())
+                                        .$(", errno=").$(e.getErrno())
+                                        .I$();
+                            }
+                            break;
                         }
-                        break;
                     }
                 }
 
@@ -603,10 +605,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 mvRefreshTask.invalidationReason = "truncate operation";
                 return 1;
             case MAT_VIEW_INVALIDATE:
-                writer.setSeqTxn(seqTxn);
-                writer.markSeqTxnCommitted(seqTxn);
-                lastCommittedRows = 0;
-
                 try (WalEventReader eventReader = walEventReader) {
                     final Path path = Path.PATH2.get();
                     final TableToken token = writer.getTableToken();
@@ -628,6 +626,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             .$(", errno=").$(e.getErrno())
                             .I$();
                 }
+                // WAL-E files can be deleted by the purge job after a commit.
+                // Update the materialized view state before committing the transaction.
+                writer.setSeqTxn(seqTxn);
+                writer.markSeqTxnCommitted(seqTxn);
+                lastCommittedRows = 0;
                 return 1;
             default:
                 throw new UnsupportedOperationException("Unsupported WAL txn type: " + walTxnType);

@@ -68,7 +68,7 @@ public class MatViewStateTest extends AbstractCairoTest {
 
     @Test
     public void testMatViewStateMaintenance() throws Exception {
-        final int iterations = 10;
+        final int iterations = 13;
         AtomicBoolean fail = new AtomicBoolean(false);
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
@@ -127,6 +127,42 @@ public class MatViewStateTest extends AbstractCairoTest {
                 walWriter.invalidateMatView(42, 42, true, "missed invalidation");
                 drainWalQueue();
                 assertState(tableToken, iterations - 1, iterations - 1, false, null);
+            }
+        });
+    }
+
+    @Test
+    public void testMatViewTransactionBlockStateMaintenance() throws Exception {
+        assertMemoryLeak(ff, () -> {
+            execute(
+                    "create table base_price (" +
+                            "  sym string, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            final String viewSql = "select sym0, last(price0) price, ts0 " +
+                    "from (select ts as ts0, sym as sym0, price as price0 from base_price) " +
+                    "sample by 1h";
+
+            execute("create materialized view price_1h as (" + viewSql + ") partition by DAY");
+            drainWalQueue();
+            int iterations = 10;
+            TableToken tableToken = engine.verifyTableName("price_1h");
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                for (int i = 0; i < iterations; i++) {
+                    TableWriter.Row row = walWriter.newRow(0);
+                    row.putStr(0, "ABC");
+                    row.putDouble(1, 0.0);
+                    row.append();
+                    if (i % 2 == 0) {
+                        walWriter.commitMatView(i, i);
+                    } else {
+                        walWriter.commit();
+                    }
+                }
+                // lastTxn = iterations - 1
+                long lastMatViewTxn = (iterations - 1) - 1;
+                assertState(tableToken, lastMatViewTxn, lastMatViewTxn, false, null);
             }
         });
     }
