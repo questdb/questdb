@@ -923,6 +923,8 @@ public class SqlParser {
         // Mat view is always WAL enabled.
         tableOpBuilder.setWalEnabled(true);
 
+        tableOpBuilder.setMaxUncommittedRows(configuration.getMaxUncommittedRows());
+
         return parseCreateMatViewExt(lexer, executionContext, sqlParserCallback, tok, mvOpBuilder);
     }
 
