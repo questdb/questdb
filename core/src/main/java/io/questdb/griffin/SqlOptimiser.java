@@ -1044,9 +1044,7 @@ public class SqlOptimiser implements Mutable {
                             }
                             orderBy.clear();
                             orderByDirection.clear();
-
                             m.setLimit(null, null);
-
                             _nested.setNestedModel(model);
                             QueryModel _model = queryModelPool.next();
                             _model.setNestedModel(_nested);
