@@ -349,7 +349,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 Path path = new Path();
                 BlockFileReader reader = new BlockFileReader(configuration);
                 WalEventReader walEventReader = new WalEventReader(configuration.getFilesFacade());
-                MemoryCMR txnMem = Vm.getCMRInstance();
+                MemoryCMR txnMem = Vm.getCMRInstance()
         ) {
             path.of(configuration.getDbRoot());
             final int pathLen = path.size();
@@ -399,7 +399,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
                             path.trimTo(pathLen).concat(tableToken);
                             if (!WalUtils.readMatViewState(path, tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader)) {
-                                LOG.info().$("could not find materialized view state, falling back to defaults [table=").utf8(matViewDefinition.getBaseTableName())
+                                LOG.info().$("could not find materialized view state, view will be fully refreshed on next base table insert [table=").utf8(matViewDefinition.getBaseTableName())
                                         .$(", view=").utf8(tableToken.getTableName())
                                         .I$();
                                 continue;
