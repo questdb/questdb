@@ -175,6 +175,44 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testCanSendLong256ViaString() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.start();
+                serverMain.ddl("create table foo (ts TIMESTAMP, d LONG256) timestamp(ts) partition by day wal;");
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .build()
+                ) {
+                    sender.table("foo")
+                            .stringColumn("d", "0xAB")
+                            .at(1233456, ChronoUnit.NANOS);
+                    sender.flush();
+
+                    serverMain.awaitTxn("foo", 1);
+                    serverMain.assertSql("foo;", "ts\td\n" +
+                            "1970-01-01T00:00:00.001233Z\t0xab\n");
+
+                    sender.table("foo")
+                            .stringColumn("d", "0xABC")
+                            .at(1233456, ChronoUnit.NANOS);
+
+                    flushAndAssertError(
+                            sender,
+                            "Could not flush buffer",
+                            "http-status=400",
+                            "error in line 1: table: foo, column: d; cast error from protocol type: STRING to column type: LONG256"
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCancelRow() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
