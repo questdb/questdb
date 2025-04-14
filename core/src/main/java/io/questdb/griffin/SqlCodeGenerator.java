@@ -2473,11 +2473,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             if (!created && slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
                                                 RecordCursorFactory slaveBase = slave.getBaseFactory();
                                                 Function stolenFilter = slave.getFilter();
-                                                slave.halfClose();
+                                                assert stolenFilter != null;
 
                                                 Misc.free(slave.getCompiledFilter());
                                                 Misc.free(slave.getBindVarMemory());
                                                 Misc.freeObjList(slave.getBindVarFunctions());
+                                                slave.halfClose();
 
                                                 master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
                                                         configuration,
