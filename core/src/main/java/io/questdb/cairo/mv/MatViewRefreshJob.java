@@ -250,6 +250,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         assert state.isLocked();
 
         final int maxRetries = configuration.getMatViewMaxRefreshRetries();
+        final long oomRetryTimeout = configuration.getMatViewRefreshOomRetryTimeout();
         final long batchSize = configuration.getMatViewInsertAsSelectBatchSize();
 
         RecordCursorFactory factory = null;
@@ -328,7 +329,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 .$(", intervalStep=").$(intervalStep)
                                 .$(", error=").$(((CairoException) th).getFlyweightMessage())
                                 .I$();
-                        Os.sleep(200);
+                        Os.sleep(oomRetryTimeout);
                         continue;
                     }
                     refreshFailState(state, refreshTimestamp, th.getMessage());

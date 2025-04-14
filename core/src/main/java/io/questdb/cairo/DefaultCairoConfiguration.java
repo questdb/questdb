@@ -489,6 +489,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getMatViewRefreshOomRetryTimeout() {
+        return 200;
+    }
+
+    @Override
     public int getMatViewRowsPerQueryEstimate() {
         return 10_000_000;
     }
