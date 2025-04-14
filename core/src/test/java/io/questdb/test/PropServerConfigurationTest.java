@@ -186,8 +186,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(9000, configuration.getHttpServerConfiguration().getBindPort());
 
         Assert.assertEquals(1_000_000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getConnectionCheckFrequency());
-        Assert.assertEquals(4, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getFloatScale());
-        Assert.assertEquals(12, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getDoubleScale());
         Assert.assertEquals("Keep-Alive: timeout=5, max=10000" + Misc.EOL, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getKeepAliveHeader());
 
         Assert.assertFalse(configuration.getHttpServerConfiguration().isPessimisticHealthCheckEnabled());
@@ -1272,7 +1270,6 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(168101918, configuration.getHttpServerConfiguration().getBindIPv4Address());
             Assert.assertEquals(9900, configuration.getHttpServerConfiguration().getBindPort());
             Assert.assertEquals(2_000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getConnectionCheckFrequency());
-            Assert.assertEquals(4, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getFloatScale());
             Assert.assertSame(FilesFacadeImpl.INSTANCE, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getFilesFacade());
             Assert.assertEquals("Keep-Alive: timeout=10, max=50000" + Misc.EOL, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getKeepAliveHeader());
 
@@ -1726,8 +1723,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(8192, configuration.getTextConfiguration().getUtf8SinkSize());
         Assert.assertEquals(4194304, configuration.getSqlCopyBufferSize());
         Assert.assertEquals(64, configuration.getCopyPoolCapacity());
-        Assert.assertEquals(8, configuration.getDoubleToStrCastScale());
-        Assert.assertEquals(3, configuration.getFloatToStrCastScale());
         Assert.assertEquals("test-id-42", configuration.getSnapshotInstanceId());
         Assert.assertFalse(configuration.isCheckpointRecoveryEnabled());
 

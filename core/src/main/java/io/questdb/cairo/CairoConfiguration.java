@@ -183,8 +183,6 @@ public interface CairoConfiguration {
 
     int getDetachedMkDirMode();
 
-    int getDoubleToStrCastScale();
-
     default Map<String, String> getEnv() {
         return System.getenv();
     }
@@ -198,8 +196,6 @@ public interface CairoConfiguration {
 
     @NotNull
     FilesFacade getFilesFacade();
-
-    int getFloatToStrCastScale();
 
     long getGroupByAllocatorDefaultChunkSize();
 

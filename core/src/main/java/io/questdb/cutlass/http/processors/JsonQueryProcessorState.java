@@ -90,9 +90,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final IntList columnTypesAndFlags = new IntList();
     private final StringSink columnsQueryParameter = new StringSink();
     private final RecordCursor.Counter counter = new RecordCursor.Counter();
-    private final int doubleScale;
     private final SCSequence eventSubSequence = new SCSequence();
-    private final int floatScale;
     private final HttpConnectionContext httpConnectionContext;
     private final CharSequence keepAliveHeader;
     private final NanosecondClock nanosecondClock;
@@ -133,8 +131,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     public JsonQueryProcessorState(
             HttpConnectionContext httpConnectionContext,
             NanosecondClock nanosecondClock,
-            int floatScale,
-            int doubleScale,
             CharSequence keepAliveHeader
     ) {
         this.httpConnectionContext = httpConnectionContext;
@@ -149,8 +145,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         resumeActions.extendAndSet(QUERY_SUFFIX, this::doQuerySuffix);
 
         this.nanosecondClock = nanosecondClock;
-        this.floatScale = floatScale;
-        this.doubleScale = doubleScale;
         this.statementTimeout = httpConnectionContext.getRequestHeader().getStatementTimeout();
         this.keepAliveHeader = keepAliveHeader;
     }
@@ -885,11 +879,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private void putDoubleValue(HttpChunkedResponse response, Record rec, int col) {
-        response.put(rec.getDouble(col), doubleScale);
+        response.put(rec.getDouble(col));
     }
 
     private void putFloatValue(HttpChunkedResponse response, Record rec, int col) {
-        response.put(rec.getFloat(col), floatScale);
+        response.put(rec.getFloat(col));
     }
 
     private void putVarcharValue(HttpChunkedResponse response, int columnIdx) {

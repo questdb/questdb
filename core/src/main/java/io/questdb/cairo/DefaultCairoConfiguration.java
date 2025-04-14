@@ -310,11 +310,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getDoubleToStrCastScale() {
-        return Numbers.MAX_DOUBLE_SCALE;
-    }
-
-    @Override
     public int getExplainPoolCapacity() {
         return 32;
     }
@@ -332,11 +327,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public @NotNull FilesFacade getFilesFacade() {
         return FilesFacadeImpl.INSTANCE;
-    }
-
-    @Override
-    public int getFloatToStrCastScale() {
-        return Numbers.MAX_FLOAT_SCALE;
     }
 
     @Override

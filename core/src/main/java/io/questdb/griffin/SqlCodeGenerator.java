@@ -299,8 +299,8 @@ import static io.questdb.cairo.ColumnType.getGeoHashBits;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.QUERY;
 import static io.questdb.griffin.model.QueryModel.*;
+import static io.questdb.griffin.model.QueryModel.QUERY;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_HOUR_INT = 1;
@@ -1635,16 +1635,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(new CastTimestampToStrFunctionFactory.Func(new TimestampColumn(i)));
                                 break;
                             case ColumnType.FLOAT:
-                                castFunctions.add(new CastFloatToStrFunctionFactory.Func(
-                                        new FloatColumn(i),
-                                        configuration.getFloatToStrCastScale()
-                                ));
+                                castFunctions.add(new CastFloatToStrFunctionFactory.Func(new FloatColumn(i)));
                                 break;
                             case ColumnType.DOUBLE:
-                                castFunctions.add(new CastDoubleToStrFunctionFactory.Func(
-                                        new DoubleColumn(i),
-                                        configuration.getDoubleToStrCastScale()
-                                ));
+                                castFunctions.add(new CastDoubleToStrFunctionFactory.Func(new DoubleColumn(i)));
                                 break;
                             case ColumnType.STRING:
                                 castFunctions.add(new StrColumn(i));
@@ -1947,16 +1941,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(new CastTimestampToVarcharFunctionFactory.Func(new TimestampColumn(i)));
                                 break;
                             case ColumnType.FLOAT:
-                                castFunctions.add(new CastFloatToVarcharFunctionFactory.Func(
-                                        new FloatColumn(i),
-                                        configuration.getFloatToStrCastScale()
-                                ));
+                                castFunctions.add(new CastFloatToVarcharFunctionFactory.Func(new FloatColumn(i)));
                                 break;
                             case ColumnType.DOUBLE:
-                                castFunctions.add(new CastDoubleToVarcharFunctionFactory.Func(
-                                        new DoubleColumn(i),
-                                        configuration.getDoubleToStrCastScale()
-                                ));
+                                castFunctions.add(new CastDoubleToVarcharFunctionFactory.Func(new DoubleColumn(i)));
                                 break;
                             case ColumnType.STRING:
                                 // StrFunction has built-in cast to varchar

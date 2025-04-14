@@ -39,7 +39,6 @@ import io.questdb.std.DefaultConcurrentCacheConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.NanosecondClock;
-import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -202,11 +201,6 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         }
 
         @Override
-        public int getDoubleScale() {
-            return Numbers.MAX_DOUBLE_SCALE;
-        }
-
-        @Override
         public FactoryProvider getFactoryProvider() {
             return DefaultFactoryProvider.INSTANCE;
         }
@@ -214,11 +208,6 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         @Override
         public FilesFacade getFilesFacade() {
             return FilesFacadeImpl.INSTANCE;
-        }
-
-        @Override
-        public int getFloatScale() {
-            return Numbers.MAX_FLOAT_SCALE;
         }
 
         @Override

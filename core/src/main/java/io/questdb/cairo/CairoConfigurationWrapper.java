@@ -277,11 +277,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getDoubleToStrCastScale() {
-        return getDelegate().getDoubleToStrCastScale();
-    }
-
-    @Override
     public int getExplainPoolCapacity() {
         return getDelegate().getExplainPoolCapacity();
     }
@@ -299,11 +294,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public @NotNull FilesFacade getFilesFacade() {
         return getDelegate().getFilesFacade();
-    }
-
-    @Override
-    public int getFloatToStrCastScale() {
-        return getDelegate().getFloatToStrCastScale();
     }
 
     @Override
