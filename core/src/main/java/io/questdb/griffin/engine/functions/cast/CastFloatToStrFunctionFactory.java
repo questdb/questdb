@@ -77,7 +77,7 @@ public class CastFloatToStrFunctionFactory implements FunctionFactory {
                 return null;
             }
             sinkB.clear();
-            sinkB.put(value, 4);
+            sinkB.put(value);
             return sinkB;
         }
     }

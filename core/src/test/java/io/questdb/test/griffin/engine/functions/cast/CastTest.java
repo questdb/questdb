@@ -3263,16 +3263,16 @@ public class CastTest extends AbstractCairoTest {
                 null,
                 "insert into tab select cast(rnd_float() as string) from long_sequence(10)",
                 "a\n" +
-                        "0.6608\n" +
-                        "0.8043\n" +
-                        "0.2246\n" +
-                        "0.1297\n" +
-                        "0.0849\n" +
-                        "0.2846\n" +
-                        "0.2992\n" +
-                        "0.0844\n" +
-                        "0.2045\n" +
-                        "0.9345\n",
+                        "0.66077775\n" +
+                        "0.80432236\n" +
+                        "0.22463012\n" +
+                        "0.12966657\n" +
+                        "0.08486962\n" +
+                        "0.28455776\n" +
+                        "0.29919904\n" +
+                        "0.08438319\n" +
+                        "0.20447439\n" +
+                        "0.93446046\n",
                 true,
                 true,
                 false
@@ -3288,16 +3288,16 @@ public class CastTest extends AbstractCairoTest {
                 null,
                 "insert into tab select cast(cast(1.34 as float) as string) from long_sequence(10)",
                 "a\n" +
-                        "1.3400\n" +
-                        "1.3400\n" +
-                        "1.3400\n" +
-                        "1.3400\n" +
-                        "1.3400\n" +
-                        "1.3400\n" +
-                        "1.3400\n" +
-                        "1.3400\n" +
-                        "1.3400\n" +
-                        "1.3400\n",
+                        "1.34\n" +
+                        "1.34\n" +
+                        "1.34\n" +
+                        "1.34\n" +
+                        "1.34\n" +
+                        "1.34\n" +
+                        "1.34\n" +
+                        "1.34\n" +
+                        "1.34\n" +
+                        "1.34\n",
                 true,
                 true,
                 false
@@ -3314,20 +3314,20 @@ public class CastTest extends AbstractCairoTest {
                         "\n" +
                         "\n" +
                         "\n" +
-                        "0.0849\n" +
-                        "0.1312\n" +
-                        "0.2245\n" +
-                        "0.2992\n" +
-                        "0.3491\n" +
-                        "0.5244\n" +
-                        "0.5599\n" +
-                        "0.6277\n" +
-                        "0.6694\n" +
-                        "0.7261\n" +
-                        "0.7611\n" +
-                        "0.7906\n" +
-                        "0.8043\n" +
-                        "0.9345\n",
+                        "0.08486962\n" +
+                        "0.13123357\n" +
+                        "0.22452337\n" +
+                        "0.29919904\n" +
+                        "0.34910703\n" +
+                        "0.5243723\n" +
+                        "0.55991614\n" +
+                        "0.6276954\n" +
+                        "0.6693837\n" +
+                        "0.7261136\n" +
+                        "0.7611029\n" +
+                        "0.7905675\n" +
+                        "0.80432236\n" +
+                        "0.93446046\n",
                 "select cast(a as string) x from tt order by x",
                 "create table tt as (select rnd_float(2) a from long_sequence(20))",
                 null,
@@ -3452,16 +3452,16 @@ public class CastTest extends AbstractCairoTest {
                 null,
                 "insert into tab select cast(rnd_float() as varchar) from long_sequence(10)",
                 "a\n" +
-                        "0.6608\n" +
-                        "0.8043\n" +
-                        "0.2246\n" +
-                        "0.1297\n" +
-                        "0.0849\n" +
-                        "0.2846\n" +
-                        "0.2992\n" +
-                        "0.0844\n" +
-                        "0.2045\n" +
-                        "0.9345\n",
+                        "0.66077775\n" +
+                        "0.80432236\n" +
+                        "0.22463012\n" +
+                        "0.12966657\n" +
+                        "0.08486962\n" +
+                        "0.28455776\n" +
+                        "0.29919904\n" +
+                        "0.08438319\n" +
+                        "0.20447439\n" +
+                        "0.93446046\n",
                 true,
                 true,
                 false
@@ -3477,16 +3477,16 @@ public class CastTest extends AbstractCairoTest {
                 null,
                 "insert into tab select cast(cast(1.34 as float) as varchar) from long_sequence(10)",
                 "a\n" +
-                        "1.3400\n" +
-                        "1.3400\n" +
-                        "1.3400\n" +
-                        "1.3400\n" +
-                        "1.3400\n" +
-                        "1.3400\n" +
-                        "1.3400\n" +
-                        "1.3400\n" +
-                        "1.3400\n" +
-                        "1.3400\n",
+                        "1.34\n" +
+                        "1.34\n" +
+                        "1.34\n" +
+                        "1.34\n" +
+                        "1.34\n" +
+                        "1.34\n" +
+                        "1.34\n" +
+                        "1.34\n" +
+                        "1.34\n" +
+                        "1.34\n",
                 true,
                 true,
                 false
@@ -3503,20 +3503,20 @@ public class CastTest extends AbstractCairoTest {
                         "\n" +
                         "\n" +
                         "\n" +
-                        "0.0849\n" +
-                        "0.1312\n" +
-                        "0.2245\n" +
-                        "0.2992\n" +
-                        "0.3491\n" +
-                        "0.5244\n" +
-                        "0.5599\n" +
-                        "0.6277\n" +
-                        "0.6694\n" +
-                        "0.7261\n" +
-                        "0.7611\n" +
-                        "0.7906\n" +
-                        "0.8043\n" +
-                        "0.9345\n",
+                        "0.08486962\n" +
+                        "0.13123357\n" +
+                        "0.22452337\n" +
+                        "0.29919904\n" +
+                        "0.34910703\n" +
+                        "0.5243723\n" +
+                        "0.55991614\n" +
+                        "0.6276954\n" +
+                        "0.6693837\n" +
+                        "0.7261136\n" +
+                        "0.7611029\n" +
+                        "0.7905675\n" +
+                        "0.80432236\n" +
+                        "0.93446046\n",
                 "select cast(a as varchar) x from tt order by x",
                 "create table tt as (select rnd_float(2) a from long_sequence(20))",
                 null,

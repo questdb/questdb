@@ -730,11 +730,11 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "0.6608\n" +
-                        "0.8043\n" +
-                        "0.2246\n" +
-                        "0.1297\n" +
-                        "0.0849\n",
+                        "0.66077775\n" +
+                        "0.80432236\n" +
+                        "0.22463012\n" +
+                        "0.12966657\n" +
+                        "0.08486962\n",
                 "create table x as (select rnd_boolean() a from long_sequence(5))",
                 "create table y as (select rnd_float() b from long_sequence(5))",
                 false
@@ -744,11 +744,11 @@ public class UnionAllCastTest extends AbstractCairoTest {
                 "a\n" +
                         "false\n" +
                         "true\n" +
-                        "0.6608\n" +
-                        "0.8043\n" +
-                        "0.2246\n" +
-                        "0.1297\n" +
-                        "0.0849\n"
+                        "0.66077775\n" +
+                        "0.80432236\n" +
+                        "0.22463012\n" +
+                        "0.12966657\n" +
+                        "0.08486962\n"
         );
     }
 
@@ -817,11 +817,11 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "0101101\n" +
                         "0111011\n" +
                         "0010101\n" +
-                        "0.6608\n" +
-                        "0.8043\n" +
-                        "0.2246\n" +
-                        "0.1297\n" +
-                        "0.0849\n",
+                        "0.66077775\n" +
+                        "0.80432236\n" +
+                        "0.22463012\n" +
+                        "0.12966657\n" +
+                        "0.08486962\n",
                 "create table x as (select rnd_geohash(7) a from long_sequence(5))",
                 "create table y as (select rnd_float() b from long_sequence(5))"
         );
