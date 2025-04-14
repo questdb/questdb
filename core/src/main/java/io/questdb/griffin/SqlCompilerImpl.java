@@ -2031,7 +2031,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(startPos, "SELECT query expected");
             }
             final QueryModel queryModel = optimiser.optimise((QueryModel) executionModel, executionContext, this);
-            createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser, queryModel);
+            createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
             queryModel.setIsMatView(true);
             compiledQuery.ofSelect(
                     generateSelectWithRetries(queryModel, executionContext, false)
