@@ -2505,13 +2505,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                                                         master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
                                                                 configuration,
-                                                                // note: we use the original slaveMetadata here, so if the SelectedRecordCursorFactory
-                                                                // renamed a column it's still propagated to the join metadata.
                                                                 createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
                                                                 master,
                                                                 selectedRecordCursorFactory,
                                                                 stolenFilter,
                                                                 masterMetadata.getColumnCount(),
+                                                                // the filter must be executed before the selected projection ->
+                                                                // -> FilteredAsOfJoinNoKeyFastRecordCursorFactory must unwrap the selectedRecordCursorFactory
+                                                                // before applying/initializing the filter
                                                                 true
                                                         );
                                                         created = true;

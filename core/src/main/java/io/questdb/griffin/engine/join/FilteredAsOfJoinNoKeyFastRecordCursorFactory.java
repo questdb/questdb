@@ -43,7 +43,9 @@ import io.questdb.std.Rows;
 public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final FilteredAsOfJoinKeyedFastRecordCursor cursor;
     private final Function slaveRecordFilter;
-    private final boolean unwrapSlave;
+    // the unwrapForFilter flag is used to determine if we should attempt to unwrap/peel the slave cursor
+    // to get the underlying record before applying the filter. this is needed after some filter-stealing transformations.
+    private final boolean unwrapForFilter;
 
     public FilteredAsOfJoinNoKeyFastRecordCursorFactory(
             CairoConfiguration configuration,
@@ -52,7 +54,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             RecordCursorFactory slaveFactory,
             Function slaveRecordFilter,
             int columnSplit,
-            boolean unwrapSlave) {
+            boolean unwrapForFilter) {
         super(metadata, null, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
         this.slaveRecordFilter = slaveRecordFilter;
@@ -63,7 +65,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 slaveFactory.getMetadata().getTimestampIndex(),
                 configuration.getSqlAsOfJoinLookAhead()
         );
-        this.unwrapSlave = unwrapSlave;
+        this.unwrapForFilter = unwrapForFilter;
     }
 
     @Override
@@ -78,9 +80,8 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
         try {
             slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
             Record filterRecord;
-            if (unwrapSlave && slaveCursor instanceof SelectedRecordCursorFactory.SelectedTimeFrameCursor) {
-                SelectedRecordCursorFactory.SelectedTimeFrameCursor selected = (SelectedRecordCursorFactory.SelectedTimeFrameCursor) slaveCursor;
-                TimeFrameRecordCursor unwrappedCursor = selected.unwrap();
+            if (unwrapForFilter && slaveCursor instanceof SelectedRecordCursorFactory.SelectedTimeFrameCursor) {
+                TimeFrameRecordCursor unwrappedCursor = ((SelectedRecordCursorFactory.SelectedTimeFrameCursor) slaveCursor).unwrap();
                 slaveRecordFilter.init(unwrappedCursor, executionContext);
                 filterRecord = unwrappedCursor.getRecordB();
             } else {
