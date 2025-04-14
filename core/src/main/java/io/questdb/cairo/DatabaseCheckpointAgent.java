@@ -167,7 +167,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
 
             try {
                 path.of(checkpointRoot).concat(configuration.getDbDirectory());
-                int checkpointDbLen = path.size();
+                final int checkpointDbLen = path.size();
                 // delete contents of the checkpoint's "db" dir.
                 if (ff.exists(path.slash$())) {
                     path.trimTo(checkpointDbLen).$();
@@ -220,7 +220,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                             LOG.info().$("creating table checkpoint [table=").$(tableToken).I$();
 
                             path.trimTo(checkpointDbLen).concat(tableToken);
-                            int rootLen = path.size();
+                            final int rootLen = path.size();
                             if (isWalTable) {
                                 path.concat(WalUtils.SEQ_DIR);
                             }
@@ -253,10 +253,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                             }
                                             matViewStateReader.of(matViewFileReader, tableToken);
                                             // restore the path
-                                            path.of(checkpointRoot).concat(configuration.getDbDirectory());
-                                            checkpointDbLen = path.size();
-                                            path.concat(tableToken);
-                                            rootLen = path.size();
+                                            path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken);
 
                                             matViewFileWriter.of(path.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
                                             MatViewState.append(matViewStateReader, matViewFileWriter);
@@ -266,7 +263,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                             LOG.info().$("materialized view state not found [view=").$(tableToken).I$();
                                         }
                                     } else {
-                                        LOG.info().$("materialized view definition not found [view=").$(tableToken).I$();
+                                        LOG.info().$("skipping, materialized view is concurrently dropped [view=").$(tableToken).I$();
                                     }
                                 }
 
@@ -291,10 +288,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     }
 
                                     // restore the path
-                                    path.of(checkpointRoot).concat(configuration.getDbDirectory());
-                                    checkpointDbLen = path.size();
-                                    path.concat(tableToken);
-                                    rootLen = path.size();
+                                    path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken);
 
                                     // Copy _meta file.
                                     path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME);
