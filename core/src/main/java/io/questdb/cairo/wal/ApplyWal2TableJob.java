@@ -552,27 +552,27 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     lastCommittedRows += walRowCount;
                 }
 
-                if (walTxnType == MAT_VIEW_DATA) {
-                    try (WalEventReader eventReader = walEventReader) {
-                        final Path path = Path.PATH2.get();
-                        final TableToken token = writer.getTableToken();
-                        path.of(engine.getConfiguration().getDbRoot()).concat(token);
-                        int tablePathLen = path.size();
-                        path.slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
-                        final WalEventCursor walEventCursor = eventReader.of(path, segmentTxn);
-                        final WalEventCursor.MatViewDataInfo data = walEventCursor.getMatViewDataInfo();
-                        updateMatViewRefreshState(
-                                path.trimTo(tablePathLen),
-                                data.getLastRefreshBaseTableTxn(),
-                                data.getLastRefreshTimestamp(),
-                                false,
-                                null
-                        );
-                    } catch (CairoException e) {
-                        LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
-                                .$(", msg=").$(e.getFlyweightMessage())
-                                .$(", errno=").$(e.getErrno())
-                                .I$();
+                for (long s = lastCommittedSeqTxn; s >= seqTxn; s--) {
+                    byte txnType = txnDetails.getWalTxnType(s);
+                    if (txnType == MAT_VIEW_DATA) {
+                        try {
+                            final Path path = Path.PATH2.get();
+                            final TableToken token = writer.getTableToken();
+                            path.of(engine.getConfiguration().getDbRoot()).concat(token);
+                            updateMatViewRefreshState(
+                                    path,
+                                    txnDetails.getMatViewRefreshTxn(s),
+                                    txnDetails.getMatViewRefreshTimestamp(s),
+                                    false,
+                                    null
+                            );
+                        } catch (CairoException e) {
+                            LOG.error().$("could not update state for materialized view [view=").$(writer.getTableToken())
+                                    .$(", msg=").$(e.getFlyweightMessage())
+                                    .$(", errno=").$(e.getErrno())
+                                    .I$();
+                        }
+                        break;
                     }
                 }
 

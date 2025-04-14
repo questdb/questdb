@@ -109,7 +109,6 @@ public class MatViewStateTest extends AbstractCairoTest {
                     row.putDouble(1, rnd.nextDouble());
                     row.append();
                     walWriter.commitMatView(i, i);
-                    assertState(tableToken, i, i, false, null);
                 }
                 assertState(tableToken, iterations - 1, iterations - 1, false, null);
 
