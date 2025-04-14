@@ -472,9 +472,9 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
-        public void recordAtLocalRowId(Record record, long localRowId) {
+        public void recordAtRowIndex(Record record, long rowIndex) {
             record = ((SelectedRecord) record).getBaseRecord();
-            baseCursor.recordAtLocalRowId(record, localRowId);
+            baseCursor.recordAtRowIndex(record, rowIndex);
         }
 
         @Override

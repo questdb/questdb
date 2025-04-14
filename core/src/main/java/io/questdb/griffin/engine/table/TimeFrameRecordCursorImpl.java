@@ -202,9 +202,9 @@ public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     }
 
     @Override
-    public void recordAtLocalRowId(Record record, long localRowId) {
+    public void recordAtRowIndex(Record record, long rowIndex) {
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
-        frameMemoryRecord.setRowIndex(localRowId);
+        frameMemoryRecord.setRowIndex(rowIndex);
     }
 
     @Override

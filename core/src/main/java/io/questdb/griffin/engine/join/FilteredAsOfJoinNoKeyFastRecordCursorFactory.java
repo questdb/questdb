@@ -238,7 +238,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                     break;
                 }
 
-                slaveCursor.recordAtLocalRowId(slaveRecB, filteredRowId);
+                slaveCursor.recordAtRowIndex(slaveRecB, filteredRowId);
                 if (slaveRecordFilter.getBool(filterRecord)) {
                     // we have a match, that's awesome, no need to traverse the slave cursor!
                     break;
