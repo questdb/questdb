@@ -24,11 +24,19 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitFailedException;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Uuid;
@@ -46,6 +54,7 @@ public class LineWalAppender {
     private final int maxFileNameLength;
     private final MicrosecondClock microsecondClock;
     private final boolean stringToCharCastAllowed;
+    private Long256Impl long256;
     private LineTcpTimestampAdapter timestampAdapter;
 
     public LineWalAppender(boolean autoCreateNewColumns, boolean stringToCharCastAllowed, LineTcpTimestampAdapter timestampAdapter, int maxFileNameLength, MicrosecondClock microsecondClock) {
@@ -54,6 +63,7 @@ public class LineWalAppender {
         this.timestampAdapter = timestampAdapter;
         this.maxFileNameLength = maxFileNameLength;
         this.microsecondClock = microsecondClock;
+        this.long256 = new Long256Impl();
     }
 
     public void appendToWal(
@@ -332,6 +342,12 @@ public class LineWalAppender {
                                         throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
                                     }
                                     break;
+                                case ColumnType.LONG256:
+                                    CharSequence cs = entityValue.asAsciiCharSequence();
+                                    if (Numbers.extractLong256(cs, long256)) {
+                                        r.putLong256(columnIndex, cs);
+                                        break;
+                                    }
                                 default:
                                     throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
                             }
