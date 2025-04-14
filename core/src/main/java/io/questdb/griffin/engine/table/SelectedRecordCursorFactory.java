@@ -53,9 +53,9 @@ import org.jetbrains.annotations.Nullable;
 public final class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private final IntList columnCrossIndex;
+    private final boolean crossedIndex;
     private final SelectedRecordCursor cursor;
     private RecordCursorFactory base;
-    private boolean crossedIndex = false;
     private SelectedPageFrameCursor pageFrameCursor;
     private SelectedTimeFrameCursor timeFrameCursor;
 
