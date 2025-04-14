@@ -3701,7 +3701,7 @@ public class JoinTest extends AbstractCairoTest {
                     query,
                     "Limit lo: 3 skip-over-rows: 0 limit: 3\n" +
                             "    VirtualRecord\n" +
-                            "      functions: [dim_ap_temperature__category,timestamp_floor('day',to_utc(date_time,1))]\n" +
+                            "      functions: [dim_ap_temperature__category,timestamp_floor('day',to_timezone(date_time))]\n" +
                             "        SelectedRecord\n" +
                             "            Hash Outer Join Light\n" +
                             "              condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +

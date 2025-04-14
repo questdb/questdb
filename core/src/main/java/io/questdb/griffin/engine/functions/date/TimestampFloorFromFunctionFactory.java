@@ -30,47 +30,58 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Timestamps;
 
 
 /**
- * Floors timestamps with modulo relative to an offset from 1970-01-01.
- * Takes a stride (i.e 5d), the timestamp to round, and the offset timestamp.
+ * Floors timestamps with modulo relative to a timestamp from 1970-01-01.
+ * Takes a stride (i.e. 5d), the timestamp to round, and the offset timestamp.
  */
-public class TimestampFloorOffsetFunctionFactory implements FunctionFactory {
+public class TimestampFloorFromFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "timestamp_floor(sNn)";
+        return TimestampFloorFunctionFactory.NAME + "(sNn)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         final CharSequence str = args.getQuick(0).getStrA(null);
         final int stride = Timestamps.getStrideMultiple(str);
         final char unit = Timestamps.getStrideUnit(str);
-        final Function timestamp = args.getQuick(1);
-        final long offset = args.getQuick(2).getTimestamp(null);
+        final Function timestampFunc = args.getQuick(1);
+        long from = args.getQuick(2).getTimestamp(null);
+        if (from == Numbers.LONG_NULL) {
+            from = 0;
+        }
 
         switch (unit) {
             case 'M':
-                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMMFunction(timestamp, stride, offset);
+                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMMFunction(timestampFunc, stride, from);
             case 'y':
-                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetYYYYFunction(timestamp, stride, offset);
+                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetYYYYFunction(timestampFunc, stride, from);
             case 'w':
-                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetWWFunction(timestamp, stride, offset);
+                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetWWFunction(timestampFunc, stride, from);
             case 'd':
-                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetDDFunction(timestamp, stride, offset);
+                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetDDFunction(timestampFunc, stride, from);
             case 'h':
-                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetHHFunction(timestamp, stride, offset);
+                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetHHFunction(timestampFunc, stride, from);
             case 'm':
-                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMIFunction(timestamp, stride, offset);
+                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMIFunction(timestampFunc, stride, from);
             case 's':
-                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetSSFunction(timestamp, stride, offset);
+                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetSSFunction(timestampFunc, stride, from);
             case 'T':
-                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMSFunction(timestamp, stride, offset);
+                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMSFunction(timestampFunc, stride, from);
             case 'U':
-                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMCFunction(timestamp, stride, offset);
+                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMCFunction(timestampFunc, stride, from);
             case 0:
                 throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
             default:
