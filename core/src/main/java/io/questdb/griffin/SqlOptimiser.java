@@ -353,14 +353,14 @@ public class SqlOptimiser implements Mutable {
                 // insert column at this position, this column must reference our timestamp, that
                 // comes out of the group-by result set, but with user-provided aliases.
                 if (column.getAst().type == LITERAL) {
-                    model.addBottomUpColumnIfNotExists(nextColumn(column.getAlias(), timestampAlias));
+                    model.addBottomUpColumnIfNotExists(nextColumn(column.getAlias(), timestampAlias, column.getAst().position));
                 } else {
                     model.addBottomUpColumnIfNotExists(column);
                 }
                 k++;
             } else {
                 QueryColumn qcFrom = tempColumns.getQuick(i);
-                model.addBottomUpColumnIfNotExists(nextColumn(qcFrom.getAlias()));
+                model.addBottomUpColumnIfNotExists(nextColumn(qcFrom.getAlias(), qcFrom.getAst().position));
                 i++;
             }
         }
@@ -456,7 +456,7 @@ public class SqlOptimiser implements Mutable {
                 QueryColumn existing = translatingModel.getAliasToColumnMap().get(alias);
                 if (existing == null) {
                     // create new column
-                    qc = nextColumn(alias, al);
+                    qc = nextColumn(alias, al, node.position);
                     translatingModel.addBottomUpColumn(qc);
 
                     if (innerVirtualModel != null) {
@@ -538,7 +538,7 @@ public class SqlOptimiser implements Mutable {
         // select a, b+c ...
         // it should translate to:
         // select a, x from (select a, b+c x from (select a,b,c ...))
-        final QueryColumn innerColumn = nextColumn(qc.getAlias(), virtualColumn.getAlias());
+        final QueryColumn innerColumn = nextColumn(qc.getAlias(), virtualColumn.getAlias(), qc.getAst().position);
 
         // pull literals only into translating model
         emitLiterals(qc.getAst(), translatingModel, null, validatingModel, false);
@@ -1338,7 +1338,7 @@ public class SqlOptimiser implements Mutable {
             // column is already being referenced by translating model
             final CharSequence translatedColumnName = translatingAliasMap.valueAtQuick(index);
             final CharSequence innerAlias = createColumnAlias(columnName, groupByModel);
-            final QueryColumn translatedColumn = nextColumn(innerAlias, translatedColumnName);
+            final QueryColumn translatedColumn = nextColumn(innerAlias, translatedColumnName, columnAst.position);
             innerModel.addBottomUpColumn(columnAst.position, translatedColumn, true);
             groupByModel.addBottomUpColumn(translatedColumn);
             return translatedColumn;
@@ -1353,7 +1353,7 @@ public class SqlOptimiser implements Mutable {
                     validatingModel
             );
 
-            final QueryColumn translatedColumn = nextColumn(alias);
+            final QueryColumn translatedColumn = nextColumn(alias, columnAst.position);
             // create column that references inner alias we just created
             innerModel.addBottomUpColumn(translatedColumn);
             windowModel.addBottomUpColumn(translatedColumn);
@@ -1426,13 +1426,14 @@ public class SqlOptimiser implements Mutable {
     // add existing group by column to outer & distinct models
     private boolean createSelectColumn(
             CharSequence alias,
+            int aliasPosition,
             CharSequence columnName,
             QueryModel groupByModel,
             QueryModel outerModel,
             QueryModel distinctModel
     ) throws SqlException {
         QueryColumn groupByColumn = groupByModel.getAliasToColumnMap().get(columnName);
-        QueryColumn outerColumn = nextColumn(alias, groupByColumn.getAlias());
+        QueryColumn outerColumn = nextColumn(alias, groupByColumn.getAlias(), aliasPosition);
         outerColumn = ensureAliasUniqueness(outerModel, outerColumn);
         outerModel.addBottomUpColumn(outerColumn);
 
@@ -1441,7 +1442,7 @@ public class SqlOptimiser implements Mutable {
             if (sameAlias) {
                 distinctModel.addBottomUpColumn(outerColumn);
             } else { // we've to use alias from outer model
-                QueryColumn distinctColumn = nextColumn(outerColumn.getAlias());
+                QueryColumn distinctColumn = nextColumn(outerColumn.getAlias(), outerColumn.getAst().position);
                 distinctColumn = ensureAliasUniqueness(distinctModel, distinctColumn);
                 distinctModel.addBottomUpColumn(distinctColumn);
             }
@@ -1476,7 +1477,7 @@ public class SqlOptimiser implements Mutable {
             // column is already being referenced by translating model
             final CharSequence translatedColumnName = translatingAliasMap.valueAtQuick(index);
             final CharSequence innerAlias = createColumnAlias(columnName, groupByModel);
-            final QueryColumn translatedColumn = nextColumn(innerAlias, translatedColumnName);
+            final QueryColumn translatedColumn = nextColumn(innerAlias, translatedColumnName, columnAst.position);
             innerModel.addBottomUpColumn(columnAst.position, translatedColumn, true);
             groupByModel.addBottomUpColumn(translatedColumn);
 
@@ -1539,7 +1540,7 @@ public class SqlOptimiser implements Mutable {
             // column is already being referenced by translating model
             final CharSequence translatedColumnName = translatingAliasMap.valueAtQuick(index);
             final CharSequence innerAlias = createColumnAlias(columnName, innerModel);
-            final QueryColumn translatedColumn = nextColumn(innerAlias, translatedColumnName);
+            final QueryColumn translatedColumn = nextColumn(innerAlias, translatedColumnName, columnAst.position);
             innerModel.addBottomUpColumn(translatedColumn);
 
             // window model is used together with inner model
@@ -1557,7 +1558,7 @@ public class SqlOptimiser implements Mutable {
                     validatingModel
             );
 
-            final QueryColumn translatedColumn = nextColumn(alias);
+            final QueryColumn translatedColumn = nextColumn(alias, columnAst.position);
 
             // create column that references inner alias we just created
             innerModel.addBottomUpColumn(translatedColumn);
@@ -2852,8 +2853,6 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    // todo: remove this method, and use the one below with the position parameter
-    //  write tests to assert for error position of invalid column for all calling sites
     private QueryColumn nextColumn(CharSequence name) {
         return nextColumn(name, 0);
     }
@@ -2862,10 +2861,12 @@ public class SqlOptimiser implements Mutable {
         return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, name, name, position);
     }
 
-    // todo: add a position parameter to this method
-    //  write tests to assert for error position of invalid column for all calling sites
     private QueryColumn nextColumn(CharSequence alias, CharSequence column) {
-        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, alias, column, 0);
+        return nextColumn(alias, column, 0);
+    }
+
+    private QueryColumn nextColumn(CharSequence alias, CharSequence column, int position) {
+        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, alias, column, position);
     }
 
     private ExpressionNode nextLiteral(CharSequence token, int position) {
@@ -4535,7 +4536,7 @@ public class SqlOptimiser implements Mutable {
                                     //and then push to upper models
                                     QueryModel m = limitModel;
                                     while (m != tempQueryModel) {
-                                        m.addBottomUpColumn(nextColumn(alias));
+                                        m.addBottomUpColumn(nextColumn(alias, orderBy.position));
                                         m = m.getNestedModel();
                                     }
 
@@ -4548,7 +4549,8 @@ public class SqlOptimiser implements Mutable {
                                         wrapper = queryModelPool.next();
                                         wrapper.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
                                         for (int j = 0; j < modelColumnCount; j++) {
-                                            wrapper.addBottomUpColumn(nextColumn(model.getBottomUpColumns().getQuick(j).getAlias()));
+                                            QueryColumn qc = model.getBottomUpColumns().getQuick(j);
+                                            wrapper.addBottomUpColumn(nextColumn(qc.getAlias(), qc.getAst().position));
                                         }
                                         result = wrapper;
                                         wrapper.setNestedModel(model);
@@ -4602,14 +4604,14 @@ public class SqlOptimiser implements Mutable {
 
                                 if (alias == null) {
                                     alias = SqlUtil.createColumnAlias(characterStore, column, dot, baseParent.getAliasToColumnMap());
-                                    baseParent.addBottomUpColumn(nextColumn(alias, column));
+                                    baseParent.addBottomUpColumn(nextColumn(alias, column, orderBy.position));
                                 }
 
                                 // do we have more than one parent model?
                                 if (model != baseParent) {
                                     QueryModel m = model;
                                     do {
-                                        m.addBottomUpColumn(nextColumn(alias));
+                                        m.addBottomUpColumn(nextColumn(alias, orderBy.position));
                                         m = m.getNestedModel();
                                     } while (m != baseParent);
                                 }
@@ -4620,7 +4622,8 @@ public class SqlOptimiser implements Mutable {
                                     wrapper = queryModelPool.next();
                                     wrapper.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
                                     for (int j = 0; j < modelColumnCount; j++) {
-                                        wrapper.addBottomUpColumn(nextColumn(model.getBottomUpColumns().getQuick(j).getAlias()));
+                                        QueryColumn qc = model.getBottomUpColumns().getQuick(j);
+                                        wrapper.addBottomUpColumn(nextColumn(qc.getAlias(), qc.getAst().position));
                                     }
                                     result = wrapper;
                                     wrapper.setNestedModel(model);
@@ -5553,6 +5556,7 @@ public class SqlOptimiser implements Mutable {
 
                         boolean sameAlias = createSelectColumn(
                                 qc.getAlias(),
+                                qc.getAst().position,
                                 groupByAliases.get(matchingColIdx),
                                 groupByModel,
                                 outerVirtualModel,
@@ -5613,7 +5617,7 @@ public class SqlOptimiser implements Mutable {
                     if (window) {
                         windowModel.addBottomUpColumn(qc);
 
-                        QueryColumn ref = nextColumn(qc.getAlias());
+                        QueryColumn ref = nextColumn(qc.getAlias(), qc.getAst().position);
                         outerVirtualModel.addBottomUpColumn(ref);
                         distinctModel.addBottomUpColumn(ref);
                         // ensure literals referenced by window column are present in nested models
@@ -5623,7 +5627,7 @@ public class SqlOptimiser implements Mutable {
                         addMissingTablePrefixes(qc.getAst(), baseModel);
                         CharSequence matchingCol = findColumnByAst(groupByNodes, groupByAliases, qc.getAst());
                         if (useOuterModel && matchingCol != null) {
-                            QueryColumn ref = nextColumn(qc.getAlias(), matchingCol);
+                            QueryColumn ref = nextColumn(qc.getAlias(), matchingCol, qc.getAst().position);
                             ref = ensureAliasUniqueness(outerVirtualModel, ref);
                             outerVirtualModel.addBottomUpColumn(ref);
                             distinctModel.addBottomUpColumn(ref);
@@ -5640,7 +5644,7 @@ public class SqlOptimiser implements Mutable {
                         // group-by column references might be needed when we have
                         // outer model supporting arithmetic such as:
                         // select sum(a)+sum(b) ...
-                        QueryColumn ref = nextColumn(qc.getAlias());
+                        QueryColumn ref = nextColumn(qc.getAlias(), qc.getAst().position);
                         outerVirtualModel.addBottomUpColumn(ref);
                         distinctModel.addBottomUpColumn(ref);
                         // sample-by implementation requires innerVirtualModel
@@ -5746,7 +5750,7 @@ public class SqlOptimiser implements Mutable {
                             // group-by column references might be needed when we have
                             // outer model supporting arithmetic such as:
                             // select sum(a)+sum(b) ...
-                            QueryColumn ref = nextColumn(qc.getAlias());
+                            QueryColumn ref = nextColumn(qc.getAlias(), qc.getAst().position);
                             outerVirtualModel.addBottomUpColumn(ref);
                             distinctModel.addBottomUpColumn(ref);
                             emitLiterals(qc.getAst(), translatingModel, null, baseModel, false);
