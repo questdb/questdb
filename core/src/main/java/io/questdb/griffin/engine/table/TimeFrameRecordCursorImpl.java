@@ -53,7 +53,7 @@ import org.jetbrains.annotations.NotNull;
  * The only supported partition order is forward, i.e. navigation
  * should start with a {@link #next()} call.
  */
-public class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
+public final class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     private final PageFrameAddressCache frameAddressCache;
     private final PageFrameMemoryPool frameMemoryPool;
     private final IntList framePartitionIndexes = new IntList();

@@ -387,7 +387,7 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
     }
 
-    public static class SelectedTimeFrameCursor implements TimeFrameRecordCursor {
+    public static final class SelectedTimeFrameCursor implements TimeFrameRecordCursor {
         private final IntList columnCrossIndex;
         private final SelectedRecord recordA;
         private final SelectedRecord recordB;
