@@ -67,6 +67,7 @@ public class MatViewOomTest extends AbstractCairoTest {
     }
 
     private void testOom(boolean enableParallelSql) throws Exception {
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT, 1);
         setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, String.valueOf(enableParallelSql));
         assertMemoryLeak(() -> {
             execute(

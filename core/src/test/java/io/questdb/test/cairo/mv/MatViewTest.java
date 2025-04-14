@@ -194,9 +194,9 @@ public class MatViewTest extends AbstractCairoTest {
                     false
             );
 
+            currentMicros = parseFloorPartialTimestamp("2024-10-24T18");
             execute("rename table base_price to base_price2");
             execute("refresh materialized view 'price_1h' full;");
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T18");
             drainQueues();
 
             assertQueryNoLeakCheck(
@@ -214,8 +214,8 @@ public class MatViewTest extends AbstractCairoTest {
                             "sym varchar, price double, ts timestamp" +
                             ") timestamp(ts) partition by DAY BYPASS WAL"
             );
-            execute("refresh materialized view 'price_1h' full;");
             currentMicros = parseFloorPartialTimestamp("2024-10-24T19");
+            execute("refresh materialized view 'price_1h' full;");
             drainQueues();
 
             assertQueryNoLeakCheck(
@@ -273,10 +273,10 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             // Swap the tables with each other.
+            currentMicros = parseFloorPartialTimestamp("2024-10-24T18");
             execute("rename table base_price to base_price_tmp");
             execute("rename table base_price2 to base_price");
             execute("rename table base_price_tmp to base_price2");
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T18");
             drainQueues();
 
             assertQueryNoLeakCheck(
@@ -470,8 +470,8 @@ public class MatViewTest extends AbstractCairoTest {
                     true
             );
 
-            Assert.assertNull(engine.getMatViewGraph().getViewRefreshState(matViewToken1));
-            Assert.assertNotNull(engine.getMatViewGraph().getViewRefreshState(matViewToken2));
+            Assert.assertNull(engine.getMatViewStateStore().getViewState(matViewToken1));
+            Assert.assertNotNull(engine.getMatViewStateStore().getViewState(matViewToken2));
         });
     }
 
@@ -554,7 +554,7 @@ public class MatViewTest extends AbstractCairoTest {
                     true
             );
 
-            Assert.assertNull(engine.getMatViewGraph().getViewRefreshState(matViewToken));
+            Assert.assertNull(engine.getMatViewStateStore().getViewState(matViewToken));
         });
     }
 
@@ -715,7 +715,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "view_name\trefresh_type\tbase_table_name\tlast_refresh_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\tbase_table_txn\tapplied_base_table_txn\n" +
-                            "price_1h\tincremental\tbase_price\t\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t0\t0\n",
+                            "price_1h\tincremental\tbase_price\t\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tvalid\t-1\t0\n",
                     "materialized_views",
                     null,
                     false
@@ -1932,6 +1932,8 @@ public class MatViewTest extends AbstractCairoTest {
             execute("cancel query " + queryId);
             stopped.await();
             Assert.assertFalse(refreshed.get());
+
+            drainWalQueue();
             assertQueryNoLeakCheck(
                     "view_name\tview_status\n" +
                             "price_1h\tinvalid\n",

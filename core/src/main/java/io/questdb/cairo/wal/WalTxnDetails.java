@@ -65,7 +65,9 @@ public class WalTxnDetails implements QuietCloseable {
     private static final int WAL_TXN_ROW_HI_OFFSET = WAL_TXN_ROW_LO_OFFSET + 1;
     private static final int WAL_TXN_ROW_IN_ORDER_DATA_TYPE = WAL_TXN_ROW_HI_OFFSET + 1;
     private static final int WAL_TXN_SYMBOL_DIFF_OFFSET = WAL_TXN_ROW_IN_ORDER_DATA_TYPE + 1;
-    public static final int TXN_METADATA_LONGS_SIZE = WAL_TXN_SYMBOL_DIFF_OFFSET + 1;
+    private static final int WAL_TXN_MAT_VIEW_REFRESH_TXN = WAL_TXN_SYMBOL_DIFF_OFFSET + 1;
+    private static final int WAL_TXN_MAT_VIEW_REFRESH_TS = WAL_TXN_MAT_VIEW_REFRESH_TXN + 1;
+    public static final int TXN_METADATA_LONGS_SIZE = WAL_TXN_MAT_VIEW_REFRESH_TS + 1;
     private static final int SYMBOL_MAP_COLUMN_RECORD_HEADER_INTS = 6;
     private static final int SYMBOL_MAP_RECORD_HEADER_INTS = 4;
     private final CairoConfiguration config;
@@ -326,6 +328,14 @@ public class WalTxnDetails implements QuietCloseable {
 
     public long getWalSegment(long seqTxn) {
         return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + WAL_TXN_ID_WAL_SEG_ID_OFFSET));
+    }
+
+    public long getMatViewRefreshTxn(long seqTxn) {
+        return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + WAL_TXN_MAT_VIEW_REFRESH_TXN);
+    }
+
+    public long getMatViewRefreshTimestamp(long seqTxn) {
+        return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE) + WAL_TXN_MAT_VIEW_REFRESH_TS);
     }
 
     @Nullable
@@ -666,6 +676,14 @@ public class WalTxnDetails implements QuietCloseable {
                             }
                             transactionMeta.set(txnMetaOffset + WAL_TXN_ROW_IN_ORDER_DATA_TYPE, Numbers.encodeLowHighInts(flags, walTxnType));
                             transactionMeta.set(txnMetaOffset + WAL_TXN_SYMBOL_DIFF_OFFSET, saveSymbols(commitInfo, seqTxn));
+                            if (walTxnType == WalTxnType.MAT_VIEW_DATA) {
+                                WalEventCursor.MatViewDataInfo matViewDataInfo = walEventCursor.getMatViewDataInfo();
+                                transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TXN, matViewDataInfo.getLastRefreshBaseTableTxn());
+                                transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TS, matViewDataInfo.getLastRefreshTimestamp());
+                            } else {
+                                transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TXN, -1);
+                                transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TS, -1);
+                            }
                             continue;
                         }
                     } else {
@@ -681,6 +699,8 @@ public class WalTxnDetails implements QuietCloseable {
                     transactionMeta.set(txnMetaOffset + WAL_TXN_ROW_HI_OFFSET, -1); // end row id
                     transactionMeta.set(txnMetaOffset + WAL_TXN_ROW_IN_ORDER_DATA_TYPE, Numbers.encodeLowHighInts(0, walTxnType));
                     transactionMeta.set(txnMetaOffset + WAL_TXN_SYMBOL_DIFF_OFFSET, -1); // symbols diff offset
+                    transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TXN, -1); // mat view refresh txn
+                    transactionMeta.set(txnMetaOffset + WAL_TXN_MAT_VIEW_REFRESH_TS, -1); // mat view refresh timestamp
                 }
             }
         } finally {
