@@ -922,6 +922,8 @@ public class SqlParser {
         // Mat view is always WAL enabled.
         tableOpBuilder.setWalEnabled(true);
 
+        tableOpBuilder.setMaxUncommittedRows(configuration.getMaxUncommittedRows());
+
         return parseCreateMatViewExt(lexer, executionContext, sqlParserCallback, tok, mvOpBuilder);
     }
 
@@ -2910,6 +2912,11 @@ public class SqlParser {
         ExpressionNode expr = expr(lexer, model, sqlParserCallback);
         if (expr == null) {
             throw SqlException.position(lexer.lastTokenPosition()).put("table name expected");
+        }
+
+        // subquery is expected to be handled outside
+        if (expr.type != ExpressionNode.LITERAL && expr.type != ExpressionNode.CONSTANT && expr.type != ExpressionNode.FUNCTION) {
+            throw SqlException.$(expr.position, "function, literal or constant is expected");
         }
 
         // check if it's a decl

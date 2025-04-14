@@ -32,12 +32,13 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlOptimiser;
 import io.questdb.griffin.SqlParser;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExpressionNode;
@@ -47,11 +48,18 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
+import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+
+import java.util.ArrayDeque;
+
+import static io.questdb.griffin.model.ExpressionNode.FUNCTION;
+import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 
 /**
  * Create mat view operation relies on implicit create table as select operation.
@@ -75,9 +83,12 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();
     private final MatViewDefinition matViewDefinition = new MatViewDefinition();
     private final int refreshType;
+    private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final String sqlText;
     private final String timeZone;
     private final String timeZoneOffset;
+    private final IntList tmpColumnIndexes = new IntList();
+    private final LowerCaseCharSequenceHashSet tmpLiterals = new LowerCaseCharSequenceHashSet();
     private String baseTableName;
     private CreateTableOperationImpl createTableOperation;
     private long samplingInterval;
@@ -273,7 +284,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     @Override
     public void validateAndUpdateMetadataFromModel(
             SqlExecutionContext sqlExecutionContext,
-            SqlOptimiser optimiser,
+            FunctionFactoryCache functionFactoryCache,
             QueryModel queryModel
     ) throws SqlException {
         // Create view columns based on query.
@@ -351,9 +362,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             final QueryColumn queryColumn = findTimestampFloorColumn(queryModel);
             if (queryColumn != null) {
                 final ExpressionNode ast = queryColumn.getAst();
-                if (ast.paramCount == 3) {
-                    intervalExpr = ast.args.getQuick(2).token;
-                    intervalPos = ast.args.getQuick(2).position;
+                // there are three timestamp_floor() overloads, so check all of them
+                if (ast.paramCount == 3 || ast.paramCount == 5) {
+                    final int idx = ast.paramCount - 1;
+                    intervalExpr = ast.args.getQuick(idx).token;
+                    intervalPos = ast.args.getQuick(idx).position;
                 } else {
                     intervalExpr = ast.lhs.token;
                     intervalPos = ast.lhs.position;
@@ -385,7 +398,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         baseKeyColumnNames.clear();
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn column = columns.getQuick(i);
-            if (!optimiser.hasAggregates(column.getAst())) {
+            if (hasNoAggregates(functionFactoryCache, queryModel, i)) {
                 // SAMPLE BY/GROUP BY key, add as dedup key.
                 final CreateTableColumnModel model = createColumnModelMap.get(column.getName());
                 if (model == null) {
@@ -515,12 +528,76 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             for (int i = 0, n = queryColumns.size(); i < n; i++) {
                 final QueryColumn queryColumn = queryColumns.getQuick(i);
                 final ExpressionNode ast = queryColumn.getAst();
-                if (ast.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase("timestamp_floor", ast.token)) {
+                if (ast.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase(TimestampFloorFunctionFactory.NAME, ast.token)) {
                     return queryColumn;
                 }
             }
             model = model.getNestedModel();
         }
         return null;
+    }
+
+    private boolean hasNoAggregates(FunctionFactoryCache functionFactoryCache, QueryModel queryModel, int columnIndex) {
+        tmpColumnIndexes.clear();
+        tmpColumnIndexes.add(columnIndex);
+
+        for (; ; ) {
+            // First, check the columns for aggregate functions
+            // and accumulate all literals we've met on the way.
+            tmpLiterals.clear();
+            for (int i = 0, n = tmpColumnIndexes.size(); i < n; i++) {
+                final int idx = tmpColumnIndexes.getQuick(i);
+                ExpressionNode node = queryModel.getBottomUpColumns().getQuick(idx).getAst();
+                // pre-order iterative tree traversal
+                // see: http://en.wikipedia.org/wiki/Tree_traversal
+                sqlNodeStack.clear();
+                while (!sqlNodeStack.isEmpty() || node != null) {
+                    if (node != null) {
+                        switch (node.type) {
+                            case LITERAL:
+                                tmpLiterals.add(node.token);
+                                node = null;
+                                continue;
+                            case FUNCTION:
+                                if (functionFactoryCache.isGroupBy(node.token)) {
+                                    return false;
+                                }
+                                break;
+                            default:
+                                for (int j = 0, m = node.args.size(); j < m; j++) {
+                                    sqlNodeStack.add(node.args.getQuick(j));
+                                }
+                                if (node.rhs != null) {
+                                    sqlNodeStack.push(node.rhs);
+                                }
+                                break;
+                        }
+                        node = node.lhs;
+                    } else {
+                        node = sqlNodeStack.poll();
+                    }
+                }
+            }
+
+            // If the model is not an outer select, we're done.
+            if (queryModel.getNestedModel() == null || SqlUtil.isNotPlainSelectModel(queryModel)) {
+                return true;
+            }
+
+            // OK, it's a simple select model, so we need to check the nested model
+            // as the column may reference nested aggregates.
+            // Example:
+            //   SELECT c FROM (SELECT count() AS c FROM x);
+            queryModel = queryModel.getNestedModel();
+
+            // Collect column indexes to check in the next iteration and carry on.
+            tmpColumnIndexes.clear();
+            for (int i = 0, n = queryModel.getBottomUpColumns().size(); i < n; i++) {
+                final QueryColumn column = queryModel.getBottomUpColumns().getQuick(i);
+                if (tmpLiterals.contains(column.getAlias())) {
+                    tmpColumnIndexes.add(i);
+                }
+            }
+        }
     }
 }

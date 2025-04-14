@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -35,7 +34,88 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAreaName() throws Exception {
-        assertToUTC("select to_utc(0, 'Europe/Prague')", "1969-12-31T23:00:00.000000Z\n");
+        assertMemoryLeak(() -> assertToUTC(
+                "to_utc\n" +
+                        "1969-12-31T23:00:00.000000Z\n",
+                "1970-01-01T00:00:00.000000Z",
+                "Europe/Prague"
+        ));
+    }
+
+    @Test
+    public void testDst() throws Exception {
+        assertMemoryLeak(() -> {
+            // CET to CEST
+            assertToUTC(
+                    "to_utc\n" +
+                            "2021-03-27T23:01:00.000000Z\n",
+                    "2021-03-28T00:01:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToUTC(
+                    "to_utc\n" +
+                            "2021-03-28T00:01:00.000000Z\n",
+                    "2021-03-28T01:01:00.000000Z",
+                    "Europe/Berlin"
+            );
+            // non-existing local time (mapped to the "next" UTC hour)
+            assertToUTC(
+                    "to_utc\n" +
+                            "2021-03-28T01:00:00.000000Z\n",
+                    "2021-03-28T02:00:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToUTC(
+                    "to_utc\n" +
+                            "2021-03-28T01:01:00.000000Z\n",
+                    "2021-03-28T02:01:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToUTC(
+                    "to_utc\n" +
+                            "2021-03-28T01:00:00.000000Z\n",
+                    "2021-03-28T03:00:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToUTC(
+                    "to_utc\n" +
+                            "2021-03-28T01:01:00.000000Z\n",
+                    "2021-03-28T03:01:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToUTC(
+                    "to_utc\n" +
+                            "2021-03-28T02:01:00.000000Z\n",
+                    "2021-03-28T04:01:00.000000Z",
+                    "Europe/Berlin"
+            );
+
+            // CEST to CET
+            assertToUTC(
+                    "to_utc\n" +
+                            "2021-10-30T23:01:00.000000Z\n",
+                    "2021-10-31T01:01:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToUTC(
+                    "to_utc\n" +
+                            "2021-10-31T00:00:00.000000Z\n",
+                    "2021-10-31T02:00:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToUTC(
+                    "to_utc\n" +
+                            "2021-10-31T00:01:00.000000Z\n",
+                    "2021-10-31T02:01:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToUTC(
+                    "to_utc\n" +
+                            "2021-10-31T02:01:00.000000Z\n",
+                    "2021-10-31T03:01:00.000000Z",
+                    "Europe/Berlin"
+            );
+        });
     }
 
     @Test
@@ -45,7 +125,7 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractCairoTest {
                 assertExceptionNoLeakCheck("select to_utc(0, '25:40')");
             } catch (SqlException e) {
                 Assert.assertEquals(17, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone name");
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone");
             }
         });
     }
@@ -57,7 +137,7 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractCairoTest {
                 assertExceptionNoLeakCheck("select to_utc(0, 'UUU')");
             } catch (SqlException e) {
                 Assert.assertEquals(17, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone name");
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone");
             }
         });
     }
@@ -76,18 +156,21 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testTimeOffset() throws Exception {
-        assertToUTC(
-                "select to_utc(cast('2020-03-12T15:30:00.000000Z' as timestamp), '-07:40')",
-                "2020-03-12T23:10:00.000000Z\n"
-        );
+        assertMemoryLeak(() -> assertToUTC(
+                "to_utc\n" +
+                        "2020-03-12T23:10:00.000000Z\n",
+                "2020-03-12T15:30:00.000000Z",
+                "-07:40"
+        ));
     }
 
     @Test
     public void testVarInvalidTimezone() throws Exception {
-        assertToUTC(
-                "select to_utc(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select 'XU' zone)",
-                "2020-03-12T15:30:00.000000Z\n"
-        );
+        assertMemoryLeak(() -> assertSql(
+                "to_utc\n" +
+                        "2020-03-12T15:30:00.000000Z\n",
+                "select to_utc(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select 'XU' zone)"
+        ));
     }
 
     @Test
@@ -104,32 +187,44 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testVarTimezone() throws Exception {
-        assertToUTC(
-                "select to_utc(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select '-07:40' zone)",
-                "2020-03-12T23:10:00.000000Z\n"
-        );
+        assertMemoryLeak(() -> assertSql(
+                "to_utc\n" +
+                        "2020-03-12T23:10:00.000000Z\n",
+                "select to_utc(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select '-07:40' zone)"
+        ));
     }
 
     @Test
     public void testZoneName() throws Exception {
-        assertToUTC(
-                "select to_utc(cast('2020-03-12T15:30:00.000000Z' as timestamp), 'PST')",
-                "2020-03-12T22:30:00.000000Z\n"
-        );
+        assertMemoryLeak(() -> assertToUTC(
+                "to_utc\n" +
+                        "2020-03-12T22:30:00.000000Z\n",
+                "2020-03-12T15:30:00.000000Z",
+                "PST"
+        ));
     }
 
-    private void assertToUTC(String sql, String expected) throws Exception {
-        assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                TestUtils.assertSql(
-                        compiler,
-                        sqlExecutionContext,
-                        sql,
-                        sink,
-                        "to_utc\n" +
-                                expected
-                );
-            }
-        });
+    private void assertToUTC(
+            String expected,
+            String timestamp,
+            String timeZone
+    ) throws SqlException {
+        assertSql(
+                expected,
+                "select to_utc('" +
+                        timestamp + "', " +
+                        (timeZone != null ? "'" + timeZone + "'" : "null") +
+                        ")"
+        );
+
+        bindVariableService.clear();
+        bindVariableService.setStr("tz", timeZone);
+        assertSql(
+                expected,
+                "select to_utc('" +
+                        timestamp + "', " +
+                        ":tz" +
+                        ")"
+        );
     }
 }

@@ -172,9 +172,9 @@ public class MatViewTest extends AbstractCairoTest {
                     false
             );
 
+            currentMicros = parseFloorPartialTimestamp("2024-10-24T18");
             execute("rename table base_price to base_price2");
             execute("refresh materialized view 'price_1h' full;");
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T18");
             drainQueues();
 
             assertQueryNoLeakCheck(
@@ -192,8 +192,8 @@ public class MatViewTest extends AbstractCairoTest {
                             "sym varchar, price double, ts timestamp" +
                             ") timestamp(ts) partition by DAY BYPASS WAL"
             );
-            execute("refresh materialized view 'price_1h' full;");
             currentMicros = parseFloorPartialTimestamp("2024-10-24T19");
+            execute("refresh materialized view 'price_1h' full;");
             drainQueues();
 
             assertQueryNoLeakCheck(
@@ -251,10 +251,10 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             // Swap the tables with each other.
+            currentMicros = parseFloorPartialTimestamp("2024-10-24T18");
             execute("rename table base_price to base_price_tmp");
             execute("rename table base_price2 to base_price");
             execute("rename table base_price_tmp to base_price2");
-            currentMicros = parseFloorPartialTimestamp("2024-10-24T18");
             drainQueues();
 
             assertQueryNoLeakCheck(
@@ -448,8 +448,8 @@ public class MatViewTest extends AbstractCairoTest {
                     true
             );
 
-            Assert.assertNull(engine.getMatViewGraph().getViewRefreshState(matViewToken1));
-            Assert.assertNotNull(engine.getMatViewGraph().getViewRefreshState(matViewToken2));
+            Assert.assertNull(engine.getMatViewStateStore().getViewState(matViewToken1));
+            Assert.assertNotNull(engine.getMatViewStateStore().getViewState(matViewToken2));
         });
     }
 
@@ -532,7 +532,7 @@ public class MatViewTest extends AbstractCairoTest {
                     true
             );
 
-            Assert.assertNull(engine.getMatViewGraph().getViewRefreshState(matViewToken));
+            Assert.assertNull(engine.getMatViewStateStore().getViewState(matViewToken));
         });
     }
 
@@ -793,7 +793,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-03-28T03:00:00.000000Z\ta\tnull\t127.43011035722469\n" +
                     "2021-03-28T04:00:00.000000Z\ta\t60.30746433578906\t128.42101395467057\n";
 
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, false);
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, true, true);
             assertQueryNoLeakCheck(expected, outSelect(out, viewName), null, true, true);
         });
     }
@@ -819,7 +819,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-03-28T03:00:00.000000Z\ta\t144.77803379943109\tnull\n" +
                     "2021-03-28T04:00:00.000000Z\ta\t98.27279585461298\t128.42101395467057\n";
 
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, false);
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, true, true);
             assertQueryNoLeakCheck(expected, outSelect(out, viewName), null, true, true);
         });
     }
@@ -846,7 +846,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-03-28T04:00:00.000000Z\ta\tnull\t127.43011035722469\n" +
                     "2021-03-28T05:00:00.000000Z\ta\t60.30746433578906\t128.42101395467057\n";
 
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, false);
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, true, true);
             assertQueryNoLeakCheck(expected, outSelect(out, viewName), null, true, true);
         });
     }
@@ -871,8 +871,7 @@ public class MatViewTest extends AbstractCairoTest {
             final String expected = "k\ts\tlat\tlon\n" +
                     "2021-03-28T00:00:00.000000Z\ta\t142.30215575416736\t167.4566019970139\n" +
                     "2021-03-28T01:00:00.000000Z\ta\t33.45558404694713\t128.42101395467057\n";
-
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, false);
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, true, true);
             assertQueryNoLeakCheck(expected, outSelect(out, viewName), null, true, true);
         });
     }
@@ -901,7 +900,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "2020-10-27T00:00:00.000000Z\t2020-10-26T23:00:00.000000Z\ta\t6.612327943200507\t2020-10-27T22:00:00.000000Z\n" +
                     "2020-10-28T00:00:00.000000Z\t2020-10-27T23:00:00.000000Z\ta\tnull\t2020-10-27T23:40:00.000000Z\n";
 
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), "k");
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), "k", true, true);
             assertQueryNoLeakCheck(expected, outSelect(out, viewName), "k", true, true);
         });
     }
@@ -911,9 +910,9 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final String viewName = "x_view";
             final String out = "select to_timezone(k, 'Europe/Berlin'), k, s, lat, lon";
-            final String viewQuery = "select k, s, first(lat) lat, last(k) lon " + //TODO(eugene): last(k) or last(lon) ?
+            final String viewQuery = "select k, s, first(lat) lat, last(k) lon " + // TODO(eugene): last(k) or last(lon) ?
                     "from x " +
-                    "where s in ('a') and k between '2021-03-27 21:00' and  '2021-03-28 04:00'" +
+                    "where s in ('a') and k between '2021-03-27 21:00' and '2021-03-28 04:00' " +
                     "sample by 1h align to calendar time zone 'Europe/Berlin' with offset '00:15'";
 
             final long startTs = TimestampFormatUtils.parseUTCTimestamp("2021-03-26T20:30:00.000000Z");
@@ -932,8 +931,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-03-28T03:15:00.000000Z\t2021-03-28T01:15:00.000000Z\ta\tnull\t2021-03-28T02:11:00.000000Z\n" +
                     "2021-03-28T04:15:00.000000Z\t2021-03-28T02:15:00.000000Z\ta\tnull\t2021-03-28T02:37:00.000000Z\n" +
                     "2021-03-28T05:15:00.000000Z\t2021-03-28T03:15:00.000000Z\ta\t38.20430552091481\t2021-03-28T03:16:00.000000Z\n";
-
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), "k", false);
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), "k", true, true);
             assertQueryNoLeakCheck(expected, outSelect(out, viewName), "k", true, true);
         });
     }
@@ -961,7 +959,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-03-29T00:00:00.000000Z\t2021-03-28T22:00:00.000000Z\ta\t70.00560222114518\t2021-03-29T16:40:00.000000Z\n" +
                     "2021-03-30T00:00:00.000000Z\t2021-03-29T22:00:00.000000Z\ta\t13.290235514836048\t2021-03-30T02:40:00.000000Z\n";
 
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), "k", false);
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), "k", true, true);
             assertQueryNoLeakCheck(expected, outSelect(out, viewName), "k", true, true);
         });
     }
@@ -1587,7 +1585,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "1970-01-02T20:42:00.000000Z\t24\n" +
                     "1970-01-02T22:42:00.000000Z\t23\n";
 
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, false);
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, true, true);
             assertQueryNoLeakCheck(expected, outSelect(out, viewName), null, true, true);
         });
     }
@@ -1618,7 +1616,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-03-28T14:00:00.000000Z\t7\n";
 
             final String out = "select to_timezone(k, 'Iran') k, c";
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, false);
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, true, true);
             assertQueryNoLeakCheck(expected, outSelect(out, viewName), null, true, true);
         });
     }
@@ -1648,7 +1646,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "2021-03-28T12:00:00.000000Z\t2\n";
 
             final String out = "select to_timezone(k, 'Europe/Berlin') k, c";
-            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, false);
+            assertQueryNoLeakCheck(expected, outSelect(out, viewQuery), null, true, true);
             assertQueryNoLeakCheck(expected, outSelect(out, viewName), null, true, true);
         });
     }
@@ -1783,7 +1781,7 @@ public class MatViewTest extends AbstractCairoTest {
                     "1970-01-03T06:42:00.000000Z\t18\n" +
                     "1970-01-03T08:12:00.000000Z\t1\n";
 
-            assertQueryNoLeakCheck(expected, viewQuery, "k");
+            assertQueryNoLeakCheck(expected, viewQuery, "k", true, true);
             assertQueryNoLeakCheck(expected, viewName, "k", true, true);
         });
     }
@@ -1893,6 +1891,8 @@ public class MatViewTest extends AbstractCairoTest {
             execute("cancel query " + queryId);
             stopped.await();
             Assert.assertFalse(refreshed.get());
+
+            drainWalQueue();
             assertQueryNoLeakCheck(
                     "view_name\tview_status\n" +
                             "price_1h\tinvalid\n",
@@ -2098,7 +2098,7 @@ public class MatViewTest extends AbstractCairoTest {
                 "1970-01-03T05:42:00.000000Z\t18\n" +
                 "1970-01-03T07:12:00.000000Z\t13\n";
 
-        assertQueryNoLeakCheck(expected, viewQuery, "k");
+        assertQueryNoLeakCheck(expected, viewQuery, "k", true, true);
         assertQueryNoLeakCheck(expected, viewName, "k", true, true);
     }
 

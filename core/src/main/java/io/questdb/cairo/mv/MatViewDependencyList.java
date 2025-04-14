@@ -22,29 +22,38 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.math;
+package io.questdb.cairo.mv;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
+import io.questdb.cairo.TableToken;
 import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
+import io.questdb.std.SimpleReadWriteLock;
 
-public class IPv4StrMinusIntFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "-(sI)";
+import java.util.concurrent.locks.ReadWriteLock;
+
+/**
+ * Holds the list of mat view tokens for the given base table (or base mat view).
+ * The list is protected with a R/W mutex, so it can be read concurrently.
+ */
+public class MatViewDependencyList {
+    private final ReadWriteLock lock = new SimpleReadWriteLock();
+    private final ObjList<TableToken> matViews = new ObjList<>();
+
+    ReadOnlyObjList<TableToken> lockForRead() {
+        lock.readLock().lock();
+        return matViews;
     }
 
-    @Override
-    public Function newInstance(
-            int position,
-            ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) {
-        return new IPv4MinusIntFunctionFactory.IPv4MinusIntFunction(args.getQuick(0), args.getQuick(1));
+    ObjList<TableToken> lockForWrite() {
+        lock.writeLock().lock();
+        return matViews;
+    }
+
+    void unlockAfterRead() {
+        lock.readLock().unlock();
+    }
+
+    void unlockAfterWrite() {
+        lock.writeLock().unlock();
     }
 }
