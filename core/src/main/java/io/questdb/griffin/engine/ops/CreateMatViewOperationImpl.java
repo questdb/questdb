@@ -80,11 +80,11 @@ import static io.questdb.griffin.model.ExpressionNode.LITERAL;
  * queries.
  */
 public class CreateMatViewOperationImpl implements CreateMatViewOperation {
-    private final String baseTableName;
-    private final int baseTableNamePosition;
     private final IntList baseKeyColumnNamePositions = new IntList();
     private final ObjList<CharSequence> baseKeyColumnNames = new ObjList<>();
     private final CharSequenceHashSet baseTableDedupKeys = new CharSequenceHashSet();
+    private final String baseTableName;
+    private final int baseTableNamePosition;
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();
     private final MatViewDefinition matViewDefinition = new MatViewDefinition();
     private final int refreshType;
