@@ -254,6 +254,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         } finally {
             state.unlock();
+            state.tryCloseIfDropped();
         }
 
         // Kickstart incremental refresh.
@@ -413,6 +414,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
             } finally {
                 state.unlock();
+                state.tryCloseIfDropped();
             }
 
             // Invalidate dependent views recursively.
@@ -477,6 +479,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     stateStore.removeViewState(viewToken);
                 } finally {
                     state.unlock();
+                    state.tryCloseIfDropped();
                 }
             }
         }
@@ -534,6 +537,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         } finally {
             state.unlock();
+            state.tryCloseIfDropped();
         }
     }
 
