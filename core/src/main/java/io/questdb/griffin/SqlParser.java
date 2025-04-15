@@ -911,12 +911,7 @@ public class SqlParser {
         }
 
         if (tok != null && isInKeyword(tok)) {
-            expectTok(lexer, "volume");
-            tok = tok(lexer, "path for volume");
-            if (Os.isWindows()) {
-                throw SqlException.position(lexer.getPosition()).put("'in volume' is not supported on Windows");
-            }
-            tableOpBuilder.setVolumeAlias(GenericLexer.unquote(tok), lexer.lastTokenPosition());
+            parseInVolume(lexer, tableOpBuilder);
             tok = optTok(lexer);
         }
 
@@ -1142,15 +1137,7 @@ public class SqlParser {
         builder.setO3MaxLag(o3MaxLag);
 
         if (tok != null && isInKeyword(tok)) {
-            tok = tok(lexer, "volume");
-            if (!isVolumeKeyword(tok)) {
-                throw SqlException.position(lexer.getPosition()).put("expected 'volume'");
-            }
-            tok = tok(lexer, "path for volume");
-            if (Os.isWindows()) {
-                throw SqlException.position(lexer.getPosition()).put("'in volume' is not supported on Windows");
-            }
-            builder.setVolumeAlias(unquote(tok), lexer.lastTokenPosition());
+            parseInVolume(lexer, builder);
             tok = optTok(lexer);
         }
 
@@ -2154,6 +2141,16 @@ public class SqlParser {
             throw SqlException.position(lexer.lastTokenPosition()).put("expected 'from'");
         }
         parseTableName(lexer, model);
+    }
+
+    private void parseInVolume(GenericLexer lexer, CreateTableOperationBuilderImpl tableOpBuilder) throws SqlException {
+        int volumeKwPos = lexer.getPosition();
+        expectTok(lexer, "volume");
+        CharSequence tok = tok(lexer, "path for volume");
+        if (Os.isWindows()) {
+            throw SqlException.position(volumeKwPos).put("'in volume' is not supported on Windows");
+        }
+        tableOpBuilder.setVolumeAlias(GenericLexer.unquote(tok), lexer.lastTokenPosition());
     }
 
     private ExecutionModel parseInsert(
