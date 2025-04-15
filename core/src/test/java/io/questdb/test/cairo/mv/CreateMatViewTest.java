@@ -68,6 +68,88 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateDropBaseTableConcurrent() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price_src (" +
+                            "  sym varchar, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price_src values('gbpusd', 1.320, now())");
+
+            execute(
+                    "create table base_price as (" +
+                            "  select sym, price, ts from base_price_src" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            execute(
+                    "create materialized view if not exists price_1h as (" +
+                            "  select sym, last(price) as price, ts from base_price sample by 1h" +
+                            ") partition by DAY"
+            );
+
+            final int iterations = 25;
+            final CyclicBarrier barrier = new CyclicBarrier(2);
+            final AtomicInteger errorCounter = new AtomicInteger();
+            final AtomicInteger createCounter = new AtomicInteger();
+
+            final Thread creator = new Thread(() -> {
+                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+                     SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                    barrier.await();
+                    for (int i = 0; i < iterations; i++) {
+                        execute(
+                                "create table if not exists base_price as (" +
+                                        "  select sym, price, ts from base_price_src" +
+                                        ") timestamp(ts) partition by DAY WAL",
+                                executionContext
+                        );
+                        drainWalQueue();
+                        execute("refresh materialized view price_1h full");
+                        refreshJob.run(0);
+                        runWalPurgeJob();
+                        createCounter.incrementAndGet();
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace(System.out);
+                    errorCounter.incrementAndGet();
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+            creator.start();
+
+            final Thread dropper = new Thread(() -> {
+                try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                    barrier.await();
+                    int knownCount;
+                    int droppedAt = 0;
+                    while ((knownCount = createCounter.get()) < iterations && errorCounter.get() == 0) {
+                        if (knownCount > droppedAt) {
+                            execute("drop table if exists base_price", executionContext);
+                            droppedAt = createCounter.get();
+                        } else {
+                            Os.sleep(1);
+                        }
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace(System.out);
+                    errorCounter.incrementAndGet();
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+            dropper.start();
+
+            creator.join();
+            dropper.join();
+
+            Assert.assertEquals(0, errorCounter.get());
+        });
+    }
+
+    @Test
     public void testCreateDropConcurrent() throws Exception {
         assertMemoryLeak(() -> {
             execute(
