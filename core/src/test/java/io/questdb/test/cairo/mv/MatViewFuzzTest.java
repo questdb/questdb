@@ -49,7 +49,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
-        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 1);
         AbstractCairoTest.setUpStatic();
     }
 
@@ -58,7 +57,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         super.setUp();
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
-        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 1);
     }
 
     @Test
