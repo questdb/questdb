@@ -8777,7 +8777,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select x,sum(y) from (tab order by ts desc) sample by 2m align to first observation",
                 0,
-                "base query does not provide ASC order over dedicated TIMESTAMP column",
+                "base query does not provide ASC order over designated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -8787,7 +8787,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select x,sum(y) from (tab order by ts desc) sample by 2m",
                 0,
-                "base query does not provide ASC order over dedicated TIMESTAMP column",
+                "base query does not provide ASC order over designated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -8797,7 +8797,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select x,sum(y) from (tab order by ts desc) sample by 2m align to calendar",
                 0,
-                "base query does not provide ASC order over dedicated TIMESTAMP column",
+                "base query does not provide ASC order over designated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -8810,7 +8810,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select sum(x) from (select x+1 as x, ts from (tab order by ts desc)) sample by 2m align to first observation",
                 0,
-                "base query does not provide ASC order over dedicated TIMESTAMP column",
+                "base query does not provide ASC order over designated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -8820,7 +8820,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select sum(x) from (select x+1 as x, ts from (tab order by ts desc)) sample by 2m",
                 0,
-                "base query does not provide ASC order over dedicated TIMESTAMP column",
+                "base query does not provide ASC order over designated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -8830,7 +8830,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select sum(x) from (select x+1 as x, ts from (tab order by ts desc)) sample by 2m align to calendar",
                 0,
-                "base query does not provide ASC order over dedicated TIMESTAMP column",
+                "base query does not provide ASC order over designated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -8907,7 +8907,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select x,sum(y) from tab sample by 2m align to first observation",
                 0,
-                "base query does not provide ASC order over dedicated TIMESTAMP column",
+                "base query does not provide ASC order over designated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -8916,7 +8916,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select x,sum(y) from tab sample by 2m",
                 0,
-                "base query does not provide ASC order over dedicated TIMESTAMP column",
+                "base query does not provide ASC order over designated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -8925,7 +8925,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select x,sum(y) from tab sample by 2m align to calendar",
                 0,
-                "base query does not provide ASC order over dedicated TIMESTAMP column",
+                "base query does not provide ASC order over designated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -8937,7 +8937,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select x,sum(y) from (select distinct x, y from tab) sample by 2m align to first observation",
                 0,
-                "base query does not provide ASC order over dedicated TIMESTAMP column",
+                "base query does not provide ASC order over designated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -8946,7 +8946,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select x,sum(y) from (select distinct x, y from tab) sample by 2m",
                 0,
-                "base query does not provide ASC order over dedicated TIMESTAMP column",
+                "base query does not provide ASC order over designated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
@@ -8955,7 +8955,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "select x,sum(y) from (select distinct x, y from tab) sample by 2m align to calendar",
                 0,
-                "base query does not provide ASC order over dedicated TIMESTAMP column",
+                "base query does not provide ASC order over designated TIMESTAMP column",
                 modelOf("tab")
                         .col("x", ColumnType.INT)
                         .col("y", ColumnType.INT)
