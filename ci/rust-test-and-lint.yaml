@@ -23,6 +23,7 @@ jobs:
         displayName: "Ensure Rust is installed"
         # Note, the `prepare_rust_env.py` script exports a number of variables.
       - task: Cache@2
+        continueOnError: true
         inputs:
           key: '"cargo-registry" | "$(RUSTC_HOST_TRIPLE)" | "$(RUSTC_RELEASE)"'
           path: $(CARGO_HOME)/registry
