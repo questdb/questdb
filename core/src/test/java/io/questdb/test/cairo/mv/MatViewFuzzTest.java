@@ -379,7 +379,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         runRefreshJobAndDrainWalQueue();
         fuzzer.checkNoSuspendedTables();
 
-
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             for (int i = 0; i < tableCount; i++) {
                 String viewSql = viewSqls.getQuick(i);
@@ -454,14 +453,14 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     private Thread startRefreshJob(int workerId, AtomicBoolean stop, Rnd outsideRnd) {
-        Rnd rnd = new Rnd(outsideRnd.nextLong(), outsideRnd.nextLong());
-        Thread th = new Thread(
+        final Rnd rnd = new Rnd(outsideRnd.nextLong(), outsideRnd.nextLong());
+        final Thread th = new Thread(
                 () -> {
                     try {
                         try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(workerId, engine)) {
                             while (!stop.get()) {
                                 refreshJob.run(workerId);
-                                Os.sleep(rnd.nextInt(1000));
+                                Os.sleep(rnd.nextInt(100));
                             }
 
                             // Run one final time before stopping

@@ -223,7 +223,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
                         if (rs.wasNull()) {
                             sink.put("null");
                         } else {
-                            sink.put(floatValue, 3);
+                            sink.put(floatValue);
                         }
                         break;
                     case SMALLINT:

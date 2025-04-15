@@ -136,7 +136,7 @@ public class FirstNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
 
         assertSql(
                 "a0\ta1\ta2\ta3\ta4\ta5\ta6\ta7\ta8\ta9\ta10\ta11\ta12\ta13\ta14\n" +
-                        "a\t2023-10-23T00:00:00.000Z\t2.2\t3.3000\t4\t5\ta_symbol\t2023-10-23T12:34:59.000000Z\t" + firstUuid + "\ta_string\tu\tuu\tuuuuu\tuuuuuuu\t1.0.0.0\n",
+                        "a\t2023-10-23T00:00:00.000Z\t2.2\t3.3\t4\t5\ta_symbol\t2023-10-23T12:34:59.000000Z\t" + firstUuid + "\ta_string\tu\tuu\tuuuuu\tuuuuuuu\t1.0.0.0\n",
                 "select first_not_null(a0) a0," +
                         "     first_not_null(a1) a1," +
                         "     first_not_null(a2) a2," +

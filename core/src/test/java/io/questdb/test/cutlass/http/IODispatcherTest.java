@@ -3062,6 +3062,26 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testJsonFloatClipping() throws Exception {
+        getSimpleTester().run((engine, sqlExecutionContext) -> {
+            testHttpClient.assertGet(
+                    "{\"ddl\":\"OK\"}",
+                    "CREATE TABLE t0(f FLOAT, d DOUBLE);"
+            );
+
+            testHttpClient.assertGet(
+                    "{\"dml\":\"OK\"}",
+                    "INSERT INTO t0 VALUES (54321, 54321);"
+            );
+
+            testHttpClient.assertGet(
+                    "{\"query\":\"SELECT * FROM t0;\",\"columns\":[{\"name\":\"f\",\"type\":\"FLOAT\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[54321.0,54321.0]],\"count\":1}",
+                    "SELECT * FROM t0;"
+            );
+        });
+    }
+
+    @Test
     public void testJsonImplicitCastException() throws Exception {
         testJsonQuery(
                 0,
