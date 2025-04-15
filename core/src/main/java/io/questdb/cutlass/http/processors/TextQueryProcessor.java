@@ -83,9 +83,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final MillisecondClock clock;
     private final JsonQueryProcessorConfiguration configuration;
-    private final int doubleScale;
     private final CairoEngine engine;
-    private final int floatScale;
     private final int maxSqlRecompileAttempts;
     private final Metrics metrics;
     private final byte requiredAuthType;
@@ -107,10 +105,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             int sharedWorkerCount
     ) {
         this.configuration = configuration;
-        this.floatScale = configuration.getFloatScale();
         this.clock = configuration.getMillisecondClock();
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount);
-        this.doubleScale = configuration.getDoubleScale();
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
         this.metrics = engine.getMetrics();
         this.engine = engine;
@@ -583,13 +579,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             case ColumnType.DOUBLE:
                 double d = rec.getDouble(col);
                 if (d == d) {
-                    response.put(d, doubleScale);
+                    response.put(d);
                 }
                 break;
             case ColumnType.FLOAT:
                 float f = rec.getFloat(col);
                 if (f == f) {
-                    response.put(f, floatScale);
+                    response.put(f);
                 }
                 break;
             case ColumnType.INT:

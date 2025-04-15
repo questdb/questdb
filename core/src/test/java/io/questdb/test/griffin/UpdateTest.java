@@ -906,8 +906,8 @@ public class UpdateTest extends AbstractCairoTest {
             );
 
             String expected = "ts\txint\txlong\txdouble\txshort\txbyte\txchar\txdate\txfloat\txts\txbool\txl256\n" +
-                    "1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1\t1\t1\t1970-01-01T00:00:00.001Z\t1.0000\t1970-01-01T00:00:00.000001Z\ttrue\t0x01\n" +
-                    "1970-01-01T00:00:01.000000Z\t2\t2\t2.0\t2\t2\t2\t1970-01-01T00:00:00.002Z\t2.0000\t1970-01-01T00:00:00.000002Z\ttrue\t0x02\n";
+                    "1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1\t1\t1\t1970-01-01T00:00:00.001Z\t1.0\t1970-01-01T00:00:00.000001Z\ttrue\t0x01\n" +
+                    "1970-01-01T00:00:01.000000Z\t2\t2\t2.0\t2\t2\t2\t1970-01-01T00:00:00.002Z\t2.0\t1970-01-01T00:00:00.000002Z\ttrue\t0x02\n";
 
             update("UPDATE up SET xint=xshort");
             assertSql(expected, "up");
