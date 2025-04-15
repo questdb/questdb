@@ -238,7 +238,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return cancelReason.get();
     }
 
-    // warning: the circuit breaker may be thread unsafe, so don't call it concurrently
+    // warning: the circuit breaker may be thread unsafe, so don't use it concurrently
     public SqlExecutionCircuitBreaker getCircuitBreaker() {
         return sqlExecutionContext.getCircuitBreaker();
     }
