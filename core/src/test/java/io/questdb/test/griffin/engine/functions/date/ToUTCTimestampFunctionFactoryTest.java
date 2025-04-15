@@ -93,6 +93,12 @@ public class ToUTCTimestampFunctionFactoryTest extends AbstractCairoTest {
             // CEST to CET
             assertToUTC(
                     "to_utc\n" +
+                            "2021-10-30T22:01:00.000000Z\n",
+                    "2021-10-31T00:01:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToUTC(
+                    "to_utc\n" +
                             "2021-10-30T23:01:00.000000Z\n",
                     "2021-10-31T01:01:00.000000Z",
                     "Europe/Berlin"
