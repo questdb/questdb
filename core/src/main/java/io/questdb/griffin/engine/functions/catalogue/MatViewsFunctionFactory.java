@@ -26,14 +26,17 @@ package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.mv.MatViewDefinition;
-import io.questdb.cairo.mv.MatViewRefreshState;
+import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -45,10 +48,14 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Path;
 
 public class MatViewsFunctionFactory implements FunctionFactory {
+    private static final Log LOG = LogFactory.getLog(MatViewsFunctionFactory.class);
 
     @Override
     public String getSignature() {
@@ -108,6 +115,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
         private static class ViewsListCursor implements NoRandomAccessRecordCursor {
             private final MatViewsRecord record = new MatViewsRecord();
+            private final MatViewStateReader viewStateReader = new MatViewStateReader();
             private final ObjList<TableToken> viewTokens = new ObjList<>();
             private CairoEngine engine;
             private int viewIndex = 0;
@@ -123,33 +131,61 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() throws DataUnavailableException {
-                int n = viewTokens.size();
-                while (viewIndex < n) {
-                    final TableToken viewToken = viewTokens.get(viewIndex);
-                    final MatViewRefreshState viewState = engine.getMatViewGraph().getViewRefreshState(viewToken);
-                    if (viewState != null && !viewState.isDropped()) {
-                        TableToken baseTableToken = engine.getTableTokenIfExists(viewState.getViewDefinition().getBaseTableName());
-                        final long lastRefreshedBaseTxn = viewState.getLastRefreshBaseTxn();
-                        final long lastRefreshTimestamp = viewState.getLastRefreshTimestamp();
-                        // Read base table txn after mat view's last refreshed txn to avoid
-                        // showing obsolete base table txn.
-                        final long lastAppliedBaseTxn = baseTableToken != null
-                                ? engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn() : -1;
+                final CairoConfiguration configuration = engine.getConfiguration();
+                try (
+                        final Path path = new Path();
+                        final BlockFileReader reader = new BlockFileReader(configuration)
+                ) {
+                    path.of(configuration.getDbRoot());
+                    final int pathLen = path.size();
 
-                        record.of(
-                                viewState.getViewDefinition(),
-                                lastRefreshTimestamp,
-                                lastRefreshedBaseTxn,
-                                lastAppliedBaseTxn,
-                                viewState.getInvalidationReason(),
-                                viewState.isInvalid()
-                        );
-                        viewIndex++;
-                        return true;
+                    final int n = viewTokens.size();
+                    for (; viewIndex < n; viewIndex++) {
+                        final TableToken viewToken = viewTokens.get(viewIndex);
+                        if (engine.getTableTokenIfExists(viewToken.getTableName()) != null) {
+                            final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(viewToken);
+                            if (matViewDefinition == null) {
+                                continue; // mat view was dropped concurrently
+                            }
+
+                            viewStateReader.clear();
+                            final boolean isMatViewStateExists = TableUtils.isMatViewStateFileExists(configuration, path, viewToken.getDirName());
+                            if (isMatViewStateExists) {
+                                try {
+                                    reader.of(path.trimTo(pathLen).concat(viewToken.getDirName()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                                    viewStateReader.of(reader, viewToken);
+                                } catch (CairoException e) {
+                                    LOG.info().$("could not read materialized view state file [view=").utf8(viewToken.getTableName())
+                                            .$(", msg=").$(e.getFlyweightMessage())
+                                            .$(", errno=").$(e.getErrno())
+                                            .I$();
+                                    continue;
+                                }
+                            }
+
+                            final long lastRefreshedBaseTxn = viewStateReader.getLastRefreshBaseTxn();
+                            final long lastRefreshTimestamp = viewStateReader.getLastRefreshTimestamp();
+
+                            final TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());
+                            // Read base table txn after mat view's last refreshed txn to avoid
+                            // showing obsolete base table txn.
+                            final long lastAppliedBaseTxn = baseTableToken != null
+                                    ? engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn() : -1;
+
+                            record.of(
+                                    matViewDefinition,
+                                    lastRefreshTimestamp,
+                                    lastRefreshedBaseTxn,
+                                    lastAppliedBaseTxn,
+                                    viewStateReader.getInvalidationReason(),
+                                    viewStateReader.isInvalid()
+                            );
+                            viewIndex++;
+                            return true;
+                        }
                     }
-                    viewIndex++;
+                    return false;
                 }
-                return false;
             }
 
             @Override
@@ -255,8 +291,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("view_table_dir_name", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("invalidation_reason", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("view_status", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("refresh_base_table_txn", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("base_table_txn", ColumnType.LONG));
-            metadata.add(new TableColumnMetadata("applied_base_table_txn", ColumnType.LONG));
             METADATA = metadata;
         }
     }

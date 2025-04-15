@@ -22,35 +22,20 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.date;
+package io.questdb.cairo.mv;
 
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.engine.functions.TimestampFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+import org.jetbrains.annotations.Nullable;
 
-class OffsetTimestampFunctionFromOffset extends TimestampFunction implements UnaryFunction {
-    private final long offset;
-    private final Function timestamp;
+/**
+ * Describes materialized view refresh state fields.
+ */
+public interface ReadableMatViewState {
 
-    public OffsetTimestampFunctionFromOffset(Function timestamp, long offset) {
-        this.timestamp = timestamp;
-        this.offset = offset;
-    }
+    @Nullable String getInvalidationReason();
 
-    @Override
-    public Function getArg() {
-        return timestamp;
-    }
+    long getLastRefreshBaseTxn();
 
-    @Override
-    public long getTimestamp(Record rec) {
-        return timestamp.getTimestamp(rec) + offset;
-    }
+    long getLastRefreshTimestamp();
 
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.val(timestamp).val('+').val(offset);
-    }
+    boolean isInvalid();
 }

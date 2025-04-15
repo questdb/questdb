@@ -34,7 +34,105 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAreaName() throws Exception {
-        assertToTimezone("select to_timezone(0, 'Europe/Prague')", "1970-01-01T01:00:00.000000Z\n");
+        assertMemoryLeak(() -> assertToTimezone(
+                "to_timezone\n" +
+                        "1970-01-01T01:00:00.000000Z\n",
+                "1970-01-01T00:00:00.000000Z",
+                "Europe/Prague"
+        ));
+    }
+
+    @Test
+    public void testDst() throws Exception {
+        assertMemoryLeak(() -> {
+            // CET to CEST
+            assertToTimezone(
+                    "to_timezone\n" +
+                            "2021-03-28T00:01:00.000000Z\n",
+                    "2021-03-27T23:01:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToTimezone(
+                    "to_timezone\n" +
+                            "2021-03-28T01:00:00.000000Z\n",
+                    "2021-03-28T00:00:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToTimezone(
+                    "to_timezone\n" +
+                            "2021-03-28T01:01:00.000000Z\n",
+                    "2021-03-28T00:01:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToTimezone(
+                    "to_timezone\n" +
+                            "2021-03-28T03:00:00.000000Z\n",
+                    "2021-03-28T01:00:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToTimezone(
+                    "to_timezone\n" +
+                            "2021-03-28T03:01:00.000000Z\n",
+                    "2021-03-28T01:01:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToTimezone(
+                    "to_timezone\n" +
+                            "2021-03-28T04:01:00.000000Z\n",
+                    "2021-03-28T02:01:00.000000Z",
+                    "Europe/Berlin"
+            );
+
+            // CEST to CET
+            assertToTimezone(
+                    "to_timezone\n" +
+                            "2021-10-31T01:01:00.000000Z\n",
+                    "2021-10-30T23:01:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToTimezone(
+                    "to_timezone\n" +
+                            "2021-10-31T02:00:00.000000Z\n",
+                    "2021-10-31T00:00:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToTimezone(
+                    "to_timezone\n" +
+                            "2021-10-31T02:01:00.000000Z\n",
+                    "2021-10-31T00:01:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToTimezone(
+                    "to_timezone\n" +
+                            "2021-10-31T02:00:00.000000Z\n",
+                    "2021-10-31T01:00:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToTimezone(
+                    "to_timezone\n" +
+                            "2021-10-31T02:01:00.000000Z\n",
+                    "2021-10-31T01:01:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToTimezone(
+                    "to_timezone\n" +
+                            "2021-10-31T03:00:00.000000Z\n",
+                    "2021-10-31T02:00:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToTimezone(
+                    "to_timezone\n" +
+                            "2021-10-31T03:01:00.000000Z\n",
+                    "2021-10-31T02:01:00.000000Z",
+                    "Europe/Berlin"
+            );
+            assertToTimezone(
+                    "to_timezone\n" +
+                            "2021-10-31T04:01:00.000000Z\n",
+                    "2021-10-31T03:01:00.000000Z",
+                    "Europe/Berlin"
+            );
+        });
     }
 
     @Test
@@ -44,7 +142,7 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
                 assertExceptionNoLeakCheck("select to_timezone(0, '25:40')");
             } catch (SqlException e) {
                 Assert.assertEquals(22, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone name");
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone");
             }
         });
     }
@@ -56,7 +154,7 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
                 assertExceptionNoLeakCheck("select to_timezone(0, 'UUU')");
             } catch (SqlException e) {
                 Assert.assertEquals(22, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone name");
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid timezone");
             }
         });
     }
@@ -75,18 +173,21 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testTimeOffset() throws Exception {
-        assertToTimezone(
-                "select to_timezone(cast('2020-03-12T15:30:00.000000Z' as timestamp), '-07:40')",
-                "2020-03-12T07:50:00.000000Z\n"
-        );
+        assertMemoryLeak(() -> assertToTimezone(
+                "to_timezone\n" +
+                        "2020-03-12T07:50:00.000000Z\n",
+                "2020-03-12T15:30:00.000000Z",
+                "-07:40"
+        ));
     }
 
     @Test
     public void testVarInvalidTimezone() throws Exception {
-        assertToTimezone(
-                "select to_timezone(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select 'XU' zone)",
-                "2020-03-12T15:30:00.000000Z\n"
-        );
+        assertMemoryLeak(() -> assertSql(
+                "to_timezone\n" +
+                        "2020-03-12T15:30:00.000000Z\n",
+                "select to_timezone(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select 'XU' zone)"
+        ));
     }
 
     @Test
@@ -103,22 +204,44 @@ public class ToTimezoneTimestampFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testVarTimezone() throws Exception {
-        assertToTimezone(
-                "select to_timezone(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select '-07:40' zone)",
-                "2020-03-12T07:50:00.000000Z\n"
-        );
+        assertMemoryLeak(() -> assertSql(
+                "to_timezone\n" +
+                        "2020-03-12T07:50:00.000000Z\n",
+                "select to_timezone(cast('2020-03-12T15:30:00.000000Z' as timestamp), zone) from (select '-07:40' zone)"
+        ));
     }
 
     @Test
     public void testZoneName() throws Exception {
-        assertToTimezone(
-                "select to_timezone(cast('2020-03-12T15:30:00.000000Z' as timestamp), 'PST')",
-                "2020-03-12T08:30:00.000000Z\n"
+        assertMemoryLeak(() -> assertToTimezone(
+                "to_timezone\n" +
+                        "2020-03-12T08:30:00.000000Z\n",
+                "2020-03-12T15:30:00.000000Z",
+                "PST"
+        ));
+    }
+
+    private void assertToTimezone(
+            String expected,
+            String timestamp,
+            String timeZone
+    ) throws SqlException {
+        assertSql(
+                expected,
+                "select to_timezone('" +
+                        timestamp + "', " +
+                        (timeZone != null ? "'" + timeZone + "'" : "null") +
+                        ")"
+        );
+
+        bindVariableService.clear();
+        bindVariableService.setStr("tz", timeZone);
+        assertSql(
+                expected,
+                "select to_timezone('" +
+                        timestamp + "', " +
+                        ":tz" +
+                        ")"
         );
     }
-
-    private void assertToTimezone(String sql, String expected) throws Exception {
-        assertMemoryLeak(() -> assertSql("to_timezone\n" + expected, sql));
-    }
-
 }

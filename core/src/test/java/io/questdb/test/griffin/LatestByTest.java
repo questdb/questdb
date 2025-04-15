@@ -492,7 +492,7 @@ public class LatestByTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByPartitionByFloat() throws Exception {
-        testLatestByPartitionBy("float", "0.0000", "1.0000");
+        testLatestByPartitionBy("float", "0.0", "1.0");
     }
 
     @Test

@@ -69,7 +69,7 @@ public class ExplicitStringyCastTest extends AbstractCairoTest {
                 {"int", "1"},
                 {"long", "0"},
                 {"long256", "0x797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fab5b2159a23565217"},
-                {"float", "0.1312"},
+                {"float", "0.13123357"},
                 {"double", "0.8423410920883345"},
                 {"date", "2024-11-26T02:19:54.316Z"},
                 {"timestamp", "2024-12-04T22:56:43.359212Z"},

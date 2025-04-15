@@ -76,7 +76,6 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         return legacyModeParams();
     }
 
-
     @Test
     public void testAsyncPGCommandBlockDoesntProduceError() throws Exception {
         // @Ignore in legacy mode

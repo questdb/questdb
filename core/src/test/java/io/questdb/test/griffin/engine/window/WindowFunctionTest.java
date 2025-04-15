@@ -5554,8 +5554,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertException(
                 "SELECT pickup_datetime, row_number() OVER (PARTITION BY row_number())\n" +
                         "FROM trips\n" +
-                        "WHERE pickup_datetime >= '2018-12-30' and pickup_datetime <= '2018-12-31'\n" +
-                        "SAMPLE BY 1d",
+                        "WHERE pickup_datetime >= '2018-12-30' and pickup_datetime <= '2018-12-31'",
                 "create table trips as " +
                         "(" +
                         "select" +
