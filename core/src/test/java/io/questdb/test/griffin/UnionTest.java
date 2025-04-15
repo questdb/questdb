@@ -286,7 +286,7 @@ public class UnionTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "ts\tcolA\tcolB\tcolC\tcolD\tcolE\n" +
-                            "2025-04-09T17:20:00.000000Z\tnull\tnull\tnull\tnull\tnull\n",
+                            "2025-04-09T17:20:00.000000Z\tnull\tnull\t\tnull\tnull\n",
                     "foo;",
                     "ts###ASC",
                     true,
@@ -310,7 +310,7 @@ public class UnionTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "ts\tcolA\tcolB\tcolC\tcolD\tcolE\n" +
-                            "2025-04-09T17:20:00.000000Z\tnull\tnull\tnull\tnull\tnull\n",
+                            "2025-04-09T17:20:00.000000Z\tnull\t\t\tnull\tnull\n",
                     "foo;",
                     "ts###ASC",
                     true,
@@ -334,7 +334,7 @@ public class UnionTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "ts\tcolA\tcolB\tcolC\tcolD\tcolE\n" +
-                            "2025-04-09T17:20:00.000000Z\tnull\tnull\tnull\tnull\tnull\n",
+                            "2025-04-09T17:20:00.000000Z\tnull\tnull\t\t\tnull\n",
                     "foo;",
                     "ts###ASC",
                     true,
@@ -358,7 +358,7 @@ public class UnionTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "ts\tcolA\tcolB\tcolC\tcolD\tcolE\n" +
-                            "2025-04-09T17:20:00.000000Z\tnull\tnull\tnull\tnull\tnull\n",
+                            "2025-04-09T17:20:00.000000Z\tnull\tnull\t\t\tnull\n",
                     "foo;",
                     "ts###ASC",
                     true,
@@ -382,7 +382,7 @@ public class UnionTest extends AbstractCairoTest {
 
             assertQueryNoLeakCheck(
                     "ts\tcolA\tcolB\tcolC\tcolD\tcolE\n" +
-                            "2025-04-09T17:20:00.000000Z\tnull\tnull\tnull\tnull\tnull\n",
+                            "2025-04-09T17:20:00.000000Z\tnull\tnull\t\tnull\tnull\n",
                     "foo;",
                     "ts###ASC",
                     true,

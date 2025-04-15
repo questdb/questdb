@@ -91,10 +91,9 @@ public class DateFormatUtils {
     // YYYY-MM-DDThh:mm:ss.mmmmZ
     public static void appendDateTime(@NotNull CharSink<?> sink, long millis) {
         if (millis == Long.MIN_VALUE) {
-            sink.put("null");
-        } else {
-            UTC_FORMAT.format(millis, EN_LOCALE, "Z", sink);
+            return;
         }
+        UTC_FORMAT.format(millis, EN_LOCALE, "Z", sink);
     }
 
     public static void appendEra(@NotNull CharSink<?> sink, int year, @NotNull DateLocale locale) {
