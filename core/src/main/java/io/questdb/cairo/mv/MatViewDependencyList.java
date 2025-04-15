@@ -22,23 +22,38 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.groupby;
+package io.questdb.cairo.mv;
 
-import io.questdb.std.str.Sinkable;
+import io.questdb.cairo.TableToken;
+import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
+import io.questdb.std.SimpleReadWriteLock;
 
-public interface TimestampSampler extends Sinkable {
+import java.util.concurrent.locks.ReadWriteLock;
 
-    long getApproxBucketSize();
+/**
+ * Holds the list of mat view tokens for the given base table (or base mat view).
+ * The list is protected with a R/W mutex, so it can be read concurrently.
+ */
+public class MatViewDependencyList {
+    private final ReadWriteLock lock = new SimpleReadWriteLock();
+    private final ObjList<TableToken> matViews = new ObjList<>();
 
-    default long getBucketSize() {
-        throw new UnsupportedOperationException();
+    ReadOnlyObjList<TableToken> lockForRead() {
+        lock.readLock().lock();
+        return matViews;
     }
 
-    long nextTimestamp(long timestamp);
+    ObjList<TableToken> lockForWrite() {
+        lock.writeLock().lock();
+        return matViews;
+    }
 
-    long previousTimestamp(long timestamp);
+    void unlockAfterRead() {
+        lock.readLock().unlock();
+    }
 
-    long round(long timestamp);
-
-    void setStart(long timestamp);
+    void unlockAfterWrite() {
+        lock.writeLock().unlock();
+    }
 }

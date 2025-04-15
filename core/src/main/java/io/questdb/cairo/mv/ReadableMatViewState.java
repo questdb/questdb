@@ -22,23 +22,20 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.groupby;
+package io.questdb.cairo.mv;
 
-import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.Nullable;
 
-public interface TimestampSampler extends Sinkable {
+/**
+ * Describes materialized view refresh state fields.
+ */
+public interface ReadableMatViewState {
 
-    long getApproxBucketSize();
+    @Nullable String getInvalidationReason();
 
-    default long getBucketSize() {
-        throw new UnsupportedOperationException();
-    }
+    long getLastRefreshBaseTxn();
 
-    long nextTimestamp(long timestamp);
+    long getLastRefreshTimestamp();
 
-    long previousTimestamp(long timestamp);
-
-    long round(long timestamp);
-
-    void setStart(long timestamp);
+    boolean isInvalid();
 }
