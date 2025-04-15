@@ -194,8 +194,9 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     sender.flush();
 
                     serverMain.awaitTxn("foo", 1);
-                    serverMain.assertSql("foo;", "ts\td\n" +
-                            "1970-01-01T00:00:00.001233Z\t0xab\n");
+                    serverMain.assertSql("foo;",
+                            "ts\td\n" +
+                                    "1970-01-01T00:00:00.001233Z\t0xab\n");
 
                     sender.table("foo")
                             .stringColumn("d", "0xABC")

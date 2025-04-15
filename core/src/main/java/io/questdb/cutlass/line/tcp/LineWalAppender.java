@@ -51,10 +51,10 @@ import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.
 public class LineWalAppender {
     private static final Log LOG = LogFactory.getLog(LineWalAppender.class);
     private final boolean autoCreateNewColumns;
+    private final Long256Impl long256;
     private final int maxFileNameLength;
     private final MicrosecondClock microsecondClock;
     private final boolean stringToCharCastAllowed;
-    private Long256Impl long256;
     private LineTcpTimestampAdapter timestampAdapter;
 
     public LineWalAppender(boolean autoCreateNewColumns, boolean stringToCharCastAllowed, LineTcpTimestampAdapter timestampAdapter, int maxFileNameLength, MicrosecondClock microsecondClock) {
@@ -345,9 +345,10 @@ public class LineWalAppender {
                                 case ColumnType.LONG256:
                                     CharSequence cs = entityValue.asAsciiCharSequence();
                                     if (Numbers.extractLong256(cs, long256)) {
-                                        r.putLong256(columnIndex, cs);
+                                        r.putLong256(columnIndex, long256);
                                         break;
                                     }
+                                    throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
                                 default:
                                     throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
                             }
