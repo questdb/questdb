@@ -439,7 +439,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         Os.sleep(oomRetryTimeout);
                         continue;
                     }
-                    refreshFailState(state, walWriter, refreshTimestamp, th.getMessage());
                     throw th;
                 }
             }
