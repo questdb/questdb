@@ -138,9 +138,11 @@ public class RecordToRowCopierUtils {
 
 
         int implicitCastIntAsDouble = asm.poolMethod(SqlUtil.class, "implicitCastIntAsDouble", "(I)D");
-        int implicitCastLongAsDouble = asm.poolMethod(SqlUtil.class, "implicitCastLongAsDouble", "(J)D");
         int implicitCastIntAsLong = asm.poolMethod(SqlUtil.class, "implicitCastIntAsLong", "(I)J");
         int implicitCastIntAsFloat = asm.poolMethod(SqlUtil.class, "implicitCastIntAsFloat", "(I)F");
+        int implicitCastLongAsFloat = asm.poolMethod(SqlUtil.class, "implicitCastLongAsFloat", "(J)F");
+        int implicitCastLongAsDouble = asm.poolMethod(SqlUtil.class, "implicitCastLongAsDouble", "(J)D");
+
 
         int implicitCastVarcharAsLong = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsLong", "(Lio/questdb/std/str/Utf8Sequence;)J");
         int implicitCastVarcharAsShort = asm.poolMethod(SqlUtil.class, "implicitCastVarcharAsShort", "(Lio/questdb/std/str/Utf8Sequence;)S");
@@ -296,11 +298,11 @@ public class RecordToRowCopierUtils {
                             asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         case ColumnType.FLOAT:
-                            asm.l2f();
+                            asm.invokeStatic(implicitCastLongAsFloat);
                             asm.invokeInterface(wPutFloat, 2);
                             break;
                         case ColumnType.DOUBLE:
-                            asm.l2d();
+                            asm.invokeStatic(implicitCastLongAsDouble);
                             asm.invokeInterface(wPutDouble, 3);
                             break;
                         default:

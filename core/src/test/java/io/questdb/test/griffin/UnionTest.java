@@ -34,31 +34,6 @@ import java.util.Arrays;
 public class UnionTest extends AbstractCairoTest {
 
     @Test
-    public void testConversionsFromInt() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE foo (ts TIMESTAMP, colA DOUBLE, colB FLOAT, colC TIMESTAMP, colD DATE, colE LONG) timestamp(ts) PARTITION BY DAY WAL;");
-            execute("INSERT INTO foo (ts, colA, colB, colC, colD, colE) " +
-                    "SELECT '2025-04-09 17:20:00.000' AS ts, " +
-                    "null::int as colA, " +
-                    "null::int as colB, " +
-                    "null::int as colC, " +
-                    "null::int as colD, " +
-                    "null::int as colE;");
-            drainWalQueue();
-
-            assertQueryNoLeakCheck(
-                    "ts\tcolA\tcolB\tcolC\tcolD\tcolE\n" +
-                            "2025-04-09T17:20:00.000000Z\tnull\tnull\tnull\tnull\tnull\n",
-                    "foo;",
-                    "ts###ASC",
-                    true,
-                    true
-            );
-        });
-    }
-
-
-    @Test
     public void testExcept() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table events2 (contact symbol, groupid symbol, eventid string)");
@@ -294,6 +269,54 @@ public class UnionTest extends AbstractCairoTest {
                         "select * from (select x from long_sequence(4) order by x*2 limit 2) " +
                         "union all " +
                         "select x-1 from long_sequence(1) order by 1 limit 2", null, null, true, true);
+    }
+
+    @Test
+    public void testNullConversionsFromInt() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, colA DOUBLE, colB FLOAT, colC TIMESTAMP, colD DATE, colE LONG) timestamp(ts) PARTITION BY DAY WAL;");
+            execute("INSERT INTO foo (ts, colA, colB, colC, colD, colE) " +
+                    "SELECT '2025-04-09 17:20:00.000' AS ts, " +
+                    "null::int as colA, " +
+                    "null::int as colB, " +
+                    "null::int as colC, " +
+                    "null::int as colD, " +
+                    "null::int as colE;");
+            drainWalQueue();
+
+            assertQueryNoLeakCheck(
+                    "ts\tcolA\tcolB\tcolC\tcolD\tcolE\n" +
+                            "2025-04-09T17:20:00.000000Z\tnull\tnull\tnull\tnull\tnull\n",
+                    "foo;",
+                    "ts###ASC",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNullConversionsFromLong() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, colA DOUBLE, colB FLOAT, colC TIMESTAMP, colD DATE, colE INT) timestamp(ts) PARTITION BY DAY WAL;");
+            execute("INSERT INTO foo (ts, colA, colB, colC, colD, colE) " +
+                    "SELECT '2025-04-09 17:20:00.000' AS ts, " +
+                    "null::long as colA, " +
+                    "null::long as colB, " +
+                    "null::long as colC, " +
+                    "null::long as colD, " +
+                    "null::long as colE;");
+            drainWalQueue();
+
+            assertQueryNoLeakCheck(
+                    "ts\tcolA\tcolB\tcolC\tcolD\tcolE\n" +
+                            "2025-04-09T17:20:00.000000Z\tnull\tnull\tnull\tnull\tnull\n",
+                    "foo;",
+                    "ts###ASC",
+                    true,
+                    true
+            );
+        });
     }
 
     @Test

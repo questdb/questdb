@@ -494,9 +494,18 @@ public class SqlUtil {
         if (value == Numbers.LONG_NULL) {
             return Double.NaN;
         } else {
-            return value;
+            return (double) value;
         }
     }
+
+    public static float implicitCastLongAsFloat(long value) {
+        if (value == Numbers.LONG_NULL) {
+            return Float.NaN;
+        } else {
+            return (float) value;
+        }
+    }
+
 
     @SuppressWarnings("unused")
     // used by the row copier
