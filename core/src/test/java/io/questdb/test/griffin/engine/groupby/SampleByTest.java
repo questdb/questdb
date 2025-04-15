@@ -13177,7 +13177,7 @@ public class SampleByTest extends AbstractCairoTest {
                         ")\n" +
                         "select * from sampled;",
                 507,
-                "base query does not provide ASC order over dedicated TIMESTAMP column"
+                "base query does not provide ASC order over designated TIMESTAMP column"
         );
     }
 
@@ -13203,7 +13203,7 @@ public class SampleByTest extends AbstractCairoTest {
                         ")\n" +
                         "select * from sampled;",
                 489,
-                "base query does not provide ASC order over dedicated TIMESTAMP column"
+                "base query does not provide ASC order over designated TIMESTAMP column"
         );
     }
 
