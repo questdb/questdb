@@ -2585,8 +2585,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "t TIMESTAMP) " +
                         "TIMESTAMP(t) " +
                         "PARTITION BY YEAR IN peterson",
-                97,
-                "expected 'volume'"
+                89,
+                "'volume' expected"
         );
 
         assertSyntaxError(

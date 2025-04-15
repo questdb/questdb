@@ -841,11 +841,19 @@ public class CreateMatViewTest extends AbstractCairoTest {
         Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(() -> {
             createTable(TABLE1);
-            assertException(
-                    "create materialized view testView as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day in volume aaa",
-                    110,
-                    "volume alias is not allowed [alias=aaa]"
-            );
+            try {
+                execute("CREATE MATERIALIZED VIEW testView AS (SELECT ts, avg(v) FROM " + TABLE1 +
+                        " SAMPLE BY 30s) PARTITION BY DAY IN VOLUME aaa");
+                fail("CREATE statement should have failed");
+            } catch (SqlException e) {
+                if (Os.isWindows()) {
+                    TestUtils.assertContains("'in volume' is not supported on Windows", e.getFlyweightMessage());
+                    Assert.assertEquals(103, e.getPosition());
+                } else {
+                    TestUtils.assertContains("volume alias is not allowed [alias=aaa]", e.getFlyweightMessage());
+                    Assert.assertEquals(110, e.getPosition());
+                }
+            }
         });
     }
 
