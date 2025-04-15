@@ -148,7 +148,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                         reduceQueue,
                         pageFrameReduceSubSeq,
                         localRecord,
-                        workStealCircuitBreaker(),
+                        workStealCircuitBreaker,
                         this
                 );
             } catch (Throwable th) {
@@ -523,7 +523,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     }
                     // start stealing work to unload the queue
                     idle = false;
-                    if (stealWork(reduceQueue, reduceSubSeq, localRecord, workStealCircuitBreaker())) {
+                    if (stealWork(reduceQueue, reduceSubSeq, localRecord, workStealCircuitBreaker)) {
                         if (reduceFinishedCounter.get() > collectedFrameCount) {
                             // We have something to collect, so let's do it!
                             return true;
@@ -550,7 +550,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         // join the gang to consume published tasks
         while (reduceFinishedCounter.get() < dispatchStartFrameIndex) {
             idle = false;
-            if (stealWork(reduceQueue, reduceSubSeq, localRecord, workStealCircuitBreaker())) {
+            if (stealWork(reduceQueue, reduceSubSeq, localRecord, workStealCircuitBreaker)) {
                 if (isActive()) {
                     continue;
                 }
@@ -559,7 +559,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         }
 
         if (idle) {
-            stealWork(reduceQueue, reduceSubSeq, localRecord, workStealCircuitBreaker());
+            stealWork(reduceQueue, reduceSubSeq, localRecord, workStealCircuitBreaker);
         }
 
         return dispatched;
@@ -597,7 +597,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     .$(", active=").$(isActive())
                     .I$();
             if (isActive()) {
-                PageFrameReduceJob.reduce(localRecord, workStealCircuitBreaker(), localTask, this, this);
+                PageFrameReduceJob.reduce(localRecord, workStealCircuitBreaker, localTask, this, this);
             }
         } catch (Throwable th) {
             LOG.error()
@@ -617,10 +617,5 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         } finally {
             reduceFinishedCounter.incrementAndGet();
         }
-    }
-
-    private SqlExecutionCircuitBreakerWrapper workStealCircuitBreaker() {
-        workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
-        return workStealCircuitBreaker;
     }
 }
