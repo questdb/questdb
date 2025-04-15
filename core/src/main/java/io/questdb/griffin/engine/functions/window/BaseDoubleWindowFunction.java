@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.functions.window;
 
-import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
@@ -33,9 +32,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
-import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.std.IntList;
 
 public abstract class BaseDoubleWindowFunction extends DoubleFunction implements WindowFunction, ScalarFunction {
     protected final Function arg;
@@ -57,7 +54,7 @@ public abstract class BaseDoubleWindowFunction extends DoubleFunction implements
 
     @Override
     public double getDouble(Record rec) {
-        //unused
+        // unused
         throw new UnsupportedOperationException();
     }
 
@@ -72,7 +69,6 @@ public abstract class BaseDoubleWindowFunction extends DoubleFunction implements
 
     @Override
     public void reset() {
-
     }
 
     @Override

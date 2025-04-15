@@ -69,6 +69,11 @@ public class EqIPv4StrFunctionFactory implements FunctionFactory {
         throw SqlException.$(strFuncPosition, "STRING constant expected");
     }
 
+    @Override
+    public boolean supportImplicitCastCharToStr() {
+        return false;
+    }
+
     /**
      * The string function is constant and the IPv4 function is not constant.
      */

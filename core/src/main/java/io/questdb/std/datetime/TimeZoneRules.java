@@ -25,17 +25,31 @@
 package io.questdb.std.datetime;
 
 public interface TimeZoneRules {
-    long getNextDST(long utcEpoch, int year, boolean leap);
 
     /**
-     * Computes UTC time for the next Daylight Saving Transition
+     * Returns gap (forward clock shift) duration for the given local timestamp.
+     * May be used to align SAMPLE BY buckets, so that they don't start at non-existing
+     * local time, i.e. in a gap.
+     */
+    long getGapDuration(long localEpoch);
+
+    long getLocalOffset(long localEpoch);
+
+    long getLocalOffset(long localEpoch, int year);
+
+    /**
+     * Computes UTC epoch time for the next Daylight Saving Transition.
      *
      * @param utcEpoch arbitrary point in time, UTC epoch time
      * @return UTC epoch
      */
     long getNextDST(long utcEpoch);
 
-    long getOffset(long utcEpoch, int year, boolean leap);
+    long getNextDST(long utcEpoch, int year);
 
     long getOffset(long utcEpoch);
+
+    long getOffset(long utcEpoch, int year);
+
+    boolean hasFixedOffset();
 }

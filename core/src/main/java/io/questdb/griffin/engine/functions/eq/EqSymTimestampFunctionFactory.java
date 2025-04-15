@@ -198,5 +198,4 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
             return negated == (symbol != timestamp);
         }
     }
-
 }

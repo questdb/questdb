@@ -11878,7 +11878,7 @@ create table tab as (
         String query = "select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000)";
 
         try (final PreparedStatement stmt = connection.prepareStatement(query)) {
-            new Thread(() -> {
+            Thread thread2 = new Thread(() -> {
                 try {
                     while (!isCancelled.get()) {
                         Os.sleep(1);
@@ -11889,15 +11889,19 @@ create table tab as (
                 } finally {
                     finished.countDown();
                 }
-            }, "cancellation thread").start();
+            }, "cancellation thread");
+            thread2.start();
+
             try {
                 Os.sleep(1);
                 stmt.execute();
                 Assert.fail("expected PSQLException with cancel message");
             } catch (PSQLException e) {
+                assertContains(e.getMessage(), "cancelled by user");
                 isCancelled.set(true);
                 finished.await();
-                assertContains(e.getMessage(), "cancelled by user");
+            } finally {
+                thread2.join();
             }
         }
         return backendPid;

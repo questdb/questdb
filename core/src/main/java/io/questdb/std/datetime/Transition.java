@@ -22,35 +22,20 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.date;
+package io.questdb.std.datetime;
 
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.engine.functions.TimestampFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+/**
+ * Pre-calculated DST transition that belong to a given year.
+ */
+public class Transition {
+    public final long offsetAfter; // micros or millis
+    public final long offsetBefore; // micros or millis
+    // transition UTC timestamp
+    public final long transition;
 
-class OffsetTimestampFunctionFromOffset extends TimestampFunction implements UnaryFunction {
-    private final long offset;
-    private final Function timestamp;
-
-    public OffsetTimestampFunctionFromOffset(Function timestamp, long offset) {
-        this.timestamp = timestamp;
-        this.offset = offset;
-    }
-
-    @Override
-    public Function getArg() {
-        return timestamp;
-    }
-
-    @Override
-    public long getTimestamp(Record rec) {
-        return timestamp.getTimestamp(rec) + offset;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.val(timestamp).val('+').val(offset);
+    public Transition(long offsetBefore, long offsetAfter, long transition) {
+        this.offsetBefore = offsetBefore;
+        this.offsetAfter = offsetAfter;
+        this.transition = transition;
     }
 }

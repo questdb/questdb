@@ -3682,7 +3682,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             sink.put(" null ");
             String query = sink.toString();
 
-            assertSql("column\n\n", query);
+            assertSql("column\n" +
+                    "null\n", query);
 
             sink.clear();
             sink.put("select ");

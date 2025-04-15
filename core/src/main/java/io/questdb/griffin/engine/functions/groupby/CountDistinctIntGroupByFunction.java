@@ -147,7 +147,7 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
         setA.of(destPtr);
         setB.of(srcPtr);
 
-        if (setA.size() > (setB.size() >> 1)) {
+        if (setA.size() > (setB.size() >>> 1)) {
             setA.merge(setB);
             destValue.putLong(valueIndex, setA.size());
             destValue.putLong(valueIndex + 1, setA.ptr());

@@ -196,7 +196,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.commit.lag\tQDB_CAIRO_COMMIT_LAG\t600000\tdefault\tfalse\tfalse\n" +
                                     "cairo.commit.mode\tQDB_CAIRO_COMMIT_MODE\tnosync\tdefault\tfalse\tfalse\n" +
                                     "cairo.create.as.select.retry.count\tQDB_CAIRO_CREATE_AS_SELECT_RETRY_COUNT\t5\tdefault\tfalse\tfalse\n" +
-                                    "cairo.mat.view.enabled\tQDB_CAIRO_MAT_VIEW_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.date.locale\tQDB_CAIRO_DATE_LOCALE\ten\tdefault\tfalse\tfalse\n" +
                                     "cairo.default.sequencer.part.txn.count\tQDB_CAIRO_DEFAULT_SEQUENCER_PART_TXN_COUNT\t0\tdefault\tfalse\tfalse\n" +
                                     "cairo.default.symbol.cache.flag\tQDB_CAIRO_DEFAULT_SYMBOL_CACHE_FLAG\ttrue\tdefault\tfalse\tfalse\n" +
@@ -541,8 +540,12 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "line.udp.timestamp\tQDB_LINE_UDP_TIMESTAMP\tn\tdefault\tfalse\tfalse\n" +
                                     "line.udp.unicast\tQDB_LINE_UDP_UNICAST\tfalse\tdefault\tfalse\tfalse\n" +
                                     "metrics.enabled\tQDB_METRICS_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
-                                    "cairo.mat.view.sql.max.recompile.attempts\tQDB_CAIRO_MAT_VIEW_SQL_MAX_RECOMPILE_ATTEMPTS\t10\tdefault\tfalse\ttrue\n" +
+                                    "cairo.mat.view.enabled\tQDB_CAIRO_MAT_VIEW_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "cairo.mat.view.min.refresh.interval\tQDB_CAIRO_MAT_VIEW_MIN_REFRESH_INTERVAL\t60000000\tdefault\tfalse\ttrue\n" +
+                                    "cairo.mat.view.max.refresh.retries\tQDB_CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES\t10\tdefault\tfalse\ttrue\n" +
+                                    "cairo.mat.view.refresh.oom.retry.timeout\tQDB_CAIRO_MAT_VIEW_REFRESH_OOM_RETRY_TIMEOUT\t200\tdefault\tfalse\tfalse\n" +
                                     "cairo.mat.view.insert.as.select.batch.size\tQDB_CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE\t1000000\tdefault\tfalse\ttrue\n" +
+                                    "cairo.mat.view.rows.per.query.estimate\tQDB_CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE\t10000000\tdefault\tfalse\ttrue\n" +
                                     "cairo.mat.view.parallel.sql.enabled\tQDB_CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.nap.threshold\tQDB_MAT_VIEW_REFRESH_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "mat.view.refresh.worker.affinity\tQDB_MAT_VIEW_REFRESH_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
