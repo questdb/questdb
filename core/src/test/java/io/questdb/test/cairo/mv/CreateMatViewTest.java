@@ -233,6 +233,21 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewGroupByNoTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            try {
+                execute("create materialized view test as (select avg(v) from " + TABLE1 + ") partition by day");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "TIMESTAMP column is not present in select list");
+            }
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
     public void testCreateMatViewGroupByTimestamp1() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -269,7 +284,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "create materialized view test as (" + query + ") partition by day",
                     35,
-                    "TIMESTAMP column does not exist [name=ts]"
+                    "TIMESTAMP column does not exist or not present in select list [name=ts]"
             );
             assertNull(getMatViewDefinition("testView"));
         });
@@ -476,7 +491,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "create materialized view test as (select * from " + TABLE1 + " where v % 2 = 0) partition by day",
                     34,
-                    "materialized view query requires a sampling interval"
+                    "TIMESTAMP column is not present in select list"
             );
             assertNull(getMatViewDefinition("test"));
         });
@@ -490,6 +505,21 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     34,
                     "missing base table, materialized views have to be based on a table"
             );
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
+    public void testCreateMatViewNoTimestampInSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            try {
+                execute("create materialized view test as (select k, max(v) as v_max from " + TABLE1 + " sample by 30s) partition by day");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "TIMESTAMP column does not exist or not present in select list [name=ts]");
+            }
             assertNull(getMatViewDefinition("test"));
         });
     }
@@ -614,6 +644,20 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertQuery0("ts\tts2\tavg\n", "test_view", "ts");
             assertMatViewDefinition("test_view", query, TABLE3, 30, 's');
             assertMatViewMetadata("test_view", query, TABLE3, 30, 's');
+        });
+    }
+
+    @Test
+    public void testCreateMatViewSampleByAlignToFirstObservation() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String query = "select ts, avg(v) from " + TABLE1 + " sample by 1d align to first observation";
+            try {
+                execute("create materialized view test as (" + query + ") partition by day");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "ALIGN TO FIRST OBSERVATION on base table is not supported for materialized views: " + TABLE1);
+            }
         });
     }
 

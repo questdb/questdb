@@ -51,6 +51,11 @@ public class MicroTimestampSampler implements TimestampSampler {
     }
 
     @Override
+    public long nextTimestamp(long timestamp, int numSteps) {
+        return timestamp + numSteps * bucket;
+    }
+
+    @Override
     public long previousTimestamp(long timestamp) {
         return timestamp - bucket;
     }

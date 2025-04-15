@@ -40,7 +40,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
     private final RecordSink keyMapSink;
     private final Map map;
     private final RecordCursor mapCursor;
-    private boolean isHasNextPending;
+    private boolean hasNextPending;
     private boolean isMapBuildPending;
     private boolean isOpen;
     private long rowId;
@@ -120,7 +120,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
             map.reopen();
         }
         rowId = 0;
-        isHasNextPending = false;
+        hasNextPending = false;
         isMapBuildPending = true;
     }
 
@@ -128,7 +128,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
     public void toTop() {
         super.toTop();
         rowId = 0;
-        isHasNextPending = false;
+        hasNextPending = false;
         isMapBuildPending = true;
     }
 
@@ -142,7 +142,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
         final long next = timestampSampler.nextTimestamp(localEpoch);
         boolean baseHasNext = true;
         while (baseHasNext) {
-            if (!isHasNextPending) {
+            if (!hasNextPending) {
                 long timestamp = getBaseRecordTimestamp();
                 if (timestamp < next) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
@@ -171,9 +171,9 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
                 }
             }
 
-            isHasNextPending = true;
+            hasNextPending = true;
             baseHasNext = baseCursor.hasNext();
-            isHasNextPending = false;
+            hasNextPending = false;
         }
 
         // we ran out of data, make sure hasNext() returns false at the next

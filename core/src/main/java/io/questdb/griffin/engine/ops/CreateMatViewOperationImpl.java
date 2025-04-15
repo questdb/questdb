@@ -346,12 +346,13 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         CharSequence intervalExpr = null;
         int intervalPos = 0;
         final ExpressionNode sampleBy = findSampleByNode(queryModel);
+        // Vanilla SAMPLE BY.
         if (sampleBy != null && sampleBy.type == ExpressionNode.CONSTANT) {
             intervalExpr = sampleBy.token;
             intervalPos = sampleBy.position;
         }
 
-        // GROUP BY timestamp_floor(ts) (optimized SAMPLE BY)
+        // GROUP BY timestamp_floor(ts) (optimized SAMPLE BY).
         if (intervalExpr == null) {
             final QueryColumn queryColumn = findTimestampFloorColumn(queryModel);
             if (queryColumn != null) {
@@ -370,23 +371,25 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                     createTableOperation.setTimestampColumnNamePosition(ast.position);
                     final CreateTableColumnModel timestampModel = createColumnModelMap.get(queryColumn.getName());
                     if (timestampModel == null) {
-                        throw SqlException.position(ast.position).put("TIMESTAMP column does not exist [name=").put(queryColumn.getName()).put(']');
+                        throw SqlException.position(ast.position).put("TIMESTAMP column does not exist or not present in select list [name=").put(queryColumn.getName()).put(']');
                     }
                     timestampModel.setIsDedupKey(); // set dedup for timestamp column
                 }
             }
         }
+
+        // We haven't found timestamp_floor() in SELECT.
         if (intervalExpr == null) {
-            throw SqlException.$(selectTextPosition, "materialized view query requires a sampling interval");
+            throw SqlException.$(selectTextPosition, "TIMESTAMP column is not present in select list");
         }
 
         // Parse sampling interval expression.
-        intervalExpr = GenericLexer.unquote(intervalExpr);
-        final int samplingIntervalEnd = TimestampSamplerFactory.findIntervalEndIndex(intervalExpr, intervalPos);
-        assert samplingIntervalEnd < intervalExpr.length();
-        samplingInterval = TimestampSamplerFactory.parseInterval(intervalExpr, samplingIntervalEnd, intervalPos);
+        final CharSequence interval = GenericLexer.unquote(intervalExpr);
+        final int samplingIntervalEnd = TimestampSamplerFactory.findIntervalEndIndex(interval, intervalPos);
+        assert samplingIntervalEnd < interval.length();
+        samplingInterval = TimestampSamplerFactory.parseInterval(interval, samplingIntervalEnd, intervalPos);
         assert samplingInterval > 0;
-        samplingIntervalUnit = intervalExpr.charAt(samplingIntervalEnd);
+        samplingIntervalUnit = interval.charAt(samplingIntervalEnd);
 
         // Check if PARTITION BY wasn't specified in SQL, so that we need
         // to assign it based on the sampling interval.
