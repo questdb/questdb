@@ -198,14 +198,27 @@ public class ObjStackTest {
         Rnd rnd = TestUtils.generateRandom(null);
         int n = 1 + rnd.nextInt(ObjStack.DEFAULT_INITIAL_CAPACITY * 4);
         int p = rnd.nextInt(n);
-        addNPopP(n, s, p);
+        pushPop(n, p, s);
 
         int n1 = 1 + rnd.nextInt(ObjStack.DEFAULT_INITIAL_CAPACITY * 3);
         int p1 = rnd.nextInt(n1);
-        addNPopP(n1, s, p1);
+        pushPop(n1, p1, s);
     }
 
-    private static void addNPopP(int n, ObjStack<Integer> s, int p) {
+    @Test
+    public void updateTest() {
+        ObjStack<Integer> s = new ObjStack<>();
+        for (int i = 0; i < 10; i++) {
+            s.push(i);
+        }
+
+        Assert.assertEquals(s.size() - 1, (int) s.peek());
+        s.update(20);
+        Assert.assertEquals(20, (int) s.peek());
+        Assert.assertEquals(20, (int) s.pop());
+    }
+
+    private static void pushPop(int n, int p, ObjStack<Integer> s) {
         for (int i = 0; i < n; i++) {
             s.push(i);
         }
@@ -223,18 +236,5 @@ public class ObjStackTest {
             Assert.assertEquals(n - p - i - 1, s.pop().intValue());
         }
         Assert.assertEquals(0, s.size());
-    }
-
-    @Test
-    public void updateTest() {
-        ObjStack<Integer> s = new ObjStack<>();
-        for (int i = 0; i < 10; i++) {
-            s.push(i);
-        }
-
-        Assert.assertEquals(s.size() - 1, (int) s.peek());
-        s.update(20);
-        Assert.assertEquals(20, (int) s.peek());
-        Assert.assertEquals(20, (int) s.pop());
     }
 }

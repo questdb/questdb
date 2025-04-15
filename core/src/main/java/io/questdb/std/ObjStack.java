@@ -92,28 +92,30 @@ public class ObjStack<T> implements Mutable {
      */
     @SuppressWarnings("unchecked")
     public void resetCapacity() {
-        int h = head;
         int n = elements.length;
-        int size = size();
-        int newCapacity = initialCapacity;
-        T[] next = (T[]) new Object[newCapacity];
-        int maxCopy = newCapacity - 1;
-        if (size > 0) {
-            int t = (h + size) & mask;
-            if (head < t) {
-                System.arraycopy(elements, h, next, 0, Math.min(size, maxCopy));
-            } else {
-                int r = Math.min(n - h, maxCopy);
-                System.arraycopy(elements, h, next, 0, r);
-                if (r < maxCopy && t < head) {
-                    System.arraycopy(elements, 0, next, r, Math.min(t, maxCopy - r));
+        if (n > initialCapacity) {
+            int h = head;
+            int size = size();
+            int newCapacity = initialCapacity;
+            T[] next = (T[]) new Object[newCapacity];
+            int maxCopy = newCapacity - 1;
+            if (size > 0) {
+                int t = (h + size) & mask;
+                if (head < t) {
+                    System.arraycopy(elements, h, next, 0, Math.min(size, maxCopy));
+                } else {
+                    int r = Math.min(n - h, maxCopy);
+                    System.arraycopy(elements, h, next, 0, r);
+                    if (r < maxCopy && t < head) {
+                        System.arraycopy(elements, 0, next, r, Math.min(t, maxCopy - r));
+                    }
                 }
             }
+            head = 0;
+            tail = Math.min(size, maxCopy);
+            elements = next;
+            mask = maxCopy;
         }
-        head = 0;
-        tail = Math.min(size, maxCopy);
-        elements = next;
-        mask = maxCopy;
     }
 
     public int size() {
