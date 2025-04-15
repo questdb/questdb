@@ -597,6 +597,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     .$(", active=").$(isActive())
                     .I$();
             if (isActive()) {
+                workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
                 PageFrameReduceJob.reduce(localRecord, workStealCircuitBreaker, localTask, this, this);
             }
         } catch (Throwable th) {
