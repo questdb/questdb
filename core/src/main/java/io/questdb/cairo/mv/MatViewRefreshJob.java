@@ -452,7 +452,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             LOG.error().$("error refreshing materialized view [view=").$(viewDef.getMatViewToken()).$(", error=").$(th).I$();
             Misc.free(factory);
             refreshFailState(state, walWriter, refreshTimestamp, th.getMessage());
-            throw th;
+            return false;
         }
 
         return rowCount > 0;
