@@ -174,7 +174,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
-        engine.getMatViewGraph().clear();
+        engine.getMatViewStateStore().clear();
         inputRoot = root;
     }
 

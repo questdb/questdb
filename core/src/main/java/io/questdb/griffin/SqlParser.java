@@ -847,9 +847,8 @@ public class SqlParser {
         final CreateTableOperationBuilderImpl tableOpBuilder = mvOpBuilder.getCreateTableOperationBuilder();
         mvOpBuilder.clear(); // clears tableOpBuilder too
         tableOpBuilder.setDefaultSymbolCapacity(configuration.getDefaultSymbolCapacity());
-
-        // Mat view is always WAL-enabled.
-        tableOpBuilder.setWalEnabled(true);
+        tableOpBuilder.setMaxUncommittedRows(configuration.getMaxUncommittedRows());
+        tableOpBuilder.setWalEnabled(true); // mat view is always WAL-enabled
 
         expectTok(lexer, "view");
         CharSequence tok = tok(lexer, "view name or 'if'");
