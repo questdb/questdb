@@ -395,7 +395,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testWalWriteManySmallTransactions() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_QUICKSORT_ENABLED, true);
-        Rnd rnd = generateRandom(LOG,1073755740699L, 1744722594696L);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(
                 0,
                 0,
