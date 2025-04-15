@@ -198,40 +198,72 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         }
     }
 
+    private long binarySearchScanDown(long v, long low, long high) {
+        for (long i = high - 1; i >= low; i--) {
+            slaveCursor.recordAtRowIndex(slaveRecA, i);
+            long that = slaveRecA.getTimestamp(slaveTimestampIndex);
+            // Here the code differs from the original C code:
+            // We want to find the last row with value less *or equal* to v
+            // while the original code find the first row with value greater than v.
+            if (that <= v) {
+                return i;
+            }
+        }
+        // all values are greater than v, return low - 1
+        return low - 1;
+    }
+
+    private long binarySearchScrollDown(long low, long high, long value) {
+        long data;
+        do {
+            if (low < high) {
+                low++;
+            } else {
+                return low;
+            }
+            slaveCursor.recordAtRowIndex(slaveRecA, low);
+            data = slaveRecA.getTimestamp(slaveTimestampIndex);
+        } while (data == value);
+        return low - 1;
+    }
+
     // Finds the last value less or equal to the master timestamp.
     // Both rowLo and rowHi are inclusive.
-    protected long binarySearch(long masterTimestamp, long rowLo, long rowHi) {
-        long lo = rowLo;
-        long hi = rowHi;
-        while (lo < hi) {
-            long mid = (lo + hi) >>> 1;
-            slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, mid));
-            long midTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
+    // When multiple rows have the same matching timestamp, the last one is returned.
+    // When all rows have timestamps greater than the master timestamp, rowLo - 1 is returned.
+    protected long binarySearch(long value, long rowLo, long rowHi) {
+        // this is the same algorithm as implemented in C (util.h)
+        // template<class T, class V>
+        // inline int64_t binary_search(T *data, V value, int64_t low, int64_t high, int32_t scan_dir)
+        // please ensure these implementations are in sync
+        //
+        // there is a notable difference in the algo: the original C code returns an insertion point
+        // when there is no match, while we return the last row with value less than or equal to v
 
-            if (midTimestamp <= masterTimestamp) {
-                if (lo < mid) {
-                    lo = mid;
-                } else {
-                    // special case: when lo == mid, we're down to two elements
-                    // check if the higher element exceeds the master timestamp
-                    slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, hi));
-                    if (slaveRecA.getTimestamp(slaveTimestampIndex) > masterTimestamp) {
-                        return lo; // hi's timestamp exceeds master, so return lo
-                    }
-                    return hi; // Both elements are <= master, return the higher one
-                }
+        // we expect to use binary search only after linearSearch()
+        // this means we expect the slaveRecA to be already set to the right frame.
+        // this invariant allows us to avoid calling slaveCursor.recordAt()
+        // and we can call cheaper slaveCursor.recordAtRowIndex()
+        assert Rows.toPartitionIndex(slaveRecA.getRowId()) == slaveFrameIndex;
+
+        long low = rowLo;
+        long high = rowHi;
+        while (high - low > 65) {
+            final long mid = (low + high) >>> 1;
+            slaveCursor.recordAtRowIndex(slaveRecA, mid);
+            long midVal = slaveRecA.getTimestamp(slaveTimestampIndex);
+
+            if (midVal < value) {
+                low = mid;
+            } else if (midVal > value) {
+                high = mid - 1;
             } else {
-                hi = mid;
+                // In case of multiple equal values, find the last
+                return binarySearchScrollDown(mid, high, midVal);
             }
         }
 
-        // loop exited with lo == hi, verify the final candidate
-        slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, lo));
-        if (slaveRecA.getTimestamp(slaveTimestampIndex) > masterTimestamp) {
-            // current element exceeds master, return previous index
-            return lo - 1;
-        }
-        return lo; // current element is <= master, return it
+        return binarySearchScanDown(value, low, high + 1);
     }
 
     /**
