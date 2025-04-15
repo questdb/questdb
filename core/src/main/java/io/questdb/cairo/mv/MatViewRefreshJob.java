@@ -582,11 +582,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
                 try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
                     try {
-                        refreshed = refreshIncremental0(state, baseTableToken, walWriter, refreshTriggeredTimestamp);
+                        refreshed |= refreshIncremental0(state, baseTableToken, walWriter, refreshTriggeredTimestamp);
                     } catch (Throwable th) {
                         LOG.error().$("error refreshing materialized view [view=").$(viewToken).$(", error=").$(th).I$();
                         refreshFailState(state, walWriter, microsecondClock.getTicks(), th.getMessage());
-                        return false;
                     }
                 } catch (Throwable th) {
                     // If we're here, we either couldn't obtain the WAL writer or the writer couldn't write
