@@ -371,7 +371,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                     createTableOperation.setTimestampColumnNamePosition(ast.position);
                     final CreateTableColumnModel timestampModel = createColumnModelMap.get(queryColumn.getName());
                     if (timestampModel == null) {
-                        throw SqlException.position(ast.position).put("TIMESTAMP column does not exist or not present in select list [name=").put(queryColumn.getName()).put(']');
+                        throw SqlException.position(selectTextPosition)
+                                .put("TIMESTAMP column does not exist or not present in select list [name=")
+                                .put(queryColumn.getName()).put(']');
                     }
                     timestampModel.setIsDedupKey(); // set dedup for timestamp column
                 }

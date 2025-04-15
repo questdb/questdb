@@ -378,7 +378,7 @@ public class SqlParser {
             final boolean baseTableQueried = isTableQueried(m, baseTableName);
             if (baseTableQueried) {
                 if (m.getSampleBy() != null && m.getSampleByOffset() == null) {
-                    throw SqlException.position(m.getSampleBy().position)
+                    throw SqlException.position(m.getSampleBy().position + m.getSampleBy().token.length() + 1)
                             .put("ALIGN TO FIRST OBSERVATION on base table is not supported for materialized views: ").put(baseTableName);
                 }
 
