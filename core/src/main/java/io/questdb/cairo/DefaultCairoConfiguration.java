@@ -51,6 +51,7 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -478,8 +479,23 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getMatViewMaxRecompileAttempts() {
+    public int getMatViewMaxRefreshRetries() {
         return 10;
+    }
+
+    @Override
+    public long getMatViewMinRefreshInterval() {
+        return Timestamps.MINUTE_MICROS;
+    }
+
+    @Override
+    public long getMatViewRefreshOomRetryTimeout() {
+        return 200;
+    }
+
+    @Override
+    public int getMatViewRowsPerQueryEstimate() {
+        return 10_000_000;
     }
 
     @Override

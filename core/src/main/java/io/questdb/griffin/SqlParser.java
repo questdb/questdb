@@ -372,29 +372,37 @@ public class SqlParser {
 
     private static void validateMatViewQuery(QueryModel model, String baseTableName) throws SqlException {
         for (QueryModel m = model; m != null; m = m.getNestedModel()) {
-            if ((m.getSampleByFrom() != null || m.getSampleByTo() != null) && isTableQueried(m, baseTableName)) {
-                final int position = m.getSampleByFrom() != null ? m.getSampleByFrom().position : m.getSampleByTo().position;
-                throw SqlException.position(position)
-                        .put("FROM-TO on base table is not supported for materialized views: ").put(baseTableName);
-            }
-
-            final ObjList<ExpressionNode> sampleByFill = m.getSampleByFill();
-            if (sampleByFill != null && sampleByFill.size() > 0 && isTableQueried(m, baseTableName)) {
-                throw SqlException.position(sampleByFill.get(0).position)
-                        .put("FILL on base table is not supported for materialized views: ").put(baseTableName);
-            }
-
-            ObjList<QueryColumn> columns = m.getColumns();
-            QueryColumn windowFuncColumn = null;
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                QueryColumn column = columns.getQuick(i);
-                if (column.isWindowColumn()) {
-                    windowFuncColumn = column;
+            final boolean baseTableQueried = isTableQueried(m, baseTableName);
+            if (baseTableQueried) {
+                if (m.getSampleBy() != null && m.getSampleByOffset() == null) {
+                    throw SqlException.position(m.getSampleBy().position)
+                            .put("ALIGN TO FIRST OBSERVATION on base table is not supported for materialized views: ").put(baseTableName);
                 }
-            }
-            if (windowFuncColumn != null && isTableQueried(m, baseTableName)) {
-                throw SqlException.position(windowFuncColumn.getAst().position)
-                        .put("window function on base table is not supported for materialized views: ").put(baseTableName);
+
+                if ((m.getSampleByFrom() != null || m.getSampleByTo() != null)) {
+                    final int position = m.getSampleByFrom() != null ? m.getSampleByFrom().position : m.getSampleByTo().position;
+                    throw SqlException.position(position)
+                            .put("FROM-TO on base table is not supported for materialized views: ").put(baseTableName);
+                }
+
+                final ObjList<ExpressionNode> sampleByFill = m.getSampleByFill();
+                if (sampleByFill != null && sampleByFill.size() > 0) {
+                    throw SqlException.position(sampleByFill.get(0).position)
+                            .put("FILL on base table is not supported for materialized views: ").put(baseTableName);
+                }
+
+                ObjList<QueryColumn> columns = m.getColumns();
+                QueryColumn windowFuncColumn = null;
+                for (int i = 0, n = columns.size(); i < n; i++) {
+                    QueryColumn column = columns.getQuick(i);
+                    if (column.isWindowColumn()) {
+                        windowFuncColumn = column;
+                    }
+                }
+                if (windowFuncColumn != null) {
+                    throw SqlException.position(windowFuncColumn.getAst().position)
+                            .put("window function on base table is not supported for materialized views: ").put(baseTableName);
+                }
             }
 
             final ObjList<QueryModel> joinModels = m.getJoinModels();
@@ -408,7 +416,7 @@ public class SqlParser {
 
             final QueryModel unionModel = m.getUnionModel();
             if (unionModel != null) {
-                if (isTableQueried(m, baseTableName)) {
+                if (baseTableQueried) {
                     throw SqlException.position(m.getUnionModel().getModelPosition())
                             .put("union on base table is not supported for materialized views: ").put(baseTableName);
                 }
