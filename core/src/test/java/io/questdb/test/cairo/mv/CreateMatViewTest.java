@@ -281,7 +281,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final String query = "select ts as ts2, avg from (select timestamp_floor('1m', ts) as ts, avg(v) avg from " + TABLE1 + ")";
             assertExceptionNoLeakCheck(
                     "create materialized view test as (" + query + ") partition by day",
-                    35,
+                    34,
                     "TIMESTAMP column does not exist or not present in select list [name=ts]"
             );
             assertNull(getMatViewDefinition("testView"));
