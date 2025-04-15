@@ -60,6 +60,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.datetime.millitime.DateFormatUtils.*;
 
+@SuppressWarnings("unused")
 public class SqlUtil {
 
     static final CharSequenceHashSet disallowedAliases = new CharSequenceHashSet();
@@ -381,6 +382,14 @@ public class SqlUtil {
         throw ImplicitCastException.inconvertibleValue(value, ColumnType.FLOAT, ColumnType.BYTE);
     }
 
+    public static double implicitCastFloatAsDouble(float value) {
+        if (Numbers.isNull(value)) {
+            return Double.NaN;
+        }
+
+        return value;
+    }
+
     @SuppressWarnings("unused")
     // used by the row copier
     public static int implicitCastFloatAsInt(float value) {
@@ -439,6 +448,30 @@ public class SqlUtil {
         return 0;
     }
 
+    public static double implicitCastIntAsDouble(int value) {
+        if (value == Numbers.INT_NULL) {
+            return Double.NaN;
+        } else {
+            return value;
+        }
+    }
+
+    public static float implicitCastIntAsFloat(int value) {
+        if (value == Numbers.INT_NULL) {
+            return Float.NaN;
+        } else {
+            return value;
+        }
+    }
+
+    public static long implicitCastIntAsLong(int value) {
+        if (value == Numbers.INT_NULL) {
+            return Long.MIN_VALUE;
+        } else {
+            return value;
+        }
+    }
+
     @SuppressWarnings("unused")
     // used by the row copier
     public static short implicitCastIntAsShort(int value) {
@@ -464,6 +497,23 @@ public class SqlUtil {
         }
         return 0;
     }
+
+    public static double implicitCastLongAsDouble(long value) {
+        if (value == Numbers.LONG_NULL) {
+            return Double.NaN;
+        } else {
+            return (double) value;
+        }
+    }
+
+    public static float implicitCastLongAsFloat(long value) {
+        if (value == Numbers.LONG_NULL) {
+            return Float.NaN;
+        } else {
+            return (float) value;
+        }
+    }
+
 
     @SuppressWarnings("unused")
     // used by the row copier
@@ -748,6 +798,14 @@ public class SqlUtil {
         return implicitCastStrVarcharAsTimestamp0(value, ColumnType.VARCHAR);
     }
 
+    public static boolean isNotPlainSelectModel(QueryModel model) {
+        return model.getTableName() != null
+                || model.getGroupBy().size() > 0
+                || model.getJoinModels().size() > 1
+                || model.getLatestByType() != QueryModel.LATEST_BY_NONE
+                || model.getUnionModel() != null;
+    }
+
     public static boolean isParallelismSupported(ObjList<Function> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
             if (!functions.getQuick(i).supportsParallelism()) {
@@ -844,14 +902,6 @@ public class SqlUtil {
             throw ImplicitCastException.inconvertibleValue(value, columnType, ColumnType.TIMESTAMP);
         }
         return Numbers.LONG_NULL;
-    }
-
-    public static boolean isNotPlainSelectModel(QueryModel model) {
-        return model.getTableName() != null
-                || model.getGroupBy().size() > 0
-                || model.getJoinModels().size() > 1
-                || model.getLatestByType() != QueryModel.LATEST_BY_NONE
-                || model.getUnionModel() != null;
     }
 
     static CharSequence createColumnAlias(
