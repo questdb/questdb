@@ -31,6 +31,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -198,7 +199,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     @Test
     public void testManyTablesView() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = fuzzer.generateRandom(LOG, 1322036736192L, 1744583437751L);
+            Rnd rnd = fuzzer.generateRandom(LOG);
             setFuzzParams(rnd, 0);
             setFuzzProperties(rnd);
             runMvFuzz(rnd, getTestName(), 1 + rnd.nextInt(4));
@@ -386,14 +387,14 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     private Thread startRefreshJob(int workerId, AtomicBoolean stop, Rnd outsideRnd) {
-        Rnd rnd = new Rnd(outsideRnd.nextLong(), outsideRnd.nextLong());
-        Thread th = new Thread(
+        final Rnd rnd = new Rnd(outsideRnd.nextLong(), outsideRnd.nextLong());
+        final Thread th = new Thread(
                 () -> {
                     try {
                         try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(workerId, engine)) {
                             while (!stop.get()) {
                                 refreshJob.run(workerId);
-                                //Os.sleep(rnd.nextInt(1000));
+                                Os.sleep(rnd.nextInt(100));
                             }
 
                             // Run one final time before stopping
