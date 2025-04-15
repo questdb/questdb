@@ -2717,11 +2717,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     CharSequence volumePath = configuration.getVolumeDefinitions().resolveAlias(volumeAlias);
                     if (volumePath != null) {
                         if (!ff.isDirOrSoftLinkDir(path.of(volumePath).$())) {
-                            throw CairoException.critical(0).put("not a valid path for volume [alias=")
+                            throw CairoException.critical(0).position(createMatViewOp.getVolumePosition())
+                                    .put("not a valid path for volume [alias=")
                                     .put(volumeAlias).put(", path=").put(path).put(']');
                         }
                     } else {
-                        throw SqlException.position(0).put("volume alias is not allowed [alias=")
+                        throw SqlException.position(createMatViewOp.getVolumePosition()).put("volume alias is not allowed [alias=")
                                 .put(volumeAlias).put(']');
                     }
                 }
@@ -2817,11 +2818,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     CharSequence volumePath = configuration.getVolumeDefinitions().resolveAlias(volumeAlias);
                     if (volumePath != null) {
                         if (!ff.isDirOrSoftLinkDir(path.of(volumePath).$())) {
-                            throw CairoException.critical(0).put("not a valid path for volume [alias=")
+                            throw CairoException.critical(0).position(createTableOp.getVolumePosition())
+                                    .put("not a valid path for volume [alias=")
                                     .put(volumeAlias).put(", path=").put(path).put(']');
                         }
                     } else {
-                        throw SqlException.position(0).put("volume alias is not allowed [alias=")
+                        throw SqlException.position(createTableOp.getVolumePosition()).put("volume alias is not allowed [alias=")
                                 .put(volumeAlias).put(']');
                     }
                 }

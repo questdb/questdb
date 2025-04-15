@@ -2558,6 +2558,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 } else {
                     TestUtils.assertContains(e.getFlyweightMessage(), "volume alias is not allowed [alias=12]");
                 }
+                Assert.assertEquals(96, e.getPosition());
             }
         });
     }

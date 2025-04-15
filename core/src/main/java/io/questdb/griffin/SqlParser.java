@@ -916,7 +916,7 @@ public class SqlParser {
             if (Os.isWindows()) {
                 throw SqlException.position(lexer.getPosition()).put("'in volume' is not supported on Windows");
             }
-            tableOpBuilder.setVolumeAlias(GenericLexer.unquote(tok));
+            tableOpBuilder.setVolumeAlias(GenericLexer.unquote(tok), lexer.lastTokenPosition());
             tok = optTok(lexer);
         }
 
@@ -1150,7 +1150,7 @@ public class SqlParser {
             if (Os.isWindows()) {
                 throw SqlException.position(lexer.getPosition()).put("'in volume' is not supported on Windows");
             }
-            builder.setVolumeAlias(unquote(tok));
+            builder.setVolumeAlias(unquote(tok), lexer.lastTokenPosition());
             tok = optTok(lexer);
         }
 

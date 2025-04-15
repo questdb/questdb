@@ -235,6 +235,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
+    public int getVolumePosition() {
+        return createTableOperation.getVolumePosition();
+    }
+
+    @Override
     public boolean ignoreIfExists() {
         return createTableOperation.ignoreIfExists();
     }

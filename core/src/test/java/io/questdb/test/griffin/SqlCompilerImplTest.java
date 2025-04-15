@@ -3034,6 +3034,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 } else {
                     TestUtils.assertContains(e.getFlyweightMessage(), "volume alias is not allowed [alias=niza]");
                 }
+                Assert.assertEquals(53, e.getPosition());
             }
         });
     }

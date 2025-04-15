@@ -55,6 +55,8 @@ public interface CreateTableOperation extends TableStructure, Operation {
 
     CharSequence getVolumeAlias();
 
+    int getVolumePosition();
+
     boolean ignoreIfExists();
 
     void updateFromLikeTableMetadata(TableMetadata likeTableMetadata);
