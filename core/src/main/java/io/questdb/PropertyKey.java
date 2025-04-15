@@ -427,6 +427,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     PG_NAMED_STATEMENT_POOL_CAPACITY("pg.named.statement.pool.capacity"),
     PG_PENDING_WRITERS_CACHE_CAPACITY("pg.pending.writers.cache.capacity"),
     PG_NET_CONNECTION_SNDBUF("pg.net.connection.sndbuf"),
+    PG_PIPELINE_CAPACITY("pg.pipeline.capacity"),
     DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE("debug.force.send.fragmentation.chunk.size", false, true),
     DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE("debug.force.recv.fragmentation.chunk.size", false, true),
     DEBUG_PG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE("debug.pg.force.send.fragmentation.chunk.size", false, true),
