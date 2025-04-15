@@ -74,7 +74,7 @@ public class NoOpMatViewStateStore implements MatViewStateStore {
     }
 
     @Override
-    public void notifyTxnApplied(MatViewRefreshTask task, long seqTxn) {
+    public void notifyBaseTableCommit(MatViewRefreshTask task, long seqTxn) {
     }
 
     @Override
