@@ -60,6 +60,7 @@ import java.util.Collection;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.Assert.fail;
 
@@ -1282,9 +1283,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelNonKeyedGroupByThrowsOnTimeout() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
-        testParallelGroupByThrowsOnTimeout("select vwap(price, quantity) from tab");
+        final Rnd rnd = TestUtils.generateRandom(AbstractCairoTest.LOG);
+        // We want the timeout to happen in reduce.
+        // Page frame count is 40.
+        final long tripWhenTicks = Math.max(10, rnd.nextLong(39));
+        testParallelGroupByThrowsOnTimeout("select vwap(price, quantity) from tab", tripWhenTicks);
     }
 
     @Test
@@ -1880,9 +1883,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelSingleKeyGroupByThrowsOnTimeout() throws Exception {
-        // This query doesn't use filter, so we don't care about JIT.
-        Assume.assumeTrue(enableJitCompiler);
-        testParallelGroupByThrowsOnTimeout("select quantity % 100, vwap(price, quantity) from tab");
+        final Rnd rnd = TestUtils.generateRandom(AbstractCairoTest.LOG);
+        // We want the timeout to happen in either reduce or merge.
+        // Page frame count is 40 and shard count is 8.
+        final long tripWhenTicks = Math.max(10, rnd.nextLong(48));
+        testParallelGroupByThrowsOnTimeout("select quantity % 100, vwap(price, quantity) from tab", tripWhenTicks);
     }
 
     @Test
@@ -3076,62 +3081,79 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         });
     }
 
-    private void testParallelGroupByThrowsOnTimeout(String query) throws Exception {
+    private void testParallelGroupByThrowsOnTimeout(String query, long tripWhenTicks) throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        // Validate parallel GROUP BY factories.
         Assume.assumeTrue(enableParallelGroupBy);
+        // The test is very sensitive to sharding threshold and page frame sizes.
+        Assert.assertEquals(2, configuration.getGroupByShardingThreshold());
+        final int rowCount = ROW_COUNT;
+        Assert.assertEquals(40, rowCount / configuration.getSqlPageFrameMaxRows());
         assertMemoryLeak(() -> {
-            SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
-            setCurrentMicros(0);
-            NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
-                    new DefaultSqlExecutionCircuitBreakerConfiguration() {
-                        @Override
-                        @NotNull
-                        public MillisecondClock getClock() {
-                            return () -> Long.MAX_VALUE;
-                        }
+            circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                private final AtomicLong ticks = new AtomicLong();
 
-                        @Override
-                        public long getQueryTimeout() {
-                            return 1;
+                @Override
+                @NotNull
+                public MillisecondClock getClock() {
+                    return () -> {
+                        if (ticks.incrementAndGet() < tripWhenTicks) {
+                            return 0;
                         }
-                    },
-                    MemoryTag.NATIVE_DEFAULT
-            );
-
-            try {
-                execute(
-                        "CREATE TABLE tab (" +
-                                "  ts TIMESTAMP," +
-                                "  price DOUBLE," +
-                                "  quantity DOUBLE) timestamp (ts) PARTITION BY DAY"
-                );
-                execute("insert into tab select (x * 864000000)::timestamp, x, x % 100 from long_sequence(" + ROW_COUNT + ")");
-                if (convertToParquet) {
-                    execute("alter table tab convert partition to parquet where ts >= 0");
+                        return Long.MAX_VALUE;
+                    };
                 }
 
-                context.with(
-                        context.getSecurityContext(),
-                        context.getBindVariableService(),
-                        context.getRandom(),
-                        context.getRequestFd(),
-                        circuitBreaker
-                );
-                context.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                @Override
+                public long getQueryTimeout() {
+                    return 1;
+                }
+            };
 
-                assertSql("", query);
-                Assert.fail();
-            } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "timeout, query aborted");
-            } finally {
-                context.with(
-                        context.getSecurityContext(),
-                        context.getBindVariableService(),
-                        context.getRandom(),
-                        context.getRequestFd(),
-                        null
-                );
-                Misc.free(circuitBreaker);
-            }
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
+                        final NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(circuitBreakerConfiguration, MemoryTag.NATIVE_DEFAULT);
+                        try {
+                            engine.execute(
+                                    "CREATE TABLE tab ( " +
+                                            "  ts TIMESTAMP, " +
+                                            "  price DOUBLE, " +
+                                            "  quantity DOUBLE " +
+                                            ") TIMESTAMP(ts) PARTITION BY DAY;",
+                                    sqlExecutionContext
+                            );
+                            engine.execute(
+                                    "insert into tab select (x * 864000000)::timestamp, x, x % 100 from long_sequence(" + rowCount + ")",
+                                    sqlExecutionContext
+                            );
+                            if (convertToParquet) {
+                                engine.execute("alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                            }
+
+                            context.with(
+                                    context.getSecurityContext(),
+                                    context.getBindVariableService(),
+                                    context.getRandom(),
+                                    context.getRequestFd(),
+                                    circuitBreaker
+                            );
+                            context.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+
+                            TestUtils.assertSql(compiler, context, query, sink, "");
+                            Assert.fail();
+                        } catch (CairoException ex) {
+                            TestUtils.assertContains(ex.getFlyweightMessage(), "timeout, query aborted");
+                        } finally {
+                            Misc.free(circuitBreaker);
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
         });
     }
 

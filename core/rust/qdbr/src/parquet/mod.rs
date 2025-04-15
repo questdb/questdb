@@ -21,7 +21,24 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-pub(crate) mod col_type;
 pub(crate) mod error;
 pub(crate) mod io;
 pub(crate) mod qdb_metadata;
+
+// Don't expose this in the general API, as it heightens the risk
+// of constructing an invalid `ColumnType`, e.g. one without the appropriate
+// extra type info for Geo types.
+#[cfg(test)]
+pub(crate) mod tests {
+    use qdb_core::col_type::{ColumnType, ColumnTypeTag};
+
+    pub trait ColumnTypeTagExt {
+        fn into_type(self) -> ColumnType;
+    }
+
+    impl ColumnTypeTagExt for ColumnTypeTag {
+        fn into_type(self) -> ColumnType {
+            ColumnType::new(self, 0)
+        }
+    }
+}

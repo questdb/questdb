@@ -25,9 +25,19 @@
 package io.questdb.griffin.engine.window;
 
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.RecordArray;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -172,6 +182,8 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        // Forcefully disable column pre-touch for nested filter queries.
+        executionContext.setColumnPreTouchEnabled(false);
         final RecordCursor baseCursor = base.getCursor(executionContext);
         cursor.of(baseCursor, executionContext);
         return cursor;
@@ -485,7 +497,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                 reopenTrees();
                 reopen(allFunctions);
             }
-            Function.init(allFunctions, this, executionContext);
+            Function.init(allFunctions, this, executionContext, null);
         }
 
         private void reopen(ObjList<?> list) {

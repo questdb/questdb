@@ -65,6 +65,7 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -192,10 +193,16 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         containsSecret = false;
     }
 
+    public void clearFactory() {
+        columnSkewList.clear();
+        columnTypesAndFlags.clear();
+        recordCursorFactory = Misc.free(recordCursorFactory);
+    }
+
     @Override
     public void close() {
         cursor = Misc.free(cursor);
-        recordCursorFactory = Misc.free(recordCursorFactory);
+        clearFactory();
         circuitBreaker = null;
         freeAsyncOperation();
     }
@@ -316,6 +323,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public void setContainsSecret(boolean containsSecret) {
         this.containsSecret = containsSecret;
+    }
+
+    public void setCursor(RecordCursor cursor) {
+        this.cursor = cursor;
     }
 
     public void setOperation(Operation operation) {
@@ -791,10 +802,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         recordCountNanos = nanosecondClock.getTicks() - nanos;
     }
 
-    private void onQueryMetadata(
-            HttpChunkedResponse response,
-            int columnCount
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void onQueryMetadata(HttpChunkedResponse response, int columnCount) throws PeerDisconnectedException, PeerIsSlowToReadException {
         doQueryMetadata(response, columnCount);
         onQueryMetadataSuffix(response, columnCount);
     }
@@ -807,7 +815,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         onSendRecordsLoop(response, columnCount);
     }
 
-    private void onQueryPrefix(HttpChunkedResponse response, int columnCount) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void onQueryPrefix(
+            HttpChunkedResponse response,
+            int columnCount
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (doQueryPrefix(response)) {
             doQueryMetadata(response, columnCount);
             doQueryMetadataSuffix(response);
@@ -815,7 +826,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         onSendRecordsLoop(response, columnCount);
     }
 
-    private void onQueryRecord(HttpChunkedResponse response, int columnCount) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void onQueryRecord(HttpChunkedResponse response, int columnCount)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
         doQueryRecord(response, columnCount);
         onQueryRecordSuffix(response, columnCount);
     }
@@ -847,7 +859,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
     }
 
-    private void onSetupFirstRecord(HttpChunkedResponse response, int columnCount) throws PeerIsSlowToReadException, PeerDisconnectedException {
+    private void onSetupFirstRecord(
+            HttpChunkedResponse response,
+            int columnCount
+    ) throws PeerIsSlowToReadException, PeerDisconnectedException {
         // If there is an exception in the first record setup then upper layers will handle it:
         // Either they will send error or pause execution on DataUnavailableException
         setupFirstRecord();
@@ -925,27 +940,15 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         response.sendChunk(true);
     }
 
-    boolean of(
-            RecordCursorFactory factory,
-            RecordCursor cursor,
-            SqlExecutionContextImpl sqlExecutionContext
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
-        return of(factory, cursor, true, sqlExecutionContext);
-    }
-
-    boolean of(
-            RecordCursorFactory factory,
-            RecordCursor cursor,
-            boolean queryCacheable,
-            SqlExecutionContextImpl sqlExecutionContext
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
+    boolean of(RecordCursorFactory factory, boolean queryCacheable, SqlExecutionContextImpl sqlExecutionContext)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         this.recordCursorFactory = factory;
-        this.cursor = cursor;
         this.queryCacheable = queryCacheable;
         this.queryJitCompiled = factory.usesCompiledFilter();
         // Enable column pre-touch in REST API only when LIMIT K,N is not specified since when limit is defined
         // we do a no-op loop over the cursor to calculate the total row count and pre-touch only slows things down.
-        sqlExecutionContext.setColumnPreTouchEnabled(stop == Long.MAX_VALUE);
+        // Make sure to use the override flag to avoid affecting the explain plan.
+        sqlExecutionContext.setColumnPreTouchEnabledOverride(stop == Long.MAX_VALUE);
         this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
         final RecordMetadata metadata = factory.getMetadata();
         this.queryTimestampIndex = metadata.getTimestampIndex();
@@ -954,6 +957,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
         int columnCount;
         columnSkewList.clear();
+        this.columnNames.clear();
+        this.columnTypesAndFlags.clear();
         if (columnNames != null) {
             columnsQueryParameter.clear();
             if (!Utf8s.utf8ToUtf16(columnNames.lo(), columnNames.hi(), columnsQueryParameter)) {
@@ -998,7 +1003,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     void querySuffixWithError(
             HttpChunkedResponse response,
             int code,
-            CharSequence message
+            @Nullable CharSequence message
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         // we no longer need cursor when we reached query suffix
         // closing cursor here guarantees that by the time http client finished reading response the table
@@ -1046,7 +1051,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         response.done();
     }
 
-    void resume(HttpChunkedResponse response) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    void resume(HttpChunkedResponse response)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         resumeActions.getQuick(queryState).onResume(response, columnCount);
     }
 
@@ -1059,6 +1065,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         void onResume(
                 HttpChunkedResponse response,
                 int columnCount
-        ) throws PeerDisconnectedException, PeerIsSlowToReadException;
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException;
     }
 }

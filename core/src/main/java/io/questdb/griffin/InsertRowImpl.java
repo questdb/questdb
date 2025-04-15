@@ -64,13 +64,18 @@ public final class InsertRowImpl {
 
     public void append(TableWriterAPI writer) {
         final TableWriter.Row row = rowFactory.getRow(writer);
-        copier.copy(virtualRecord, row);
-        row.append();
+        try {
+            copier.copy(virtualRecord, row);
+            row.append();
+        } catch (Throwable e) {
+            row.cancel();
+            throw e;
+        }
     }
 
     public void initContext(SqlExecutionContext executionContext) throws SqlException {
         final ObjList<? extends Function> functions = virtualRecord.getFunctions();
-        Function.init(functions, null, executionContext);
+        Function.init(functions, null, executionContext, null);
         if (timestampFunction != null) {
             timestampFunction.init(null, executionContext);
         }

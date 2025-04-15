@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.str.Utf8Sequence;
 
 public class InCharFunctionFactory implements FunctionFactory {
@@ -50,12 +51,11 @@ public class InCharFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-
         IntHashSet set = new IntHashSet();
         int n = args.size();
 

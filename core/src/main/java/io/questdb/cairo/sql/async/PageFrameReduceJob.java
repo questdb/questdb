@@ -246,7 +246,7 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
         // we deliberately hold the queue item because
         // processing is daisy-chained. If we were to release item before
         // finishing reduction, next step (job) will be processing an incomplete task
-        int cbState = frameSequence.isUninterruptible()
+        final int cbState = frameSequence.isUninterruptible()
                 ? SqlExecutionCircuitBreaker.STATE_OK
                 : circuitBreaker.getState(frameSequence.getStartTime(), frameSequence.getCircuitBreakerFd());
 

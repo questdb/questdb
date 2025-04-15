@@ -2671,8 +2671,8 @@ public class JoinTest extends AbstractCairoTest {
                     "3456\t3\tqu\t\t9\t1970-01-01T00:00:08.000000Z\t3456\tq\t12\t\t1\t1970-01-01T00:00:00.000000Z\n" +
                     "3456\tq\t12\t\t10\t1970-01-01T00:00:09.000000Z\t3456\tq\t12\t\t1\t1970-01-01T00:00:00.000000Z\n";
 
-            String sql = "with g1 as (select distinct * from t1)," +
-                    "g2 as (select distinct * from t2)" +
+            String sql = "with g1 as (select distinct * from t1 order by ts)," +
+                    "g2 as (select distinct * from t2 order by ts)" +
                     "select * from g1 lt join g2 on g1.geo4 = g2.geo4";
 
             assertSql(sql, expected, true);
@@ -2696,8 +2696,8 @@ public class JoinTest extends AbstractCairoTest {
                     "timestamp_sequence(0, 1000000) ts " +
                     "from long_sequence(2)) timestamp(ts)");
 
-            String sql = "with g1 as (select distinct * from t1)," +
-                    "g2 as (select distinct * from t2)" +
+            String sql = "with g1 as (select distinct * from t1 order by ts)," +
+                    "g2 as (select distinct * from t2 order by ts)" +
                     "select * from g1 lt join g2 on g1.geo4 = g2.geo1";
 
             try {
@@ -2922,7 +2922,8 @@ public class JoinTest extends AbstractCairoTest {
                     "y1 as (select distinct * from y) " +
                     "select g1, gg1, gg2, gg4, gg8, x1.k " +
                     "from x1 " +
-                    "join y1 on y1.kk = x1.k";
+                    "join y1 on y1.kk = x1.k" +
+                    " order by 6";
 
             final String expected = "g1\tgg1\tgg2\tgg4\tgg8\tk\n" +
                     "9v1s\t1\twh4\ts2z2\t10011100111100101000010010010000010001010\t1\n" +
@@ -2957,8 +2958,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testJoinWithGeohash2() throws Exception {
         assertMemoryLeak(() -> {
-            final String query = "with x1 as (select distinct * from x)," +
-                    "y1 as (select distinct * from y) " +
+            final String query = "with x1 as (select distinct * from x order by k)," +
+                    "y1 as (select distinct * from y order by kk) " +
                     "select g1, gg1, gg2, gg4, gg8, x1.k " +
                     "from x1 " +
                     "lt join y1 on x1.l = y1.l";
@@ -3700,7 +3701,7 @@ public class JoinTest extends AbstractCairoTest {
                     query,
                     "Limit lo: 3 skip-over-rows: 0 limit: 3\n" +
                             "    VirtualRecord\n" +
-                            "      functions: [dim_ap_temperature__category,timestamp_floor('day',to_utc(date_time,1))]\n" +
+                            "      functions: [dim_ap_temperature__category,timestamp_floor('day',to_timezone(date_time))]\n" +
                             "        SelectedRecord\n" +
                             "            Hash Outer Join Light\n" +
                             "              condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +

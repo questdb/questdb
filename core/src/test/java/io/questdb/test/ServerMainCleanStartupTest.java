@@ -27,12 +27,8 @@ package io.questdb.test;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.security.AllowAllSecurityContext;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
@@ -69,20 +65,15 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                 CairoEngine cairoEngine = serverMain.getEngine();
                 cairoEngine.execute("insert into y values(200, 2)", sqlExecutionContext);
 
-                // wait for the row count
-                try (RecordCursorFactory rfc = serverMain.getEngine().select("select count() from y", sqlExecutionContext)) {
-                    while (true) {
-                        try (RecordCursor cursor = rfc.getCursor(sqlExecutionContext)) {
-                            Record rec = cursor.getRecord();
-                            if (cursor.hasNext()) {
-                                if (rec.getLong(0) == 2) {
-                                    break;
-                                }
-                            }
-                            Os.pause();
-                        }
-                    }
-                }
+                // wait for txns to be written
+                TestUtils.assertSql(
+                        serverMain.getEngine(),
+                        sqlExecutionContext,
+                        "select wait_wal_table('y')",
+                        sink,
+                        "wait_wal_table\n" +
+                                "true\n"
+                );
 
                 // ensure transactions
                 TestUtils.assertSql(

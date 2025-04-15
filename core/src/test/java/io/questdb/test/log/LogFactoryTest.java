@@ -236,13 +236,13 @@ public class LogFactoryTest {
             factory.bind();
             factory.startThread();
 
-            Assert.assertEquals(Logger.class, getLogger(QueryProgress.class).getClass());
+            Assert.assertEquals(Logger.class, getLogger().getClass());
 
             LogFactory.enableGuaranteedLogging(QueryProgress.class);
-            Assert.assertEquals(GuaranteedLogger.class, getLogger(QueryProgress.class).getClass());
+            Assert.assertEquals(GuaranteedLogger.class, getLogger().getClass());
 
             LogFactory.disableGuaranteedLogging(QueryProgress.class);
-            Assert.assertEquals(Logger.class, getLogger(QueryProgress.class).getClass());
+            Assert.assertEquals(Logger.class, getLogger().getClass());
         }
     }
 
@@ -998,8 +998,8 @@ public class LogFactoryTest {
             writer.setRollEvery("day  ");
             writer.bindProperties(LogFactory.getInstance());
 
-            Assert.assertNotEquals(writer.getRollDeadlineFunction().getDeadline(), Long.MAX_VALUE);
-            Assert.assertEquals(writer.getRollDeadlineFunction().getDeadline(), 1430697600000000L);
+            Assert.assertNotEquals(Long.MAX_VALUE, writer.getRollDeadlineFunction().getDeadline());
+            Assert.assertEquals(1430697600000000L, writer.getRollDeadlineFunction().getDeadline());
         }
 
         try (final LogRollingFileWriter writer = new LogRollingFileWriter(
@@ -1013,8 +1013,8 @@ public class LogFactoryTest {
             writer.setRollEvery(" minute ");
             writer.bindProperties(LogFactory.getInstance());
 
-            Assert.assertNotEquals(writer.getRollDeadlineFunction().getDeadline(), Long.MAX_VALUE);
-            Assert.assertEquals(writer.getRollDeadlineFunction().getDeadline(), 1430649360000000L);
+            Assert.assertNotEquals(Long.MAX_VALUE, writer.getRollDeadlineFunction().getDeadline());
+            Assert.assertEquals(1430649360000000L, writer.getRollDeadlineFunction().getDeadline());
         }
     }
 
@@ -1084,9 +1084,9 @@ public class LogFactoryTest {
         r.$();
     }
 
-    private static Log getLogger(Class<?> clazz) {
+    private static Log getLogger() {
         try {
-            final Field field = clazz.getDeclaredField("LOG");
+            final Field field = QueryProgress.class.getDeclaredField("LOG");
             field.setAccessible(true);
             return (Log) field.get(null);
         } catch (NoSuchFieldException | IllegalAccessException e) {
@@ -1099,7 +1099,7 @@ public class LogFactoryTest {
         Assert.assertTrue("oops: " + len, len > 0L && len < 1073741824L);
     }
 
-    private void testAutoDelete(String sizeLimit, String lifeDuration, String rollSize) throws NumericException {
+    private void testAutoDelete(String sizeLimit, String lifeDuration, String rollSize) throws Exception {
         final int extraFiles = 2;
         String fileTemplate = "mylog-${date:yyyy-MM-dd}.log";
         String extraFilePrefix = "mylog-test";

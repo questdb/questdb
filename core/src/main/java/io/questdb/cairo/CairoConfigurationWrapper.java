@@ -247,6 +247,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getDebugWalApplyBlockFailureNoRetry() {
+        return getDelegate().getDebugWalApplyBlockFailureNoRetry();
+    }
+
+    @Override
     public @NotNull DateLocale getDefaultDateLocale() {
         return getDelegate().getDefaultDateLocale();
     }
@@ -862,6 +867,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public double getSqlParallelFilterPreTouchThreshold() {
+        return getDelegate().getSqlParallelFilterPreTouchThreshold();
+    }
+
+    @Override
     public int getSqlParallelWorkStealingThreshold() {
         return getDelegate().getSqlParallelWorkStealingThreshold();
     }
@@ -1119,6 +1129,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getWorkStealTimeoutNanos() {
         return getDelegate().getWorkStealTimeoutNanos();
+    }
+
+    @Override
+    public long getWriteBackOffTimeoutOnMemPressureMs() {
+        return getDelegate().getWriteBackOffTimeoutOnMemPressureMs();
     }
 
     @Override

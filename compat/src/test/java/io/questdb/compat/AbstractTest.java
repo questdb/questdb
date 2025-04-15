@@ -77,8 +77,8 @@ public class AbstractTest {
         Files.mkdirs(path.of(root).slash(), 509);
     }
 
-    public static Rnd generateRandom() {
-        return generateRandom(null, System.nanoTime(), System.currentTimeMillis());
+    public static Rnd generateRandom(Log log) {
+        return generateRandom(log, System.nanoTime(), System.currentTimeMillis());
     }
 
     public static Rnd generateRandom(Log log, long s0, long s1) {

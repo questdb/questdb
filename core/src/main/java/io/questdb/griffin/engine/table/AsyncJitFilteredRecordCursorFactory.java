@@ -88,7 +88,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             @Nullable ObjList<Function> perWorkerFilters,
             @Nullable Function limitLoFunction,
             int limitLoPos,
-            boolean preTouchColumns,
             int workerCount
     ) {
         super(base.getMetadata());
@@ -111,15 +110,14 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             int columnType = base.getMetadata().getColumnType(i);
             columnTypes.add(columnType);
         }
-        AsyncJitFilterAtom atom = new AsyncJitFilterAtom(
+        final AsyncJitFilterAtom atom = new AsyncJitFilterAtom(
                 configuration,
                 filter,
                 perWorkerFilters,
                 compiledFilter,
                 bindVarMemory,
                 bindVarFunctions,
-                columnTypes,
-                !preTouchColumns
+                columnTypes
         );
         this.frameSequence = new PageFrameSequence<>(
                 configuration,
@@ -347,7 +345,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
 
         // Pre-touch native columns, if asked.
         if (frameMemory.getFrameFormat() == PartitionFormat.NATIVE) {
-            atom.preTouchColumns(record, rows);
+            atom.preTouchColumns(record, rows, frameRowCount);
         }
     }
 
@@ -429,7 +427,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     public static class AsyncJitFilterAtom extends AsyncFilterAtom {
-
         final ObjList<Function> bindVarFunctions;
         final MemoryCARW bindVarMemory;
         final CompiledFilter compiledFilter;
@@ -441,10 +438,9 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 CompiledFilter compiledFilter,
                 MemoryCARW bindVarMemory,
                 ObjList<Function> bindVarFunctions,
-                IntList columnTypes,
-                boolean forceDisablePreTouch
+                IntList columnTypes
         ) {
-            super(configuration, filter, perWorkerFilters, columnTypes, forceDisablePreTouch);
+            super(configuration, filter, perWorkerFilters, columnTypes);
             this.compiledFilter = compiledFilter;
             this.bindVarMemory = bindVarMemory;
             this.bindVarFunctions = bindVarFunctions;
@@ -453,7 +449,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            Function.init(bindVarFunctions, symbolTableSource, executionContext);
+            Function.init(bindVarFunctions, symbolTableSource, executionContext, null);
             prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
         }
     }

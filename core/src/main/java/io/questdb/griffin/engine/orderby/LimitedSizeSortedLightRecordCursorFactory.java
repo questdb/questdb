@@ -87,7 +87,6 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        boolean oldPreTouchEnabled = executionContext.isColumnPreTouchEnabled();
         // Forcefully disable column pre-touch for all ORDER BY + LIMIT queries for all downstream
         // async filtered factories to avoid redundant disk reads.
         executionContext.setColumnPreTouchEnabled(false);
@@ -95,7 +94,6 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         try {
             initialize(executionContext, baseCursor);
         } catch (Throwable th) {
-            executionContext.setColumnPreTouchEnabled(oldPreTouchEnabled);
             Misc.free(baseCursor);
             throw th;
         }
@@ -106,8 +104,6 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         } catch (Throwable th) {
             Misc.free(cursor);
             throw th;
-        } finally {
-            executionContext.setColumnPreTouchEnabled(oldPreTouchEnabled);
         }
     }
 

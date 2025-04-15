@@ -72,6 +72,7 @@ public final class Timestamps {
     public static final int STATE_UTC = 1;
     public static final int WEEK_DAYS = 7;
     public static final long WEEK_MICROS = 604800000000L; // DAY_MICROS * 7
+    public static final long YEAR_10000 = 253_402_300_800_000_000L;
     private static final char AFTER_NINE = '9' + 1;
     private static final char BEFORE_ZERO = '0' - 1;
     private static final int DAYS_0000_TO_1970 = 719527;
@@ -1252,12 +1253,12 @@ public final class Timestamps {
         return sink.toString();
     }
 
-    public static long toUTC(long timestampWithTimezone, DateLocale locale, CharSequence timezone) throws NumericException {
-        return toUTC(timestampWithTimezone, locale, timezone, 0, timezone.length());
+    public static long toUTC(long localTimestamp, DateLocale locale, CharSequence timezone) throws NumericException {
+        return toUTC(localTimestamp, locale, timezone, 0, timezone.length());
     }
 
     public static long toUTC(
-            long timestampWithTimezone,
+            long localTimestamp,
             DateLocale locale,
             CharSequence timezone,
             int lo,
@@ -1270,20 +1271,16 @@ public final class Timestamps {
                     Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)),
                     RESOLUTION_MICROS
             );
-            offset = zoneRules.getOffset(timestampWithTimezone);
-            // getOffset really needs UTC date, not local
-            offset = zoneRules.getOffset(timestampWithTimezone - offset);
-            return timestampWithTimezone - offset;
+            offset = zoneRules.getLocalOffset(localTimestamp);
+            return localTimestamp - offset;
         }
         offset = Numbers.decodeLowInt(l) * MINUTE_MICROS;
-        return timestampWithTimezone - offset;
+        return localTimestamp - offset;
     }
 
-    public static long toUTC(long timestampWithTimezone, TimeZoneRules zoneRules) {
-        long offset = zoneRules.getOffset(timestampWithTimezone);
-        // getOffset really needs UTC date, not local
-        offset = zoneRules.getOffset(timestampWithTimezone - offset);
-        return timestampWithTimezone - offset;
+    public static long toUTC(long localTimestamp, TimeZoneRules zoneRules) {
+        final long offset = zoneRules.getLocalOffset(localTimestamp);
+        return localTimestamp - offset;
     }
 
     /**

@@ -679,7 +679,7 @@ public class UnionTest extends AbstractCairoTest {
             ); // produces PLANE PLANE BICYCLE SCOOTER SCOOTER SCOOTER SCOOTER
 
             try (RecordCursorFactory factory = select("select distinct t from x union all y order by t")) {
-                assertCursor(expected2, factory, true, false);
+                assertCursor(expected2, factory, true, true);
             }
         });
     }
@@ -760,7 +760,7 @@ public class UnionTest extends AbstractCairoTest {
                                     ")"
                     )
             ) {
-                assertCursor(expected2, factory, false, false);
+                assertCursor(expected2, factory, false, true);
             }
         });
     }
@@ -930,7 +930,7 @@ public class UnionTest extends AbstractCairoTest {
                                     ")  order by 1"
                     )
             ) {
-                assertCursor(expected2, factory, true, false);
+                assertCursor(expected2, factory, true, true);
             }
         });
     }

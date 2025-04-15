@@ -769,21 +769,21 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testDistinctFunctionColumn() throws Exception {
         final String expected = "v\n" +
-                "8.0\n" +
+                "0.0\n" +
                 "1.0\n" +
-                "7.0\n" +
                 "2.0\n" +
                 "3.0\n" +
                 "4.0\n" +
-                "0.0\n" +
-                "6.0\n" +
-                "9.0\n" +
                 "5.0\n" +
+                "6.0\n" +
+                "7.0\n" +
+                "8.0\n" +
+                "9.0\n" +
                 "10.0\n";
 
         assertQuery(
                 expected,
-                "select distinct round(val*10, 0) v from prices",
+                "select distinct round(val*10, 0) v from prices order by 1",
                 "create table prices as " +
                         "(" +
                         " SELECT \n" +
@@ -792,6 +792,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " long_sequence(1200000)" +
                         ")",
                 null,
+                true,
                 true
         );
     }
@@ -799,21 +800,21 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testDistinctOperatorColumn() throws Exception {
         final String expected = "v\n" +
-                "10.0\n" +
+                "2.0\n" +
                 "3.0\n" +
-                "9.0\n" +
                 "4.0\n" +
                 "5.0\n" +
                 "6.0\n" +
-                "2.0\n" +
-                "8.0\n" +
-                "11.0\n" +
                 "7.0\n" +
+                "8.0\n" +
+                "9.0\n" +
+                "10.0\n" +
+                "11.0\n" +
                 "12.0\n";
 
         assertQuery(
                 expected,
-                "select distinct 2+round(val*10,0) v from prices",
+                "select distinct 2+round(val*10,0) v from prices order by 1",
                 "create table prices as " +
                         "(" +
                         " SELECT \n" +
@@ -822,6 +823,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " long_sequence(1200000)" +
                         ")",
                 null,
+                true,
                 true
         );
     }
@@ -848,7 +850,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         ")",
                 null,
                 true,
-                false
+                true
         );
     }
 
@@ -860,7 +862,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
         assertQuery(
                 expected,
-                "select distinct pair from prices where pair in ('A','B')",
+                "select distinct pair from prices where pair in ('A','B') order by 1",
                 "create table prices as " +
                         "(" +
                         " SELECT \n" +
@@ -872,6 +874,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " long_sequence(1200000)" +
                         ")",
                 null,
+                true,
                 true
         );
     }
@@ -1068,13 +1071,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     "k",
                     "insert into x select * from (" +
                             "select" +
-                            " rnd_double(0)*100," +
+                            " 0.0992," +
                             " 'HYRX'," +
                             " to_timestamp('1971', 'yyyy') t" +
                             " from long_sequence(1)" +
                             ") timestamp(t)",
                     expected +
-                            "48.52404686849972\tHYRX\t1971-01-01T00:00:00.000000Z\n",
+                            "0.0992\tHYRX\t1971-01-01T00:00:00.000000Z\n",
                     true
             );
             Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
@@ -2009,6 +2012,164 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 24,
                 "boolean expression expected"
         );
+    }
+
+    @Test
+    public void testFunctionArgsImplicitCast() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1(c0 INT, c1 SYMBOL, c2 STRING, c3 VARCHAR, c4 LONG, c5 DOUBLE);");
+            execute("INSERT INTO t1(c0, c1) VALUES (1, '2012-01-01');");
+
+            assertQuery(
+                    "c0\tc1\n",
+                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 > t1.c0);",
+                    null,
+                    true,
+                    false
+            );
+            assertQuery(
+                    "c0\tc1\n",
+                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 > t1.c2);",
+                    null,
+                    true,
+                    false
+            );
+            assertQuery(
+                    "c0\tc1\n",
+                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 > t1.c3);",
+                    null,
+                    true,
+                    false
+            );
+            assertQuery(
+                    "c0\tc1\n",
+                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 > t1.c4);",
+                    null,
+                    true,
+                    false
+            );
+            assertException(
+                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 > t1.c5);",
+                    41,
+                    "there is no matching operator `>` with the argument types: SYMBOL > DOUBLE"
+            );
+        });
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE uuid_str (c1 uuid, c2 string);");
+            execute("INSERT INTO uuid_str VALUES('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')");
+
+            assertQuery(
+                    "c1\tc2\n" +
+                            "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
+                    "SELECT * FROM uuid_str where c1 = c2",
+                    null,
+                    true,
+                    false
+            );
+        });
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE varchar_date (c1 varchar, c2 date);");
+            execute("INSERT INTO varchar_date VALUES('2025-03-28', '2029-03-28')");
+
+            assertQuery(
+                    "c1\tc2\n" +
+                            "2025-03-28\t2029-03-28T00:00:00.000Z\n",
+                    "SELECT * FROM varchar_date where c1 < c2",
+                    null,
+                    true,
+                    false
+            );
+        });
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE char_cast (c1 char, c2 short, c3 int, c4 long, c5 float, c6 double);");
+            execute("INSERT INTO char_cast VALUES('9', 1, 1, 1, 1, 1)");
+
+            assertQuery(
+                    "c1\n" +
+                            "9\n",
+                    "SELECT c1 FROM char_cast where c1 > c2 and c1 > c3 and c1 > c4 and c1 > c5 and c1 > c6",
+                    null,
+                    true,
+                    false
+            );
+        });
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE date_double (c1 date, c2 timestamp, c3 double);");
+            execute("INSERT INTO date_double VALUES('2025-03-28', '2025-03-29', 100.0)");
+
+            assertQuery(
+                    "c3\n" +
+                            "100.0\n",
+                    "SELECT c3 FROM date_double where c1 < c2 and c2 > c3 and c1 > c3",
+                    null,
+                    true,
+                    false
+            );
+        });
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ipv4_str (c1 ipv4, c2 varchar);");
+            execute("INSERT INTO ipv4_str VALUES('0.0.0.3', '0.0.0.2')");
+
+            assertQuery(
+                    "count\n" +
+                            "1\n",
+                    "SELECT count(c1) FROM ipv4_str",
+                    null,
+                    false,
+                    true
+            );
+        });
+
+        assertMemoryLeak(() -> {
+            assertQuery(
+                    "column\n" +
+                            "1\n",
+                    "SELECT '2' - 1;",
+                    null,
+                    true,
+                    true
+            );
+
+            assertQuery(
+                    "column\n" +
+                            "255\n",
+                    "SELECT '256' - 1;",
+                    null,
+                    true,
+                    true
+            );
+
+            assertException(
+                    "SELECT 'm' -1",
+                    0,
+                    "inconvertible value: m [CHAR -> INT]"
+            );
+
+            assertException(
+                    "select ~'m'",
+                    0,
+                    "inconvertible value: m [CHAR -> INT]"
+            );
+        });
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (c1 int);");
+            execute("INSERT INTO x VALUES(10)");
+
+            assertQuery(
+                    "column\n" +
+                            "-9\n",
+                    "SELECT '1' - c1 FROM x",
+                    null,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
@@ -7293,7 +7454,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 expected2,
                 true,
                 false,
-                false
+                true
         );
     }
 
@@ -7304,8 +7465,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = select("select distinct id as foo from my_table")) {
                 RecordMetadata metadata = factory.getMetadata();
                 Assert.assertEquals(ColumnType.LONG, metadata.getColumnType(0));
-                assertCursor("foo\n" +
-                        "1\n", factory, true, false);
+                assertCursor(
+                        "foo\n" +
+                                "1\n",
+                        factory,
+                        true,
+                        true
+                );
             }
         });
     }
@@ -7318,22 +7484,31 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 RecordMetadata metadata = factory.getMetadata();
                 Assert.assertEquals(ColumnType.LONG, metadata.getColumnType(0));
 
-                assertCursor("foo\n" +
-                        "1\n", factory, true, false);
+                assertCursor(
+                        "foo\n" +
+                                "1\n",
+                        factory,
+                        true,
+                        true
+                );
             }
         });
     }
 
     @Test
     public void testSelectDistinctWithColumnAliasOnExplicitJoin() throws Exception {
-        assertQuery("id\n" +
+        assertQuery(
+                "id\n" +
                         "1\n" +
                         "2\n",
                 "select distinct t1.id " +
                         "from  tab t1 " +
                         "join (select x as id from long_sequence(2)) t2 on (t1.id=t2.id)",
                 "create table tab as (select x as id from long_sequence(3))",
-                null, false, false
+
+                null,
+                true,
+                true
         );
     }
 
@@ -7345,7 +7520,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "select distinct t1.id " +
                         "from  tab t1, tab t2",
                 "create table tab as (select x as id from long_sequence(2))",
-                null, false, false
+                null, true, true
         );
     }
 

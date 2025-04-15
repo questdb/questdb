@@ -459,7 +459,7 @@ public class OrderByRadixSortTest extends AbstractCairoTest {
                         " end as timestamp) as a" +
                         " from long_sequence(25)" +
                         ")",
-                null,
+                "a###desc",
                 true,
                 true
         );

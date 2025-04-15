@@ -54,6 +54,118 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                execute("create table up_part_o3_many as" +
+                        " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
+                        " x," +
+                        " rnd_str('a', 'b', 'c', 'd') str," +
+                        " rnd_symbol('A', 'B', 'C', 'D') sym1," +
+                        " rnd_symbol('1', '2', '3', '4') sym2" +
+                        " from long_sequence(5)), index(sym2)" +
+                        " timestamp(ts) PARTITION BY DAY");
+
+                try (TableReader rdr1 = getReader("up_part_o3_many")) {
+                    execute("insert into up_part_o3_many " +
+                            " select timestamp_sequence('1970-01-02T01', 24 * 60 * 60 * 1000000L) ts," +
+                            " x," +
+                            " rnd_str('a', 'b', 'c', 'd') str," +
+                            " rnd_symbol('A', 'B', 'C', 'D') sym1," +
+                            " rnd_symbol('1', '2', '3', '4') sym2" +
+                            " from long_sequence(3)");
+
+                    try (TableReader ignored = getReader("up_part_o3_many")) {
+                        update("ALTER TABLE up_part_o3_many alter column sym2 type varchar");
+                        runPurgeJob(purgeJob);
+
+                        setCurrentMicros(currentMicros + 1);
+                    }
+                    rdr1.openPartition(0);
+                }
+
+                String[] partitions = new String[]{"1970-01-03.1", "1970-01-04.1", "1970-01-05"};
+                try (Path path = new Path()) {
+                    assertIndexFilesExist(partitions, path, "up_part_o3_many", "", true);
+
+                    runPurgeJob(purgeJob);
+
+                    assertIndexFilesExist(partitions, path, "up_part_o3_many", "", false);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDropIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                execute("create table up_part_o3_many as" +
+                        " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
+                        " x," +
+                        " rnd_str('a', 'b', 'c', 'd') str," +
+                        " rnd_symbol('A', 'B', 'C', 'D') sym1," +
+                        " rnd_symbol('1', '2', '3', '4') sym2" +
+                        " from long_sequence(5)), index(sym2)" +
+                        " timestamp(ts) PARTITION BY DAY");
+
+                try (TableReader rdr1 = getReader("up_part_o3_many")) {
+                    execute("insert into up_part_o3_many " +
+                            " select timestamp_sequence('1970-01-02T01', 24 * 60 * 60 * 1000000L) ts," +
+                            " x," +
+                            " rnd_str('a', 'b', 'c', 'd') str," +
+                            " rnd_symbol('A', 'B', 'C', 'D') sym1," +
+                            " rnd_symbol('1', '2', '3', '4') sym2" +
+                            " from long_sequence(3)");
+
+                    try (TableReader ignored = getReader("up_part_o3_many")) {
+                        update("ALTER TABLE up_part_o3_many alter column sym2 drop index");
+                        runPurgeJob(purgeJob);
+
+                        setCurrentMicros(currentMicros + 1);
+                    }
+                    rdr1.openPartition(0);
+                }
+
+                String[] partitions = new String[]{"1970-01-03.1", "1970-01-04.1", "1970-01-05"};
+                try (Path path = new Path()) {
+                    assertIndexFilesExist(partitions, path, "up_part_o3_many", "", true);
+
+                    runPurgeJob(purgeJob);
+
+                    assertIndexFilesExist(partitions, path, "up_part_o3_many", "", false);
+                }
+
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+
+                try (TableReader rdr1 = getReader("up_part_o3_many")) {
+                    try (TableReader ignored = getReader("up_part_o3_many")) {
+                        update("ALTER TABLE up_part_o3_many alter column sym2 add index");
+                        runPurgeJob(purgeJob);
+
+                        try (TableReader ignored2 = getReader("up_part_o3_many")) {
+                            update("ALTER TABLE up_part_o3_many alter column sym2 drop index");
+                            runPurgeJob(purgeJob);
+                        }
+                        setCurrentMicros(currentMicros + 1);
+                    }
+                    rdr1.openPartition(0);
+                }
+
+                try (Path path = new Path()) {
+                    assertIndexFilesExist(partitions, path, "up_part_o3_many", ".2", true);
+
+                    runPurgeJob(purgeJob);
+
+                    assertIndexFilesExist(partitions, path, "up_part_o3_many", ".2", false);
+                }
+
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+            }
+        });
+    }
+
+    @Test
     public void testHandlesDroppedTablesAfterRestart() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
@@ -923,6 +1035,18 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         path.of(configuration.getDbRoot()).concat(tableToken).concat(partition).concat("str.i").put(colSuffix).$();
         Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
 
+        assertIndexFilesExist(path, up_part, partition, colSuffix, exist);
+    }
+
+    private void assertIndexFilesExist(String[] partitions, Path path, String tableName, String colSuffix, boolean exist) {
+        for (int i = 0; i < partitions.length; i++) {
+            String partition = partitions[i];
+            assertIndexFilesExist(path, tableName, partition, colSuffix, exist);
+        }
+    }
+
+    private void assertIndexFilesExist(Path path, String up_part, String partition, String colSuffix, boolean exist) {
+        TableToken tableToken = engine.verifyTableName(up_part);
         path.of(configuration.getDbRoot()).concat(tableToken).concat(partition).concat("sym2.d").put(colSuffix).$();
         Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
 

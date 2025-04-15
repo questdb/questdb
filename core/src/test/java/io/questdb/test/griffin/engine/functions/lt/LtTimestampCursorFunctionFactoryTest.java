@@ -42,6 +42,7 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
             assertSql(expected, "select * from x where ts < (select null::timestamp)");
             assertSql(expected, "select * from x where ts < (select null::string)");
             assertSql(expected, "select * from x where ts < (select null::varchar)");
+
             // no rows selected in the cursor
             assertSql(expected, "select * from x where ts < (select 1::timestamp from x where 1 <> 1)");
             assertSql(expected, "select * from x where ts < (select '11' from x where 1 <> 1)");
@@ -188,6 +189,123 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
                             "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t1970-01-01T00:00:00.000000Z\n" +
                             "8#3TsZ\t1970-01-01T00:00:02.500000Z\n",
                     "select * from x where ts >= (select '1970-01-01T00:00:00.000000Z'::varchar)"
+            );
+        });
+    }
+
+    @Test
+    public void testPlans() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x as (" +
+                    "  select rnd_varchar() a, rnd_long(30000, 80000000, 1)::timestamp ts from long_sequence(10)" +
+                    ")");
+
+            // non-thread-safe
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts::string::timestamp < cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [null]\n" +
+                            "        long_sequence count: 1 [state-shared] [pre-touch]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts::string::timestamp < (select null)"
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts::string::timestamp < cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [1]\n" +
+                            "        long_sequence count: 1 [state-shared] [pre-touch]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts::string::timestamp < (select 1::timestamp)"
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts::string::timestamp < cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: ['2015-03-11']\n" +
+                            "        long_sequence count: 1 [state-shared] [pre-touch]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts::string::timestamp < (select '2015-03-11'::string)"
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts::string::timestamp < cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: ['2015-03-12']\n" +
+                            "        long_sequence count: 1 [state-shared] [pre-touch]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts::string::timestamp < (select '2015-03-12'::varchar)"
+            );
+
+            // thread-safe
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts [thread-safe] < cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [null]\n" +
+                            "        long_sequence count: 1 [pre-touch]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts < (select null)"
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts [thread-safe] < cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [1]\n" +
+                            "        long_sequence count: 1 [pre-touch]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts < (select 1::timestamp)"
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts [thread-safe] < cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: ['2015-03-11']\n" +
+                            "        long_sequence count: 1 [pre-touch]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts < (select '2015-03-11'::string)"
+            );
+
+            assertSql(
+                    "QUERY PLAN\n" +
+                            "Async Filter workers: 1\n" +
+                            "  filter: ts [thread-safe] < cursor \n" +
+                            "    VirtualRecord\n" +
+                            "      functions: ['2015-03-12']\n" +
+                            "        long_sequence count: 1 [pre-touch]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: x\n",
+                    "explain select * from x where ts < (select '2015-03-12'::varchar)"
             );
         });
     }

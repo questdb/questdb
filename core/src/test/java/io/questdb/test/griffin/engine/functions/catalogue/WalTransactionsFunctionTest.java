@@ -65,6 +65,34 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalTransactionIdempotency() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE 'trades' ( \n" +
+                    "\tsymbol SYMBOL CAPACITY 256 CACHE,\n" +
+                    "\tside SYMBOL CAPACITY 256 CACHE,\n" +
+                    "\tprice DOUBLE,\n" +
+                    "\tamount DOUBLE,\n" +
+                    "\ttimestamp TIMESTAMP\n" +
+                    ") timestamp(timestamp) PARTITION BY DAY WAL\n");
+
+            assertQueryNoLeakCheck(
+                    "column\n" +
+                            "null\n",
+                    "with segments as (\n" +
+                            "\tselect walid, segmentId from wal_transactions('trades')\n" +
+                            "\twhere sequencerTxn = 10\n" +
+                            ")\n" +
+                            "select max(wt.sequencerTxn) + 1 from wal_transactions('trades') wt\n" +
+                            "join segments s on s.segmentId = wt.segmentId and s.walId = wt.walId\n" +
+                            "where sequencerTxn > 10;\n",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testWalTransactions() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(IntervalUtils.parseFloorPartialTimestamp("2023-11-22T19:00:53.950468Z"));
@@ -100,34 +128,6 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
                     "sequencerTxn\ttimestamp\twalId\tsegmentId\tsegmentTxn\tstructureVersion\tminTimestamp\tmaxTimestamp\trowCount\talterCommandType\n" +
                             "3\t2023-11-22T19:00:53.950468Z\t-1\t-1\t-1\t1\t\t\tnull\t0\n",
                     "select * from wal_transactions('x') limit -1"
-            );
-        });
-    }
-
-    @Test
-    public void testWalTransactionIdempotency() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE 'trades' ( \n" +
-                    "\tsymbol SYMBOL CAPACITY 256 CACHE,\n" +
-                    "\tside SYMBOL CAPACITY 256 CACHE,\n" +
-                    "\tprice DOUBLE,\n" +
-                    "\tamount DOUBLE,\n" +
-                    "\ttimestamp TIMESTAMP\n" +
-                    ") timestamp(timestamp) PARTITION BY DAY WAL\n");
-
-            assertQueryNoLeakCheck(
-                    "column\n" +
-                            "null\n",
-                    "with segments as (\n" +
-                            "\tselect walid, segmentId from wal_transactions('trades')\n" +
-                            "\twhere sequencerTxn = 10\n" +
-                            ")\n" +
-                            "select max(wt.sequencerTxn) + 1 from wal_transactions('trades') wt\n" +
-                            "join segments s on s.segmentId = wt.segmentId and s.walId = wt.walId\n" +
-                            "where sequencerTxn > 10;\n",
-                    null,
-                    false,
-                    true
             );
         });
     }

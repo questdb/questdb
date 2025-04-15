@@ -1492,13 +1492,19 @@ public class SqlKeywords {
     }
 
     public static boolean isPublicKeyword(CharSequence tok, int len) {
+        return isPublicKeyword(tok, 0, len);
+    }
+
+    public static boolean isPublicKeyword(CharSequence tok, int lo, int hi) {
+        int len = hi - lo;
+
         return len == 6
-                && (tok.charAt(0) | 32) == 'p'
-                && (tok.charAt(1) | 32) == 'u'
-                && (tok.charAt(2) | 32) == 'b'
-                && (tok.charAt(3) | 32) == 'l'
-                && (tok.charAt(4) | 32) == 'i'
-                && (tok.charAt(5) | 32) == 'c';
+                && (tok.charAt(lo) | 32) == 'p'
+                && (tok.charAt(lo + 1) | 32) == 'u'
+                && (tok.charAt(lo + 2) | 32) == 'b'
+                && (tok.charAt(lo + 3) | 32) == 'l'
+                && (tok.charAt(lo + 4) | 32) == 'i'
+                && (tok.charAt(lo + 5) | 32) == 'c';
     }
 
     public static boolean isQuarterKeyword(CharSequence tok) {
@@ -1935,13 +1941,12 @@ public class SqlKeywords {
     }
 
     public static boolean isUTC(CharSequence tok) {
-        return
-                tok.length() == 5
-                        && (tok.charAt(0)) == '\''
-                        && (tok.charAt(1) | 32) == 'u'
-                        && (tok.charAt(2) | 32) == 't'
-                        && (tok.charAt(3) | 32) == 'c'
-                        && (tok.charAt(4)) == '\'';
+        return tok.length() == 5
+                && (tok.charAt(0)) == '\''
+                && (tok.charAt(1) | 32) == 'u'
+                && (tok.charAt(2) | 32) == 't'
+                && (tok.charAt(3) | 32) == 'c'
+                && (tok.charAt(4)) == '\'';
     }
 
     public static boolean isUnboundedKeyword(CharSequence tok) {

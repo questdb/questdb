@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -79,9 +80,26 @@ class OperationExecutor implements Closeable {
         final TableToken tableToken = tableWriter.getTableToken();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             executionContext.remapTableNameResolutionTo(tableToken);
-            final CompiledQuery compiledQuery = compiler.compile(alterSql, executionContext);
+            CompiledQuery compiledQuery;
+            while (true) {
+                try {
+                    compiledQuery = compiler.compile(alterSql, executionContext);
+                    break;
+                } catch (TableReferenceOutOfDateException ex) {
+                    // The table is renamed in the table registry
+                    // just before the compilation of this ALTER
+                    TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
+                    if (updatedToken != null && !updatedToken.equals(tableToken)) {
+                        tableWriter.updateTableToken(updatedToken);
+                        executionContext.remapTableNameResolutionTo(updatedToken);
+                    } else {
+                        throw ex;
+                    }
+                }
+            }
             try (AlterOperation alterOp = compiledQuery.getAlterOperation()) {
                 alterOp.withContext(executionContext);
+                assert !alterOp.isStructural() : "alter operation must not be structural when applied as SQL";
                 tableWriter.apply(alterOp, seqTxn);
                 return alterOp.matViewInvalidationReason();
             }

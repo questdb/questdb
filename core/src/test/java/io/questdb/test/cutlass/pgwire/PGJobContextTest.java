@@ -2013,28 +2013,6 @@ if __name__ == "__main__":
         testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.WEEK);
     }
 
-//Testing through postgres - need to establish connection
-//    @Test
-//    public void testReadINet() throws SQLException, IOException {
-//        Properties properties = new Properties();
-//        properties.setProperty("user", "admin");
-//        properties.setProperty("password", "postgres");
-//        properties.setProperty("sslmode", "disable");
-//        properties.setProperty("binaryTransfer", Boolean.toString(true));
-//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
-//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-//
-//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
-//
-//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
-//            var stmt = connection.prepareStatement("select * from ipv4");
-//            ResultSet rs = stmt.executeQuery();
-//            assertResultSet("a[OTHER]\n" +
-//                    "1.1.1.1\n" +
-//                    "12.2.65.90\n", sink, rs);
-//        }
-//    }
-
     @Test
     public void testBindVariableDropLastPartitionListWithWeekPrecision() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -2063,6 +2041,28 @@ if __name__ == "__main__":
             }
         });
     }
+
+//Testing through postgres - need to establish connection
+//    @Test
+//    public void testReadINet() throws SQLException, IOException {
+//        Properties properties = new Properties();
+//        properties.setProperty("user", "admin");
+//        properties.setProperty("password", "postgres");
+//        properties.setProperty("sslmode", "disable");
+//        properties.setProperty("binaryTransfer", Boolean.toString(true));
+//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
+//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+//
+//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
+//
+//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
+//            var stmt = connection.prepareStatement("select * from ipv4");
+//            ResultSet rs = stmt.executeQuery();
+//            assertResultSet("a[OTHER]\n" +
+//                    "1.1.1.1\n" +
+//                    "12.2.65.90\n", sink, rs);
+//        }
+//    }
 
     @Test
     public void testBindVariableInFilter() throws Exception {
@@ -3811,7 +3811,7 @@ if __name__ == "__main__":
                             expectedResult.put("QUERY PLAN[VARCHAR]\n" +
                                     "Async Filter workers: 2\n" +
                                     "  limit: 10\n" +
-                                    "  filter: ('" + i + "'::long<x and x<'" + (i + 1) * 10 + ".0'::double)\n" +
+                                    "  filter: ('" + i + "'::long<x and x<'" + (i + 1) * 10 + ".0'::double) [pre-touch]\n" +
                                     "    PageFrame\n" +
                                     "        Row forward scan\n" +
                                     "        Frame forward scan on: xx\n");
@@ -3820,7 +3820,7 @@ if __name__ == "__main__":
                             expectedResult.put("QUERY PLAN[VARCHAR]\n" +
                                     "Async Filter workers: 2\n" +
                                     "  limit: 10\n" +
-                                    "  filter: ($0::long<x and x<$1::double)\n" +
+                                    "  filter: ($0::long<x and x<$1::double) [pre-touch]\n" +
                                     "    PageFrame\n" +
                                     "        Row forward scan\n" +
                                     "        Frame forward scan on: xx\n");
@@ -4911,6 +4911,42 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testImplicitCastExceptionInWindowFunction() throws Exception {
+        Assume.assumeFalse(legacyMode);
+        skipOnWalRun(); // Non-WAL
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            final String ddl = "CREATE TABLE 'trades' ( " +
+                    " symbol SYMBOL, " +
+                    " side SYMBOL, " +
+                    " price DOUBLE, " +
+                    " amount DOUBLE, " +
+                    " timestamp TIMESTAMP " +
+                    ") timestamp(timestamp) PARTITION BY DAY;";
+            try (PreparedStatement stmt = connection.prepareStatement(ddl)) {
+                stmt.execute();
+            }
+
+            final String insert = "INSERT INTO trades VALUES ('ETH-USD', 'sell', 2615.54, 0.00044, '2022-03-08T18:03:57.609765Z');";
+            try (PreparedStatement stmt = connection.prepareStatement(insert)) {
+                stmt.execute();
+            }
+
+            final String query = "SELECT " +
+                    "    timestamp, " +
+                    "    price, " +
+                    "    lag('timestamp') OVER (ORDER BY timestamp) AS previous_price " +
+                    "FROM trades " +
+                    "LIMIT 10;";
+            try (PreparedStatement stmt = connection.prepareStatement(query)) {
+                stmt.executeQuery();
+                Assert.fail();
+            } catch (PSQLException e) {
+                TestUtils.assertContains(e.getMessage(), "ERROR: inconvertible value: `timestamp` [STRING -> DOUBLE]");
+            }
+        });
+    }
+
+    @Test
     public void testImplicitStringAndCharConversions() throws Exception {
         skipOnWalRun();
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
@@ -5678,14 +5714,16 @@ if __name__ == "__main__":
 
     @Test
     public void testInsertExtendedAndCommit() throws Exception {
-        String expectedAll = "count[BIGINT]\n" +
-                "10000\n";
+        String expectedAll = "count[BIGINT]\n10000\n";
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             //
             // test methods of inserting QuestDB's DATA and TIMESTAMP values
             //
-            final PreparedStatement statement = connection.prepareStatement("create table x (a int, d date, t timestamp, d1 date, t1 timestamp, t3 timestamp, b1 short, t4 timestamp) timestamp(t) partition by YEAR");
+            final PreparedStatement statement = connection.prepareStatement(
+                    "CREATE TABLE x " +
+                            "(a INT, d DATE, t TIMESTAMP, d1 DATE, t1 TIMESTAMP, t3 TIMESTAMP, b1 SHORT, t4 TIMESTAMP) " +
+                            "TIMESTAMP(t) PARTITION BY YEAR");
             statement.execute();
 
             // exercise parameters on select statement
@@ -5693,8 +5731,11 @@ if __name__ == "__main__":
             execSelectWithParam(select, 9);
 
 
-            final PreparedStatement insert = connection.prepareStatement("insert into x values (?, ?, ?, ?, ?, ?, ?, ?)");
-            long micros = TimestampFormatUtils.parseTimestamp("2011-04-11T14:40:54.998821Z");
+            final PreparedStatement insert = connection.prepareStatement(
+                    "INSERT INTO x VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+            String date = "2011-04-11";
+            String time = "14:40:54.998821";
+            long micros = TimestampFormatUtils.parseTimestamp(date + "T" + time + "Z");
             for (int i = 0; i < 10_000; i++) {
                 insert.setInt(1, i);
                 // DATE as jdbc's DATE
@@ -5703,7 +5744,7 @@ if __name__ == "__main__":
                 insert.setDate(2, new Date(micros / 1000));
 
                 // TIMESTAMP as jdbc's TIMESTAMP, this should keep the micros
-                insert.setTimestamp(3, new Timestamp(micros));
+                insert.setTimestamp(3, Timestamp.valueOf(date + " " + time));
 
                 // DATE as jdbc's TIMESTAMP, this should keep millis and we need to supply millis
                 insert.setTimestamp(4, new Timestamp(micros / 1000L));
@@ -7796,7 +7837,7 @@ nodejs code:
                     insert.setNull(2, Types.NULL);
                     try {
                         insert.executeUpdate();
-                        assertExceptionNoLeakCheck("cannot insert null when the column is designated");
+                        assertExceptionNoLeakCheck("inserting NULL for designated timestamp should fail");
                     } catch (PSQLException expected) {
                         Assert.assertEquals("ERROR: designated timestamp column cannot be NULL\n" +
                                 "  Position: 1", expected.getMessage());
@@ -9603,7 +9644,7 @@ create table tab as (
                     assertResultSet(
                             "QUERY PLAN[VARCHAR]\n" +
                                     "Async Filter workers: 2\n" +
-                                    "  filter: to_str(ts) in [$0::string,'Wednesday',$1::string]\n" +
+                                    "  filter: to_str(ts) in [$0::string,'Wednesday',$1::string] [pre-touch]\n" +
                                     "    PageFrame\n" +
                                     "        Row forward scan\n" +
                                     "        Frame forward scan on: tab\n",
@@ -11837,7 +11878,7 @@ create table tab as (
         String query = "select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000)";
 
         try (final PreparedStatement stmt = connection.prepareStatement(query)) {
-            new Thread(() -> {
+            Thread thread2 = new Thread(() -> {
                 try {
                     while (!isCancelled.get()) {
                         Os.sleep(1);
@@ -11848,15 +11889,19 @@ create table tab as (
                 } finally {
                     finished.countDown();
                 }
-            }, "cancellation thread").start();
+            }, "cancellation thread");
+            thread2.start();
+
             try {
                 Os.sleep(1);
                 stmt.execute();
                 Assert.fail("expected PSQLException with cancel message");
             } catch (PSQLException e) {
+                assertContains(e.getMessage(), "cancelled by user");
                 isCancelled.set(true);
                 finished.await();
-                assertContains(e.getMessage(), "cancelled by user");
+            } finally {
+                thread2.join();
             }
         }
         return backendPid;

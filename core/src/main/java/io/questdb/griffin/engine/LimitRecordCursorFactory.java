@@ -55,10 +55,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        boolean preTouchEnabled = executionContext.isColumnPreTouchEnabled();
-        // Forcefully disable column pre-touch for LIMIT K,N queries for all downstream
-        // async filtered factories to avoid redundant disk reads.
-        executionContext.setColumnPreTouchEnabled(preTouchEnabled && cursor.hiFunction == null);
+        if (cursor.hiFunction != null) {
+            // Forcefully disable column pre-touch for LIMIT K,N queries for all downstream
+            // async filtered factories to avoid redundant disk reads.
+            executionContext.setColumnPreTouchEnabled(false);
+        }
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
             cursor.of(baseCursor, executionContext);
@@ -66,8 +67,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         } catch (Throwable th) {
             cursor.close();
             throw th;
-        } finally {
-            executionContext.setColumnPreTouchEnabled(preTouchEnabled);
         }
     }
 
@@ -104,7 +103,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
 
-        if (loFunc != null && loFunc.getLong(null) != Numbers.LONG_NULL) {
+        // cursor has to be open to calculate the limit details.
+        if (cursor.base != null && loFunc != null && loFunc.getLong(null) != Numbers.LONG_NULL) {
             cursor.countLimit();
             sink.meta("skip-over-rows").val(cursor.skippedRows);
             sink.meta("limit").val(cursor.limit);

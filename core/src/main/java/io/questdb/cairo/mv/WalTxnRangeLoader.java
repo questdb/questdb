@@ -35,7 +35,8 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cairo.wal.WalUtils.*;
+import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
+import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
 
 public class WalTxnRangeLoader {
     private final IntList txnDetails = new IntList();
@@ -70,7 +71,7 @@ public class WalTxnRangeLoader {
     private static WalEventCursor openWalEFile(Path tempPath, WalEventReader eventReader, int segmentTxn) {
         WalEventCursor walEventCursor;
         try {
-            walEventCursor = eventReader.of(tempPath, WAL_FORMAT_VERSION, segmentTxn);
+            walEventCursor = eventReader.of(tempPath, segmentTxn);
         } catch (CairoException ex) {
             throw CairoException.critical(ex.getErrno()).put("cannot read WAL even file:").put(tempPath)
                     .put(", ").put(ex.getFlyweightMessage());
@@ -122,7 +123,7 @@ public class WalTxnRangeLoader {
                     lastSegmentTxn = segmentTxn;
                 }
 
-                if (walEventCursor.getType() != WalTxnType.DATA) {
+                if (!WalTxnType.isDataType(walEventCursor.getType())) {
                     // Skip non-inserts
                     continue;
                 }

@@ -89,18 +89,16 @@ io.questdb.cliutil.Table2Ilp -d <destination_table_name> -dc <destination_ilp_ho
 ```
 
 - `-d` destination table name
-- `-dc` destination ILP host and port, e.g. `localhost:9009`
+- `-dilp` destination ILP connection string, e.g. `https::addr=localhost:9000;username=admin;password=quest;`
 - `-s` source select query, e.g. `trades` or `trades WHERE timestamp in '2021-01'`
 - `-sc` source connection string, e.g. `jdbc:pgsql://localhost:8812/qdb`
 - `-sts` source designated timestamp column name, defaults to `timestamp`
 - `-sym` comma separated list of symbol columns, e.g. `symbol,exchange`
-- `-dauth` ILP key and authentication token. e.g. `admin:GwBXoGG5c6NoUTLXnzMxw_uNiVa8PKobzx5EiuylMW0`
-- `-dtls` specify to use TLS for ILP connection. False by default.
 
 #### Examples
 
 ```bash
-java -cp utils.jar io.questdb.cliutil.Table2Ilp -d trades -dc localhost:9009 -s "trades WHERE start_time in '2022-06'" \ 
+java -cp utils.jar io.questdb.cliutil.Table2Ilp -d trades -dilp "https::addr=localhost:9000;username=admin;password=quest;" -s "trades WHERE start_time in '2022-06'" \ 
      -sc "jdbc:postgresql://localhost:9812/qdb?user=account&password=secret&ssl=false" \
      -sym "ticker,exchagne" -sts start_time
 

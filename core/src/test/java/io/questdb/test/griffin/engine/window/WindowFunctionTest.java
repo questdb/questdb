@@ -58,8 +58,6 @@ import java.util.List;
 
 public class WindowFunctionTest extends AbstractCairoTest {
     private static final List<String> FRAME_FUNCTIONS;
-    private static final List<String> FRAME_TYPES = Arrays.asList("rows  ", "groups", "range ");
-    private static final List<String> WINDOW_ONLY_FUNCTIONS;
     private static final String[][] FRAME_FUNCTIONS_PARAMETER_COLUMN_NAME = new String[][]{
             {
                     "i", "j" // avg
@@ -95,6 +93,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "i", "j", // last_value respect nulls
             }
     };
+    private static final List<String> FRAME_TYPES = Arrays.asList("rows  ", "groups", "range ");
+    private static final List<String> WINDOW_ONLY_FUNCTIONS;
 
     @Test
     public void testAggregateFunctionInPartitionByFails() throws Exception {
@@ -3095,6 +3095,580 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImplicitCastExceptionInLag() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE 'trades' ( " +
+                            " symbol SYMBOL, " +
+                            " side SYMBOL, " +
+                            " price DOUBLE, " +
+                            " amount DOUBLE, " +
+                            " timestamp TIMESTAMP " +
+                            ") timestamp(timestamp) PARTITION BY DAY;"
+            );
+            execute("INSERT INTO trades VALUES ('ETH-USD', 'sell', 2615.54, 0.00044, '2022-03-08T18:03:57.609765Z');");
+
+            assertExceptionNoLeakCheck(
+                    "SELECT " +
+                            "    timestamp, " +
+                            "    price, " +
+                            "    lag('timestamp') OVER (ORDER BY timestamp) AS previous_price " +
+                            "FROM trades " +
+                            "LIMIT 10;",
+                    0,
+                    "inconvertible value: `timestamp` [STRING -> DOUBLE]"
+            );
+        });
+    }
+
+    @Test
+    public void testLagException() throws Exception {
+        execute("create table tab (ts timestamp, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)");
+        assertExceptionNoLeakCheck(
+                "select lag() over () from tab",
+                7,
+                "function `lag` requires arguments"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lag(d, -1) over () from tab",
+                14,
+                "offset must be a positive integer"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lag(d, 1, i) over () from tab",
+                17,
+                "default value must be a double"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lag(d, 1, d + 1, d) over () from tab",
+                24,
+                "too many arguments"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lag(d, i, d + 1) over () from tab",
+                14,
+                "offset must be a constant"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lag(d, 1, sum(d)) over () from tab",
+                17,
+                "default value can not be a window function"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lag(d, 1) ignore over () from tab",
+                17,
+                "'nulls' or 'from' expected"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lag(d, 1) respect over () from tab",
+                17,
+                "'nulls' or 'from' expected"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lag(d, 1) ignore null over () from tab",
+                17,
+                "'nulls' or 'from' expected"
+        );
+    }
+
+    @Test
+    public void testLagLeadOver() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)");
+            execute("insert into tab select x::timestamp, x/4, case when x % 3 = 0 THEN NULL ELSE x%5 END, x%5, 'k' || (x%5) ::symbol, 'k' || x from long_sequence(7)");
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2.0\tnull\t2.0\tnull\t2.0\tnull\t2.0\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\t1.0\t4.0\t1.0\tnull\t1.0\t3.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t4.0\t2.0\t4.0\t2.0\t4.0\t2.0\t4.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t0.0\tnull\t0.0\t2.0\t0.0\tnull\t0.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t4.0\t2.0\t4.0\tnull\t4.0\t1.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t2.0\t0.0\t2.0\t0.0\t2.0\t0.0\t2.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\tnull\tnull\t0.0\tnull\tnull\tnull\t1.0\n",
+                    "select ts, i, j, d, " +
+                            "lead(j) over (), " +
+                            "lag(j) over (), " +
+                            "lead(j) ignore nulls over (), " +
+                            "lag(j) ignore nulls over (), " +
+                            "lead(j) respect nulls over (), " +
+                            "lag(j) respect nulls over (), " +
+                            "lead(d) over (), " +
+                            "lag(d) over () " +
+                            "from tab ",
+                    "ts",
+                    true,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\tnull\tnull\tnull\tnull\tnull\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\tnull\tnull\tnull\tnull\tnull\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\n",
+                    "select ts, i, j, d, " +
+                            "lead(j, 0) over (), " +
+                            "lag(j, 0) over (), " +
+                            "lead(j, 0) ignore nulls over (), " +
+                            "lag(j, 0) ignore nulls over (), " +
+                            "lead(j, 0) respect nulls over (), " +
+                            "lag(j, 0) respect nulls over (), " +
+                            "lead(d, 0) over (), " +
+                            "lag(d, 0) over () " +
+                            "from tab ",
+                    "ts",
+                    false,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t4.0\tnull\t0.0\tnull\t4.0\tnull\t4.0\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t0.0\tnull\t2.0\tnull\t0.0\tnull\t0.0\tnull\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\tnull\t2.0\tnull\tnull\tnull\t1.0\tnull\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t2.0\t1.0\tnull\tnull\t2.0\t1.0\t2.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t2.0\tnull\t1.0\tnull\t2.0\tnull\t2.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\tnull\tnull\t2.0\tnull\tnull\tnull\t3.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\t4.0\tnull\t2.0\tnull\t4.0\tnull\t4.0\n",
+                    "select ts, i, j, d, " +
+                            "lead(j, 3) over (), " +
+                            "lag(j, 3) over (), " +
+                            "lead(j, 3) ignore nulls over (), " +
+                            "lag(j, 3) ignore nulls over (), " +
+                            "lead(j, 3) respect nulls over (), " +
+                            "lag(j, 3) respect nulls over (), " +
+                            "lead(d, 3) over (), " +
+                            "lag(d, 3) over () " +
+                            "from tab ",
+                    "ts",
+                    true,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\t2.0\t4.0\t2.0\tnull\t2.0\t3.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t4.0\t3.0\t0.0\t3.0\t4.0\t3.0\t4.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t0.0\t1.0\t0.0\t1.0\t0.0\t1.0\t0.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\tnull\t2.0\t2.0\t1.0\tnull\t2.0\t1.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t2.0\tnull\t1.0\t2.0\t2.0\tnull\t2.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\t4.0\tnull\t4.0\tnull\t4.0\t2.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t3.0\t0.0\t3.0\t4.0\t3.0\t0.0\t3.0\t0.0\n",
+                    "select ts, i, j, d, " +
+                            "lead(j, 2, (j + 1)::double) over (), " +
+                            "lag(j, 2, (j + 1)::double) over (), " +
+                            "lead(j, 2, (j + 1)::double) ignore nulls over (), " +
+                            "lag(j, 2, (j + 1)::double) ignore nulls over (), " +
+                            "lead(j, 2, (j + 1)::double) respect nulls over (), " +
+                            "lag(j, 2, (j + 1)::double) respect nulls over (), " +
+                            "lead(d, 2, d + 1) over (), " +
+                            "lag(d, 2, d + 1) over () " +
+                            "from tab ",
+                    "ts",
+                    true,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2.0\tnull\t2.0\t4.0\t2.0\tnull\t3.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3.0\t4.0\t3.0\t0.0\t3.0\t4.0\t4.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t1.0\t0.0\t1.0\t0.0\t1.0\t0.0\t0.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t2.0\tnull\t1.0\t2.0\t2.0\tnull\t1.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t2.0\t2.0\t1.0\tnull\t2.0\t2.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t4.0\tnull\t4.0\tnull\t4.0\tnull\t2.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t0.0\t3.0\t4.0\t3.0\t0.0\t3.0\t3.0\t0.0\n",
+                    "select ts, i, j, d, " +
+                            "lead(j, 2, (j + 1)::double) over (order by ts desc), " +
+                            "lag(j, 2, (j + 1)::double) over (order by ts desc), " +
+                            "lead(j, 2, (j + 1)::double) ignore nulls over (order by ts desc), " +
+                            "lag(j, 2, (j + 1)::double) ignore nulls over (order by ts desc), " +
+                            "lead(j, 2, (j + 1)::double) respect nulls over (order by ts desc), " +
+                            "lag(j, 2, (j + 1)::double) respect nulls over (order by ts desc), " +
+                            "lead(d, 2, d + 1) over (), " +
+                            "lag(d, 2, d + 1) over () " +
+                            "from tab order by ts asc",
+                    "ts",
+                    true,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\tnull\tnull\tnull\tnull\tnull\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\tnull\tnull\tnull\tnull\tnull\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\n",
+                    "select ts, i, j, d, " +
+                            "lead(j, 0) over (order by ts desc), " +
+                            "lag(j, 0) over (order by ts desc), " +
+                            "lead(j, 0) ignore nulls over (order by ts desc), " +
+                            "lag(j, 0) ignore nulls over (order by ts desc), " +
+                            "lead(j, 0) respect nulls over (order by ts desc), " +
+                            "lag(j, 0) respect nulls over (order by ts desc), " +
+                            "lead(d, 0) over (), " +
+                            "lag(d, 0) over () " +
+                            "from tab order by ts asc",
+                    "ts",
+                    true,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlag\tlag_ignore_nulls\tlag1\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t1.0\t1.0\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t2.0\t2.0\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\tnull\t2.0\tnull\t3.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t4.0\t4.0\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t0.0\t0.0\t0.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\t0.0\tnull\t1.0\n",
+                    "select ts, i, j, d, " +
+                            "lag(j) over (), " +
+                            "lag(j) ignore nulls over (), " +
+                            "lag(j) respect nulls over (), " +
+                            "lag(d) over () " +
+                            "from tab ",
+                    "ts",
+                    false,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlag\tlag_ignore_nulls\tlag1\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t1.0\tnull\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t2.0\t1.0\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\t2.0\tnull\t3.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t4.0\t2.0\t4.0\t4.0\n",
+                    "select ts, i, j, d, " +
+                            "lag(j, 3) over (), " +
+                            "lag(j, 3) ignore nulls over (), " +
+                            "lag(j, 3) respect nulls over (), " +
+                            "lag(d, 3) over () " +
+                            "from tab ",
+                    "ts",
+                    false,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlag\tlag_ignore_nulls\tlag1\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2.0\t2.0\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3.0\t3.0\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t1.0\t1.0\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t2.0\t1.0\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t2.0\tnull\t3.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t4.0\t4.0\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t0.0\t4.0\t0.0\t0.0\n",
+                    "select ts, i, j, d, " +
+                            "lag(j, 2, (j + 1)::double) over (), " +
+                            "lag(j, 2, (j + 1)::double) ignore nulls over (), " +
+                            "lag(j, 2, (j + 1)::double) respect nulls over (), " +
+                            "lag(d, 2, d + 1) over () " +
+                            "from tab ",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testLagLeadOverPartitionBy() throws Exception {
+
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)");
+            execute("insert into tab select x::timestamp, x/4, case when x % 3 = 0 THEN NULL ELSE x%5 END, x%5, 'k' || (x%5) ::symbol, 'k' || x from long_sequence(7)");
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2.0\tnull\t2.0\tnull\t2.0\tnull\t2.0\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\t1.0\tnull\t1.0\tnull\t1.0\t3.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\t2.0\tnull\t2.0\tnull\t2.0\tnull\t2.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t0.0\tnull\t0.0\tnull\t0.0\tnull\t0.0\tnull\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t4.0\t2.0\t4.0\tnull\t4.0\t1.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t2.0\t0.0\t2.0\t0.0\t2.0\t0.0\t2.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\tnull\tnull\t0.0\tnull\tnull\tnull\t1.0\n",
+                    "select ts, i, j, d, " +
+                            "lead(j) over (partition by i), " +
+                            "lag(j) over (partition by i), " +
+                            "lead(j) ignore nulls over (partition by i), " +
+                            "lag(j) ignore nulls over (partition by i), " +
+                            "lead(j) respect nulls over (partition by i), " +
+                            "lag(j) respect nulls over (partition by i), " +
+                            "lead(d) over (partition by i), " +
+                            "lag(d) over (partition by i) " +
+                            "from tab ",
+                    "ts",
+                    true,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead_ignore_nulls1\tlag_ignore_nulls1\tlead1\tlag1\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\tnull\tnull\tnull\tnull\tnull\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\tnull\tnull\tnull\tnull\tnull\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\n",
+                    "select ts, i, j, d, " +
+                            "lead(j, 0) over (partition by i), " +
+                            "lag(j, 0) over (partition by i), " +
+                            "lead(j, 0) ignore nulls over (partition by i), " +
+                            "lag(j, 0) ignore nulls over (partition by i), " +
+                            "lead(j, 0) ignore nulls over (partition by i), " +
+                            "lag(j, 0) ignore nulls over (partition by i), " +
+                            "lead(d, 0) over (partition by i), " +
+                            "lag(d, 0) over (partition by i) " +
+                            "from tab ",
+                    "ts",
+                    false,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t2.0\tnull\tnull\tnull\t2.0\tnull\t2.0\tnull\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\t4.0\tnull\tnull\tnull\t4.0\tnull\t4.0\n",
+                    "select ts, i, j, d, " +
+                            "lead(j, 3) over (partition by i), " +
+                            "lag(j, 3) over (partition by i), " +
+                            "lead(j, 3) ignore nulls over (partition by i), " +
+                            "lag(j, 3) ignore nulls over (partition by i), " +
+                            "lead(j, 3) respect nulls over (partition by i), " +
+                            "lag(j, 3) respect nulls over (partition by i), " +
+                            "lead(d, 3) over (partition by i), " +
+                            "lag(d, 3) over (partition by i) " +
+                            "from tab ",
+                    "ts",
+                    true,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\t2.0\t2.0\t2.0\tnull\t2.0\t3.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\t1.0\tnull\t1.0\tnull\t1.0\t4.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\tnull\t5.0\t2.0\t5.0\tnull\t5.0\t1.0\t5.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t2.0\t1.0\t1.0\t1.0\t2.0\t1.0\t2.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\t4.0\tnull\t4.0\tnull\t4.0\t2.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t3.0\t0.0\t3.0\t4.0\t3.0\t0.0\t3.0\t0.0\n",
+                    "select ts, i, j, d, " +
+                            "lead(j, 2, (j + 1)::double) over (partition by i), " +
+                            "lag(j, 2, (j + 1)::double) over (partition by i), " +
+                            "lead(j, 2, (j + 1)::double) ignore nulls over (partition by i), " +
+                            "lag(j, 2, (j + 1)::double) ignore nulls over (partition by i), " +
+                            "lead(j, 2, (j + 1)::double) respect nulls over (partition by i), " +
+                            "lag(j, 2, (j + 1)::double) respect nulls over (partition by i), " +
+                            "lead(d, 2, d + 1) over (partition by i), " +
+                            "lag(d, 2, d + 1) over (partition by i) " +
+                            "from tab ",
+                    "ts",
+                    true,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2.0\tnull\t2.0\t2.0\t2.0\tnull\t3.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t1.0\tnull\t1.0\tnull\t1.0\tnull\t4.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t5.0\tnull\t5.0\t2.0\t5.0\tnull\t1.0\t5.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t1.0\t2.0\t1.0\t1.0\t1.0\t2.0\t2.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t4.0\tnull\t4.0\tnull\t4.0\tnull\t2.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t0.0\t3.0\t4.0\t3.0\t0.0\t3.0\t3.0\t0.0\n",
+                    "select ts, i, j, d, " +
+                            "lead(j, 2, (j + 1)::double) over (partition by i order by ts desc), " +
+                            "lag(j, 2, (j + 1)::double) over (partition by i order by ts desc), " +
+                            "lead(j, 2, (j + 1)::double) ignore nulls over (partition by i order by ts desc), " +
+                            "lag(j, 2, (j + 1)::double) ignore nulls over (partition by i order by ts desc), " +
+                            "lead(j, 2, (j + 1)::double) respect nulls over (partition by i order by ts desc), " +
+                            "lag(j, 2, (j + 1)::double) respect nulls over (partition by i order by ts desc), " +
+                            "lead(d, 2, d + 1) over (partition by i), " +
+                            "lag(d, 2, d + 1) over (partition by i) " +
+                            "from tab order by ts asc",
+                    "ts",
+                    true,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\tnull\tnull\tnull\tnull\tnull\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\tnull\tnull\tnull\tnull\tnull\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\n",
+                    "select ts, i, j, d, " +
+                            "lead(j, 0) over (partition by i order by ts desc), " +
+                            "lag(j, 0) over (partition by i order by ts desc), " +
+                            "lead(j, 0) ignore nulls over (partition by i order by ts desc), " +
+                            "lag(j, 0) ignore nulls over (partition by i order by ts desc), " +
+                            "lead(j, 0) respect nulls over (partition by i order by ts desc), " +
+                            "lag(j, 0) respect nulls over (partition by i order by ts desc), " +
+                            "lead(d, 0) over (partition by i order by ts desc), " +
+                            "lag(d, 0) over (partition by i order by ts desc) " +
+                            "from tab order by ts asc",
+                    "ts",
+                    true,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlag\tlag_ignore_nulls\tlag1\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t1.0\t1.0\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t2.0\t2.0\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t4.0\t4.0\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t0.0\t0.0\t0.0\t0.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\t0.0\tnull\t1.0\n",
+                    "select ts, i, j, d, " +
+                            "lag(j) over (partition by i), " +
+                            "lag(j) ignore nulls over (partition by i), " +
+                            "lag(j) respect nulls over (partition by i), " +
+                            "lag(d) over (partition by i) " +
+                            "from tab ",
+                    "ts",
+                    false,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlag\tlag_ignore_nulls\tlag1\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t4.0\tnull\t4.0\t4.0\n",
+                    "select ts, i, j, d, " +
+                            "lag(j, 3) over (partition by i), " +
+                            "lag(j, 3) ignore nulls over (partition by i), " +
+                            "lag(j, 3) respect nulls over (partition by i), " +
+                            "lag(d, 3) over (partition by i) " +
+                            "from tab ",
+                    "ts",
+                    false,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\td\tlag\tlag_ignore_nulls\tlag1\tlag2\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2.0\t2.0\t2.0\t2.0\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3.0\t3.0\t3.0\t3.0\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t1.0\t1.0\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t5.0\t5.0\t5.0\t5.0\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t1.0\t1.0\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t4.0\t4.0\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t0.0\t4.0\t0.0\t0.0\n",
+                    "select ts, i, j, d, " +
+                            "lag(j, 2, (j + 1)::double) over (partition by i), " +
+                            "lag(j, 2, (j + 1)::double) ignore nulls over (partition by i), " +
+                            "lag(j, 2, (j + 1)::double) respect nulls over (partition by i), " +
+                            "lag(d, 2, d + 1) over (partition by i) " +
+                            "from tab ",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testLeadException() throws Exception {
+        execute("create table tab (ts timestamp, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)");
+        assertExceptionNoLeakCheck(
+                "select lead() over () from tab",
+                7,
+                "function `lead` requires arguments"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lead(d, -1) over () from tab",
+                15,
+                "offset must be a positive integer"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lead(d, 1, i) over () from tab",
+                18,
+                "default value must be a double"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lead(d, 1, d + 1, d) over () from tab",
+                25,
+                "too many arguments"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lead(d, i, d + 1) over () from tab",
+                15,
+                "offset must be a constant"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lead(d, 1, sum(d)) over () from tab",
+                18,
+                "default value can not be a window function"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lead(d, 1, sum(d)) over () from tab",
+                18,
+                "default value can not be a window function"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lead(d, 1) ignore over () from tab",
+                18,
+                "'nulls' or 'from' expected"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lead(d, 1) respect over () from tab",
+                18,
+                "'nulls' or 'from' expected"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select lead(d, 1) ignore null over () from tab",
+                18,
+                "'nulls' or 'from' expected"
+        );
+    }
+
+    @Test
     public void testNegativeLimitWindowOrderedByNotTimestamp() throws Exception {
         // https://github.com/questdb/questdb/issues/4748
         assertMemoryLeak(() -> assertQuery("x\trow_number\n" +
@@ -3310,6 +3884,252 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab " +
                             "order by ts desc",
                     null,
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testRankFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, i long, s symbol) timestamp(ts)");
+            execute("insert into tab select (x/4)::timestamp, x/2, 'k' || (x%2) ::symbol from long_sequence(12)");
+
+            // rank()/dense_rank() over(partition by)
+            assertQueryNoLeakCheck(
+                    "ts\trank\tdense_rank\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000002Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000002Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000002Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000002Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000003Z\t1\t1\n",
+                    "select ts, " +
+                            "rank() over (partition by s), " +
+                            "dense_rank() over (partition by s) " +
+                            "from tab ",
+                    "ts",
+                    false,
+                    true
+            );
+
+            // rank()/dense_rank() over()
+            assertQueryNoLeakCheck(
+                    "ts\trank\tdense_rank\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000002Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000002Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000002Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000002Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000003Z\t1\t1\n",
+                    "select ts, " +
+                            "rank() over (), " +
+                            "dense_rank() over () " +
+                            "from tab ",
+                    "ts",
+                    false,
+                    true
+            );
+
+            // rank()/dense_rank() over(partition by xxx order by xxx)
+            assertQueryNoLeakCheck(
+                    "ts\ts\trank\tdense_rank\n" +
+                            "1970-01-01T00:00:00.000000Z\tk1\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\tk0\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\tk1\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\tk0\t2\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\tk1\t3\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\tk0\t2\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\tk1\t3\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\tk0\t4\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\tk1\t5\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\tk0\t4\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\tk1\t5\t3\n" +
+                            "1970-01-01T00:00:00.000003Z\tk0\t6\t4\n",
+                    "select ts, s," +
+                            "rank() over (partition by s order by ts), " +
+                            "dense_rank() over (partition by s order by ts) " +
+                            "from tab ",
+                    "ts",
+                    false,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ts\trank\tdense_rank\n" +
+                            "1970-01-01T00:00:00.000000Z\tk0\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\tk0\t2\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\tk0\t2\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\tk0\t4\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\tk0\t4\t3\n" +
+                            "1970-01-01T00:00:00.000003Z\tk0\t6\t4\n" +
+                            "1970-01-01T00:00:00.000000Z\tk1\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\tk1\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\tk1\t3\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\tk1\t3\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\tk1\t5\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\tk1\t5\t3\n",
+                    "select ts, s," +
+                            "rank() over (partition by s order by ts), " +
+                            "dense_rank() over (partition by s order by ts) " +
+                            "from tab order by s, ts",
+                    "",
+                    true,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ts\trank\trank1\tdense_rank\tdense_rank1\n" +
+                            "1970-01-01T00:00:00.000000Z\tk0\t1\t6\t1\t4\n" +
+                            "1970-01-01T00:00:00.000001Z\tk0\t2\t4\t2\t3\n" +
+                            "1970-01-01T00:00:00.000001Z\tk0\t2\t4\t2\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\tk0\t4\t2\t3\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\tk0\t4\t2\t3\t2\n" +
+                            "1970-01-01T00:00:00.000003Z\tk0\t6\t1\t4\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\tk1\t1\t5\t1\t3\n" +
+                            "1970-01-01T00:00:00.000000Z\tk1\t1\t5\t1\t3\n" +
+                            "1970-01-01T00:00:00.000001Z\tk1\t3\t3\t2\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\tk1\t3\t3\t2\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\tk1\t5\t1\t3\t1\n" +
+                            "1970-01-01T00:00:00.000002Z\tk1\t5\t1\t3\t1\n",
+                    "select ts, s," +
+                            "rank() over (partition by s order by ts), " +
+                            "rank() over (partition by s order by ts desc), " +
+                            "dense_rank() over (partition by s order by ts), " +
+                            "dense_rank() over (partition by s order by ts desc) " +
+                            "from tab order by s, ts",
+                    "",
+                    true,
+                    false
+            );
+
+            // rank()/dense_rank() over(order by xxx)
+            assertQueryNoLeakCheck(
+                    "ts\trank\tdense_rank\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
+                            "1970-01-01T00:00:00.000003Z\t12\t4\n",
+                    "select ts," +
+                            "rank() over (order by ts), " +
+                            "dense_rank() over (order by ts) " +
+                            "from tab order by ts",
+                    "ts",
+                    false,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ts\trank\tdense_rank\n" +
+                            "1970-01-01T00:00:00.000000Z\tk0\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\tk0\t4\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\tk0\t4\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\tk0\t8\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\tk0\t8\t3\n" +
+                            "1970-01-01T00:00:00.000003Z\tk0\t12\t4\n" +
+                            "1970-01-01T00:00:00.000000Z\tk1\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\tk1\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\tk1\t4\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\tk1\t4\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\tk1\t8\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\tk1\t8\t3\n",
+                    "select ts, s," +
+                            "rank() over (order by ts), " +
+                            "dense_rank() over (order by ts) " +
+                            "from tab order by s",
+                    "",
+                    true,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\trank\tdense_rank\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
+                            "1970-01-01T00:00:00.000003Z\t12\t4\n",
+                    "select ts," +
+                            "rank() over (order by ts), " +
+                            "dense_rank() over (order by ts) " +
+                            "from tab",
+                    "ts",
+                    false,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\trank\tdense_rank\trank1\tdense_rank1\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\t10\t4\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\t10\t4\n" +
+                            "1970-01-01T00:00:00.000000Z\t1\t1\t10\t4\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\t6\t3\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\t6\t3\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\t6\t3\n" +
+                            "1970-01-01T00:00:00.000001Z\t4\t2\t6\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\t2\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\t2\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\t2\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\t8\t3\t2\t2\n" +
+                            "1970-01-01T00:00:00.000003Z\t12\t4\t1\t1\n",
+                    "select ts," +
+                            "rank() over (order by ts), " +
+                            "dense_rank() over (order by ts), " +
+                            "rank() over (order by ts desc), " +
+                            "dense_rank() over (order by ts desc) " +
+                            "from tab",
+                    "ts",
+                    true,
+                    false
+            );
+
+            assertQueryNoLeakCheck(
+                    "ts\ts\trank\tdense_rank\n" +
+                            "1970-01-01T00:00:00.000000Z\tk0\t6\t4\n" +
+                            "1970-01-01T00:00:00.000001Z\tk0\t4\t3\n" +
+                            "1970-01-01T00:00:00.000001Z\tk0\t4\t3\n" +
+                            "1970-01-01T00:00:00.000002Z\tk0\t2\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\tk0\t2\t2\n" +
+                            "1970-01-01T00:00:00.000003Z\tk0\t1\t1\n" +
+                            "1970-01-01T00:00:00.000000Z\tk1\t5\t3\n" +
+                            "1970-01-01T00:00:00.000000Z\tk1\t5\t3\n" +
+                            "1970-01-01T00:00:00.000001Z\tk1\t3\t2\n" +
+                            "1970-01-01T00:00:00.000001Z\tk1\t3\t2\n" +
+                            "1970-01-01T00:00:00.000002Z\tk1\t1\t1\n" +
+                            "1970-01-01T00:00:00.000002Z\tk1\t1\t1\n",
+                    "select ts, s," +
+                            "rank() over (partition by concat(s,'foobar') order by ts desc)," +
+                            "dense_rank() over (partition by concat(s,'foobar') order by ts desc)" +
+                            "from tab order by s, ts",
+                    "",
                     true,
                     false
             );
@@ -3994,6 +4814,34 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnSupportImplicitCast() throws Exception {
+        assertException(
+                "SELECT ts, side, lead(side) OVER ( PARTITION BY symbol ORDER BY ts ) " +
+                        "AS next_price FROM trades " +
+                        "WHERE ts  >= '1970-03-08 00:00:00' AND ts < '2025-03-08 23:59:59'",
+                "create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(100) price," +
+                        " rnd_symbol('XX','YY','ZZ') side," +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        " timestamp_sequence(0, 100000000000) ts" +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day",
+                22,
+                "argument type mismatch for function `lead` at #1 expected: DOUBLE, actual: SYMBOL"
+        );
+
+        assertException(
+                "SELECT ts, side, first_value(side) OVER ( PARTITION BY symbol ORDER BY ts ) " +
+                        "AS next_price FROM trades " +
+                        "WHERE ts  >= '1970-03-08 00:00:00' AND ts < '2025-03-08 23:59:59'",
+                29,
+                "argument type mismatch for function `first_value` at #1 expected: DOUBLE, actual: SYMBOL"
+        );
+    }
+
+    @Test
     public void testWindowBufferExceedsLimit() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 4096);
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES, 10);
@@ -4480,34 +5328,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWindowFunctionUnsupportNulls() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)");
-
-            for (int i = 0, size = FRAME_FUNCTIONS.size(); i < size; i++) {
-                String func = FRAME_FUNCTIONS.get(i);
-                for (String column : FRAME_FUNCTIONS_PARAMETER_COLUMN_NAME[i]) {
-                    if (!func.contains("first_value") && !func.contains("last_value")) {
-                        String query1 = "select #FUNCT_NAME IGNORE NULLS over () from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column);
-                        assertExceptionNoLeakCheck(
-                                query1,
-                                36,
-                                "RESPECT/IGNORE NULLS is not supported for current window function"
-                        );
-
-                        String query2 = "select #FUNCT_NAME RESPECT NULLS over () from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column);
-                        assertExceptionNoLeakCheck(
-                                query2,
-                                36,
-                                "RESPECT/IGNORE NULLS is not supported for current window function"
-                        );
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
     public void testWindowFunctionContextCleanup() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table trades as " +
@@ -4626,799 +5446,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLagLeadOverPartitionBy() throws Exception {
-
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)");
-            execute("insert into tab select x::timestamp, x/4, case when x % 3 = 0 THEN NULL ELSE x%5 END, x%5, 'k' || (x%5) ::symbol, 'k' || x from long_sequence(7)");
-
-            assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2.0\tnull\t2.0\tnull\t2.0\tnull\t2.0\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\t1.0\tnull\t1.0\tnull\t1.0\t3.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\t2.0\tnull\t2.0\tnull\t2.0\tnull\t2.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t0.0\tnull\t0.0\tnull\t0.0\tnull\t0.0\tnull\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t4.0\t2.0\t4.0\tnull\t4.0\t1.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t2.0\t0.0\t2.0\t0.0\t2.0\t0.0\t2.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\tnull\tnull\t0.0\tnull\tnull\tnull\t1.0\n",
-                    "select ts, i, j, d, " +
-                            "lead(j) over (partition by i), " +
-                            "lag(j) over (partition by i), " +
-                            "lead(j) ignore nulls over (partition by i), " +
-                            "lag(j) ignore nulls over (partition by i), " +
-                            "lead(j) respect nulls over (partition by i), " +
-                            "lag(j) respect nulls over (partition by i), " +
-                            "lead(d) over (partition by i), " +
-                            "lag(d) over (partition by i) " +
-                            "from tab ",
-                    "ts",
-                    true,
-                    false
-            );
-
-            assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead_ignore_nulls1\tlag_ignore_nulls1\tlead1\tlag1\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\tnull\tnull\tnull\tnull\tnull\t3.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\tnull\tnull\tnull\tnull\tnull\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\n",
-                    "select ts, i, j, d, " +
-                            "lead(j, 0) over (partition by i), " +
-                            "lag(j, 0) over (partition by i), " +
-                            "lead(j, 0) ignore nulls over (partition by i), " +
-                            "lag(j, 0) ignore nulls over (partition by i), " +
-                            "lead(j, 0) ignore nulls over (partition by i), " +
-                            "lag(j, 0) ignore nulls over (partition by i), " +
-                            "lead(d, 0) over (partition by i), " +
-                            "lag(d, 0) over (partition by i) " +
-                            "from tab ",
-                    "ts",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t2.0\tnull\tnull\tnull\t2.0\tnull\t2.0\tnull\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\t4.0\tnull\tnull\tnull\t4.0\tnull\t4.0\n",
-                    "select ts, i, j, d, " +
-                            "lead(j, 3) over (partition by i), " +
-                            "lag(j, 3) over (partition by i), " +
-                            "lead(j, 3) ignore nulls over (partition by i), " +
-                            "lag(j, 3) ignore nulls over (partition by i), " +
-                            "lead(j, 3) respect nulls over (partition by i), " +
-                            "lag(j, 3) respect nulls over (partition by i), " +
-                            "lead(d, 3) over (partition by i), " +
-                            "lag(d, 3) over (partition by i) " +
-                            "from tab ",
-                    "ts",
-                    true,
-                    false
-            );
-
-            assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\t2.0\t2.0\t2.0\tnull\t2.0\t3.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\t1.0\tnull\t1.0\tnull\t1.0\t4.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\tnull\t5.0\t2.0\t5.0\tnull\t5.0\t1.0\t5.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t2.0\t1.0\t1.0\t1.0\t2.0\t1.0\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\t4.0\tnull\t4.0\tnull\t4.0\t2.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t3.0\t0.0\t3.0\t4.0\t3.0\t0.0\t3.0\t0.0\n",
-                    "select ts, i, j, d, " +
-                            "lead(j, 2, (j + 1)::double) over (partition by i), " +
-                            "lag(j, 2, (j + 1)::double) over (partition by i), " +
-                            "lead(j, 2, (j + 1)::double) ignore nulls over (partition by i), " +
-                            "lag(j, 2, (j + 1)::double) ignore nulls over (partition by i), " +
-                            "lead(j, 2, (j + 1)::double) respect nulls over (partition by i), " +
-                            "lag(j, 2, (j + 1)::double) respect nulls over (partition by i), " +
-                            "lead(d, 2, d + 1) over (partition by i), " +
-                            "lag(d, 2, d + 1) over (partition by i) " +
-                            "from tab ",
-                    "ts",
-                    true,
-                    false
-            );
-
-            assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2.0\tnull\t2.0\t2.0\t2.0\tnull\t3.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t1.0\tnull\t1.0\tnull\t1.0\tnull\t4.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t5.0\tnull\t5.0\t2.0\t5.0\tnull\t1.0\t5.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t1.0\t2.0\t1.0\t1.0\t1.0\t2.0\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t4.0\tnull\t4.0\tnull\t4.0\tnull\t2.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t0.0\t3.0\t4.0\t3.0\t0.0\t3.0\t3.0\t0.0\n",
-                    "select ts, i, j, d, " +
-                            "lead(j, 2, (j + 1)::double) over (partition by i order by ts desc), " +
-                            "lag(j, 2, (j + 1)::double) over (partition by i order by ts desc), " +
-                            "lead(j, 2, (j + 1)::double) ignore nulls over (partition by i order by ts desc), " +
-                            "lag(j, 2, (j + 1)::double) ignore nulls over (partition by i order by ts desc), " +
-                            "lead(j, 2, (j + 1)::double) respect nulls over (partition by i order by ts desc), " +
-                            "lag(j, 2, (j + 1)::double) respect nulls over (partition by i order by ts desc), " +
-                            "lead(d, 2, d + 1) over (partition by i), " +
-                            "lag(d, 2, d + 1) over (partition by i) " +
-                            "from tab order by ts asc",
-                    "ts",
-                    true,
-                    false
-            );
-
-            assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\tnull\tnull\tnull\tnull\tnull\t3.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\tnull\tnull\tnull\tnull\tnull\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\n",
-                    "select ts, i, j, d, " +
-                            "lead(j, 0) over (partition by i order by ts desc), " +
-                            "lag(j, 0) over (partition by i order by ts desc), " +
-                            "lead(j, 0) ignore nulls over (partition by i order by ts desc), " +
-                            "lag(j, 0) ignore nulls over (partition by i order by ts desc), " +
-                            "lead(j, 0) respect nulls over (partition by i order by ts desc), " +
-                            "lag(j, 0) respect nulls over (partition by i order by ts desc), " +
-                            "lead(d, 0) over (partition by i order by ts desc), " +
-                            "lag(d, 0) over (partition by i order by ts desc) " +
-                            "from tab order by ts asc",
-                    "ts",
-                    true,
-                    false
-            );
-
-            assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlag\tlag_ignore_nulls\tlag1\tlag2\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\tnull\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t1.0\t1.0\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t2.0\t2.0\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\tnull\tnull\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t4.0\t4.0\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t0.0\t0.0\t0.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\t0.0\tnull\t1.0\n",
-                    "select ts, i, j, d, " +
-                            "lag(j) over (partition by i), " +
-                            "lag(j) ignore nulls over (partition by i), " +
-                            "lag(j) respect nulls over (partition by i), " +
-                            "lag(d) over (partition by i) " +
-                            "from tab ",
-                    "ts",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlag\tlag_ignore_nulls\tlag1\tlag2\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\tnull\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\tnull\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\tnull\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\tnull\tnull\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\tnull\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\tnull\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t4.0\tnull\t4.0\t4.0\n",
-                    "select ts, i, j, d, " +
-                            "lag(j, 3) over (partition by i), " +
-                            "lag(j, 3) ignore nulls over (partition by i), " +
-                            "lag(j, 3) respect nulls over (partition by i), " +
-                            "lag(d, 3) over (partition by i) " +
-                            "from tab ",
-                    "ts",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlag\tlag_ignore_nulls\tlag1\tlag2\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2.0\t2.0\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3.0\t3.0\t3.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t1.0\t1.0\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t5.0\t5.0\t5.0\t5.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t1.0\t1.0\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t4.0\t4.0\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t0.0\t4.0\t0.0\t0.0\n",
-                    "select ts, i, j, d, " +
-                            "lag(j, 2, (j + 1)::double) over (partition by i), " +
-                            "lag(j, 2, (j + 1)::double) ignore nulls over (partition by i), " +
-                            "lag(j, 2, (j + 1)::double) respect nulls over (partition by i), " +
-                            "lag(d, 2, d + 1) over (partition by i) " +
-                            "from tab ",
-                    "ts",
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testLagLeadOver() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)");
-            execute("insert into tab select x::timestamp, x/4, case when x % 3 = 0 THEN NULL ELSE x%5 END, x%5, 'k' || (x%5) ::symbol, 'k' || x from long_sequence(7)");
-
-            assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2.0\tnull\t2.0\tnull\t2.0\tnull\t2.0\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\t1.0\t4.0\t1.0\tnull\t1.0\t3.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t4.0\t2.0\t4.0\t2.0\t4.0\t2.0\t4.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t0.0\tnull\t0.0\t2.0\t0.0\tnull\t0.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t4.0\t2.0\t4.0\tnull\t4.0\t1.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t2.0\t0.0\t2.0\t0.0\t2.0\t0.0\t2.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\tnull\tnull\t0.0\tnull\tnull\tnull\t1.0\n",
-                    "select ts, i, j, d, " +
-                            "lead(j) over (), " +
-                            "lag(j) over (), " +
-                            "lead(j) ignore nulls over (), " +
-                            "lag(j) ignore nulls over (), " +
-                            "lead(j) respect nulls over (), " +
-                            "lag(j) respect nulls over (), " +
-                            "lead(d) over (), " +
-                            "lag(d) over () " +
-                            "from tab ",
-                    "ts",
-                    true,
-                    false
-            );
-
-            assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\tnull\tnull\tnull\tnull\tnull\t3.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\tnull\tnull\tnull\tnull\tnull\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\n",
-                    "select ts, i, j, d, " +
-                            "lead(j, 0) over (), " +
-                            "lag(j, 0) over (), " +
-                            "lead(j, 0) ignore nulls over (), " +
-                            "lag(j, 0) ignore nulls over (), " +
-                            "lead(j, 0) respect nulls over (), " +
-                            "lag(j, 0) respect nulls over (), " +
-                            "lead(d, 0) over (), " +
-                            "lag(d, 0) over () " +
-                            "from tab ",
-                    "ts",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t4.0\tnull\t0.0\tnull\t4.0\tnull\t4.0\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t0.0\tnull\t2.0\tnull\t0.0\tnull\t0.0\tnull\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\tnull\t2.0\tnull\tnull\tnull\t1.0\tnull\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t2.0\t1.0\tnull\tnull\t2.0\t1.0\t2.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t2.0\tnull\t1.0\tnull\t2.0\tnull\t2.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\tnull\tnull\t2.0\tnull\tnull\tnull\t3.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\t4.0\tnull\t2.0\tnull\t4.0\tnull\t4.0\n",
-                    "select ts, i, j, d, " +
-                            "lead(j, 3) over (), " +
-                            "lag(j, 3) over (), " +
-                            "lead(j, 3) ignore nulls over (), " +
-                            "lag(j, 3) ignore nulls over (), " +
-                            "lead(j, 3) respect nulls over (), " +
-                            "lag(j, 3) respect nulls over (), " +
-                            "lead(d, 3) over (), " +
-                            "lag(d, 3) over () " +
-                            "from tab ",
-                    "ts",
-                    true,
-                    false
-            );
-
-            assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\t2.0\t4.0\t2.0\tnull\t2.0\t3.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t4.0\t3.0\t0.0\t3.0\t4.0\t3.0\t4.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t0.0\t1.0\t0.0\t1.0\t0.0\t1.0\t0.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\tnull\t2.0\t2.0\t1.0\tnull\t2.0\t1.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t2.0\tnull\t1.0\t2.0\t2.0\tnull\t2.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\t4.0\tnull\t4.0\tnull\t4.0\t2.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t3.0\t0.0\t3.0\t4.0\t3.0\t0.0\t3.0\t0.0\n",
-                    "select ts, i, j, d, " +
-                            "lead(j, 2, (j + 1)::double) over (), " +
-                            "lag(j, 2, (j + 1)::double) over (), " +
-                            "lead(j, 2, (j + 1)::double) ignore nulls over (), " +
-                            "lag(j, 2, (j + 1)::double) ignore nulls over (), " +
-                            "lead(j, 2, (j + 1)::double) respect nulls over (), " +
-                            "lag(j, 2, (j + 1)::double) respect nulls over (), " +
-                            "lead(d, 2, d + 1) over (), " +
-                            "lag(d, 2, d + 1) over () " +
-                            "from tab ",
-                    "ts",
-                    true,
-                    false
-            );
-
-            assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2.0\tnull\t2.0\t4.0\t2.0\tnull\t3.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3.0\t4.0\t3.0\t0.0\t3.0\t4.0\t4.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t1.0\t0.0\t1.0\t0.0\t1.0\t0.0\t0.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t2.0\tnull\t1.0\t2.0\t2.0\tnull\t1.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t2.0\t2.0\t1.0\tnull\t2.0\t2.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t4.0\tnull\t4.0\tnull\t4.0\tnull\t2.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t0.0\t3.0\t4.0\t3.0\t0.0\t3.0\t3.0\t0.0\n",
-                    "select ts, i, j, d, " +
-                            "lead(j, 2, (j + 1)::double) over (order by ts desc), " +
-                            "lag(j, 2, (j + 1)::double) over (order by ts desc), " +
-                            "lead(j, 2, (j + 1)::double) ignore nulls over (order by ts desc), " +
-                            "lag(j, 2, (j + 1)::double) ignore nulls over (order by ts desc), " +
-                            "lead(j, 2, (j + 1)::double) respect nulls over (order by ts desc), " +
-                            "lag(j, 2, (j + 1)::double) respect nulls over (order by ts desc), " +
-                            "lead(d, 2, d + 1) over (), " +
-                            "lag(d, 2, d + 1) over () " +
-                            "from tab order by ts asc",
-                    "ts",
-                    true,
-                    false
-            );
-
-            assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\tlead2\tlag2\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\tnull\tnull\tnull\tnull\tnull\t3.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\tnull\tnull\tnull\tnull\tnull\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\t2.0\n",
-                    "select ts, i, j, d, " +
-                            "lead(j, 0) over (order by ts desc), " +
-                            "lag(j, 0) over (order by ts desc), " +
-                            "lead(j, 0) ignore nulls over (order by ts desc), " +
-                            "lag(j, 0) ignore nulls over (order by ts desc), " +
-                            "lead(j, 0) respect nulls over (order by ts desc), " +
-                            "lag(j, 0) respect nulls over (order by ts desc), " +
-                            "lead(d, 0) over (), " +
-                            "lag(d, 0) over () " +
-                            "from tab order by ts asc",
-                    "ts",
-                    true,
-                    false
-            );
-
-            assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlag\tlag_ignore_nulls\tlag1\tlag2\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\tnull\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t1.0\t1.0\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t2.0\t2.0\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\tnull\t2.0\tnull\t3.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t4.0\t4.0\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t0.0\t0.0\t0.0\t0.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\tnull\t0.0\tnull\t1.0\n",
-                    "select ts, i, j, d, " +
-                            "lag(j) over (), " +
-                            "lag(j) ignore nulls over (), " +
-                            "lag(j) respect nulls over (), " +
-                            "lag(d) over () " +
-                            "from tab ",
-                    "ts",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlag\tlag_ignore_nulls\tlag1\tlag2\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\tnull\tnull\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\tnull\tnull\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\tnull\tnull\tnull\tnull\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t1.0\tnull\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\t2.0\t1.0\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\tnull\t2.0\tnull\t3.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t4.0\t2.0\t4.0\t4.0\n",
-                    "select ts, i, j, d, " +
-                            "lag(j, 3) over (), " +
-                            "lag(j, 3) ignore nulls over (), " +
-                            "lag(j, 3) respect nulls over (), " +
-                            "lag(d, 3) over () " +
-                            "from tab ",
-                    "ts",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    "ts\ti\tj\td\tlag\tlag_ignore_nulls\tlag1\tlag2\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\t1.0\t2.0\t2.0\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\t2.0\t3.0\t3.0\t3.0\t3.0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\tnull\t3.0\t1.0\t1.0\t1.0\t1.0\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\t4.0\t2.0\t1.0\t2.0\t2.0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\t0.0\tnull\t2.0\tnull\t3.0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\tnull\t1.0\t4.0\t4.0\t4.0\t4.0\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t0.0\t4.0\t0.0\t0.0\n",
-                    "select ts, i, j, d, " +
-                            "lag(j, 2, (j + 1)::double) over (), " +
-                            "lag(j, 2, (j + 1)::double) ignore nulls over (), " +
-                            "lag(j, 2, (j + 1)::double) respect nulls over (), " +
-                            "lag(d, 2, d + 1) over () " +
-                            "from tab ",
-                    "ts",
-                    false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testLagException() throws Exception {
-        execute("create table tab (ts timestamp, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)");
-        assertExceptionNoLeakCheck(
-                "select lag() over () from tab",
-                7,
-                "function `lag` requires arguments"
-        );
-
-        assertExceptionNoLeakCheck(
-                "select lag(d, -1) over () from tab",
-                14,
-                "offset must be a positive integer"
-        );
-
-        assertExceptionNoLeakCheck(
-                "select lag(d, 1, i) over () from tab",
-                17,
-                "default value must be a double"
-        );
-
-        assertExceptionNoLeakCheck(
-                "select lag(d, 1, d + 1, d) over () from tab",
-                24,
-                "too many arguments"
-        );
-
-        assertExceptionNoLeakCheck(
-                "select lag(d, i, d + 1) over () from tab",
-                14,
-                "offset must be a constant"
-        );
-
-        assertExceptionNoLeakCheck(
-                "select lag(d, 1, sum(d)) over () from tab",
-                17,
-                "default value can not be a window function"
-        );
-
-        assertExceptionNoLeakCheck(
-                "select lag(d, 1) ignore over () from tab",
-                17,
-                "'nulls' or 'from' expected"
-        );
-
-        assertExceptionNoLeakCheck(
-                "select lag(d, 1) respect over () from tab",
-                17,
-                "'nulls' or 'from' expected"
-        );
-
-        assertExceptionNoLeakCheck(
-                "select lag(d, 1) ignore null over () from tab",
-                17,
-                "'nulls' or 'from' expected"
-        );
-    }
-
-    @Test
-    public void testLeadException() throws Exception {
-        execute("create table tab (ts timestamp, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)");
-        assertExceptionNoLeakCheck(
-                "select lead() over () from tab",
-                7,
-                "function `lead` requires arguments"
-        );
-
-        assertExceptionNoLeakCheck(
-                "select lead(d, -1) over () from tab",
-                15,
-                "offset must be a positive integer"
-        );
-
-        assertExceptionNoLeakCheck(
-                "select lead(d, 1, i) over () from tab",
-                18,
-                "default value must be a double"
-        );
-
-        assertExceptionNoLeakCheck(
-                "select lead(d, 1, d + 1, d) over () from tab",
-                25,
-                "too many arguments"
-        );
-
-        assertExceptionNoLeakCheck(
-                "select lead(d, i, d + 1) over () from tab",
-                15,
-                "offset must be a constant"
-        );
-
-        assertExceptionNoLeakCheck(
-                "select lead(d, 1, sum(d)) over () from tab",
-                18,
-                "default value can not be a window function"
-        );
-
-        assertExceptionNoLeakCheck(
-                "select lead(d, 1, sum(d)) over () from tab",
-                18,
-                "default value can not be a window function"
-        );
-
-        assertExceptionNoLeakCheck(
-                "select lead(d, 1) ignore over () from tab",
-                18,
-                "'nulls' or 'from' expected"
-        );
-
-        assertExceptionNoLeakCheck(
-                "select lead(d, 1) respect over () from tab",
-                18,
-                "'nulls' or 'from' expected"
-        );
-
-        assertExceptionNoLeakCheck(
-                "select lead(d, 1) ignore null over () from tab",
-                18,
-                "'nulls' or 'from' expected"
-        );
-    }
-
-    @Test
-    public void testRankFunction() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, i long, s symbol) timestamp(ts)");
-            execute("insert into tab select (x/4)::timestamp, x/2, 'k' || (x%2) ::symbol from long_sequence(12)");
-
-            // rank()/dense_rank() over(partition by)
-            assertQueryNoLeakCheck(
-                    "ts\trank\tdense_rank\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000001Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000001Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000001Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000001Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000002Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000002Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000002Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000002Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000003Z\t1\t1\n",
-                    "select ts, " +
-                            "rank() over (partition by s), " +
-                            "dense_rank() over (partition by s) " +
-                            "from tab ",
-                    "ts",
-                    false,
-                    true
-            );
-
-            // rank()/dense_rank() over()
-            assertQueryNoLeakCheck(
-                    "ts\trank\tdense_rank\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000001Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000001Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000001Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000001Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000002Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000002Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000002Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000002Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000003Z\t1\t1\n",
-                    "select ts, " +
-                            "rank() over (), " +
-                            "dense_rank() over () " +
-                            "from tab ",
-                    "ts",
-                    false,
-                    true
-            );
-
-            // rank()/dense_rank() over(partition by xxx order by xxx)
-            assertQueryNoLeakCheck(
-                    "ts\ts\trank\tdense_rank\n" +
-                            "1970-01-01T00:00:00.000000Z\tk1\t1\t1\n" +
-                            "1970-01-01T00:00:00.000000Z\tk0\t1\t1\n" +
-                            "1970-01-01T00:00:00.000000Z\tk1\t1\t1\n" +
-                            "1970-01-01T00:00:00.000001Z\tk0\t2\t2\n" +
-                            "1970-01-01T00:00:00.000001Z\tk1\t3\t2\n" +
-                            "1970-01-01T00:00:00.000001Z\tk0\t2\t2\n" +
-                            "1970-01-01T00:00:00.000001Z\tk1\t3\t2\n" +
-                            "1970-01-01T00:00:00.000002Z\tk0\t4\t3\n" +
-                            "1970-01-01T00:00:00.000002Z\tk1\t5\t3\n" +
-                            "1970-01-01T00:00:00.000002Z\tk0\t4\t3\n" +
-                            "1970-01-01T00:00:00.000002Z\tk1\t5\t3\n" +
-                            "1970-01-01T00:00:00.000003Z\tk0\t6\t4\n",
-                    "select ts, s," +
-                            "rank() over (partition by s order by ts), " +
-                            "dense_rank() over (partition by s order by ts) " +
-                            "from tab ",
-                    "ts",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    "ts\ts\trank\tdense_rank\n" +
-                            "1970-01-01T00:00:00.000000Z\tk0\t1\t1\n" +
-                            "1970-01-01T00:00:00.000001Z\tk0\t2\t2\n" +
-                            "1970-01-01T00:00:00.000001Z\tk0\t2\t2\n" +
-                            "1970-01-01T00:00:00.000002Z\tk0\t4\t3\n" +
-                            "1970-01-01T00:00:00.000002Z\tk0\t4\t3\n" +
-                            "1970-01-01T00:00:00.000003Z\tk0\t6\t4\n" +
-                            "1970-01-01T00:00:00.000000Z\tk1\t1\t1\n" +
-                            "1970-01-01T00:00:00.000000Z\tk1\t1\t1\n" +
-                            "1970-01-01T00:00:00.000001Z\tk1\t3\t2\n" +
-                            "1970-01-01T00:00:00.000001Z\tk1\t3\t2\n" +
-                            "1970-01-01T00:00:00.000002Z\tk1\t5\t3\n" +
-                            "1970-01-01T00:00:00.000002Z\tk1\t5\t3\n",
-                    "select ts, s," +
-                            "rank() over (partition by s order by ts), " +
-                            "dense_rank() over (partition by s order by ts) " +
-                            "from tab order by s, ts",
-                    "",
-                    true,
-                    false
-            );
-
-            assertQueryNoLeakCheck(
-                    "ts\ts\trank\trank1\tdense_rank\tdense_rank1\n" +
-                            "1970-01-01T00:00:00.000000Z\tk0\t1\t6\t1\t4\n" +
-                            "1970-01-01T00:00:00.000001Z\tk0\t2\t4\t2\t3\n" +
-                            "1970-01-01T00:00:00.000001Z\tk0\t2\t4\t2\t3\n" +
-                            "1970-01-01T00:00:00.000002Z\tk0\t4\t2\t3\t2\n" +
-                            "1970-01-01T00:00:00.000002Z\tk0\t4\t2\t3\t2\n" +
-                            "1970-01-01T00:00:00.000003Z\tk0\t6\t1\t4\t1\n" +
-                            "1970-01-01T00:00:00.000000Z\tk1\t1\t5\t1\t3\n" +
-                            "1970-01-01T00:00:00.000000Z\tk1\t1\t5\t1\t3\n" +
-                            "1970-01-01T00:00:00.000001Z\tk1\t3\t3\t2\t2\n" +
-                            "1970-01-01T00:00:00.000001Z\tk1\t3\t3\t2\t2\n" +
-                            "1970-01-01T00:00:00.000002Z\tk1\t5\t1\t3\t1\n" +
-                            "1970-01-01T00:00:00.000002Z\tk1\t5\t1\t3\t1\n",
-                    "select ts, s," +
-                            "rank() over (partition by s order by ts), " +
-                            "rank() over (partition by s order by ts desc), " +
-                            "dense_rank() over (partition by s order by ts), " +
-                            "dense_rank() over (partition by s order by ts desc) " +
-                            "from tab order by s, ts",
-                    "",
-                    true,
-                    false
-            );
-
-            // rank()/dense_rank() over(order by xxx)
-            assertQueryNoLeakCheck(
-                    "ts\trank\tdense_rank\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
-                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
-                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
-                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
-                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
-                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
-                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
-                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
-                            "1970-01-01T00:00:00.000003Z\t12\t4\n",
-                    "select ts," +
-                            "rank() over (order by ts), " +
-                            "dense_rank() over (order by ts) " +
-                            "from tab order by ts",
-                    "ts",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    "ts\ts\trank\tdense_rank\n" +
-                            "1970-01-01T00:00:00.000000Z\tk0\t1\t1\n" +
-                            "1970-01-01T00:00:00.000001Z\tk0\t4\t2\n" +
-                            "1970-01-01T00:00:00.000001Z\tk0\t4\t2\n" +
-                            "1970-01-01T00:00:00.000002Z\tk0\t8\t3\n" +
-                            "1970-01-01T00:00:00.000002Z\tk0\t8\t3\n" +
-                            "1970-01-01T00:00:00.000003Z\tk0\t12\t4\n" +
-                            "1970-01-01T00:00:00.000000Z\tk1\t1\t1\n" +
-                            "1970-01-01T00:00:00.000000Z\tk1\t1\t1\n" +
-                            "1970-01-01T00:00:00.000001Z\tk1\t4\t2\n" +
-                            "1970-01-01T00:00:00.000001Z\tk1\t4\t2\n" +
-                            "1970-01-01T00:00:00.000002Z\tk1\t8\t3\n" +
-                            "1970-01-01T00:00:00.000002Z\tk1\t8\t3\n",
-                    "select ts, s," +
-                            "rank() over (order by ts), " +
-                            "dense_rank() over (order by ts) " +
-                            "from tab order by s",
-                    "",
-                    true,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    "ts\trank\tdense_rank\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\n" +
-                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
-                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
-                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
-                            "1970-01-01T00:00:00.000001Z\t4\t2\n" +
-                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
-                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
-                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
-                            "1970-01-01T00:00:00.000002Z\t8\t3\n" +
-                            "1970-01-01T00:00:00.000003Z\t12\t4\n",
-                    "select ts," +
-                            "rank() over (order by ts), " +
-                            "dense_rank() over (order by ts) " +
-                            "from tab",
-                    "ts",
-                    false,
-                    true
-            );
-
-            assertQueryNoLeakCheck(
-                    "ts\trank\tdense_rank\trank1\tdense_rank1\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\t10\t4\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\t10\t4\n" +
-                            "1970-01-01T00:00:00.000000Z\t1\t1\t10\t4\n" +
-                            "1970-01-01T00:00:00.000001Z\t4\t2\t6\t3\n" +
-                            "1970-01-01T00:00:00.000001Z\t4\t2\t6\t3\n" +
-                            "1970-01-01T00:00:00.000001Z\t4\t2\t6\t3\n" +
-                            "1970-01-01T00:00:00.000001Z\t4\t2\t6\t3\n" +
-                            "1970-01-01T00:00:00.000002Z\t8\t3\t2\t2\n" +
-                            "1970-01-01T00:00:00.000002Z\t8\t3\t2\t2\n" +
-                            "1970-01-01T00:00:00.000002Z\t8\t3\t2\t2\n" +
-                            "1970-01-01T00:00:00.000002Z\t8\t3\t2\t2\n" +
-                            "1970-01-01T00:00:00.000003Z\t12\t4\t1\t1\n",
-                    "select ts," +
-                            "rank() over (order by ts), " +
-                            "dense_rank() over (order by ts), " +
-                            "rank() over (order by ts desc), " +
-                            "dense_rank() over (order by ts desc) " +
-                            "from tab",
-                    "ts",
-                    true,
-                    false
-            );
-
-            assertQueryNoLeakCheck(
-                    "ts\ts\trank\tdense_rank\n" +
-                            "1970-01-01T00:00:00.000000Z\tk0\t6\t4\n" +
-                            "1970-01-01T00:00:00.000001Z\tk0\t4\t3\n" +
-                            "1970-01-01T00:00:00.000001Z\tk0\t4\t3\n" +
-                            "1970-01-01T00:00:00.000002Z\tk0\t2\t2\n" +
-                            "1970-01-01T00:00:00.000002Z\tk0\t2\t2\n" +
-                            "1970-01-01T00:00:00.000003Z\tk0\t1\t1\n" +
-                            "1970-01-01T00:00:00.000000Z\tk1\t5\t3\n" +
-                            "1970-01-01T00:00:00.000000Z\tk1\t5\t3\n" +
-                            "1970-01-01T00:00:00.000001Z\tk1\t3\t2\n" +
-                            "1970-01-01T00:00:00.000001Z\tk1\t3\t2\n" +
-                            "1970-01-01T00:00:00.000002Z\tk1\t1\t1\n" +
-                            "1970-01-01T00:00:00.000002Z\tk1\t1\t1\n",
-                    "select ts, s," +
-                            "rank() over (partition by concat(s,'foobar') order by ts desc)," +
-                            "dense_rank() over (partition by concat(s,'foobar') order by ts desc)" +
-                            "from tab order by s, ts",
-                    "",
-                    true,
-                    false
-            );
-        });
-    }
-
-    @Test
     public void testWindowFunctionDoesntSortIfOrderByIsCompatibleWithBaseQuery() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (ts timestamp, i long, j long, sym symbol index) timestamp(ts)");
@@ -5527,8 +5554,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertException(
                 "SELECT pickup_datetime, row_number() OVER (PARTITION BY row_number())\n" +
                         "FROM trips\n" +
-                        "WHERE pickup_datetime >= '2018-12-30' and pickup_datetime <= '2018-12-31'\n" +
-                        "SAMPLE BY 1d",
+                        "WHERE pickup_datetime >= '2018-12-30' and pickup_datetime <= '2018-12-31'",
                 "create table trips as " +
                         "(" +
                         "select" +
@@ -5607,6 +5633,81 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     }
                 }
             }
+        });
+    }
+
+    @Test
+    public void testWindowFunctionUnsupportNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, i long, j long, s symbol, d double, c VARCHAR) timestamp(ts)");
+
+            for (int i = 0, size = FRAME_FUNCTIONS.size(); i < size; i++) {
+                String func = FRAME_FUNCTIONS.get(i);
+                for (String column : FRAME_FUNCTIONS_PARAMETER_COLUMN_NAME[i]) {
+                    if (!func.contains("first_value") && !func.contains("last_value")) {
+                        String query1 = "select #FUNCT_NAME IGNORE NULLS over () from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column);
+                        assertExceptionNoLeakCheck(
+                                query1,
+                                36,
+                                "RESPECT/IGNORE NULLS is not supported for current window function"
+                        );
+
+                        String query2 = "select #FUNCT_NAME RESPECT NULLS over () from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", column);
+                        assertExceptionNoLeakCheck(
+                                query2,
+                                36,
+                                "RESPECT/IGNORE NULLS is not supported for current window function"
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWindowOnNestWithMultiArgsFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x ( timestamp TIMESTAMP, ticker SYMBOL, open DOUBLE, high DOUBLE, low DOUBLE, close DOUBLE, true_range DOUBLE ) TIMESTAMP(timestamp) PARTITION BY MONTH;");
+            execute("INSERT INTO x VALUES " +
+                    "('2021-01-01 09:30:00', 'SPY', 370.00, 370.50, 369.50, 370.25, 100)," +
+                    "('2021-01-02 09:30:00', 'SPY', 370.25, 370.75, 369.75, 370.50, 200)," +
+                    "('2021-01-03 09:30:00', 'SPY', 370.50, 371.00, 370.00, 370.75, 300)," +
+                    "('2021-01-04 09:30:00', 'SPY', 370.75, 371.25, 370.25, 371.00, 400)," +
+                    "('2021-01-05 09:30:00', 'SPY', 371.00, 371.50, 370.50, 371.25, 500)," +
+                    "('2021-01-06 09:30:00', 'SPY', 371.25, 371.75, 370.75, 371.50, 600)," +
+                    "('2021-01-07 09:30:00', 'SPY', 371.50, 372.00, 371.00, 371.75, 700)," +
+                    "('2021-01-08 09:30:00', 'SPY', 371.75, 372.25, 371.25, 372.00, 800)," +
+                    "('2021-01-09 09:30:00', 'SPY', 372.00, 372.50, 371.50, 372.25, 900)," +
+                    "('2021-01-10 09:30:00', 'SPY', 372.25, 372.75, 371.75, 372.50, 1000)," +
+                    "('2021-01-11 09:30:00', 'SPY', 372.50, 373.00, 372.00, 372.75, 1100)," +
+                    "('2021-01-12 09:30:00', 'SPY', 372.75, 373.25, 372.25, 373.00, 1200)," +
+                    "('2021-01-13 09:30:00', 'SPY', 373.00, 373.50, 372.50, 373.25, 1300)," +
+                    "('2021-01-14 09:30:00', 'SPY', 373.00, 373.50, 372.50, 373.25, 1400);");
+            drainWalQueue();
+            assertSql("rn\tticker\ttimestamp\topen\thigh\tlow\tclose\tatr\n" +
+                            "14\tSPY\t2021-01-14T09:30:00.000000Z\t373.0\t373.5\t372.5\t373.25\t1.0\n" +
+                            "13\tSPY\t2021-01-13T09:30:00.000000Z\t373.0\t373.5\t372.5\t373.25\t1.0\n" +
+                            "12\tSPY\t2021-01-12T09:30:00.000000Z\t372.75\t373.25\t372.25\t373.0\t1.0\n" +
+                            "11\tSPY\t2021-01-11T09:30:00.000000Z\t372.5\t373.0\t372.0\t372.75\t1.0\n" +
+                            "10\tSPY\t2021-01-10T09:30:00.000000Z\t372.25\t372.75\t371.75\t372.5\t1.0\n" +
+                            "9\tSPY\t2021-01-09T09:30:00.000000Z\t372.0\t372.5\t371.5\t372.25\t1.0\n" +
+                            "8\tSPY\t2021-01-08T09:30:00.000000Z\t371.75\t372.25\t371.25\t372.0\t1.0\n" +
+                            "7\tSPY\t2021-01-07T09:30:00.000000Z\t371.5\t372.0\t371.0\t371.75\t1.0\n" +
+                            "6\tSPY\t2021-01-06T09:30:00.000000Z\t371.25\t371.75\t370.75\t371.5\t1.0\n" +
+                            "5\tSPY\t2021-01-05T09:30:00.000000Z\t371.0\t371.5\t370.5\t371.25\t1.0\n" +
+                            "4\tSPY\t2021-01-04T09:30:00.000000Z\t370.75\t371.25\t370.25\t371.0\t1.0\n" +
+                            "3\tSPY\t2021-01-03T09:30:00.000000Z\t370.5\t371.0\t370.0\t370.75\t1.0\n" +
+                            "2\tSPY\t2021-01-02T09:30:00.000000Z\t370.25\t370.75\t369.75\t370.5\t1.0\n" +
+                            "1\tSPY\t2021-01-01T09:30:00.000000Z\t370.0\t370.5\t369.5\t370.25\tnull\n",
+                    "WITH true_ranges AS " +
+                            "( SELECT rn, ticker, timestamp, open, high, low, close, high-low AS day_range, avg_14_bar_range, " +
+                            "greatest(high-low, abs(high-prev_close), abs(low-prev_close)) as true_range FROM " +
+                            "( SELECT timestamp, ticker, open, high, low, close, row_number() OVER (PARTITION BY ticker ORDER BY timestamp) as rn, " +
+                            "avg(high - low) OVER (PARTITION BY ticker ORDER BY timestamp ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) as avg_14_bar_range, " +
+                            "LAG(close) OVER (PARTITION BY ticker ORDER BY timestamp) AS prev_close, FROM x WHERE ticker = 'SPY' ))" +
+                            "SELECT rn, ticker, timestamp, open, high, low, close, atr FROM ( " +
+                            "SELECT rn, ticker, timestamp, open, high, low, close, avg(true_range) OVER " +
+                            "(PARTITION BY ticker ORDER BY timestamp ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) AS atr FROM true_ranges ) ORDER BY ticker, timestamp DESC;");
         });
     }
 

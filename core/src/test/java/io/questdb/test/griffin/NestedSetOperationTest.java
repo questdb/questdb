@@ -34,7 +34,8 @@ public class NestedSetOperationTest extends AbstractCairoTest {
 
     @Test
     public void testColumnPushdownWithDistinctAndUnionAll() throws Exception {
-        assertQuery("c\n" +
+        assertQuery(
+                "c\n" +
                         "0\n" +
                         "0\n" +
                         "0\n" +
@@ -45,7 +46,11 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                         "select distinct c, d b from test)",    //0,1 ; 0,2;
                 "create table test as (" +
                         "select 0 as a, x as b, 0 as c, x as d from long_sequence(2)" +
-                        ")", null, false);
+                        ")",
+                null,
+                false,
+                true
+        );
     }
 
     @Test

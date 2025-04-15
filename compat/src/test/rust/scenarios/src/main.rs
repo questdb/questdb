@@ -26,6 +26,7 @@ struct TestCase {
     steps: Vec<Step>,
     teardown: Option<Vec<Step>>,
     iterations: Option<u32>,
+    exclude: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -113,8 +114,18 @@ async fn main() -> TestResult<()> {
 
 async fn run_tests(client: &Client, test_file: &TestFile) -> TestResult<bool> {
     let mut all_tests_passed = true;
+    let rust_string = "rust".to_string();
     for test in &test_file.tests {
         let iterations = test.iterations.unwrap_or(50);
+
+        if let Some(excludes) = &test.exclude {
+            if excludes.contains(&rust_string) {
+                println!("Skipping test: {:?} because it's excluded for Rust", test.name);
+                continue;
+            }
+        }
+
+
         for i in 0..iterations {
             println!("Running test '{}' (iteration {})", test.name, i);
             if !run_test(client, &test_file.variables, test).await? {

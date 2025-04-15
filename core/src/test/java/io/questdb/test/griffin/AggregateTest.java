@@ -1512,7 +1512,9 @@ public class AggregateTest extends AbstractCairoTest {
                     "count\tcount1\n1\t1\n",
                     sql,
                     ddl,
-                    null, true, false
+                    null,
+                    true,
+                    true
             );
         });
     }

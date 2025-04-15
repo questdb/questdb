@@ -67,6 +67,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private ExpressionNode tableNameExpr;
     private ExpressionNode timestampExpr;
     private int ttlHoursOrMonths;
+    private int ttlPosition;
     private CharSequence volumeAlias;
     private boolean walEnabled;
 
@@ -92,6 +93,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     timestampExpr != null ? Chars.toString(timestampExpr.token) : null,
                     timestampExpr != null ? timestampExpr.position : 0, Chars.toString(volumeAlias),
                     ttlHoursOrMonths,
+                    ttlPosition,
                     walEnabled,
                     defaultSymbolCapacity,
                     maxUncommittedRows,
@@ -132,6 +134,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 o3MaxLag,
                 maxUncommittedRows,
                 ttlHoursOrMonths,
+                ttlPosition,
                 walEnabled
         );
     }
@@ -155,6 +158,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         selectModel = null;
         volumeAlias = null;
         ttlHoursOrMonths = 0;
+        ttlPosition = 0;
         walEnabled = false;
     }
 
@@ -192,6 +196,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         return tableNameExpr.token;
     }
 
+    @Override
     public ExpressionNode getTableNameExpr() {
         return tableNameExpr;
     }
@@ -271,6 +276,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public void setTtlHoursOrMonths(int ttlHoursOrMonths) {
         this.ttlHoursOrMonths = ttlHoursOrMonths;
+    }
+
+    public void setTtlPosition(int ttlPosition) {
+        this.ttlPosition = ttlPosition;
     }
 
     public void setVolumeAlias(CharSequence volumeAlias) {

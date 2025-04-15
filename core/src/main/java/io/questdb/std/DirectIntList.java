@@ -102,6 +102,14 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
         return capacity >>> 2;
     }
 
+    public void removeIndexBlock(long index, long length) {
+        long size = size();
+        assert index > -1 && length > -1 && (index + length) <= size;
+        Vect.memcpy(address + (index << 2), address + ((index + length) << 2), (size - index - length) << 2);
+        pos -= (length << 2);
+        assert pos >= address;
+    }
+
     public void removeLast() {
         if (pos == address) {
             return;
@@ -121,6 +129,7 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     }
 
     public void set(long p, int v) {
+        assert p > -1 && p < ((pos - address) >>> 2);
         Unsafe.getUnsafe().putInt(address + (p << 2), v);
     }
 

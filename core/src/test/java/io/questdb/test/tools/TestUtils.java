@@ -627,11 +627,15 @@ public final class TestUtils {
         }
     }
 
-    public static void assertEventually(Runnable assertion) {
+    public static void assertEventually(EventualCode assertion) throws Exception {
         assertEventually(assertion, 30);
     }
 
-    public static void assertEventually(Runnable assertion, int timeoutSeconds) {
+    public interface EventualCode {
+        void run() throws Exception;
+    }
+
+    public static void assertEventually(EventualCode assertion, int timeoutSeconds) throws Exception {
         long maxSleepingTimeMillis = 1000;
         long nextSleepingTimeMillis = 10;
         long startTime = System.nanoTime();

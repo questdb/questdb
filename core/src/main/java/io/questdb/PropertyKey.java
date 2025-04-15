@@ -96,6 +96,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_PAGE_FRAME_COLUMN_LIST_CAPACITY("cairo.page.frame.column.list.capacity"),
     CAIRO_SQL_PARALLEL_FILTER_ENABLED("cairo.sql.parallel.filter.enabled"),
     CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED("cairo.sql.parallel.filter.pretouch.enabled"),
+    CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_THRESHOLD("cairo.sql.parallel.filter.pretouch.threshold"),
     CAIRO_SQL_PARALLEL_GROUPBY_ENABLED("cairo.sql.parallel.groupby.enabled"),
     CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY("cairo.sql.parallel.groupby.merge.shard.queue.capacity"),
     CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD("cairo.sql.parallel.groupby.sharding.threshold"),
@@ -494,6 +495,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_O3_LAST_PARTITION_MAX_SPLITS("cairo.o3.last.partition.max.splits"),
     CAIRO_O3_PARTITION_SPLIT_MIN_SIZE("cairo.o3.partition.split.min.size"),
     CAIRO_O3_PARTITION_OVERWRITE_CONTROL_ENABLED("cairo.o3.partition.overwrite.control.enabled"),
+    CAIRO_WRITE_BACK_OFF_TIMEOUT_ON_MEM_PRESSURE("cairo.write.back.off.timeout.on.mem.pressure"),
     DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE("debug.wal.purge.wait.before.delete", false, true),
     RAM_USAGE_LIMIT_BYTES("ram.usage.limit.bytes"),
     RAM_USAGE_LIMIT_PERCENT("ram.usage.limit.percent"),
@@ -543,7 +545,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     MAT_VIEW_REFRESH_WORKER_NAP_THRESHOLD("mat.view.refresh.worker.nap.threshold"),
     MAT_VIEW_REFRESH_WORKER_SLEEP_THRESHOLD("mat.view.refresh.worker.sleep.threshold"),
     MAT_VIEW_REFRESH_WORKER_SLEEP_TIMEOUT("mat.view.refresh.worker.sleep.timeout"),
-    MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD("mat.view.refresh.worker.yield.threshold");
+    MAT_VIEW_REFRESH_WORKER_YIELD_THRESHOLD("mat.view.refresh.worker.yield.threshold"),
+    DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY("debug.wal.apply.block.failure.no.retry", false, true);
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

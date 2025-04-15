@@ -105,8 +105,9 @@ import io.questdb.griffin.engine.functions.date.DateTruncFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ExtractFromTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.date.TimestampAddFunctionFactory;
 import io.questdb.griffin.engine.functions.date.TimestampCeilFunctionFactory;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFromFunctionFactory;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetFunctionFactory;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
-import io.questdb.griffin.engine.functions.date.TimestampFloorOffsetFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToTimezoneTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.ContainsEqIPv4StrFunctionFactory;
@@ -172,15 +173,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         super.setUp();
-        engine.getMatViewGraph().clear();
+        engine.getMatViewStateStore().clear();
         inputRoot = root;
     }
 
     @Test
     public void test2686LeftJoinDoesNotMoveOtherInnerJoinPredicate() throws Exception {
         test2686Prepare();
-
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(
+        assertPlan(
                 "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)\n" +
                         "from table_1 as a \n" +
                         "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) " +
@@ -202,14 +202,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: table_2\n"
-        ));
+        );
     }
 
     @Test
     public void test2686LeftJoinDoesNotMoveOtherLeftJoinPredicate() throws Exception {
         test2686Prepare();
-
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(
+        assertPlan(
                 "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)\n" +
                         "from table_1 as a \n" +
                         "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) " +
@@ -230,14 +229,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: table_2\n"
-        ));
+        );
     }
 
     @Test
     public void test2686LeftJoinDoesNotMoveOtherTwoTableEqJoinPredicate() throws Exception {
         test2686Prepare();
-
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(
+        assertPlan(
                 "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)\n" +
                         "from table_1 as a \n" +
                         "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) " +
@@ -259,14 +257,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: table_2\n"
-        ));
+        );
     }
 
     @Test
     public void test2686LeftJoinDoesNotPushJoinPredicateToLeftTable() throws Exception {
         test2686Prepare();
-
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(
+        assertPlan(
                 "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)\n" +
                         "from table_1 as a \n" +
                         "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) and a.age = 10 ",
@@ -281,14 +278,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: table_2\n"
-        ));
+        );
     }
 
     @Test
     public void test2686LeftJoinDoesNotPushJoinPredicateToRightTable() throws Exception {
         test2686Prepare();
-
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(
+        assertPlan(
                 "select a.name, a.age, b.address, a.ts \n" +
                         "from table_1 as a \n" +
                         "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) and b.age = 10 ",
@@ -301,14 +297,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: table_2\n"
-        ));
+        );
     }
 
     @Test
     public void test2686LeftJoinDoesNotPushWherePredicateToRightTable() throws Exception {
         test2686Prepare();
-
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(
+        assertPlan(
                 "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)\n" +
                         "from table_1 as a \n" +
                         "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)" +
@@ -325,14 +320,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: table_2\n"
-        ));
+        );
     }
 
     @Test
     public void test2686LeftJoinPushesWherePredicateToLeftJoinCondition() throws Exception {
         test2686Prepare();
-
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(
+        assertPlan(
                 "select a.name, a.age, b.address, a.ts\n" +
                         "from table_1 as a \n" +
                         "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts) " +
@@ -347,13 +341,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: table_2\n"
-        ));
+        );
     }
 
     @Test
     public void test2686LeftJoinPushesWherePredicateToLeftTable() throws Exception {
         test2686Prepare();
-        assertMemoryLeak(() -> assertPlanNoLeakCheck(
+        assertPlan(
                 "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts)\n" +
                         "from table_1 as a \n" +
                         "left join table_2 as b on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)" +
@@ -371,7 +365,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: table_2\n"
-        ));
+        );
     }
 
     @Test
@@ -568,7 +562,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    AsOf Join Fast Scan\n" +
                             "        Async JIT Filter workers: 1\n" +
-                            "          filter: 0<i\n" +
+                            "          filter: 0<i [pre-touch]\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -945,9 +939,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di order by 1 limit 10",
-                "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
-                        "    DistinctTimeSeries\n" +
-                        "      keys: ts\n" +
+                "Sort light lo: 10\n" +
+                        "  keys: [ts]\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [ts]\n" +
+                        "      filter: null\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: di\n"
@@ -961,11 +957,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select distinct ts from di order by 1 desc limit 10",
                 "Sort light lo: 10\n" +
                         "  keys: [ts desc]\n" +
-                        "    DistinctTimeSeries\n" +
-                        "      keys: ts\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [ts]\n" +
+                        "      filter: null\n" +
                         "        PageFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: di\n"
+                        "            Row backward scan\n" +
+                        "            Frame backward scan on: di\n"
         );
     }
 
@@ -975,8 +972,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di limit 10",
                 "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
-                        "    DistinctTimeSeries\n" +
-                        "      keys: ts\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [ts]\n" +
+                        "      filter: null\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: di\n"
@@ -989,8 +987,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di limit -10",
                 "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
-                        "    DistinctTimeSeries\n" +
-                        "      keys: ts\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [ts]\n" +
+                        "      filter: null\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: di\n"
@@ -1003,14 +1002,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di where y = 5 limit 10",
                 "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
-                        "    DistinctTimeSeries\n" +
-                        "      keys: ts\n" +
-                        "        SelectedRecord\n" +
-                        "            Async JIT Filter workers: 1\n" +
-                        "              filter: y=5\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: di\n"
+                        "    Async JIT Group By workers: 1\n" +
+                        "      keys: [ts]\n" +
+                        "      filter: y=5\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1020,14 +1017,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di where y = 5 limit -10",
                 "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
-                        "    DistinctTimeSeries\n" +
-                        "      keys: ts\n" +
-                        "        SelectedRecord\n" +
-                        "            Async JIT Filter workers: 1\n" +
-                        "              filter: y=5\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: di\n"
+                        "    Async JIT Group By workers: 1\n" +
+                        "      keys: [ts]\n" +
+                        "      filter: y=5\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1037,14 +1032,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di where abs(y) = 5 limit 10",
                 "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
-                        "    DistinctTimeSeries\n" +
-                        "      keys: ts\n" +
-                        "        SelectedRecord\n" +
-                        "            Async Filter workers: 1\n" +
-                        "              filter: abs(y)=5\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: di\n"
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [ts]\n" +
+                        "      filter: abs(y)=5\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1054,14 +1047,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di where abs(y) = 5 limit -10",
                 "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
-                        "    DistinctTimeSeries\n" +
-                        "      keys: ts\n" +
-                        "        SelectedRecord\n" +
-                        "            Async Filter workers: 1\n" +
-                        "              filter: abs(y)=5\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: di\n"
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [ts]\n" +
+                        "      filter: abs(y)=5\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1071,14 +1062,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long, ts timestamp) timestamp(ts)",
                 "select distinct ts from di where abs(y) = 5 limit 10, 20",
                 "Limit lo: 10 hi: 20 skip-over-rows: 10 limit: 10\n" +
-                        "    DistinctTimeSeries\n" +
-                        "      keys: ts\n" +
-                        "        SelectedRecord\n" +
-                        "            Async Filter workers: 1\n" +
-                        "              filter: abs(y)=5\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: di\n"
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [ts]\n" +
+                        "      filter: abs(y)=5\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1089,13 +1078,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select distinct x from di order by 1 limit 10",
                 "Sort light lo: 10\n" +
                         "  keys: [x]\n" +
-                        "    DistinctKey\n" +
-                        "        GroupBy vectorized: true workers: 1\n" +
-                        "          keys: [x]\n" +
-                        "          values: [count(*)]\n" +
-                        "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: di\n"
+                        "    GroupBy vectorized: true workers: 1\n" +
+                        "      keys: [x]\n" +
+                        "      values: [count(*)]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1106,13 +1094,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select distinct x from di order by 1 desc limit 10",
                 "Sort light lo: 10\n" +
                         "  keys: [x desc]\n" +
-                        "    DistinctKey\n" +
-                        "        GroupBy vectorized: true workers: 1\n" +
-                        "          keys: [x]\n" +
-                        "          values: [count(*)]\n" +
-                        "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: di\n"
+                        "    GroupBy vectorized: true workers: 1\n" +
+                        "      keys: [x]\n" +
+                        "      values: [count(*)]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1122,13 +1109,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select distinct x from di limit 10",
                 "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
-                        "    DistinctKey\n" +
-                        "        GroupBy vectorized: true workers: 1\n" +
-                        "          keys: [x]\n" +
-                        "          values: [count(*)]\n" +
-                        "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: di\n"
+                        "    GroupBy vectorized: true workers: 1\n" +
+                        "      keys: [x]\n" +
+                        "      values: [count(*)]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1138,13 +1124,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select distinct x from di limit -10",
                 "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
-                        "    DistinctKey\n" +
-                        "        GroupBy vectorized: true workers: 1\n" +
-                        "          keys: [x]\n" +
-                        "          values: [count(*)]\n" +
-                        "            PageFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: di\n"
+                        "    GroupBy vectorized: true workers: 1\n" +
+                        "      keys: [x]\n" +
+                        "      values: [count(*)]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1154,14 +1139,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select distinct x from di where y = 5 limit 10",
                 "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
-                        "    Distinct\n" +
-                        "      keys: x\n" +
-                        "        SelectedRecord\n" +
-                        "            Async JIT Filter workers: 1\n" +
-                        "              filter: y=5\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: di\n"
+                        "    Async JIT Group By workers: 1\n" +
+                        "      keys: [x]\n" +
+                        "      filter: y=5\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1171,14 +1154,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select distinct x from di where y = 5 limit -10",
                 "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
-                        "    Distinct\n" +
-                        "      keys: x\n" +
-                        "        SelectedRecord\n" +
-                        "            Async JIT Filter workers: 1\n" +
-                        "              filter: y=5\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: di\n"
+                        "    Async JIT Group By workers: 1\n" +
+                        "      keys: [x]\n" +
+                        "      filter: y=5\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1188,14 +1169,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select distinct x from di where abs(y) = 5 limit 10",
                 "Limit lo: 10 skip-over-rows: 0 limit: 10\n" +
-                        "    Distinct\n" +
-                        "      keys: x\n" +
-                        "        SelectedRecord\n" +
-                        "            Async Filter workers: 1\n" +
-                        "              filter: abs(y)=5\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: di\n"
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [x]\n" +
+                        "      filter: abs(y)=5\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1205,14 +1184,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select distinct x from di where abs(y) = 5 limit -10",
                 "Limit lo: -10 skip-over-rows: 0 limit: 0\n" +
-                        "    Distinct\n" +
-                        "      keys: x\n" +
-                        "        SelectedRecord\n" +
-                        "            Async Filter workers: 1\n" +
-                        "              filter: abs(y)=5\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: di\n"
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [x]\n" +
+                        "      filter: abs(y)=5\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1222,14 +1199,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table di (x int, y long)",
                 "select distinct x from di where abs(y) = 5 limit 10, 20",
                 "Limit lo: 10 hi: 20 skip-over-rows: 10 limit: 10\n" +
-                        "    Distinct\n" +
-                        "      keys: x\n" +
-                        "        SelectedRecord\n" +
-                        "            Async Filter workers: 1\n" +
-                        "              filter: abs(y)=5\n" +
-                        "                PageFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: di\n"
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [x]\n" +
+                        "      filter: abs(y)=5\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
         );
     }
 
@@ -1467,7 +1442,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a (s string)",
                 "select * from a where s = '\b\f\n\r\t\\u0013'",
                 "Async Filter workers: 1\n" +
-                        "  filter: s='\\b\\f\\n\\r\\t\\u0013'\n" +
+                        "  filter: s='\\b\\f\\n\\r\\t\\u0013' [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -1587,7 +1562,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    VirtualRecord\n" +
                         "      functions: [20,d+rnd_double()]\n" +
                         "        Async Filter workers: 1\n" +
-                        "          filter: d<100.0\n" +
+                        "          filter: d<100.0 [pre-touch]\n" +
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Interval forward scan on: a\n" +
@@ -2515,10 +2490,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     args.add(new StrConstant("{'abc'}"));
                                 } else if (factory instanceof TestSumXDoubleGroupByFunctionFactory && p == 1) {
                                     args.add(new StrConstant("123.456"));
-                                } else if (factory instanceof TimestampFloorFunctionFactory && p == 0) {
+                                } else if ((factory instanceof TimestampFloorFunctionFactory || factory instanceof TimestampFloorFromFunctionFactory || factory instanceof TimestampFloorFromOffsetFunctionFactory) && p == 0) {
                                     args.add(new StrConstant("d"));
-                                } else if (factory instanceof TimestampFloorOffsetFunctionFactory && p == 0) {
-                                    args.add(new StrConstant("d"));
+                                } else if (factory instanceof TimestampFloorFromOffsetFunctionFactory && p == 3) {
+                                    args.add(new StrConstant("00:30"));
+                                    args.add(new StrConstant("UTC"));
                                 } else if (factory instanceof DateTruncFunctionFactory && p == 0) {
                                     args.add(new StrConstant("year"));
                                 } else if (factory instanceof ToUTCTimestampFunctionFactory && p == 1) {
@@ -3360,7 +3336,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    Filter filter: s='key'\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
-                        "            Frame forward scan on: a\n" +
+                        "            Frame forward scan on: a [state-shared]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -3720,7 +3696,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a (u uuid, ts timestamp) timestamp(ts);",
                 "select u, ts from a where u in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333')",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: u in ['22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111','33333333-3333-3333-3333-333333333333']\n" +
+                        "  filter: u in ['22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111','33333333-3333-3333-3333-333333333333'] [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -4093,7 +4069,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select s, i, ts from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s",
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
-                        "        DistinctSymbol\n" +
+                        "        GroupBy vectorized: true workers: 1\n" +
+                        "          keys: [s]\n" +
+                        "          values: [count(*)]\n" +
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
@@ -4110,7 +4088,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select s, i, ts from a where s in (select distinct s from a) latest on ts partition by s",
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
-                        "        DistinctSymbol\n" +
+                        "        GroupBy vectorized: true workers: 1\n" +
+                        "          keys: [s]\n" +
+                        "          values: [count(*)]\n" +
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
@@ -4126,7 +4106,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select i, ts, s from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s",
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
-                        "        DistinctSymbol\n" +
+                        "        GroupBy vectorized: true workers: 1\n" +
+                        "          keys: [s]\n" +
+                        "          values: [count(*)]\n" +
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
@@ -4143,7 +4125,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select i, ts, s from a where s in (select distinct s from a) latest on ts partition by s",
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
-                        "        DistinctSymbol\n" +
+                        "        GroupBy vectorized: true workers: 1\n" +
+                        "          keys: [s]\n" +
+                        "          values: [count(*)]\n" +
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
@@ -5018,7 +5002,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  and s3 like 'a%'  and s4 ilike 'a%' " +
                             "  and s5 like '%a%' and s6 ilike '%a%';",
                     "Async Filter workers: 1\n" +
-                            "  filter: ((s1 like %a and s2 ilike %a and s3 like a% and s4 ilike a%) and s5 like %a% and s6 ilike %a%)\n" +
+                            "  filter: ((s1 like %a and s2 ilike %a and s3 like a% and s4 ilike a%) and s5 like %a% and s6 ilike %a%) [pre-touch]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
@@ -5192,7 +5176,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Lt Join Fast Scan\n" +
                             "        Async JIT Filter workers: 1\n" +
-                            "          filter: 0<i\n" +
+                            "          filter: 0<i [pre-touch]\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
@@ -5583,7 +5567,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    SelectedRecord\n" +
                             "        Async JIT Filter workers: 1\n" +
                             "          limit: 1\n" +
-                            "          filter: id='12345678'\n" +
+                            "          filter: id='12345678' [pre-touch]\n" +
                             "            PageFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: device_data\n",
@@ -5602,7 +5586,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    SelectedRecord\n" +
                             "        Async JIT Filter workers: 1\n" +
                             "          limit: 1\n" +
-                            "          filter: id='12345678'\n" +
+                            "          filter: id='12345678' [pre-touch]\n" +
                             "            PageFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: device_data\n",
@@ -5621,7 +5605,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    SelectedRecord\n" +
                             "        Async JIT Filter workers: 1\n" +
                             "          limit: 2\n" +
-                            "          filter: id='12345678'\n" +
+                            "          filter: id='12345678' [pre-touch]\n" +
                             "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: device_data\n",
@@ -6062,7 +6046,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 assertPlanNoLeakCheck(
                         "select * from read_parquet('x.parquet') where a_long = 42;",
                         "Async JIT Filter workers: 1\n" +
-                                "  filter: a_long=42\n" +
+                                "  filter: a_long=42 [pre-touch]\n" +
                                 "    parquet page frame scan\n"
                 );
 
@@ -6820,6 +6804,153 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByAliasesAndOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
+
+            assertPlanNoLeakCheck(
+                    "select x1.a, sum(x1.b) from x x1 sample by 2m align to first observation order by x1.a",
+                    "Sort\n" +
+                            "  keys: [a]\n" +
+                            "    Sample By\n" +
+                            "      keys: [a]\n" +
+                            "      values: [sum(b)]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select \"x1.a\", sum(\"x1.b\") from x \"x1\" sample by 2m order by \"x1.a\"",
+                    "SelectedRecord\n" +
+                            "    Radix sort light\n" +
+                            "      keys: [a]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [a,ts]\n" +
+                            "          values: [sum(b)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select \"x1.a\", sum(\"x1.b\") from x \"x1\" sample by 2m align to calendar time zone 'Europe/Paris' order by \"x1.a\"",
+                    "Radix sort light\n" +
+                            "  keys: [a]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [a,sum]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [a,ts]\n" +
+                            "          values: [sum(b)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select \"x1.a\", sum(\"x1.b\") from x \"x1\" sample by 2m align to calendar time zone 'Europe/Paris' order by 10*\"x1.a\"",
+                    "SelectedRecord\n" +
+                            "    Radix sort light\n" +
+                            "      keys: [column]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [a,sum,10*a]\n" +
+                            "            VirtualRecord\n" +
+                            "              functions: [a,sum]\n" +
+                            "                Async Group By workers: 1\n" +
+                            "                  keys: [a,ts]\n" +
+                            "                  values: [sum(b)]\n" +
+                            "                  filter: null\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select x1.a, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 1 desc",
+                    "Radix sort light\n" +
+                            "  keys: [a desc]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [a,sum]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [a,ts]\n" +
+                            "          values: [sum(b)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select 10*x1.a as a10, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by a10",
+                    "Radix sort light\n" +
+                            "  keys: [a10]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [a10,sum]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [a10,ts]\n" +
+                            "          values: [sum(b)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select x1.a as a0, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc",
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [column desc, a0]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [a0,sum,10*a0]\n" +
+                            "            VirtualRecord\n" +
+                            "              functions: [a0,sum]\n" +
+                            "                Async Group By workers: 1\n" +
+                            "                  keys: [a0,ts]\n" +
+                            "                  values: [sum(b)]\n" +
+                            "                  filter: null\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select x1.a as a0, sum(x1.b), x1.ts from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc",
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [column desc, a0]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [a0,sum,to_utc(ts),10*a0]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [a0,ts]\n" +
+                            "              values: [sum(b)]\n" +
+                            "              filter: null\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select x1.ts, to_utc(x1.ts, 'Europe/Berlin') berlin_ts, x1.a as a0, sum(x1.b) from x x1 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 3 asc, berlin_ts desc",
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [column desc, a0, berlin_ts desc]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [to_utc(ts),berlin_ts,a0,sum,10*a0]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [ts,berlin_ts,a0]\n" +
+                            "              values: [sum(b)]\n" +
+                            "              filter: null\n" +
+                            "                SelectedRecord\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: x\n"
+            );
+        });
+    }
+
+    @Test
     public void testSampleByFillLinear() throws Exception {
         assertMemoryLeak(() -> {
             assertPlanNoLeakCheck(
@@ -6859,7 +6990,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Frame forward scan on: a\n"
             );
 
-            // without rewrite
             assertPlanNoLeakCheck(
                     "select first(i) from a sample by 1h fill(null) align to calendar with offset '10:00'",
                     "Sample By\n" +
@@ -6887,7 +7017,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: a\n"
             );
-
         });
     }
 
@@ -6923,7 +7052,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleByFillPrevNotKeyed() throws Exception {
         assertMemoryLeak(() -> {
             assertPlanNoLeakCheck(
-                    "create table a ( i int, ts timestamp) timestamp(ts);",
+                    "create table a (i int, ts timestamp) timestamp(ts);",
                     "select first(i) from a sample by 1h fill(prev) align to first observation",
                     "Sample By\n" +
                             "  fill: prev\n" +
@@ -6941,6 +7070,21 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select first(a1.i) from a a1 asof join a a2 sample by 1h fill(prev) align to calendar",
+                    "Sample By\n" +
+                            "  fill: prev\n" +
+                            "  values: [first(i)]\n" +
+                            "    SelectedRecord\n" +
+                            "        AsOf Join Fast Scan\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: a\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: a\n"
             );
         });
     }
@@ -6977,7 +7121,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSampleByFillValueNotKeyed() throws Exception {
         assertMemoryLeak(() -> {
             assertPlanNoLeakCheck(
-                    "create table a ( i int, ts timestamp) timestamp(ts);",
+                    "create table a (i int, ts timestamp) timestamp(ts);",
                     "select first(i) from a sample by 1h fill(1) align to first observation",
                     "Sample By\n" +
                             "  fill: value\n" +
@@ -6987,7 +7131,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Frame forward scan on: a\n"
             );
 
-            // without rewrite
             assertPlanNoLeakCheck(
                     "select first(i) from a sample by 1h fill(1) align to calendar with offset '10:00'",
                     "Sample By\n" +
@@ -7055,6 +7198,189 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                  filter: sym='S'\n" +
                             "                Interval forward scan on: a\n" +
                             "                  intervals: [(\"1970-01-01T00:00:00.000001Z\",\"1970-01-01T00:00:00.000099Z\")]\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByJoinAndOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
+
+            assertPlanNoLeakCheck(
+                    "select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to first observation order by x1.a",
+                    "Sort\n" +
+                            "  keys: [a]\n" +
+                            "    Sample By\n" +
+                            "      keys: [a]\n" +
+                            "      values: [sum(b)]\n" +
+                            "        SelectedRecord\n" +
+                            "            AsOf Join Fast Scan\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: x\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m order by x1.a",
+                    "SelectedRecord\n" +
+                            "    Radix sort light\n" +
+                            "      keys: [a]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [a,ts]\n" +
+                            "          values: [sum(b)]\n" +
+                            "            SelectedRecord\n" +
+                            "                AsOf Join Fast Scan\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: x\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by x1.a",
+                    "Radix sort light\n" +
+                            "  keys: [a]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [a,sum]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [a,ts]\n" +
+                            "          values: [sum(b)]\n" +
+                            "            SelectedRecord\n" +
+                            "                AsOf Join Fast Scan\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: x\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a",
+                    "SelectedRecord\n" +
+                            "    Radix sort light\n" +
+                            "      keys: [column]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [a,sum,10*a]\n" +
+                            "            VirtualRecord\n" +
+                            "              functions: [a,sum]\n" +
+                            "                GroupBy vectorized: false\n" +
+                            "                  keys: [a,ts]\n" +
+                            "                  values: [sum(b)]\n" +
+                            "                    SelectedRecord\n" +
+                            "                        AsOf Join Fast Scan\n" +
+                            "                            PageFrame\n" +
+                            "                                Row forward scan\n" +
+                            "                                Frame forward scan on: x\n" +
+                            "                            PageFrame\n" +
+                            "                                Row forward scan\n" +
+                            "                                Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 1 desc",
+                    "Radix sort light\n" +
+                            "  keys: [a desc]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [a,sum]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [a,ts]\n" +
+                            "          values: [sum(b)]\n" +
+                            "            SelectedRecord\n" +
+                            "                AsOf Join Fast Scan\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: x\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select 10*x1.a as a10, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by a10",
+                    "Radix sort light\n" +
+                            "  keys: [a10]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [a10,sum]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [a10,ts]\n" +
+                            "          values: [sum(b)]\n" +
+                            "            SelectedRecord\n" +
+                            "                AsOf Join Fast Scan\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: x\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select x1.a as a0, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc",
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [column desc, a0]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [a0,sum,10*a0]\n" +
+                            "            VirtualRecord\n" +
+                            "              functions: [a0,sum]\n" +
+                            "                GroupBy vectorized: false\n" +
+                            "                  keys: [a0,ts]\n" +
+                            "                  values: [sum(b)]\n" +
+                            "                    SelectedRecord\n" +
+                            "                        AsOf Join Fast Scan\n" +
+                            "                            PageFrame\n" +
+                            "                                Row forward scan\n" +
+                            "                                Frame forward scan on: x\n" +
+                            "                            PageFrame\n" +
+                            "                                Row forward scan\n" +
+                            "                                Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select x1.a as a0, sum(x1.b), x1.ts from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 1 asc",
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [column desc, a0]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [a0,sum,to_utc(ts),10*a0]\n" +
+                            "            GroupBy vectorized: false\n" +
+                            "              keys: [a0,ts]\n" +
+                            "              values: [sum(b)]\n" +
+                            "                SelectedRecord\n" +
+                            "                    AsOf Join Fast Scan\n" +
+                            "                        PageFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: x\n" +
+                            "                        PageFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select x1.ts, to_utc(x1.ts, 'Europe/Berlin') berlin_ts, x1.a as a0, sum(x1.b) from x x1 asof join x x2 sample by 2m align to calendar time zone 'Europe/Paris' order by 10*x1.a desc, 3 asc, berlin_ts desc",
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [column desc, a0, berlin_ts desc]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [to_utc(ts),berlin_ts,a0,sum,10*a0]\n" +
+                            "            GroupBy vectorized: false\n" +
+                            "              keys: [ts,berlin_ts,a0]\n" +
+                            "              values: [sum(b)]\n" +
+                            "                SelectedRecord\n" +
+                            "                    AsOf Join Fast Scan\n" +
+                            "                        PageFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: x\n" +
+                            "                        PageFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: x\n"
             );
         });
     }
@@ -7227,6 +7553,221 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
+
+            assertPlanNoLeakCheck(
+                    "select a, sum(b) from x sample by 2m align to first observation order by a",
+                    "Sort\n" +
+                            "  keys: [a]\n" +
+                            "    Sample By\n" +
+                            "      keys: [a]\n" +
+                            "      values: [sum(b)]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select a, sum(b) from x sample by 2m order by a",
+                    "SelectedRecord\n" +
+                            "    Radix sort light\n" +
+                            "      keys: [a]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [a,ts]\n" +
+                            "          values: [sum(b)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select a, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by a",
+                    "Radix sort light\n" +
+                            "  keys: [a]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [a,sum]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [a,ts]\n" +
+                            "          values: [sum(b)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select a, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a",
+                    "SelectedRecord\n" +
+                            "    Radix sort light\n" +
+                            "      keys: [column]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [a,sum,10*a]\n" +
+                            "            VirtualRecord\n" +
+                            "              functions: [a,sum]\n" +
+                            "                Async Group By workers: 1\n" +
+                            "                  keys: [a,ts]\n" +
+                            "                  values: [sum(b)]\n" +
+                            "                  filter: null\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select a, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by 1 desc",
+                    "Radix sort light\n" +
+                            "  keys: [a desc]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [a,sum]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [a,ts]\n" +
+                            "          values: [sum(b)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select 10*a as a10, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by a10",
+                    "Radix sort light\n" +
+                            "  keys: [a10]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [a10,sum]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [a10,ts]\n" +
+                            "          values: [sum(b)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select a as a0, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a desc, 1 asc",
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [column desc, a0]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [a0,sum,10*a0]\n" +
+                            "            VirtualRecord\n" +
+                            "              functions: [a0,sum]\n" +
+                            "                Async Group By workers: 1\n" +
+                            "                  keys: [a0,ts]\n" +
+                            "                  values: [sum(b)]\n" +
+                            "                  filter: null\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select a as a0, sum(b), ts from x sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a desc, 1 asc",
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [column desc, a0]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [a0,sum,to_utc(ts),10*a0]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [a0,ts]\n" +
+                            "              values: [sum(b)]\n" +
+                            "              filter: null\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select ts, to_utc(ts, 'Europe/Berlin') berlin_ts, a as a0, sum(b) from x sample by 2m align to calendar time zone 'Europe/Paris' order by 10*a desc, 3 asc, berlin_ts desc",
+                    "SelectedRecord\n" +
+                            "    Sort light\n" +
+                            "      keys: [column desc, a0, berlin_ts desc]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [ts,to_utc(ts),a0,sum,10*a0]\n" +
+                            "            VirtualRecord\n" +
+                            "              functions: [to_utc(ts),a0,sum]\n" +
+                            "                Async Group By workers: 1\n" +
+                            "                  keys: [ts,a0]\n" +
+                            "                  values: [sum(b)]\n" +
+                            "                  filter: null\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: x\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByOrderByTimestampFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
+
+            assertPlanNoLeakCheck(
+                    "select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by berlin_ts desc",
+                    "Radix sort light\n" +
+                            "  keys: [berlin_ts desc]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [a,sum,to_timezone(ts)]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [a,ts]\n" +
+                            "          values: [sum(b)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by 3 asc",
+                    "Radix sort light\n" +
+                            "  keys: [berlin_ts]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [a,sum,to_timezone(ts)]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [a,ts]\n" +
+                            "          values: [sum(b)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by to_timezone(ts, 'Europe/Berlin')",
+                    "Radix sort light\n" +
+                            "  keys: [berlin_ts]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [a,sum,to_timezone(ts)]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [a,ts]\n" +
+                            "          values: [sum(b)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select a, timestamp_floor('M', ts) month_ts, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by berlin_ts desc, a asc, month_ts asc",
+                    "Sort light\n" +
+                            "  keys: [berlin_ts desc, a, month_ts]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [a,timestamp_floor('month',ts),sum,to_timezone(ts)]\n" +
+                            "        Async Group By workers: 1\n" +
+                            "          keys: [a,ts]\n" +
+                            "          values: [sum(b)]\n" +
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
             );
         });
     }
@@ -7692,8 +8233,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select distinct l, ts from tab",
-                "DistinctTimeSeries\n" +
-                        "  keys: l,ts\n" +
+                "Async Group By workers: 1\n" +
+                        "  keys: [l,ts]\n" +
+                        "  filter: null\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -7719,8 +8261,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select distinct(l) from tab",
-                "Distinct\n" +
-                        "  keys: l\n" +
+                "Async Group By workers: 1\n" +
+                        "  keys: [l]\n" +
+                        "  filter: null\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -7732,7 +8275,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( s symbol, ts timestamp);",
                 "select distinct(s) from tab",
-                "DistinctSymbol\n" +
+                "GroupBy vectorized: true workers: 1\n" +
+                        "  keys: [s]\n" +
+                        "  values: [count(*)]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -7744,7 +8289,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( s symbol index, ts timestamp);",
                 "select distinct(s) from tab",
-                "DistinctSymbol\n" +
+                "GroupBy vectorized: true workers: 1\n" +
+                        "  keys: [s]\n" +
+                        "  values: [count(*)]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -7756,8 +8303,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select distinct ts, l  from tab",
-                "Distinct\n" +
-                        "  keys: ts,l\n" +
+                "Async Group By workers: 1\n" +
+                        "  keys: [ts,l]\n" +
+                        "  filter: null\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -7772,7 +8320,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select * from t where d in (5, -1, 1, null)",
                     "Async JIT Filter workers: 1\n" +
-                            "  filter: d in [-1.0,1.0,5.0,NaN]\n" +
+                            "  filter: d in [-1.0,1.0,5.0,NaN] [pre-touch]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
@@ -7781,7 +8329,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select * from t where d not in (5, -1, 1, null)",
                     "Async JIT Filter workers: 1\n" +
-                            "  filter: not (d in [-1.0,1.0,5.0,NaN])\n" +
+                            "  filter: not (d in [-1.0,1.0,5.0,NaN]) [pre-touch]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
@@ -7795,7 +8343,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts > sysdate()",
                 "Async Filter workers: 1\n" +
-                        "  filter: sysdate()<ts\n" +
+                        "  filter: sysdate()<ts [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -7808,7 +8356,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts > systimestamp()",
                 "Async Filter workers: 1\n" +
-                        "  filter: systimestamp()<ts\n" +
+                        "  filter: systimestamp()<ts [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -8039,7 +8587,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from a where s = $1 or s = $2 order by ts desc limit 1",
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
-                        "  filter: (s=$0::string or s=$1::string)\n" +
+                        "  filter: (s=$0::string or s=$1::string) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: a\n"
@@ -8053,7 +8601,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from a where s = 'S1' or s = 'S2' order by ts desc limit 1",
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
-                        "  filter: (s='S1' or s='S2')\n" +
+                        "  filter: (s='S1' or s='S2') [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: a\n"
@@ -8409,7 +8957,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Sort light\n" +
                             "  keys: [s1, ts desc]\n" +
                             "    Async JIT Filter workers: 1\n" +
-                            "      filter: (s1='S1' or s1='S2')\n" +
+                            "      filter: (s1='S1' or s1='S2') [pre-touch]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Interval forward scan on: a\n" +
@@ -8479,7 +9027,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select * from t where l in (5, -1, 1, null)",
                     "Async JIT Filter workers: 1\n" +
-                            "  filter: l in [null,-1,1,5]\n" +
+                            "  filter: l in [null,-1,1,5] [pre-touch]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
@@ -8488,7 +9036,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select * from t where l not in (5, -1, 1, null)",
                     "Async JIT Filter workers: 1\n" +
-                            "  filter: not (l in [null,-1,1,5])\n" +
+                            "  filter: not (l in [null,-1,1,5]) [pre-touch]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
@@ -8677,13 +9225,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select distinct(i) from a limit -5",
                     "Limit lo: -5 skip-over-rows: 5 limit: 5\n" +
-                            "    DistinctKey\n" +
-                            "        GroupBy vectorized: true workers: 1\n" +
-                            "          keys: [i]\n" +
-                            "          values: [count(*)]\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: a\n"
+                            "    GroupBy vectorized: true workers: 1\n" +
+                            "      keys: [i]\n" +
+                            "      values: [count(*)]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: a\n"
             );
         });
     }
@@ -8795,7 +9342,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts in '2020-03-01' or ts in '2020-03-10'",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: (ts in [1583020800000000,1583107199999999] or ts in [1583798400000000,1583884799999999])\n" +
+                        "  filter: (ts in [1583020800000000,1583107199999999] or ts in [1583798400000000,1583884799999999]) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -8829,7 +9376,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where (ts > '2020-03-01' and ts < '2020-03-10') or (ts > '2020-04-01' and ts < '2020-04-10') ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: ((1583020800000000<ts and ts<1583798400000000) or (1585699200000000<ts and ts<1586476800000000))\n" +
+                        "  filter: ((1583020800000000<ts and ts<1583798400000000) or (1585699200000000<ts and ts<1586476800000000)) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -8842,7 +9389,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where (ts between '2020-03-01' and '2020-03-10') or (ts between '2020-04-01' and '2020-04-10') ",
                 "Async Filter workers: 1\n" +
-                        "  filter: (ts between 1583020800000000 and 1583798400000000 or ts between 1585699200000000 and 1586476800000000)\n" +
+                        "  filter: (ts between 1583020800000000 and 1583798400000000 or ts between 1585699200000000 and 1586476800000000) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -8879,7 +9426,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where ts > '2020-03-01'",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: 1583020800000000<ts\n" +
+                        "  filter: 1583020800000000<ts [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -8916,7 +9463,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: 100<l\n" +
+                        "  filter: 100<l [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -8929,7 +9476,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( s symbol, ts timestamp);",
                 "select * from tab where s in ( 'A', 'B' )",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: s in [A,B]\n" +
+                        "  filter: s in [A,B] [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -8942,7 +9489,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( s symbol, ts timestamp);",
                 "select * from tab where ts in ( '2020-01-01', '2020-01-02' )",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: ts in [1577836800000000,1577923200000000]\n" +
+                        "  filter: ts in [1577836800000000,1577923200000000] [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -8955,7 +9502,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( s symbol, ts timestamp);",
                 "select * from tab where ts in ( '2020-01-01', '2020-01-03' ) and s = 'ABC'",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: (ts in [1577836800000000,1578009600000000] and s='ABC')\n" +
+                        "  filter: (ts in [1577836800000000,1578009600000000] and s='ABC') [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -8968,7 +9515,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( s symbol, ts timestamp);",
                 "select * from tab where ts in ( '2020-01-01' ) and s = 'ABC'",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: (ts in [1577836800000000,1577923199999999] and s='ABC')\n" +
+                        "  filter: (ts in [1577836800000000,1577923199999999] and s='ABC') [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -8981,7 +9528,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = 12 or l = 15 ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: (l=12 or l=15)\n" +
+                        "  filter: (l=12 or l=15) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -8994,7 +9541,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = 12.345 ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: l=12.345\n" +
+                        "  filter: l=12.345 [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9007,7 +9554,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( b boolean, ts timestamp);",
                 "select * from tab where b = false ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: b=false\n" +
+                        "  filter: b=false [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9020,7 +9567,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( b boolean, ts timestamp);",
                 "select * from tab where not(b = false or ts = 123) ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: (b!=false and ts!=123)\n" +
+                        "  filter: (b!=false and ts!=123) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9033,7 +9580,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l1 long, l2 long);",
                 "select * from tab where l1 < l2 ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: l1<l2\n" +
+                        "  filter: l1<l2 [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9046,7 +9593,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l1 long, l2 long);",
                 "select * from tab where l1 * l2 > 0  ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: 0<l1*l2\n" +
+                        "  filter: 0<l1*l2 [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9059,7 +9606,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 and l < 1000 ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: (100<l and l<1000)\n" +
+                        "  filter: (100<l and l<1000) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9072,7 +9619,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l1 long, l2 long, l3 long);",
                 "select * from tab where l1 * l2 > l3  ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: l3<l1*l2\n" +
+                        "  filter: l3<l1*l2 [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9085,7 +9632,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = $1 ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: l=$0::long\n" +
+                        "  filter: l=$0::long [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9098,7 +9645,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( d double, ts timestamp);",
                 "select * from tab where d = 1024.1 + 1 ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: d=1024.1+1\n" +
+                        "  filter: d=1024.1+1 [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9111,7 +9658,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( d double, ts timestamp);",
                 "select * from tab where d = null ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: d is null\n" +
+                        "  filter: d is null [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9125,7 +9672,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where d = 1.2 order by ts limit 1 ",
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
-                        "  filter: d=1.2\n" +
+                        "  filter: d=1.2 [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9139,7 +9686,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where d = 1.2 order by ts limit -1 ",
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
-                        "  filter: d=1.2\n" +
+                        "  filter: d=1.2 [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -9153,7 +9700,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where d = 1.2 limit -1 ",
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
-                        "  filter: d=1.2\n" +
+                        "  filter: d=1.2 [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -9167,7 +9714,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where d = 1.2 order by ts desc limit 1 ",
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
-                        "  filter: d=1.2\n" +
+                        "  filter: d=1.2 [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -9181,7 +9728,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where d = 1.2 limit -1 ",
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
-                        "  filter: d=1.2\n" +
+                        "  filter: d=1.2 [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -9197,7 +9744,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where d = 1.2 limit :maxRows ",
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
-                        "  filter: d=1.2\n" +
+                        "  filter: d=1.2 [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -9211,7 +9758,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where d = 1.2 order by ts desc limit 1 ",
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
-                        "  filter: d=1.2\n" +
+                        "  filter: d=1.2 [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -9225,7 +9772,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where d = 1.2 order by ts limit -1 ",
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
-                        "  filter: d=1.2\n" +
+                        "  filter: d=1.2 [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -9238,7 +9785,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab (s string, ts timestamp);",
                 "select * from tab where s = null ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: s is null\n" +
+                        "  filter: s is null [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9251,7 +9798,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab (v varchar, ts timestamp);",
                 "select * from tab where v = null ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: v is null\n" +
+                        "  filter: v is null [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9264,7 +9811,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 and l < 1000 and ts = '2022-01-01' ",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: (100<l and l<1000 and ts=1640995200000000)\n" +
+                        "  filter: (100<l and l<1000 and ts=1640995200000000) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9277,7 +9824,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 and l < 1000 and l = 20",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: (100<l and l<1000 and l=20)\n" +
+                        "  filter: (100<l and l<1000 and l=20) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9290,7 +9837,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 and l < 1000 or l = 20",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: ((100<l and l<1000) or l=20)\n" +
+                        "  filter: ((100<l and l<1000) or l=20) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9303,7 +9850,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l > 100 and l < 1000 or ts = 123",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: ((100<l and l<1000) or ts=123)\n" +
+                        "  filter: ((100<l and l<1000) or ts=123) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9316,7 +9863,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp) timestamp (ts);",
                 "select * from tab where l > 100 and l < 1000 or ts > '2021-01-01'",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: ((100<l and l<1000) or 1609459200000000<ts)\n" +
+                        "  filter: ((100<l and l<1000) or 1609459200000000<ts) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9329,7 +9876,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp) timestamp (ts);",
                 "select * from tab where l > 100 and l < 1000 and ts in '2021-01-01'",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: (100<l and l<1000)\n" +
+                        "  filter: (100<l and l<1000) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Interval forward scan on: tab\n" +
@@ -9343,7 +9890,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l in ( 100, 200 )",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: l in [100,200]\n" +
+                        "  filter: l in [100,200] [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9404,7 +9951,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = 12::short ",
                 "Async Filter workers: 1\n" +
-                        "  filter: l=12::short\n" +
+                        "  filter: l=12::short [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9417,7 +9964,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( s short, ts timestamp);",
                 "select * from tab where s = 1::short ",
                 "Async Filter workers: 1\n" +
-                        "  filter: s=1::short\n" +
+                        "  filter: s=1::short [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9430,7 +9977,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( b boolean, ts timestamp);",
                 "select * from tab where b = true::boolean ",
                 "Async Filter workers: 1\n" +
-                        "  filter: b=true\n" +
+                        "  filter: b=true [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9443,7 +9990,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = 1024::long ",
                 "Async Filter workers: 1\n" +
-                        "  filter: l=1024::long\n" +
+                        "  filter: l=1024::long [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9456,7 +10003,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( d double, ts timestamp);",
                 "select * from tab where d = 1024.1::double ",
                 "Async Filter workers: 1\n" +
-                        "  filter: d=1024.1\n" +
+                        "  filter: d=1024.1 [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9469,7 +10016,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( d double, ts timestamp);",
                 "select * from tab where d = null::double ",
                 "Async Filter workers: 1\n" +
-                        "  filter: d is null\n" +
+                        "  filter: d is null [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9482,7 +10029,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where (l | l) > 0  ",
                 "Async Filter workers: 1\n" +
-                        "  filter: 0<l|l\n" +
+                        "  filter: 0<l|l [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9495,7 +10042,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where (l & l) > 0  ",
                 "Async Filter workers: 1\n" +
-                        "  filter: 0<l&l\n" +
+                        "  filter: 0<l&l [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9508,7 +10055,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where (l ^ l) > 0  ",
                 "Async Filter workers: 1\n" +
-                        "  filter: 0<l^l\n" +
+                        "  filter: 0<l^l [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9522,7 +10069,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where (l ^ l) > 0 limit -1",
                 "Async Filter workers: 1\n" +
                         "  limit: 1\n" +
-                        "  filter: 0<l^l\n" +
+                        "  filter: 0<l^l [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -9539,7 +10086,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where (l ^ l) > 0 limit :maxRows",
                 "Async Filter workers: 1\n" +
                         "  limit: 1\n" +
-                        "  filter: 0<l^l\n" +
+                        "  filter: 0<l^l [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
@@ -9552,7 +10099,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = 12::byte ",
                 "Async Filter workers: 1\n" +
-                        "  filter: l=12::byte\n" +
+                        "  filter: l=12::byte [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9565,7 +10112,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = '123' ",
                 "Async Filter workers: 1\n" +
-                        "  filter: l='123'\n" +
+                        "  filter: l='123' [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9578,7 +10125,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = rnd_long() ",
                 "Async Filter workers: 1\n" +
-                        "  filter: l=rnd_long()\n" +
+                        "  filter: l=rnd_long() [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9591,7 +10138,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = case when l > 0 then 1 when l = 0 then 0 else -1 end ",
                 "Async Filter workers: 1\n" +
-                        "  filter: l=case([0<l,1,l=0,0,-1])\n" +
+                        "  filter: l=case([0<l,1,l=0,0,-1]) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9604,7 +10151,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l = $1::string ",
                 "Async Filter workers: 1\n" +
-                        "  filter: l=$0::string\n" +
+                        "  filter: l=$0::string [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9617,7 +10164,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( s string, ts timestamp);",
                 "select * from tab where s = 'test' ",
                 "Async Filter workers: 1\n" +
-                        "  filter: s='test'\n" +
+                        "  filter: s='test' [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9630,7 +10177,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( b byte, ts timestamp);",
                 "select * from tab where b = 1::byte ",
                 "Async Filter workers: 1\n" +
-                        "  filter: b=1::byte\n" +
+                        "  filter: b=1::byte [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
@@ -9643,7 +10190,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "CREATE TABLE tst ( timestamp TIMESTAMP );",
                 "select * from tst where timestamp not between '2021-01-01' and '2021-01-10' ",
                 "Async Filter workers: 1\n" +
-                        "  filter: not (timestamp between 1609459200000000 and 1610236800000000)\n" +
+                        "  filter: not (timestamp between 1609459200000000 and 1610236800000000) [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tst\n"
@@ -9718,7 +10265,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, l long, ts timestamp) timestamp(ts) ;",
                 "select ts, l, i from a where l<i",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: l<i\n" +
+                        "  filter: l<i [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -9731,7 +10278,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, l long, ts timestamp) timestamp(ts) ;",
                 "select ts, l, i from a where l::short<i",
                 "Async Filter workers: 1\n" +
-                        "  filter: l::short<i\n" +
+                        "  filter: l::short<i [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -9791,7 +10338,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  values: [max(ts)]\n" +
                         "    SelectedRecord\n" +
                         "        Async Filter workers: 1\n" +
-                        "          filter: (l::short<i and l<0)\n" +
+                        "          filter: (l::short<i and l<0) [pre-touch]\n" +
                         "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n"
@@ -10207,7 +10754,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "      values: [min(ts)]\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
-                        "            Frame forward scan on: x\n" +
+                        "            Frame forward scan on: x [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: x\n"
@@ -10232,12 +10779,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table x (l long, ts timestamp)",
                 "select * from x where ts > (select min(ts) from x)",
                 "Async Filter workers: 1\n" +
-                        "  filter: ts>cursor \n" +
+                        "  filter: ts [thread-safe] > cursor \n" +
                         "    GroupBy vectorized: true workers: 1\n" +
                         "      values: [min(ts)]\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
-                        "            Frame forward scan on: x\n" +
+                        "            Frame forward scan on: x [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: x\n"
@@ -10262,12 +10809,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table x (l long, ts timestamp)",
                 "select * from x where ts < (select max(ts) from x)",
                 "Async Filter workers: 1\n" +
-                        "  filter: ts<cursor \n" +
+                        "  filter: ts [thread-safe] < cursor \n" +
                         "    GroupBy vectorized: true workers: 1\n" +
                         "      values: [max(ts)]\n" +
                         "        PageFrame\n" +
                         "            Row forward scan\n" +
-                        "            Frame forward scan on: x\n" +
+                        "            Frame forward scan on: x [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: x\n"
@@ -10326,7 +10873,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     query,
                     "Async JIT Filter workers: 1\n" +
                             "  limit: 5\n" +
-                            "  filter: x<100\n" +
+                            "  filter: x<100 [pre-touch]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
@@ -10355,7 +10902,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a (u uuid, ts timestamp) timestamp(ts);",
                 "select u, ts from a where u = '11111111-1111-1111-1111-111111111111' or u = '22222222-2222-2222-2222-222222222222' or u = '33333333-3333-3333-3333-333333333333'",
                 "Async JIT Filter workers: 1\n" +
-                        "  filter: ((u='11111111-1111-1111-1111-111111111111' or u='22222222-2222-2222-2222-222222222222') or u='33333333-3333-3333-3333-333333333333')\n" +
+                        "  filter: ((u='11111111-1111-1111-1111-111111111111' or u='22222222-2222-2222-2222-222222222222') or u='33333333-3333-3333-3333-333333333333') [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -11131,7 +11678,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlanNoLeakCheck(
                 "select * from t where x = :v1 ",
                 "Async Filter workers: 1\n" +
-                        "  filter: x=:v1::" + type + "\n" +
+                        "  filter: x=:v1::" + type + " [pre-touch]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: t\n"

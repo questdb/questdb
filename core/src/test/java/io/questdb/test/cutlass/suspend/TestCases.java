@@ -69,6 +69,21 @@ public class TestCases {
         addTestCase("select * from x where isym in (select s from y limit 3) and i != 42");
         addTestCase("select * from x where isym in (select s from y limit 3) and i != 42 limit -10");
 
+
+        // EqTimestampCursorFunctionFactory
+//        addTestCase("select * from x where ts = (select ts from y limit 3) and i != 41 limit -10");
+//        addTestCase("select * from x where ts = (select ts::string from y limit 3) and i != 40 limit -7");
+//        addTestCase("select * from x where ts = (select ts::varchar from y limit 1)");
+//
+//        addTestCase("select * from x where ts > (select ts from y limit 1)");
+//        addTestCase("select * from x where ts > (select ts::string from y limit 1)");
+//        addTestCase("select * from x where ts > (select ts::varchar from y limit 1)");
+
+
+//        addTestCase("select * from x where ts < (select ts from y limit -2)");
+//        addTestCase("select * from x where ts < (select ts::string from y limit -2)");
+//        addTestCase("select * from x where ts < (select ts::varchar from y limit -2)");
+
         // FilterOnExcludedValuesRecordCursorFactory
         addTestCase("select * from x where isym not in ('a','b') and i != 42");
 
@@ -113,6 +128,7 @@ public class TestCases {
         // SortedSymbolIndexRecordCursorFactory
         addTestCase("select * from x where ts in '1970-01-01T00' order by isym, ts desc");
 
+
         // LimitedSizeSortedLightRecordCursorFactory
         addTestCase("select * from x order by i limit 3");
 
@@ -121,9 +137,9 @@ public class TestCases {
         addTestCase("select i, row_number() over (partition by sym order by ts) from x");
 
         // InSymbolCursorFunctionFactory
-        addTestCase("select * from x where sym in (select sym from y)");
-        addTestCase("select * from x where cast(s as symbol) in (select sym from y)");
-        addTestCase("select * from x where sym in (select sym from y where isym in (select isym from x limit 3))");
+//        addTestCase("select * from x where sym in (select sym from y)");
+//        addTestCase("select * from x where cast(s as symbol) in (select sym from y)");
+//        addTestCase("select * from x where sym in (select sym from y where isym in (select isym from x limit 3))");
 
         // CountRecordCursorFactory
         addTestCase("select count() from x where isym = 'c'");

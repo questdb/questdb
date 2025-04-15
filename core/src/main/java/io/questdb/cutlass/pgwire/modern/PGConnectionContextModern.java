@@ -453,6 +453,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             try {
                 parseMessage(recvBuffer + recvBufferReadOffset, (int) (recvBufferWriteOffset - recvBufferReadOffset));
             } catch (BadProtocolException e) {
+                LOG.error().$("failed to parse message [err: `").$(e.getFlyweightMessage()).$("`]").$();
                 // ignore, we are interrupting the current message processing, but have to continue processing other
                 // messages
             }

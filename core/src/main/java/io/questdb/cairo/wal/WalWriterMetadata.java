@@ -77,12 +77,26 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             boolean suspended,
             RecordMetadata metadata
     ) {
+        final boolean firstWrite = metaMem.getAppendOffset() == 0;
         metaMem.jumpTo(0);
         // Size of metadata
-        metaMem.putInt(0);
+        if (firstWrite) {
+            metaMem.putInt(0);
+        } else {
+            // When overwriting the file, don't "blip" the size to zero
+            // in case there are concurrent readers.
+            metaMem.skip(Integer.BYTES);
+        }
         metaMem.putInt(WAL_FORMAT_VERSION);
         metaMem.putLong(structureVersion);
-        metaMem.putInt(columnCount);
+        final long columnCountOffset = metaMem.getAppendOffset();
+        if (firstWrite) {
+            metaMem.putInt(0);
+        } else {
+            // Same as for the file-size, keep the old size until
+            // a new col count is patched at the end.
+            metaMem.skip(Integer.BYTES);
+        }
         metaMem.putInt(timestampIndex);
         metaMem.putInt(tableId);
         metaMem.putBool(suspended);
@@ -92,8 +106,11 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             metaMem.putStr(metadata.getColumnName(i));
         }
 
-        // update metadata size
-        metaMem.putInt(0, (int) metaMem.getAppendOffset());
+        // To avoid consistency issues with concurrent readers,
+        // update the column count and file size last.
+        final long size = metaMem.getAppendOffset();
+        metaMem.putInt(0, (int) size);
+        metaMem.putInt(columnCountOffset, columnCount);
     }
 
     @Override

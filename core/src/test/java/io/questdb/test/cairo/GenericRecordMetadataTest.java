@@ -73,7 +73,7 @@ public class GenericRecordMetadataTest {
             metadata.add(new TableColumnMetadata("abc", ColumnType.FLOAT));
             Assert.fail();
         } catch (CairoException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Duplicate column [name=abc]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "duplicate column [name=abc]");
         }
 
         sink.clear();
@@ -97,7 +97,7 @@ public class GenericRecordMetadataTest {
             metadata.add(new TableColumnMetadata("ABC", ColumnType.FLOAT));
             Assert.fail();
         } catch (CairoException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "Duplicate column [name=ABC]");
+            TestUtils.assertContains(e.getFlyweightMessage(), "duplicate column [name=ABC]");
         }
 
         sink.clear();

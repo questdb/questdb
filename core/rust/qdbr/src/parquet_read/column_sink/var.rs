@@ -1,4 +1,4 @@
-use crate::parquet::error::{ParquetErrorCause, ParquetResult};
+use crate::parquet::error::{ParquetErrorReason, ParquetResult};
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::slicer::DataPageSlicer;
 use crate::parquet_read::ColumnChunkBuffers;
@@ -118,7 +118,7 @@ impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
                     .extend_from_slice(self.buffers.data_vec.len().to_le_bytes().as_ref())?;
             }
             Err(utf8_str_err) => {
-                self.error = Err(ParquetErrorCause::Utf8Decode(utf8_str_err).into_err());
+                self.error = Err(ParquetErrorReason::Utf8Decode(utf8_str_err).into_err());
                 self.push_null()?;
             }
         }

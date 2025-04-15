@@ -225,7 +225,10 @@ public class ColumnPurgeOperator implements Closeable {
                 final long updateRowId = updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_UPDATE_ROW_ID);
                 int columnTypeRaw = task.getColumnType();
                 int columnType = Math.abs(columnTypeRaw);
-                boolean isSymbolRootFiles = ColumnType.isSymbol(columnType)
+                // We don't know the type of the column, the files are found on the disk but column
+                // does not exist in the table metadata (e.g. column was dropped)
+                boolean columnTypeRogue = columnTypeRaw == ColumnType.UNDEFINED;
+                boolean isSymbolRootFiles = (ColumnType.isSymbol(columnType) || columnTypeRogue)
                         && partitionTimestamp == PurgingOperator.TABLE_ROOT_PARTITION;
 
                 int pathTrimToPartition;
@@ -241,14 +244,17 @@ public class ColumnPurgeOperator implements Closeable {
                 }
 
                 // perform existence check ahead of trying to remove files
-                if (!ff.exists(path.$())) {
+                if (!ff.exists(path.$()) && !columnTypeRogue) {
                     if (ColumnType.isVarSize(columnType)) {
                         path.trimTo(pathTrimToPartition);
                         if (!ff.exists(TableUtils.iFile(path, columnName, columnVersion))) {
                             completedRowIds.add(updateRowId);
                             continue;
                         }
-                    } else if (isSymbolRootFiles) {
+                    } else if (ColumnType.isSymbol(columnType)) {
+                        // In case of symbol root files, we need to check if .k and .v files exist in table root
+                        // In case of symbol files in partition, we need to check if .k and .v files exist in partition
+                        // that can be index files after index drop SQL.
                         if (!ff.exists(TableUtils.offsetFileName(path.trimTo(pathTrimToPartition), columnName, columnVersion))) {
                             if (!ff.exists(BitmapIndexUtils.keyFileName(path.trimTo(pathTrimToPartition), columnName, columnVersion))) {
                                 if (!ff.exists(BitmapIndexUtils.valueFileName(path.trimTo(pathTrimToPartition), columnName, columnVersion))) {
@@ -316,7 +322,7 @@ public class ColumnPurgeOperator implements Closeable {
                     continue;
                 }
 
-                if (ColumnType.isVarSize(columnType)) {
+                if (ColumnType.isVarSize(columnType) || columnTypeRogue) {
                     path.trimTo(pathTrimToPartition);
                     TableUtils.iFile(path, columnName, columnVersion);
 
@@ -327,7 +333,7 @@ public class ColumnPurgeOperator implements Closeable {
                 }
 
                 // Check if it's symbol, try remove .k and .v files in the partition
-                if (ColumnType.isSymbol(columnType)) {
+                if (ColumnType.isSymbol(columnType) || columnTypeRogue) {
                     if (isSymbolRootFiles) {
                         path.trimTo(pathTrimToPartition);
                         if (couldNotRemove(ff, TableUtils.charFileName(path, columnName, columnVersion))) {

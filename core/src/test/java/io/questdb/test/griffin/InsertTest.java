@@ -87,7 +87,7 @@ public class InsertTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
-        engine.getMatViewGraph().clear();
+        engine.getMatViewStateStore().clear();
     }
 
     @Test

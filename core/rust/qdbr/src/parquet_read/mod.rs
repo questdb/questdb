@@ -1,7 +1,7 @@
 use crate::allocator::{AcVec, QdbAllocator};
-use crate::parquet::col_type::ColumnType;
 use crate::parquet::qdb_metadata::QdbMeta;
 use parquet2::metadata::FileMetaData;
+use qdb_core::col_type::ColumnType;
 use std::io::{Read, Seek};
 
 mod column_sink;
@@ -84,9 +84,9 @@ pub struct ColumnChunkStats {
 #[cfg(test)]
 mod tests {
     use crate::allocator::TestAllocatorState;
-    use crate::parquet::col_type::ColumnTypeTag;
     use crate::parquet::error::ParquetResult;
     use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol};
+    use crate::parquet::tests::ColumnTypeTagExt;
     use crate::parquet_read::{ParquetDecoder, RowGroupBuffers};
     use parquet::basic::{ConvertedType, LogicalType, Type as PhysicalType};
     use parquet::data_type::{ByteArray, ByteArrayType};
@@ -94,6 +94,7 @@ mod tests {
     use parquet::file::writer::SerializedFileWriter;
     use parquet::format::KeyValue;
     use parquet::schema::types::Type;
+    use qdb_core::col_type::ColumnTypeTag;
     use std::io::Cursor;
     use std::sync::Arc;
 

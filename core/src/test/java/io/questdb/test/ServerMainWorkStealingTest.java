@@ -67,13 +67,13 @@ public class ServerMainWorkStealingTest extends AbstractBootstrapTest {
                 PropertyKey.SHARED_WORKER_NAP_THRESHOLD + "=2",
                 PropertyKey.SHARED_WORKER_SLEEP_THRESHOLD + "=3",
                 PropertyKey.CIRCUIT_BREAKER_THROTTLE + "=5",
-                PropertyKey.QUERY_TIMEOUT_SEC + "=150"
+                PropertyKey.QUERY_TIMEOUT + "=150000"
         ));
         dbPath.parent().$();
     }
 
     @Test
-    public void testServerMainParallelFilterLoadTest() throws Exception {
+    public void testWorkStealing() throws Exception {
         try (ServerMain serverMain = new ServerMain(getServerMainArgs())) {
             serverMain.start();
 

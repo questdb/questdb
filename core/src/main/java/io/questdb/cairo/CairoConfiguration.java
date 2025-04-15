@@ -498,6 +498,8 @@ public interface CairoConfiguration {
 
     int getSqlPageFrameMinRows();
 
+    double getSqlParallelFilterPreTouchThreshold();
+
     int getSqlParallelWorkStealingThreshold();
 
     int getSqlParquetFrameCacheCapacity();
@@ -723,4 +725,8 @@ public interface CairoConfiguration {
     }
 
     boolean useFastAsOfJoin();
+
+    long getWriteBackOffTimeoutOnMemPressureMs();
+
+    boolean getDebugWalApplyBlockFailureNoRetry();
 }
