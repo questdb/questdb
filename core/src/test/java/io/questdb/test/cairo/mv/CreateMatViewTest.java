@@ -26,6 +26,7 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileReader;
@@ -90,13 +91,16 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final AtomicInteger createCounter = new AtomicInteger();
 
             final Thread creator = new Thread(() -> {
-                try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
-                     SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                try (
+                        MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine);
+                        SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)
+                ) {
                     barrier.await();
                     for (int i = 0; i < iterations; i++) {
+                        // Use test alloc() function to make sure that we always free the factory.
                         execute(
                                 "create materialized view if not exists price_1h as (" +
-                                        "  select sym, last(price) as price, ts from base_price sample by 1h" +
+                                        "  select sym, alloc(42), last(price) as price, ts from base_price sample by 1h" +
                                         ") partition by DAY",
                                 executionContext
                         );
@@ -233,10 +237,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
-            final String query = "select timestamp_floor('1m', ts) as ts, avg(v) from " + TABLE1 + " order by ts";
+            final String query = "select timestamp_floor('1m', ts) as ts1, avg(v) from " + TABLE1 + " order by ts1";
             execute("create materialized view test as (" + query + ") partition by day");
 
-            assertQuery("ts\tavg\n", "test", "ts", true, true);
+            assertQuery0("ts1\tavg\n", "test", "ts1");
             assertMatViewDefinition("test", query, TABLE1, 1, 'm');
             assertMatViewMetadata("test", query, TABLE1, 1, 'm');
         });
@@ -247,10 +251,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
-            final String query = "select timestamp_floor('1m', ts, 0::timestamp) as ts, avg(v) from " + TABLE1;
+            final String query = "select timestamp_floor('1m', ts, 0::timestamp) as ts2, avg(v) from " + TABLE1;
             execute("create materialized view test as (" + query + ") partition by day");
 
-            assertQuery("ts\tavg\n", "test", "ts", true, true);
+            assertQuery0("ts2\tavg\n", "test", "ts2");
             assertMatViewDefinition("test", query, TABLE1, 1, 'm');
             assertMatViewMetadata("test", query, TABLE1, 1, 'm');
         });
@@ -280,6 +284,29 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     49,
                     "Invalid column: no_col_like_this"
             );
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
+    public void testCreateMatViewInvalidPartitionBy() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            try {
+                execute("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by 3d");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
+            }
+            assertNull(getMatViewDefinition("test"));
+
+            try {
+                execute("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by NONE");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "materialized view has to be partitioned");
+            }
             assertNull(getMatViewDefinition("test"));
         });
     }
@@ -320,7 +347,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final String query = "select ts, k, avg(v), last(v) from " + TABLE1 + " sample by 30s";
             execute("create materialized view test as (" + query + ") partition by day ttl 1 week");
 
-            assertQuery("ts\tk\tavg\tlast\n", "test", "ts", true, true);
+            assertQuery0("ts\tk\tavg\tlast\n", "test", "ts");
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
                 assertTrue(metadata.isDedupKey(0));
@@ -349,7 +376,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertEquals(ExecutionModel.CREATE_MAT_VIEW, model.getModelType());
                 ((Sinkable) model).toSink(sink);
                 TestUtils.assertEquals(
-                        "create materialized view test as (" +
+                        "create materialized view test with base " + TABLE1 + " as (" +
                                 "select-choose ts, k, avg(v) avg from (table1 sample by 30s align to calendar with offset '00:00')" +
                                 "), index(k capacity 1024) partition by DAY TTL 3 DAYS" +
                                 (Os.isWindows() ? "" : " in volume 'vol1'"),
@@ -421,30 +448,25 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
     @Test
     public void testCreateMatViewNoPartitionBy() throws Exception {
+        testCreateMatViewNoPartitionBy(true);
+    }
+
+    @Test
+    public void testCreateMatViewNoPartitionByInvalidTtl() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
-
             assertExceptionNoLeakCheck(
-                    "create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s)",
-                    78,
-                    "'partition by' expected"
-            );
-            assertNull(getMatViewDefinition("test"));
-
-            assertExceptionNoLeakCheck(
-                    "create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by 3d",
-                    92,
-                    "'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected"
-            );
-            assertNull(getMatViewDefinition("test"));
-
-            assertExceptionNoLeakCheck(
-                    "create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by NONE",
-                    92,
-                    "materialized view has to be partitioned"
+                    "create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) ttl 12 hours",
+                    83,
+                    "TTL value must be an integer multiple of partition size"
             );
             assertNull(getMatViewDefinition("test"));
         });
+    }
+
+    @Test
+    public void testCreateMatViewNoPartitionByNoParentheses() throws Exception {
+        testCreateMatViewNoPartitionBy(false);
     }
 
     @Test
@@ -528,7 +550,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final String query = "select ts, avg(v) from (select ts, k, v+10 as v from " + TABLE1 + ") sample by 30s";
             execute("create materialized view test as (" + query + ") partition by week");
 
-            assertQuery("ts\tavg\n", "test", "ts", true, true);
+            assertQuery0("ts\tavg\n", "test", "ts");
             assertMatViewDefinition("test", query, TABLE1, 30, 's');
             assertMatViewMetadata("test", query, TABLE1, 30, 's');
         });
@@ -575,7 +597,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final String query = "select ts, avg(v) from " + TABLE1 + " sample by 30s";
             execute("create materialized view test as (" + query + ") partition by day");
 
-            assertQuery("ts\tavg\n", "test", "ts", true, true);
+            assertQuery0("ts\tavg\n", "test", "ts");
             assertMatViewDefinition("test", query, TABLE1, 30, 's');
             assertMatViewMetadata("test", query, TABLE1, 30, 's');
         });
@@ -589,7 +611,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final String query = "select ts, 1L::timestamp as ts2, avg(v) from " + TABLE3 + " sample by 30s";
             execute("create materialized view test_view as (" + query + ") partition by day");
 
-            assertQuery("ts\tts2\tavg\n", "test_view", "ts", true, true);
+            assertQuery0("ts\tts2\tavg\n", "test_view", "ts");
             assertMatViewDefinition("test_view", query, TABLE3, 30, 's');
             assertMatViewMetadata("test_view", query, TABLE3, 30, 's');
         });
@@ -598,12 +620,28 @@ public class CreateMatViewTest extends AbstractCairoTest {
     @Test
     public void testCreateMatViewSampleByFill() throws Exception {
         assertMemoryLeak(() -> {
+            createTable(TABLE1);
             createTable(TABLE2);
-            final String fill = "select ts, avg(v) from " + TABLE2 + " where ts in '2024' sample by 1d fill(null)";
+
             assertExceptionNoLeakCheck(
-                    "create materialized view test as (" + fill + ") partition by day",
-                    101,
-                    "FILL is not supported for materialized views"
+                    "create materialized view test as (" +
+                            "  select ts, avg(v) from " + TABLE1 + " where ts in '2024' sample by 1d fill(null)" +
+                            ") partition by day",
+                    103,
+                    "FILL on base table is not supported for materialized views: " + TABLE1
+            );
+            assertExceptionNoLeakCheck(
+                    "create materialized view test as (" +
+                            "  with b as (" +
+                            "    select ts, avg(v) from " + TABLE1 + " sample by 1d fill(null)" +
+                            "  )" +
+                            "  select a.ts, avg(a.v)" +
+                            "  from " + TABLE1 + " a " +
+                            "  left outer join b on a.ts = b.ts" +
+                            "  sample by 1d" +
+                            ") partition by day",
+                    99,
+                    "FILL on base table is not supported for materialized views: " + TABLE1
             );
         });
     }
@@ -617,12 +655,26 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "create materialized view test as (" + from + ") partition by day",
                     101,
-                    "FROM-TO is not supported for materialized views"
+                    "FROM-TO on base table is not supported for materialized views: " + TABLE2
             );
             assertExceptionNoLeakCheck(
                     "create materialized view test as (" + to + ") partition by day",
                     99,
-                    "FROM-TO is not supported for materialized views"
+                    "FROM-TO on base table is not supported for materialized views: " + TABLE2
+            );
+
+            assertExceptionNoLeakCheck(
+                    "create materialized view test as (" +
+                            "  with b as (" +
+                            "    select ts, avg(v) from " + TABLE2 + " sample by 1d from '2024-03-01' to '2024-06-30'" +
+                            "  )" +
+                            "  select a.ts, avg(a.v)" +
+                            "  from " + TABLE2 + " a " +
+                            "  left outer join b on a.ts = b.ts" +
+                            "  sample by 1d" +
+                            ") partition by day",
+                    99,
+                    "FROM-TO on base table is not supported for materialized views: " + TABLE2
             );
         });
     }
@@ -635,7 +687,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "create materialized view test as (" + fill + ") partition by day",
                     94,
-                    "FILL is not supported for materialized views"
+                    "FILL on base table is not supported for materialized views: " + TABLE2
             );
         });
     }
@@ -649,12 +701,12 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "create materialized view test as (" + from + ") partition by day",
                     93,
-                    "FROM-TO is not supported for materialized views"
+                    "FROM-TO on base table is not supported for materialized views: " + TABLE2
             );
             assertExceptionNoLeakCheck(
                     "create materialized view test as (" + to + ") partition by day",
                     91,
-                    "FROM-TO is not supported for materialized views"
+                    "FROM-TO on base table is not supported for materialized views: " + TABLE2
             );
         });
     }
@@ -668,7 +720,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final String query = "select ts, avg(v) from " + TABLE1 + " where ts in '2024' sample by 1d align to calendar time zone '" + tz + "'";
             execute("create materialized view test as (" + query + ") partition by day");
 
-            assertQuery("ts\tavg\n", "test", "ts", true, true);
+            assertQuery0("ts\tavg\n", "test", "ts");
             assertMatViewDefinition("test", query, TABLE1, 1, 'd', tz, null);
             assertMatViewMetadata("test", query, TABLE1, 1, 'd', tz, null);
         });
@@ -683,7 +735,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final String query = "select ts, avg(v) from " + TABLE1 + " where ts in '2024' sample by 1d align to calendar time zone '" + tz + "'";
             execute("create materialized view test as (" + query + ") partition by day");
 
-            assertQuery("ts\tavg\n", "test", "ts", true, true);
+            assertQuery0("ts\tavg\n", "test", "ts");
             assertMatViewDefinition("test", query, TABLE1, 1, 'd', tz, null);
             assertMatViewMetadata("test", query, TABLE1, 1, 'd', tz, null);
         });
@@ -699,7 +751,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final String query = "select ts, avg(v) from " + TABLE1 + " where ts in '2024' sample by 1d align to calendar time zone '" + tz + "' with offset '" + offset + "'";
             execute("create materialized view test as (" + query + ") partition by day");
 
-            assertQuery("ts\tavg\n", "test", "ts", true, true);
+            assertQuery0("ts\tavg\n", "test", "ts");
             assertMatViewDefinition("test", query, TABLE1, 1, 'd', tz, offset);
             assertMatViewMetadata("test", query, TABLE1, 1, 'd', tz, offset);
         });
@@ -714,7 +766,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final String query = "select ts, avg(v) from " + TABLE1 + " where ts in '2024' sample by 1d align to calendar with offset '" + offset + "'";
             execute("create materialized view test as (" + query + ") partition by day");
 
-            assertQuery("ts\tavg\n", "test", "ts", true, true);
+            assertQuery0("ts\tavg\n", "test", "ts");
             assertMatViewDefinition("test", query, TABLE1, 1, 'd', null, offset);
             assertMatViewMetadata("test", query, TABLE1, 1, 'd', null, offset);
         });
@@ -743,6 +795,54 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewTtlNoPartitionBy() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query = "select ts, k, max(v) as v_max from " + TABLE1 + " sample by 1h";
+            execute("CREATE MATERIALIZED VIEW test AS (" + query + ") TTL 1 MONTH;");
+            assertMatViewDefinition("test", query, TABLE1, 1, 'h');
+            assertMatViewMetadata("test", query, TABLE1, 1, 'h');
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
+                assertEquals(0, metadata.getTimestampIndex());
+                assertTrue(metadata.isDedupKey(0));
+                assertTrue(metadata.isDedupKey(1));
+                assertFalse(metadata.isDedupKey(2));
+                assertEquals(-1, metadata.getTtlHoursOrMonths());
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewUnion() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createTable(TABLE2);
+
+            try {
+                execute(
+                        "create materialized view test with base " + TABLE1 + " as (" +
+                                "  with b as (" +
+                                "    select ts, v from " + TABLE2 +
+                                "    union all" +
+                                "    select ts, v from " + TABLE1 +
+                                "  )" +
+                                "  select a.ts, avg(a.v)" +
+                                "  from " + TABLE1 + " a " +
+                                "  left outer join b on a.ts = b.ts" +
+                                "  sample by 1d" +
+                                ") partition by day"
+                );
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "union on base table is not supported for materialized views: " + TABLE1);
+                Assert.assertEquals(106, e.getPosition());
+            }
+        });
+    }
+
+    @Test
     public void testCreateMatViewWindowFunctions() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -750,7 +850,20 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "create materialized view test as (" + query + ") partition by week",
                     45,
-                    "window function is not supported for materialized views"
+                    "window function on base table is not supported for materialized views: " + TABLE1
+            );
+            assertExceptionNoLeakCheck(
+                    "create materialized view test as (" +
+                            "  with b as (" +
+                            "    select ts, avg(v) over (order by ts) as v_max from " + TABLE1 + " sample by 30s" +
+                            "  )" +
+                            "  select a.ts, avg(a.v)" +
+                            "  from " + TABLE1 + " a " +
+                            "  left outer join b on a.ts = b.ts" +
+                            "  sample by 1d" +
+                            ") partition by day",
+                    62,
+                    "window function on base table is not supported for materialized views: " + TABLE1
             );
         });
     }
@@ -764,7 +877,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final String query = "select t1.ts, avg(t1.v) from " + TABLE1 + " as t1 join " + TABLE2 + " as t2 on v sample by 60s";
             execute("create materialized view test with base " + TABLE1 + " as (" + query + ") partition by day");
 
-            assertQuery("ts\tavg\n", "test", "ts", true, true);
+            assertQuery0("ts\tavg\n", "test", "ts");
             assertMatViewDefinition("test", query, TABLE1, 60, 's');
             assertMatViewMetadata("test", query, TABLE1, 60, 's');
         });
@@ -781,6 +894,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     25,
                     "table with the requested name already exists"
             );
+
             assertExceptionNoLeakCheck(
                     "create materialized view if not exists " + TABLE2 + " as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day",
                     39,
@@ -791,6 +905,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             execute("create materialized view test as (" + query + ") partition by day");
 
             // without IF NOT EXISTS
+            // assertMatViewDefinition() fails with "definition is null" when this assertException is called!
             assertExceptionNoLeakCheck(
                     "create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day",
                     25,
@@ -818,7 +933,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final String query = "select ts, k, avg(v) from " + TABLE1 + " sample by 30s";
             execute("create materialized view test as (" + query + "), index (k) partition by day");
 
-            assertQuery("ts\tk\tavg\n", "test", "ts", true, true);
+            assertQuery0("ts\tk\tavg\n", "test", "ts");
             assertMatViewDefinition("test", query, TABLE1, 30, 's');
             assertMatViewMetadata("test", query, TABLE1, 30, 's');
 
@@ -925,7 +1040,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
             execute("create materialized view test as (" + query + ") partition by day");
 
-            assertQuery("ts\tdoubleV\tavg\n", "test", "ts", true, true);
+            assertQuery0("ts\tdoubleV\tavg\n", "test", "ts");
             assertMatViewDefinition("test", query, TABLE1, 30, 's');
             assertMatViewMetadata("test", query, TABLE1, 30, 's');
         });
@@ -949,9 +1064,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                     barrier.await();
                     for (int i = 0; i < iterations; i++) {
+                        // Use test alloc() function to make sure that we always free the factory.
                         execute(
                                 "create materialized view if not exists price_1h as (" +
-                                        "  select sym, last(price) as price, ts from base_price sample by 1h" +
+                                        "  select sym, alloc(42), last(price) as price, ts from base_price sample by 1h" +
                                         ") partition by DAY",
                                 executionContext
                         );
@@ -1390,6 +1506,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
             execute("create materialized view test as (" + query + ") partition by day");
+
             assertExceptionNoLeakCheck(
                     "show create materialized test",
                     25,
@@ -1537,7 +1654,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
             String timeZoneOffset
     ) {
         final TableToken matViewToken = engine.getTableTokenIfExists(name);
-        try (BlockFileReader reader = new BlockFileReader(configuration); Path path = new Path()) {
+        try (
+                BlockFileReader reader = new BlockFileReader(configuration);
+                Path path = new Path()
+        ) {
             path.of(configuration.getDbRoot());
             final int rootLen = path.size();
             MatViewDefinition matViewDefinition = new MatViewDefinition();
@@ -1567,8 +1687,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
         return engine.getMatViewGraph().getViewDefinition(matViewToken);
     }
 
-    private void createTable(String tableName) throws SqlException {
-        createTable(tableName, true);
+    private void assertQuery0(String expected, String query, String expectedTimestamp) throws Exception {
+        assertQueryFullFatNoLeakCheck(expected, query, expectedTimestamp, true, true, false);
     }
 
     private void createTable(String tableName, boolean walEnabled) throws SqlException {
@@ -1582,6 +1702,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
         }
     }
 
+    private void createTable(String tableName) throws SqlException {
+        createTable(tableName, true);
+    }
+
     private void drainQueues() {
         drainWalQueue();
         try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
@@ -1592,6 +1716,38 @@ public class CreateMatViewTest extends AbstractCairoTest {
         // purge job may create MatViewRefreshList for existing tables by calling engine.getDependentMatViews();
         // this affects refresh logic in some scenarios, so make sure to run it
         runWalPurgeJob();
+    }
+
+    private void testCreateMatViewNoPartitionBy(boolean useParentheses) throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            testCreateMatViewNoPartitionBy(10, 's', PartitionBy.DAY, useParentheses);
+            testCreateMatViewNoPartitionBy(1, 'm', PartitionBy.DAY, useParentheses);
+            testCreateMatViewNoPartitionBy(2, 'm', PartitionBy.MONTH, useParentheses);
+            testCreateMatViewNoPartitionBy(1, 'h', PartitionBy.MONTH, useParentheses);
+            testCreateMatViewNoPartitionBy(2, 'h', PartitionBy.YEAR, useParentheses);
+            testCreateMatViewNoPartitionBy(70, 'm', PartitionBy.YEAR, useParentheses);
+            testCreateMatViewNoPartitionBy(12, 'M', PartitionBy.YEAR, useParentheses);
+            testCreateMatViewNoPartitionBy(2, 'y', PartitionBy.YEAR, useParentheses);
+        });
+    }
+
+    private void testCreateMatViewNoPartitionBy(int samplingInterval, char samplingIntervalUnit, int expectedPartitionBy, boolean useParentheses) throws SqlException {
+        final String sampleBy = String.valueOf(samplingInterval) + samplingIntervalUnit;
+        final String matViewName = TABLE1 + '_' + sampleBy;
+        final String query = "select ts, avg(v) from " + TABLE1 + " sample by " + sampleBy;
+        if (useParentheses) {
+            execute("create materialized view " + matViewName + " as (" + query + ")");
+        } else {
+            execute("create materialized view " + matViewName + " as " + query);
+        }
+
+        try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists(matViewName))) {
+            assertEquals(expectedPartitionBy, metadata.getPartitionBy());
+        }
+        assertMatViewDefinition(matViewName, query, TABLE1, samplingInterval, samplingIntervalUnit);
+        assertMatViewMetadata(matViewName, query, TABLE1, samplingInterval, samplingIntervalUnit);
     }
 
     private void testCreateMatViewNonDeterministicFunction(String func, String columnName) throws Exception {
@@ -1625,9 +1781,5 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertExceptionNoLeakCheck(queries[i], errorPositions[i], errorMessage);
             }
         });
-    }
-
-    protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
-        assertQueryFullFatNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false);
     }
 }
