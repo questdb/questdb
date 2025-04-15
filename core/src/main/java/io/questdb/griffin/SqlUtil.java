@@ -382,6 +382,14 @@ public class SqlUtil {
         throw ImplicitCastException.inconvertibleValue(value, ColumnType.FLOAT, ColumnType.BYTE);
     }
 
+    public static double implicitCastFloatAsDouble(float value) {
+        if (Numbers.isNull(value)) {
+            return Double.NaN;
+        }
+
+        return value;
+    }
+
     @SuppressWarnings("unused")
     // used by the row copier
     public static int implicitCastFloatAsInt(float value) {
