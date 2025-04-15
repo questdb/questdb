@@ -32,13 +32,15 @@ import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
-import io.questdb.cairo.mv.MatViewRefreshState;
+import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.std.Chars;
+import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -834,47 +836,75 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateMatViewWithNonDedupBaseKeys() throws Exception {
+    public void testCreateMatViewWithInvalidVolumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute(
-                    "create table x " +
-                            " (ts timestamp, k1 symbol, k2 symbol, v long)" +
-                            " timestamp(ts) partition by day wal dedup upsert keys(ts, k1);"
+            createTable(TABLE1);
+            assertException(
+                    "create materialized view testView as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day in volume aaa",
+                    110,
+                    "volume alias is not allowed [alias=aaa]"
             );
-            execute(
-                    "create table y " +
-                            " (ts timestamp, k1 symbol, k2 symbol, v long)" +
-                            " timestamp(ts) partition by day wal;"
-            );
-
-            final String[] queries = new String[]{
-                    "create materialized view x_hourly as (select ts, k2, avg(v) from x sample by 1h) partition by day;",
-                    "create materialized view x_hourly as (select xx.ts, xx.k2, avg(xx.v) from x as xx sample by 1h) partition by day;",
-                    "create materialized view x_hourly as (select ts, k1, k2, avg(v) from x sample by 1h) partition by day;",
-                    "create materialized view x_hourly as (select ts, concat(k1, k2) k, avg(v) from x sample by 1h) partition by day;",
-                    "create materialized view x_hourly as (select ts, k, avg(v) from (select concat(k1, k2) k, v, ts from x) sample by 1h) partition by day;",
-                    "create materialized view x_hourly as (select ts, k, avg(v) from (select concat(k2, 'foobar') k, v, ts from x) sample by 1h) partition by day;",
-                    "create materialized view x_hourly as (select ts, k, avg(v) from (select concat('foobar', k2) k, v, ts from x) sample by 1h) partition by day;",
-                    "create materialized view x_hourly as (select ts, k, avg(v) from (select ts, k2 as k, v from x) sample by 1h) partition by day;",
-                    "create materialized view test with base x as (select t1.ts, t1.k2, avg(t1.v) from x as t1 join y as t2 on v sample by 1m) partition by day",
-                    "create materialized view test with base x as (select t1.ts, t2.k1, avg(t1.v) from x as t1 join y as t2 on v sample by 1m) partition by day",
-                    "create materialized view test with base x as (select \"t1\".\"ts\", \"t2\".\"k1\", avg(\"t1\".\"v\") from \"x\" as \"t1\" join \"y\" as \"t2\" on \"v\" sample by 1m) partition by day",
-                    // test table alias case-insensitivity
-                    "create materialized view test with base x as (select \"t1\".\"ts\", \"t2\".\"k1\", avg(\"t1\".\"v\") from \"x\" as \"T1\" join \"y\" as \"T2\" on \"v\" sample by 1m) partition by day",
-                    "create materialized view test with base x as (select t1.ts, t2.k1, avg(t1.v) from x as t1 join y as t2 on v sample by 1m) partition by day",
-                    // test table name case-insensitivity
-                    "create materialized view test with base x as (select t1.ts, t2.k1, avg(t1.v) from x as T1 join y as T2 on v sample by 1m) partition by day",
-            };
-
-            for (String query : queries) {
-                try {
-                    execute(query);
-                    fail("Expected SqlException missing for " + query);
-                } catch (SqlException e) {
-                    TestUtils.assertContains(query, e.getFlyweightMessage(), "base table");
-                }
-            }
         });
+    }
+
+    @Test
+    public void testCreateMatViewWithNonBaseTableKeys() throws Exception {
+        final String[] queries = new String[]{
+                "create materialized view test with base x as (select t1.ts, t2.k1, avg(t1.v) from x as t1 join y as t2 on v sample by 1m) partition by day",
+                "create materialized view test with base x as (select \"t1\".\"ts\", \"t2\".\"k1\", avg(\"t1\".\"v\") from \"x\" as \"t1\" join \"y\" as \"t2\" on \"v\" sample by 1m) partition by day",
+                // test table alias case-insensitivity
+                "create materialized view test with base x as (select \"t1\".\"ts\", \"t2\".\"k1\", avg(\"t1\".\"v\") from \"x\" as \"T1\" join \"y\" as \"T2\" on \"v\" sample by 1m) partition by day",
+                "create materialized view test with base x as (select t1.ts, t2.k1, avg(t1.v) from x as t1 join y as t2 on v sample by 1m) partition by day",
+                // test table name case-insensitivity
+                "create materialized view test with base x as (select t1.ts, t2.k1, avg(t1.v) from x as T1 join y as T2 on v sample by 1m) partition by day",
+        };
+
+        final int[] errorPositions = new int[]{
+                60,
+                64,
+                64,
+                60,
+                60
+        };
+
+        testCreateMatViewWithNonDedupBaseKeys(
+                queries,
+                "only base table columns can be used as materialized view keys [invalid key=t2.k1]",
+                errorPositions
+        );
+    }
+
+    @Test
+    public void testCreateMatViewWithNonDedupBaseKeys() throws Exception {
+        final String[] queries = new String[]{
+                "create materialized view x_hourly as (select ts, k2, avg(v) from x sample by 1h) partition by day;",
+                "create materialized view x_hourly as (select xx.ts, xx.k2, avg(xx.v) from x as xx sample by 1h) partition by day;",
+                "create materialized view x_hourly as (select ts, k1, k2, avg(v) from x sample by 1h) partition by day;",
+                "create materialized view x_hourly as (select ts, concat(k1, k2) k, avg(v) from x sample by 1h) partition by day;",
+                "create materialized view x_hourly as (select ts, k, avg(v) from (select concat(k1, k2) k, v, ts from x) sample by 1h) partition by day;",
+                "create materialized view x_hourly as (select ts, k, avg(v) from (select concat(k2, 'foobar') k, v, ts from x) sample by 1h) partition by day;",
+                "create materialized view x_hourly as (select ts, k, avg(v) from (select concat('foobar', k2) k, v, ts from x) sample by 1h) partition by day;",
+                "create materialized view x_hourly as (select ts, k, avg(v) from (select ts, k2 as k, v from x) sample by 1h) partition by day;",
+                "create materialized view test with base x as (select t1.ts, t1.k2, avg(t1.v) from x as t1 join y as t2 on v sample by 1m) partition by day"
+        };
+
+        final int[] errorPositions = new int[]{
+                49,
+                52,
+                53,
+                60,
+                83,
+                79,
+                89,
+                76,
+                60
+        };
+
+        testCreateMatViewWithNonDedupBaseKeys(
+                queries,
+                "key column must be one of the base table's dedup keys [columnName=k2, baseTableName=x, baseTableDedupKeys=[ts,k1]]",
+                errorPositions
+        );
     }
 
     @Test
@@ -1096,36 +1126,39 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 final TableToken matViewToken = engine.getTableTokenIfExists("test");
                 final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
                 assertNotNull(matViewDefinition);
-                final MatViewRefreshState matViewRefreshState = engine.getMatViewGraph().getViewRefreshState(matViewToken);
-                assertNotNull(matViewRefreshState);
+                final MatViewState matViewState = engine.getMatViewStateStore().getViewState(matViewToken);
+                assertNotNull(matViewState);
 
                 try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
-                    writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                    writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
                     // Add unknown block.
                     AppendableBlock block = writer.append();
                     block.putStr("foobar");
-                    block.commit(MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_TYPE + 1);
+                    block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_MSG_TYPE - 1);
                     // Then write mat view state.
                     block = writer.append();
-                    MatViewRefreshState.append(matViewRefreshState, block);
-                    block.commit(MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_TYPE);
+                    MatViewState.appendState(
+                            matViewState.getLastRefreshBaseTxn(),
+                            matViewState.isInvalid(),
+                            matViewState.getInvalidationReason(),
+                            block
+                    );
+                    block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_MSG_TYPE);
+                    block = writer.append();
+                    MatViewState.appendTs(matViewState.getLastRefreshTimestamp(), block);
+                    block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE);
                     writer.commit();
                 }
 
                 // Reader should ignore unknown block.
                 try (BlockFileReader reader = new BlockFileReader(configuration)) {
-                    reader.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                    MatViewRefreshState actualState = new MatViewRefreshState(
-                            matViewDefinition,
-                            false,
-                            (event, tableToken, baseTableTxn, errorMessage, latencyUs) -> {
-                            }
-                    );
-                    MatViewRefreshState.readFrom(reader, actualState);
+                    reader.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                    MatViewStateReader actualState = new MatViewStateReader().of(reader, matViewToken);
 
-                    assertEquals(matViewRefreshState.isInvalid(), actualState.isInvalid());
-                    assertEquals(matViewRefreshState.getLastRefreshBaseTxn(), actualState.getLastRefreshBaseTxn());
-                    assertEquals(matViewRefreshState.getInvalidationReason(), actualState.getInvalidationReason());
+                    assertEquals(matViewState.isInvalid(), actualState.isInvalid());
+                    assertEquals(matViewState.getLastRefreshBaseTxn(), actualState.getLastRefreshBaseTxn());
+                    assertEquals(matViewState.getLastRefreshTimestamp(), actualState.getLastRefreshTimestamp());
+                    assertEquals(matViewState.getInvalidationReason(), actualState.getInvalidationReason());
                 }
             }
         });
@@ -1184,6 +1217,87 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 Assert.fail("exception expected");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "invalid offset: T00:00");
+            }
+        });
+    }
+
+    @Test
+    public void testMatViewStateFileBackwardsCompatibility() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                createTable(TABLE1);
+
+                final String query = "select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
+                execute("create materialized view test as (" + query + ") partition by day");
+                drainQueues();
+
+                final TableToken matViewToken = engine.getTableTokenIfExists("test");
+                final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                assertNotNull(matViewDefinition);
+                final MatViewState matViewState = engine.getMatViewStateStore().getViewState(matViewToken);
+                assertNotNull(matViewState);
+
+                // add V1 block, no last refresh timestamp
+                try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
+                    writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                    final AppendableBlock block = writer.append();
+                    block.putBool(matViewState.isInvalid());
+                    block.putLong(matViewState.getLastRefreshBaseTxn());
+                    block.putStr(matViewState.getInvalidationReason());
+                    block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_MSG_TYPE);
+                    writer.commit();
+                }
+
+                // expect V1 state format, no last refresh timestamp
+                try (BlockFileReader reader = new BlockFileReader(configuration)) {
+                    reader.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                    MatViewStateReader actualState = new MatViewStateReader().of(reader, matViewToken);
+
+                    assertEquals(matViewState.isInvalid(), actualState.isInvalid());
+                    assertEquals(matViewState.getLastRefreshBaseTxn(), actualState.getLastRefreshBaseTxn());
+                    assertEquals(Numbers.LONG_NULL, actualState.getLastRefreshTimestamp());
+                    assertEquals(matViewState.getInvalidationReason(), actualState.getInvalidationReason());
+                }
+
+                // add V2 block
+                try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
+                    writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                    MatViewState.append(matViewState, writer);
+                }
+
+                // expect V2 state format
+                try (BlockFileReader reader = new BlockFileReader(configuration)) {
+                    reader.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                    MatViewStateReader actualState = new MatViewStateReader().of(reader, matViewToken);
+
+                    assertEquals(matViewState.isInvalid(), actualState.isInvalid());
+                    assertEquals(matViewState.getLastRefreshBaseTxn(), actualState.getLastRefreshBaseTxn());
+                    assertEquals(matViewState.getLastRefreshTimestamp(), actualState.getLastRefreshTimestamp());
+                    assertEquals(matViewState.getInvalidationReason(), actualState.getInvalidationReason());
+                }
+
+                // add V1 block, then V2 block
+                try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
+                    writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                    final AppendableBlock block = writer.append();
+                    block.putBool(matViewState.isInvalid());
+                    block.putLong(matViewState.getLastRefreshBaseTxn());
+                    block.putStr(matViewState.getInvalidationReason());
+                    block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_MSG_TYPE);
+
+                    MatViewState.append(matViewState, writer);
+                }
+
+                // expect V2 state format
+                try (BlockFileReader reader = new BlockFileReader(configuration)) {
+                    reader.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                    MatViewStateReader actualState = new MatViewStateReader().of(reader, matViewToken);
+
+                    assertEquals(matViewState.isInvalid(), actualState.isInvalid());
+                    assertEquals(matViewState.getLastRefreshBaseTxn(), actualState.getLastRefreshBaseTxn());
+                    assertEquals(matViewState.getLastRefreshTimestamp(), actualState.getLastRefreshTimestamp());
+                    assertEquals(matViewState.getInvalidationReason(), actualState.getInvalidationReason());
+                }
             }
         });
     }
@@ -1349,28 +1463,22 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 final TableToken matViewToken = engine.getTableTokenIfExists("test");
                 final MatViewDefinition matViewDefinition = engine.getMatViewGraph().getViewDefinition(matViewToken);
                 assertNotNull(matViewDefinition);
-                final MatViewRefreshState matViewRefreshState = engine.getMatViewGraph().getViewRefreshState(matViewToken);
-                assertNotNull(matViewRefreshState);
+                final MatViewState matViewState = engine.getMatViewStateStore().getViewState(matViewToken);
+                assertNotNull(matViewState);
 
                 try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
-                    writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
+                    writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
                     // Add unknown block.
                     AppendableBlock block = writer.append();
                     block.putStr("foobar");
-                    block.commit(MatViewRefreshState.MAT_VIEW_STATE_FORMAT_MSG_TYPE + 1);
+                    block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_MSG_TYPE - 1);
                     writer.commit();
                 }
 
                 // Reader should fail to load unknown state file.
                 try (BlockFileReader reader = new BlockFileReader(configuration)) {
-                    reader.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                    MatViewRefreshState actualState = new MatViewRefreshState(
-                            matViewDefinition,
-                            false,
-                            (event, tableToken, baseTableTxn, errorMessage, latencyUs) -> {
-                            }
-                    );
-                    MatViewRefreshState.readFrom(reader, actualState);
+                    reader.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                    new MatViewStateReader().of(reader, matViewToken);
                     Assert.fail("exception expected");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "cannot read materialized view state, block not found");
@@ -1464,6 +1572,18 @@ public class CreateMatViewTest extends AbstractCairoTest {
         }
     }
 
+    private void drainQueues() {
+        drainWalQueue();
+        try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine)) {
+            while (refreshJob.run(0)) {
+            }
+            drainWalQueue();
+        }
+        // purge job may create MatViewRefreshList for existing tables by calling engine.getDependentMatViews();
+        // this affects refresh logic in some scenarios, so make sure to run it
+        runWalPurgeJob();
+    }
+
     private void testCreateMatViewNonDeterministicFunction(String func, String columnName) throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -1473,6 +1593,27 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     "Non-deterministic column: " + columnName
             );
             assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    private void testCreateMatViewWithNonDedupBaseKeys(String[] queries, String errorMessage, int[] errorPositions) throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x " +
+                            " (ts timestamp, k1 symbol, k2 symbol, v long)" +
+                            " timestamp(ts) partition by day wal dedup upsert keys(ts, k1);"
+            );
+            execute(
+                    "create table y " +
+                            " (ts timestamp, k1 symbol, k2 symbol, v long)" +
+                            " timestamp(ts) partition by day wal;"
+            );
+
+            Assert.assertEquals("queries and error position arrays must be the same length", queries.length, errorPositions.length);
+
+            for (int i = 0, n = queries.length; i < n; i++) {
+                assertExceptionNoLeakCheck(queries[i], errorPositions[i], errorMessage);
+            }
         });
     }
 
