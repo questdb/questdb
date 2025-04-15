@@ -57,7 +57,7 @@ public class ObjectStackPool<T extends Mutable> implements Mutable {
 
     @Override
     public void clear() {
-        resetCapacity();
+        stack.clear();
     }
 
     public int getCapacity() {

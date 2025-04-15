@@ -85,30 +85,35 @@ public class ObjStack<T> implements Mutable {
     }
 
     /**
-     * The stack is peculiar, it starts off existence with unpopulated array of the
-     * initial capacity. The assumption is that when push() is called, there is guaranteed space
-     * in the array. The resetCapacity() is expected to work when stack is full, e.g. we
-     * should preserve the most recent items and remove the oldest ones. We can do that,
-     * however, we need to ensure there is space in the array for the next push() call, if it was to come.
-     * <p>
-     * We create new array, double of the initial capacity. We copy the exactly initial capacity number of elements from the larger array into the beginning
-     * of the new array. Now we have free space of initial capacity elements at the end of the new array.
-     * We configure, head, tail, mask in such a way, push() will begin to write to the beginning of the
-     * second half of our new array. head = 0, tail = half-new-array-size, mask = new-array-size - 1
+     * Resets the capacity of the stack to exactly initialCapacity.
+     * Intentionally keeps only the most recent (initialCapacity-1) elements,
+     * discarding older elements. This ensures the stack has exactly one free
+     * slot after resetting for the next push operation.
      */
     @SuppressWarnings("unchecked")
     public void resetCapacity() {
-        if (elements.length > initialCapacity * 2) {
-            int h = head;
-            int n = elements.length;
-            int r = n - h;
-            T[] old = elements;
-            this.elements = (T[]) new Object[initialCapacity * 2];
-            System.arraycopy(old, h, elements, 0, Math.min(initialCapacity, r));
-            mask = initialCapacity * 2 - 1;
-            head = 0;
-            tail = initialCapacity;
+        int h = head;
+        int n = elements.length;
+        int size = size();
+        int newCapacity = initialCapacity;
+        T[] next = (T[]) new Object[newCapacity];
+        int maxCopy = newCapacity - 1;
+        if (size > 0) {
+            int t = (h + size) & mask;
+            if (head < t) {
+                System.arraycopy(elements, h, next, 0, Math.min(size, maxCopy));
+            } else {
+                int r = Math.min(n - h, maxCopy);
+                System.arraycopy(elements, h, next, 0, r);
+                if (r < maxCopy && t < head) {
+                    System.arraycopy(elements, 0, next, r, Math.min(t, maxCopy - r));
+                }
+            }
         }
+        head = 0;
+        tail = Math.min(size, maxCopy);
+        elements = next;
+        mask = maxCopy;
     }
 
     public int size() {
@@ -139,7 +144,6 @@ public class ObjStack<T> implements Mutable {
         T[] next = (T[]) new Object[newCapacity];
         System.arraycopy(elements, h, next, 0, r);
         System.arraycopy(elements, 0, next, r, h);
-        Arrays.fill(next, r + h, newCapacity, null);
         elements = next;
         head = 0;
         tail = n;

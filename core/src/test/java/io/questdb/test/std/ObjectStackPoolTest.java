@@ -62,7 +62,21 @@ public class ObjectStackPoolTest {
         pool.clear();
 
         // The stack should be reset (capacity reduced) but outieCount should remain unchanged
-        assertEquals("Size should be 0 after clear", INITIAL_CAPACITY, pool.getSize());
+        assertEquals("Size should be 0 after clear", 0, pool.getSize());
+        assertEquals("OutieCount should remain unchanged", 2, pool.getOutieCount());
+    }
+
+    @Test
+    public void testReset() {
+        // Get some objects
+        TestMutable ignore1 = pool.next();
+        TestMutable ignore2 = pool.next();
+
+        // Clear the pool - this calls resetCapacity()
+        pool.resetCapacity();
+
+        // The stack should be reset (capacity reduced) but outieCount should remain unchanged
+        assertEquals("Size should be 0 after clear", INITIAL_CAPACITY - 2, pool.getSize());
         assertEquals("OutieCount should remain unchanged", 2, pool.getOutieCount());
     }
 
@@ -335,7 +349,7 @@ public class ObjectStackPoolTest {
         pool.resetCapacity();
 
         // The stack should be empty after capacity reset, but outieCount remains the same
-        assertEquals("Size should be initial capacity after resetCapacity", INITIAL_CAPACITY, pool.getSize());
+        assertEquals("Size should be initial capacity after resetCapacity", INITIAL_CAPACITY - 1, pool.getSize());
         assertEquals("OutieCount should remain unchanged", 0, pool.getOutieCount());
 
         // after partial pool consumption and capacity reset, we should be able to extract at least
@@ -344,7 +358,7 @@ public class ObjectStackPoolTest {
             Assert.assertNotNull(pool.next());
         }
         pool.resetCapacity();
-        assertEquals("Size should be initial capacity after resetCapacity", INITIAL_CAPACITY, pool.getSize());
+        assertEquals("Size should be initial capacity after resetCapacity", INITIAL_CAPACITY - 1, pool.getSize());
     }
 
     /**

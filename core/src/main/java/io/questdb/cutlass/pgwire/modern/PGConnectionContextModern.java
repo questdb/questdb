@@ -344,7 +344,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         tlsSessionStarting = false;
         totalReceived = 0;
         transactionState = IMPLICIT_TRANSACTION;
-        entryPool.clear();
+        entryPool.resetCapacity();
     }
 
     @Override
