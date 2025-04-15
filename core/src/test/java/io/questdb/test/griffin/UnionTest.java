@@ -344,6 +344,30 @@ public class UnionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullConversionsFromTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE foo (ts TIMESTAMP, colA DOUBLE, colB FLOAT, colC DATE, colD LONG, colE INT) timestamp(ts) PARTITION BY DAY WAL;");
+            execute("INSERT INTO foo (ts, colA, colB, colC, colD, colE) " +
+                    "SELECT '2025-04-09 17:20:00.000' AS ts, " +
+                    "null::timestamp as colA, " +
+                    "null::timestamp as colB, " +
+                    "null::timestamp as colC, " +
+                    "null::timestamp as colD, " +
+                    "null::timestamp as colE;");
+            drainWalQueue();
+
+            assertQueryNoLeakCheck(
+                    "ts\tcolA\tcolB\tcolC\tcolD\tcolE\n" +
+                            "2025-04-09T17:20:00.000000Z\tnull\tnull\tnull\tnull\tnull\n",
+                    "foo;",
+                    "ts###ASC",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testOrderByIsNotIgnoredInExceptsSecondSubquery() throws Exception {
         assertQuery("sym\tmax\n" +
                         "GWFFYUDEYY\t99\n" +

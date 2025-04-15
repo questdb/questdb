@@ -408,7 +408,7 @@ public final class ColumnType {
                 || (fromType == FLOAT && toType >= BYTE && toType <= LONG)
                 || (fromType == LONG && toType >= BYTE && toType <= INT)
                 || (fromType == DATE && toType >= BYTE && toType <= INT)
-                || (fromType == TIMESTAMP && toType >= BYTE && toType <= INT)
+                || (fromType == TIMESTAMP && ((toType >= BYTE && toType <= INT) || toType == DATE))
                 || (fromType == INT && toType >= BYTE && toType <= SHORT)
                 || (fromType == SHORT && toType == BYTE)
                 || (fromType == CHAR && toType == BYTE)
