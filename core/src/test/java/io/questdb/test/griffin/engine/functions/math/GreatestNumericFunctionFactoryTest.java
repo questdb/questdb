@@ -43,10 +43,10 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
         assertSqlWithTypes("greatest\n4:LONG\n", "select greatest(1, 4L)");
         assertSqlWithTypes("greatest\n4:LONG\n", "select greatest(1::short, 4L)");
         assertSqlWithTypes("greatest\n4:SHORT\n", "select greatest(1::short, 4::byte)");
-        assertSqlWithTypes("greatest\n4.0000:FLOAT\n", "select greatest(1::short, 4f)");
+        assertSqlWithTypes("greatest\n4.0:FLOAT\n", "select greatest(1::short, 4f)");
         assertSqlWithTypes("greatest\n4.0:DOUBLE\n", "select greatest(1::short, 4.0)");
         assertSqlWithTypes("greatest\n4.0:DOUBLE\n", "select greatest(1f, 4.0::double)");
-        assertSqlWithTypes("greatest\n4.0000:FLOAT\n", "select greatest(1f, 4::int)");
+        assertSqlWithTypes("greatest\n4.0:FLOAT\n", "select greatest(1f, 4::int)");
     }
 
     @Test
@@ -69,8 +69,8 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
 
     @Test
     public void testGreatestNumericFunctionFactoryFloats() throws Exception {
-        assertSqlWithTypes("greatest\n9.2000:FLOAT\n", "select greatest(5.3f, 9.2f)");
-        assertSqlWithTypes("greatest\n11.6000:FLOAT\n", "select greatest(5.3f, 9.2f, 6.5f, 11.6f, 3.2f)");
+        assertSqlWithTypes("greatest\n9.2:FLOAT\n", "select greatest(5.3f, 9.2f)");
+        assertSqlWithTypes("greatest\n11.6:FLOAT\n", "select greatest(5.3f, 9.2f, 6.5f, 11.6f, 3.2f)");
     }
 
     @Test

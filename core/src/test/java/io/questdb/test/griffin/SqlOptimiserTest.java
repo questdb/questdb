@@ -1953,9 +1953,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "        PageFrame\n" +
                     "            Row backward scan\n" +
                     "            Frame backward scan on: tab\n");
-            assertQueryNoLeakCheck("p1\tf1\tf2\n" +
-                    "18.0\t2.0000\t20.0000\n" +
-                    "9.0\t1.0000\t10.0000\n", q1);
+            assertQueryNoLeakCheck(
+                    "p1\tf1\tf2\n" +
+                            "18.0\t2.0\t20.0\n" +
+                            "9.0\t1.0\t10.0\n",
+                    q1
+            );
 
             String q2 = "select f2 - f1, f1, f2 from tab order by ts desc";
             assertPlanNoLeakCheck(q2, "SelectedRecord\n" +
@@ -1965,8 +1968,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "            Row backward scan\n" +
                     "            Frame backward scan on: tab\n");
             assertQueryNoLeakCheck("column\tf1\tf2\n" +
-                    "18.0\t2.0000\t20.0000\n" +
-                    "9.0\t1.0000\t10.0000\n", q2);
+                    "18.0\t2.0\t20.0\n" +
+                    "9.0\t1.0\t10.0\n", q2);
         });
     }
 

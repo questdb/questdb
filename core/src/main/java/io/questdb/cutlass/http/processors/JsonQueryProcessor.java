@@ -285,8 +285,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             LV.set(context, state = new JsonQueryProcessorState(
                     context,
                     nanosecondClock,
-                    configuration.getFloatScale(),
-                    configuration.getDoubleScale(),
                     configuration.getKeepAliveHeader()
             ));
         }
