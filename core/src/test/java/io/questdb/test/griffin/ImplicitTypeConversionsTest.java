@@ -78,7 +78,7 @@ public class ImplicitTypeConversionsTest extends AbstractCairoTest {
 
     @Test
     public void testInsertDoubleAsFloat_ReturnsApproximateValue() throws Exception {
-        testInsert("double", "12345.6789", "float", "12345.6784");
+        testInsert("double", "12345.6789", "float", "12345.679");
     }
 
     @Test
@@ -370,7 +370,7 @@ public class ImplicitTypeConversionsTest extends AbstractCairoTest {
 
     @Test
     public void testInsertNonZeroDoubleAsFloat_ReturnsValueWithoutFraction() throws Exception {
-        testInsert("double", "2.34567", "float", "2.3457");//formatting issue, number is stored properly
+        testInsert("double", "2.34567", "float", "2.34567");//formatting issue, number is stored properly
     }
 
     @Test
@@ -395,7 +395,7 @@ public class ImplicitTypeConversionsTest extends AbstractCairoTest {
 
     @Test
     public void testInsertZeroDoubleAsFloat_ReturnsExactValue() throws Exception {
-        testInsert("double", "0.0", "float", "0.0000");
+        testInsert("double", "0.0", "float", "0.0");
     }
 
     //double->int

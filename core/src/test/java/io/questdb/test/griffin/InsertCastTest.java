@@ -142,9 +142,9 @@ public class InsertCastTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertCharFunc(
                 "float",
                 "a\n" +
-                        "5.0000\n" +
-                        "3.0000\n" +
-                        "0.0000\n"
+                        "5.0\n" +
+                        "3.0\n" +
+                        "0.0\n"
         ));
     }
 
@@ -153,11 +153,11 @@ public class InsertCastTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertCharTab(
                 "float",
                 "a\n" +
-                        "5.0000\n" +
-                        "3.0000\n" +
-                        "0.0000\n" +
-                        "7.0000\n" +
-                        "0.0000\n"
+                        "5.0\n" +
+                        "3.0\n" +
+                        "0.0\n" +
+                        "7.0\n" +
+                        "0.0\n"
         ));
     }
 
@@ -339,8 +339,8 @@ public class InsertCastTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertCharBind(
                 "float",
                 "a\n" +
-                        "0.0000\n" +
-                        "3.0000\n"
+                        "0.0\n" +
+                        "3.0\n"
         ));
     }
 
@@ -349,9 +349,9 @@ public class InsertCastTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertCharLit(
                 "float",
                 "a\n" +
-                        "4.0000\n" +
-                        "7.0000\n" +
-                        "1.0000\n"
+                        "4.0\n" +
+                        "7.0\n" +
+                        "1.0\n"
         ));
     }
 
@@ -801,11 +801,11 @@ public class InsertCastTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertStrTab(
                 "float",
                 "a\tb\n" +
-                        "76.0000\t76\n" +
-                        "102.0000\t102\n" +
-                        "27.0000\t27\n" +
-                        "87.0000\t87\n" +
-                        "79.0000\t79\n"
+                        "76.0\t76\n" +
+                        "102.0\t102\n" +
+                        "27.0\t27\n" +
+                        "87.0\t87\n" +
+                        "79.0\t79\n"
         ));
     }
 
@@ -1016,8 +1016,8 @@ public class InsertCastTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertStrBind(
                 "float",
                 "a\n" +
-                        "12.0000\n" +
-                        "31.0000\n" +
+                        "12.0\n" +
+                        "31.0\n" +
                         "null\n"
         ));
     }
@@ -1027,9 +1027,9 @@ public class InsertCastTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertStrLit(
                 "float",
                 "a\n" +
-                        "45.0000\n" +
-                        "76.0000\n" +
-                        "124.0000\n"
+                        "45.0\n" +
+                        "76.0\n" +
+                        "124.0\n"
         ));
     }
 
@@ -1209,7 +1209,7 @@ public class InsertCastTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertTimestampBindNoOverflow(
                 "float",
                 "a\n" +
-                        "8.0000\n" +
+                        "8.0\n" +
                         "null\n" +
                         "8.8990229E13\n"
         ));
