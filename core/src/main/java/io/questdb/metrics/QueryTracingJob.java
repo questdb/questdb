@@ -27,6 +27,7 @@ package io.questdb.metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -35,6 +36,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.Chars;
 import io.questdb.std.ValueHolderList;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Utf8StringSink;
@@ -43,6 +45,7 @@ import java.io.Closeable;
 import java.io.IOException;
 
 public class QueryTracingJob extends SynchronizedJob implements Closeable {
+    public static final String COLUMN_ERROR = "error";
     public static final String COLUMN_EXECUTION_MICROS = "execution_micros";
     public static final String COLUMN_PRINCIPAL = "principal";
     public static final String COLUMN_QUERY_TEXT = "query_text";
@@ -81,6 +84,12 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
         TableToken tableToken;
         try {
             tableToken = engine.verifyTableName(TABLE_NAME);
+            try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
+                CompiledQuery cc = sqlCompiler.query().$("ALTER TABLE ").$(TABLE_NAME).$(" ADD COLUMN IF NOT EXISTS ").$(COLUMN_ERROR).$(" VARCHAR; ").compile(sqlExecutionContext);
+                try (OperationFuture fut = cc.execute(null)) {
+                    fut.await();
+                }
+            }
         } catch (Exception recoverable) {
             try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
                 CompiledQuery query = sqlCompiler.query()
@@ -88,8 +97,9 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
                         .$(COLUMN_TS).$(" TIMESTAMP, ")
                         .$(COLUMN_QUERY_TEXT).$(" VARCHAR, ")
                         .$(COLUMN_EXECUTION_MICROS).$(" LONG, ")
-                        .$(COLUMN_PRINCIPAL).$(" VARCHAR")
-                        .$(") TIMESTAMP(").$(COLUMN_TS).$(") PARTITION BY HOUR TTL 1 DAY BYPASS WAL")
+                        .$(COLUMN_PRINCIPAL).$(" VARCHAR, ")
+                        .$(COLUMN_ERROR).$(" VARCHAR") // not in v1 of schema
+                        .$(") TIMESTAMP(").$(COLUMN_TS).$(") PARTITION BY HOUR TTL 1 DAY BYPASS WAL;")
                         .compile(sqlExecutionContext);
                 query.getOperation().execute(sqlExecutionContext, null);
                 tableToken = engine.verifyTableName(TABLE_NAME);
@@ -120,6 +130,12 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
                 putVarchar(row, 1, trace.queryText);
                 row.putLong(2, trace.executionNanos / Timestamps.MICRO_NANOS);
                 putVarchar(row, 3, trace.principal);
+                if (!Chars.isBlank(trace.error)) {
+                    try {
+                        putVarchar(row, 4, trace.error);
+                    } catch (NullPointerException ignore) {
+                    }
+                }
                 row.append();
             }
             tableWriter.commit();

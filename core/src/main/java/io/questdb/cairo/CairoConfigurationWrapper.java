@@ -1222,6 +1222,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isQueryTracingBindVariableSubstitutionEnabled() {
+        return getDelegate().isQueryTracingBindVariableSubstitutionEnabled();
+    }
+
+    @Override
     public boolean isQueryTracingEnabled() {
         return getDelegate().isQueryTracingEnabled();
     }

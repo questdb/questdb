@@ -24,12 +24,14 @@
 
 package io.questdb.metrics;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.mp.ValueHolder;
+import io.questdb.std.Chars;
 import io.questdb.std.ObjectFactory;
 
 public class QueryTrace implements ValueHolder<QueryTrace> {
     public static final ObjectFactory<QueryTrace> ITEM_FACTORY = QueryTrace::new;
-
+    public String error;
     public long executionNanos;
     public boolean isJit;
     public String principal;
@@ -43,6 +45,7 @@ public class QueryTrace implements ValueHolder<QueryTrace> {
         principal = null;
         queryText = null;
         timestamp = 0;
+        error = null;
     }
 
     @Override
@@ -52,5 +55,10 @@ public class QueryTrace implements ValueHolder<QueryTrace> {
         dest.principal = principal;
         dest.queryText = queryText;
         dest.timestamp = timestamp;
+        dest.error = error;
+    }
+
+    public boolean shouldSubstituteBindVariables(CairoConfiguration config) {
+        return config.isQueryTracingBindVariableSubstitutionEnabled() && Chars.indexOf(queryText, '$') >= 0;
     }
 }
