@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.OperationCodes;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
@@ -36,9 +37,9 @@ import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlParser;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
+import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExpressionNode;
@@ -53,6 +54,7 @@ import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -79,6 +81,7 @@ import static io.questdb.griffin.model.ExpressionNode.LITERAL;
  */
 public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final CharSequenceHashSet baseKeyColumnNames = new CharSequenceHashSet();
+    private final String baseTableName;
     private final int baseTableNamePosition;
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();
     private final MatViewDefinition matViewDefinition = new MatViewDefinition();
@@ -89,17 +92,15 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final String timeZoneOffset;
     private final IntList tmpColumnIndexes = new IntList();
     private final LowerCaseCharSequenceHashSet tmpLiterals = new LowerCaseCharSequenceHashSet();
-    private String baseTableName;
     private CreateTableOperationImpl createTableOperation;
     private long samplingInterval;
     private char samplingIntervalUnit;
-    private CharSequenceHashSet tableNames;
 
     public CreateMatViewOperationImpl(
             @NotNull String sqlText,
             @NotNull CreateTableOperationImpl createTableOperation,
             int refreshType,
-            @Nullable String baseTableName,
+            @NotNull String baseTableName,
             int baseTableNamePosition,
             @Nullable String timeZone,
             @Nullable String timeZoneOffset
@@ -324,22 +325,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             timestampModel.setIsDedupKey(); // set dedup for timestamp column
         }
 
-        // Find base table name if not set explicitly.
-        if (baseTableName == null) {
-            if (tableNames == null) {
-                tableNames = new CharSequenceHashSet();
-            }
-            tableNames.clear();
-            SqlParser.collectTables(queryModel, tableNames);
-            if (tableNames.size() < 1) {
-                throw SqlException.$(0, "missing base table, materialized views have to be based on a table");
-            }
-            if (tableNames.size() > 1) {
-                throw SqlException.$(0, "more than one table used in query, base table has to be set using 'WITH BASE'");
-            }
-            baseTableName = Chars.toString(tableNames.get(0));
-        }
-
         final TableToken baseTableToken = sqlExecutionContext.getTableTokenIfExists(baseTableName);
         if (baseTableToken == null) {
             throw SqlException.tableDoesNotExist(baseTableNamePosition, baseTableName);
@@ -396,6 +381,26 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         samplingInterval = TimestampSamplerFactory.parseInterval(interval, samplingIntervalEnd, intervalPos);
         assert samplingInterval > 0;
         samplingIntervalUnit = interval.charAt(samplingIntervalEnd);
+
+        // Check if PARTITION BY wasn't specified in SQL, so that we need
+        // to assign it based on the sampling interval.
+        if (createTableOperation.getPartitionBy() == PartitionBy.NONE) {
+            final TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(
+                    samplingInterval,
+                    samplingIntervalUnit,
+                    0
+            );
+            final long approxBucketMicros = timestampSampler.getApproxBucketSize();
+            final int partitionBy = approxBucketMicros > Timestamps.HOUR_MICROS ? PartitionBy.YEAR
+                    : approxBucketMicros > Timestamps.MINUTE_MICROS ? PartitionBy.MONTH
+                    : PartitionBy.DAY;
+            createTableOperation.setPartitionBy(partitionBy);
+            final int ttlHoursOrMonths = createTableOperation.getTtlHoursOrMonths();
+            if (ttlHoursOrMonths > 0) {
+                // Don't forget to validate TTL against PARTITION BY.
+                PartitionBy.validateTtlGranularity(partitionBy, ttlHoursOrMonths, createTableOperation.getTtlPosition());
+            }
+        }
 
         // Mark key columns as dedup keys.
         baseKeyColumnNames.clear();

@@ -266,11 +266,6 @@ public class MatViewState implements ReadableMatViewState, QuietCloseable {
     }
 
     public void unlock() {
-        if (latch.get() && dropped) {
-            // Dropped while it was in use.
-            close();
-        }
-
         if (!latch.compareAndSet(true, false)) {
             throw new IllegalStateException("cannot unlock, not locked");
         }

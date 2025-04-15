@@ -299,8 +299,8 @@ import static io.questdb.cairo.ColumnType.getGeoHashBits;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.QUERY;
 import static io.questdb.griffin.model.QueryModel.*;
+import static io.questdb.griffin.model.QueryModel.QUERY;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_HOUR_INT = 1;
@@ -3378,7 +3378,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             factory = generateSubQuery(model, executionContext);
             timestampIndex = getTimestampIndex(model, factory);
             if (timestampIndex == -1 || factory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
-                throw SqlException.$(model.getModelPosition(), "base query does not provide ASC order over dedicated TIMESTAMP column");
+                throw SqlException.$(model.getModelPosition(), "base query does not provide ASC order over designated TIMESTAMP column");
             }
         } catch (Throwable e) {
             Misc.free(factory);

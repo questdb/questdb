@@ -28,45 +28,45 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class MicroTimestampSampler implements TimestampSampler {
-    private final long bucketSize;
+    private final long bucket;
     private long start;
 
-    public MicroTimestampSampler(long bucketSize) {
-        this.bucketSize = bucketSize;
+    public MicroTimestampSampler(long bucket) {
+        this.bucket = bucket;
     }
 
     @Override
     public long getApproxBucketSize() {
-        return bucketSize;
+        return bucket;
     }
 
     @Override
     public long getBucketSize() {
-        return bucketSize;
+        return bucket;
     }
 
     @Override
     public long nextTimestamp(long timestamp) {
-        return timestamp + bucketSize;
+        return timestamp + bucket;
     }
 
     @Override
     public long nextTimestamp(long timestamp, int numSteps) {
-        return timestamp + numSteps * bucketSize;
+        return timestamp + numSteps * bucket;
     }
 
     @Override
     public long previousTimestamp(long timestamp) {
-        return timestamp - bucketSize;
+        return timestamp - bucket;
     }
 
     @Override
     public long round(long value) {
-        long q = (value - start) / bucketSize;
-        if (value < 0 && q * bucketSize != value) {
+        long q = (value - start) / bucket;
+        if (value < 0 && q * bucket != value) {
             q = q - 1;
         }
-        return start + q * bucketSize;
+        return start + q * bucket;
     }
 
     @Override
