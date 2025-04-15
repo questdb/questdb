@@ -24,19 +24,20 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
-import io.questdb.griffin.engine.groupby.MonthTimestampSampler;
+import io.questdb.griffin.engine.groupby.MicroTimestampSampler;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class MonthTimestampSamplerTest {
+public class MicroTimestampSamplerTest {
 
     @Test
     public void testNextTimestamp() throws NumericException {
-        MonthTimestampSampler sampler = new MonthTimestampSampler(1);
+        MicroTimestampSampler sampler = new MicroTimestampSampler(Timestamps.MINUTE_MICROS);
 
         final String[] src = new String[]{
                 "2013-12-31T00:00:00.000000Z",
@@ -44,9 +45,9 @@ public class MonthTimestampSamplerTest {
                 "2020-01-01T12:12:12.123456Z",
         };
         final String[] next = new String[]{
-                "2014-01-01T00:00:00.000000Z",
-                "2014-02-01T00:00:00.000000Z",
-                "2020-02-01T00:00:00.000000Z",
+                "2013-12-31T00:01:00.000000Z",
+                "2014-01-01T00:01:00.000000Z",
+                "2020-01-01T12:13:12.123456Z",
         };
         Assert.assertEquals(src.length, next.length);
 
@@ -59,17 +60,17 @@ public class MonthTimestampSamplerTest {
 
     @Test
     public void testNextTimestampWithStep() throws NumericException {
-        MonthTimestampSampler sampler = new MonthTimestampSampler(1);
+        MicroTimestampSampler sampler = new MicroTimestampSampler(Timestamps.SECOND_MICROS);
 
         final String[] src = new String[]{
                 "2013-12-31T00:00:00.000000Z",
                 "2014-01-01T00:00:00.000000Z",
-                "2020-01-01T12:12:12.123456Z",
+                "2020-01-01T12:12:59.123456Z",
         };
         final String[] next = new String[]{
-                "2014-03-01T00:00:00.000000Z",
-                "2014-04-01T00:00:00.000000Z",
-                "2020-04-01T00:00:00.000000Z",
+                "2013-12-31T00:00:03.000000Z",
+                "2014-01-01T00:00:03.000000Z",
+                "2020-01-01T12:13:02.123456Z",
         };
         Assert.assertEquals(src.length, next.length);
 
@@ -82,7 +83,7 @@ public class MonthTimestampSamplerTest {
 
     @Test
     public void testPreviousTimestamp() throws NumericException {
-        MonthTimestampSampler sampler = new MonthTimestampSampler(1);
+        MicroTimestampSampler sampler = new MicroTimestampSampler(Timestamps.HOUR_MICROS);
 
         final String[] src = new String[]{
                 "2013-12-31T00:00:00.000000Z",
@@ -90,9 +91,9 @@ public class MonthTimestampSamplerTest {
                 "2020-02-01T12:12:12.123456Z",
         };
         final String[] prev = new String[]{
-                "2013-11-01T00:00:00.000000Z",
-                "2013-12-01T00:00:00.000000Z",
-                "2020-01-01T00:00:00.000000Z",
+                "2013-12-30T23:00:00.000000Z",
+                "2013-12-31T23:00:00.000000Z",
+                "2020-02-01T11:12:12.123456Z",
         };
         Assert.assertEquals(src.length, prev.length);
 
@@ -105,17 +106,17 @@ public class MonthTimestampSamplerTest {
 
     @Test
     public void testRound() throws NumericException {
-        MonthTimestampSampler sampler = new MonthTimestampSampler(1);
+        MicroTimestampSampler sampler = new MicroTimestampSampler(Timestamps.HOUR_MICROS);
 
         final String[] src = new String[]{
                 "2013-12-31T00:00:00.000000Z",
-                "2014-01-01T00:00:00.000000Z",
+                "2014-01-01T01:12:12.000001Z",
                 "2014-02-12T12:12:12.123456Z",
         };
         final String[] rounded = new String[]{
-                "2013-12-01T00:00:00.000000Z",
-                "2014-01-01T00:00:00.000000Z",
-                "2014-02-01T00:00:00.000000Z",
+                "2013-12-31T00:00:00.000000Z",
+                "2014-01-01T01:00:00.000000Z",
+                "2014-02-12T12:00:00.000000Z",
         };
         Assert.assertEquals(src.length, rounded.length);
 
@@ -129,12 +130,12 @@ public class MonthTimestampSamplerTest {
     @Test
     public void testSimple() throws NumericException {
         StringSink sink = new StringSink();
-        MonthTimestampSampler sampler = new MonthTimestampSampler(6);
+        MicroTimestampSampler sampler = new MicroTimestampSampler(Timestamps.HOUR_MICROS);
 
         long timestamp = TimestampFormatUtils.parseUTCTimestamp("2018-11-16T15:00:00.000000Z");
         sampler.setStart(timestamp);
 
-        for (int i = 0; i < 20; i++) {
+        for (int i = 0; i < 10; i++) {
             long ts = sampler.nextTimestamp(timestamp);
             sink.putISODate(ts).put('\n');
             Assert.assertEquals(timestamp, sampler.previousTimestamp(ts));
@@ -142,26 +143,16 @@ public class MonthTimestampSamplerTest {
         }
 
         TestUtils.assertEquals(
-                "2019-05-16T15:00:00.000000Z\n" +
-                        "2019-11-16T15:00:00.000000Z\n" +
-                        "2020-05-16T15:00:00.000000Z\n" +
-                        "2020-11-16T15:00:00.000000Z\n" +
-                        "2021-05-16T15:00:00.000000Z\n" +
-                        "2021-11-16T15:00:00.000000Z\n" +
-                        "2022-05-16T15:00:00.000000Z\n" +
-                        "2022-11-16T15:00:00.000000Z\n" +
-                        "2023-05-16T15:00:00.000000Z\n" +
-                        "2023-11-16T15:00:00.000000Z\n" +
-                        "2024-05-16T15:00:00.000000Z\n" +
-                        "2024-11-16T15:00:00.000000Z\n" +
-                        "2025-05-16T15:00:00.000000Z\n" +
-                        "2025-11-16T15:00:00.000000Z\n" +
-                        "2026-05-16T15:00:00.000000Z\n" +
-                        "2026-11-16T15:00:00.000000Z\n" +
-                        "2027-05-16T15:00:00.000000Z\n" +
-                        "2027-11-16T15:00:00.000000Z\n" +
-                        "2028-05-16T15:00:00.000000Z\n" +
-                        "2028-11-16T15:00:00.000000Z\n",
+                "2018-11-16T16:00:00.000000Z\n" +
+                        "2018-11-16T17:00:00.000000Z\n" +
+                        "2018-11-16T18:00:00.000000Z\n" +
+                        "2018-11-16T19:00:00.000000Z\n" +
+                        "2018-11-16T20:00:00.000000Z\n" +
+                        "2018-11-16T21:00:00.000000Z\n" +
+                        "2018-11-16T22:00:00.000000Z\n" +
+                        "2018-11-16T23:00:00.000000Z\n" +
+                        "2018-11-17T00:00:00.000000Z\n" +
+                        "2018-11-17T01:00:00.000000Z\n",
                 sink
         );
     }
