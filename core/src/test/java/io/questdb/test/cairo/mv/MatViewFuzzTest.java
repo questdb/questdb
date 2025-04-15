@@ -31,7 +31,6 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -394,7 +393,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                         try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(workerId, engine)) {
                             while (!stop.get()) {
                                 refreshJob.run(workerId);
-                                Os.sleep(rnd.nextInt(1000));
+                                //Os.sleep(rnd.nextInt(1000));
                             }
 
                             // Run one final time before stopping
