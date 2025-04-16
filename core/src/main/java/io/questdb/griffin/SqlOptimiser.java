@@ -1035,31 +1035,31 @@ public class SqlOptimiser implements Mutable {
                 if (m.getUnionModel() == null) {
                     // last model in the linked list
                     QueryModel un = m.getNestedModel();
-                    int n = un.getOrderBy().size();
-                    // order by clause is on the nested model
-                    final ObjList<ExpressionNode> orderBy = un.getOrderBy();
-                    final IntList orderByDirection = un.getOrderByDirection();
-                    // limit is on the parent model
-                    final ExpressionNode limitLo = m.getLimitLo();
-                    final ExpressionNode limitHi = m.getLimitHi();
+                    if (un != null) {
+                        int n = un.getOrderBy().size();
+                        // order by clause is on the nested model
+                        final ObjList<ExpressionNode> orderBy = un.getOrderBy();
+                        final IntList orderByDirection = un.getOrderByDirection();
+                        // limit is on the parent model
+                        final ExpressionNode limitLo = m.getLimitLo();
+                        final ExpressionNode limitHi = m.getLimitHi();
 
-                    if (n > 0 || limitHi != null || limitLo != null) {
-                        // we have some order by clauses to move
-                        QueryModel _nested = queryModelPool.next();
-                        for (int i = 0; i < n; i++) {
-                            _nested.addOrderBy(orderBy.getQuick(i), orderByDirection.getQuick(i));
+                        if (n > 0 || limitHi != null || limitLo != null) {
+                            // we have some order by clauses to move
+                            QueryModel _nested = queryModelPool.next();
+                            for (int i = 0; i < n; i++) {
+                                _nested.addOrderBy(orderBy.getQuick(i), orderByDirection.getQuick(i));
+                            }
+                            orderBy.clear();
+                            orderByDirection.clear();
+                            m.setLimit(null, null);
+                            _nested.setNestedModel(model);
+                            QueryModel _model = queryModelPool.next();
+                            _model.setNestedModel(_nested);
+                            SqlUtil.addSelectStar(_model, queryColumnPool, expressionNodePool);
+                            _model.setLimit(limitLo, limitHi);
+                            return _model;
                         }
-                        orderBy.clear();
-                        orderByDirection.clear();
-
-                        m.setLimit(null, null);
-
-                        _nested.setNestedModel(model);
-                        QueryModel _model = queryModelPool.next();
-                        _model.setNestedModel(_nested);
-                        SqlUtil.addSelectStar(_model, queryColumnPool, expressionNodePool);
-                        _model.setLimit(limitLo, limitHi);
-                        return _model;
                     }
                     break;
                 }
@@ -1516,7 +1516,7 @@ public class SqlOptimiser implements Mutable {
                     validatingModel
             );
 
-            final QueryColumn translatedColumn = nextColumn(alias);
+            final QueryColumn translatedColumn = nextColumn(alias, columnAst.position);
 
             // create column that references inner alias we just created
             innerModel.addBottomUpColumn(translatedColumn);
@@ -2882,11 +2882,15 @@ public class SqlOptimiser implements Mutable {
     }
 
     private QueryColumn nextColumn(CharSequence name) {
-        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, name, name);
+        return nextColumn(name, 0);
+    }
+
+    private QueryColumn nextColumn(CharSequence name, int position) {
+        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, name, name, position);
     }
 
     private QueryColumn nextColumn(CharSequence alias, CharSequence column) {
-        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, alias, column);
+        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, alias, column, 0);
     }
 
     private ExpressionNode nextLiteral(CharSequence token, int position) {
@@ -3092,7 +3096,7 @@ public class SqlOptimiser implements Mutable {
             optimiseBooleanNot(joinModels.getQuick(i));
         }
 
-        if (model.getUnionModel() != null) {
+        if (model.getUnionModel() != null && model.getNestedModel() != null) {
             optimiseBooleanNot(model.getNestedModel());
         }
     }
@@ -4828,8 +4832,10 @@ public class SqlOptimiser implements Mutable {
                         if (baseParent.getAliasToColumnMap().get(column) != null) {
                             continue;
                         } else {
-                            throw SqlException.$(orderBy.position,
-                                            "order column position is out of range [max=")
+                            throw SqlException.$(
+                                            orderBy.position,
+                                            "order column position is out of range [max="
+                                    )
                                     .put(columnCount)
                                     .put(']');
                         }
@@ -5127,7 +5133,7 @@ public class SqlOptimiser implements Mutable {
                     // need to avoid alias conflicts.
 
                     timestampAlias = createColumnAlias(timestampColumn, model);
-                    model.addBottomUpColumnIfNotExists(nextColumn(timestampAlias));
+                    model.addBottomUpColumnIfNotExists(nextColumn(timestampAlias, timestamp.position));
 
                     timestampOnly = false;
                     needRemoveColumns++;
@@ -5158,7 +5164,7 @@ public class SqlOptimiser implements Mutable {
 
                 final ExpressionNode tsFloorTsParam = expressionNodePool.next();
                 tsFloorTsParam.token = timestampColumn;
-                tsFloorTsParam.position = timestamp.position;
+                tsFloorTsParam.position = model.getBottomUpColumns().getQuick(timestampPos).getAst().position;
                 tsFloorTsParam.paramCount = 0;
                 tsFloorTsParam.type = LITERAL;
 
@@ -6516,8 +6522,9 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void validateWindowFunctions(QueryModel model, SqlExecutionContext sqlExecutionContext,
-                                         int recursionLevel) throws SqlException {
+    private void validateWindowFunctions(
+            QueryModel model, SqlExecutionContext sqlExecutionContext, int recursionLevel
+    ) throws SqlException {
         if (model == null) {
             return;
         }
@@ -6691,8 +6698,9 @@ public class SqlOptimiser implements Mutable {
         validateUpdateColumns(updateQueryModel, metadata, sqlExecutionContext);
     }
 
-    void validateUpdateColumns(QueryModel updateQueryModel, TableRecordMetadata metadata, SqlExecutionContext
-            sqlExecutionContext) throws SqlException {
+    void validateUpdateColumns(
+            QueryModel updateQueryModel, TableRecordMetadata metadata, SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         try {
             literalCollectorANames.clear();
             tempList.clear(metadata.getColumnCount());
