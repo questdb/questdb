@@ -24,8 +24,11 @@
 
 package io.questdb.metrics;
 
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsRecord;
 import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -39,8 +42,21 @@ import java.lang.management.ManagementFactory;
  */
 public class GCMetrics implements Target, Mutable {
 
+    private static final int MAJOR_COUNT = 0;
+    private static final int MAJOR_TIME = 1;
+    private static final int MINOR_COUNT = 2;
+    private static final int MINOR_TIME = 3;
+    private static final int UNKNOWN_COUNT = 4;
+    private static final int UNKNOWN_TIME = 5;
     private static final CharSequenceHashSet majorGCNames = new CharSequenceHashSet();
+    private static final LongList metrics = new LongList(6);
     private static final CharSequenceHashSet minorGCNames = new CharSequenceHashSet();
+    private static final ObjList<String> names = new ObjList<>("jvm_major_gc_count", "jvm_major_gc_time", "jvm_minor_gc_count", "jvm_minor_gc_time", "jvm_unknown_gc_count", "jvm_unknown_gc_time");
+
+
+    @Override
+    public void clear() {
+    }
 
     @Override
     public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
@@ -76,7 +92,41 @@ public class GCMetrics implements Target, Mutable {
     }
 
     @Override
-    public void clear() {
+    public void scrapeIntoRecord(PrometheusMetricsRecord record, int label) {
+        record
+                .setCounterName(names.getQuick(label))
+                .setType("counter")
+                .setValue(metrics.getQuick(label))
+                .setKind("LONG");
+    }
+
+    // Uses a separate impl to avoid interfering concurrently with the metrics endpoint
+    // This can race if multiple `prometheus_metrics()` queries scrape GCMetrics at the same time.
+    // However, it being fast may be preferable to adding locking behaviour
+    @Override
+    public int scrapeIntoRecord(PrometheusMetricsRecord record) {
+        snapshotGcMetrics();
+        scrapeIntoRecord(record, 0);
+        return metrics.size();
+    }
+
+    public synchronized void snapshotGcMetrics() {
+        clearMetrics();
+        for (GarbageCollectorMXBean gc : ManagementFactory.getGarbageCollectorMXBeans()) {
+            long count = gc.getCollectionCount();
+            if (count > -1) {
+                if (majorGCNames.contains(gc.getName())) {
+                    metrics.increment(MAJOR_COUNT, count);
+                    metrics.increment(MAJOR_TIME, gc.getCollectionTime());
+                } else if (minorGCNames.contains(gc.getName())) {
+                    metrics.increment(MINOR_COUNT, count);
+                    metrics.increment(MINOR_TIME, gc.getCollectionTime());
+                } else {
+                    metrics.increment(UNKNOWN_COUNT, count);
+                    metrics.increment(UNKNOWN_TIME, gc.getCollectionTime());
+                }
+            }
+        }
     }
 
     private void appendCounter(CharSink<?> sink, long value, String name) {
@@ -84,6 +134,10 @@ public class GCMetrics implements Target, Mutable {
         PrometheusFormatUtils.appendCounterNamePrefix(name, sink);
         PrometheusFormatUtils.appendSampleLineSuffix(sink, value);
         PrometheusFormatUtils.appendNewLine(sink);
+    }
+
+    private void clearMetrics() {
+        metrics.setAll(6, 0);
     }
 
     static {

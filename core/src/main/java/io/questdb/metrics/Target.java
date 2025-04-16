@@ -24,6 +24,7 @@
 
 package io.questdb.metrics;
 
+import io.questdb.griffin.engine.table.PrometheusMetricsRecordCursorFactory.PrometheusMetricsRecord;
 import io.questdb.std.str.BorrowableUtf8Sink;
 
 /**
@@ -31,6 +32,37 @@ import io.questdb.std.str.BorrowableUtf8Sink;
  */
 public interface Target {
 
+    default CharSequence getName() {
+        throw new UnsupportedOperationException();
+    }
+
     // We need a sink that we can borrow from and append to in native code.
     void scrapeIntoPrometheus(BorrowableUtf8Sink sink);
+
+    /**
+     * This function is used to populate a {@link PrometheusMetricsRecord PrometheusMetricsRecord}, based
+     * on a specifically indexed record contained within {@link Target}.
+     * It is part of an iteration solution that relies on {@link #scrapeIntoRecord(PrometheusMetricsRecord) scrapeIntoRecord(PrometheusMetricsRecord)} to
+     * first return how many records are available within the {@link Target}.
+     * Multiple records can be returned if the metric is labeled.
+     *
+     * @param record the record to populate
+     * @param label  the index of the specific record to return
+     */
+    default void scrapeIntoRecord(PrometheusMetricsRecord record, int label) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * This function populates a {@link PrometheusMetricsRecord PrometheusMetricsRecord}.
+     * It returns an int indicating how many records this {@link Target} can produce.
+     * The other overload, {@link #scrapeIntoRecord(PrometheusMetricsRecord, int) scrapeIntoRecord(PrometheusMetricsRecord, int)} can be used
+     * to select each of these records, allowing for iteration.
+     *
+     * @param record the record to populate
+     * @return the number of records available inside the {@link Target}
+     */
+    default int scrapeIntoRecord(PrometheusMetricsRecord record) {
+        throw new UnsupportedOperationException();
+    }
 }
