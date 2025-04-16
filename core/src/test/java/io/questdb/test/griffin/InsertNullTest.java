@@ -123,7 +123,7 @@ public class InsertNullTest extends AbstractCairoTest {
                 );
                 Assert.fail();
             } catch (SqlException expected) {
-                Assert.assertEquals("[0] designated timestamp column cannot be NULL", expected.getMessage());
+                Assert.assertEquals("[28] designated timestamp column cannot be NULL", expected.getMessage());
             }
         });
     }
