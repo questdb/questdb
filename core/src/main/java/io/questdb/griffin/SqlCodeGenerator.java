@@ -192,6 +192,7 @@ import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.FilteredAsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCursorFactory;
@@ -1635,16 +1636,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(new CastTimestampToStrFunctionFactory.Func(new TimestampColumn(i)));
                                 break;
                             case ColumnType.FLOAT:
-                                castFunctions.add(new CastFloatToStrFunctionFactory.Func(
-                                        new FloatColumn(i),
-                                        configuration.getFloatToStrCastScale()
-                                ));
+                                castFunctions.add(new CastFloatToStrFunctionFactory.Func(new FloatColumn(i)));
                                 break;
                             case ColumnType.DOUBLE:
-                                castFunctions.add(new CastDoubleToStrFunctionFactory.Func(
-                                        new DoubleColumn(i),
-                                        configuration.getDoubleToStrCastScale()
-                                ));
+                                castFunctions.add(new CastDoubleToStrFunctionFactory.Func(new DoubleColumn(i)));
                                 break;
                             case ColumnType.STRING:
                                 castFunctions.add(new StrColumn(i));
@@ -1947,16 +1942,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 castFunctions.add(new CastTimestampToVarcharFunctionFactory.Func(new TimestampColumn(i)));
                                 break;
                             case ColumnType.FLOAT:
-                                castFunctions.add(new CastFloatToVarcharFunctionFactory.Func(
-                                        new FloatColumn(i),
-                                        configuration.getFloatToStrCastScale()
-                                ));
+                                castFunctions.add(new CastFloatToVarcharFunctionFactory.Func(new FloatColumn(i)));
                                 break;
                             case ColumnType.DOUBLE:
-                                castFunctions.add(new CastDoubleToVarcharFunctionFactory.Func(
-                                        new DoubleColumn(i),
-                                        configuration.getDoubleToStrCastScale()
-                                ));
+                                castFunctions.add(new CastDoubleToVarcharFunctionFactory.Func(new DoubleColumn(i)));
                                 break;
                             case ColumnType.STRING:
                                 // StrFunction has built-in cast to varchar
@@ -2464,15 +2453,80 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             );
                                         }
                                     } else {
-                                        if (slave.supportsTimeFrameCursor()) {
-                                            master = new AsOfJoinNoKeyFastRecordCursorFactory(
-                                                    configuration,
-                                                    createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                                    master,
-                                                    slave,
-                                                    masterMetadata.getColumnCount()
-                                            );
-                                        } else {
+                                        boolean created = false;
+                                        if (fastAsOfJoins) {
+                                            if (slave.supportsTimeFrameCursor()) {
+                                                master = new AsOfJoinNoKeyFastRecordCursorFactory(
+                                                        configuration,
+                                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                        master,
+                                                        slave,
+                                                        masterMetadata.getColumnCount()
+                                                );
+                                                created = true;
+                                            }
+
+                                            if (!created && slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
+                                                RecordCursorFactory slaveBase = slave.getBaseFactory();
+                                                Function stolenFilter = slave.getFilter();
+                                                assert stolenFilter != null;
+
+                                                Misc.free(slave.getCompiledFilter());
+                                                Misc.free(slave.getBindVarMemory());
+                                                Misc.freeObjList(slave.getBindVarFunctions());
+                                                slave.halfClose();
+
+                                                master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
+                                                        configuration,
+                                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                        master,
+                                                        slaveBase,
+                                                        stolenFilter,
+                                                        masterMetadata.getColumnCount(),
+                                                        NullRecordFactory.getInstance(slaveMetadata),
+                                                        null);
+                                                created = true;
+                                            }
+
+                                            if (!created && slave.isProjection()) {
+                                                RecordCursorFactory projectionBase = slave.getBaseFactory();
+                                                // We know projectionBase does not support supportsTimeFrameCursor, because
+                                                // Projections forward this call to its base factory and if we are in this branch
+                                                // then slave.supportsTimeFrameCursor() returned false in one the previous branches.
+                                                // There is still chance that projectionBase is just a filter
+                                                // and its own base supports timeFrameCursor. let's see.
+                                                if (projectionBase.supportsFilterStealing()) {
+                                                    // ok, cool, is used only as a filter.
+                                                    RecordCursorFactory filterStealingBase = projectionBase.getBaseFactory();
+                                                    if (filterStealingBase.supportsTimeFrameCursor()) {
+                                                        IntList stolenCrossIndex = slave.getColumnCrossIndex();
+                                                        assert stolenCrossIndex != null;
+                                                        Function stolenFilter = projectionBase.getFilter();
+                                                        assert stolenFilter != null;
+
+                                                        Misc.free(projectionBase.getCompiledFilter());
+                                                        Misc.free(projectionBase.getBindVarMemory());
+                                                        Misc.freeObjList(projectionBase.getBindVarFunctions());
+                                                        projectionBase.halfClose();
+
+                                                        master = new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
+                                                                configuration,
+                                                                createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                                master,
+                                                                filterStealingBase,
+                                                                stolenFilter,
+                                                                masterMetadata.getColumnCount(),
+                                                                NullRecordFactory.getInstance(slaveMetadata),
+                                                                stolenCrossIndex
+                                                        );
+                                                        created = true;
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // slow path: this always works, but can be quite slow, especially with large slave tables
+                                        if (!created) {
                                             master = new AsOfJoinNoKeyRecordCursorFactory(
                                                     createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
                                                     master,

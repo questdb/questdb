@@ -67,7 +67,7 @@ public interface MatViewStateStore extends QuietCloseable, Mutable {
 
     // Called by WAL apply job once it applied transaction(s) to the base table
     // and wants to send refresh job an incremental refresh message.
-    void notifyTxnApplied(MatViewRefreshTask task, long seqTxn);
+    void notifyBaseTableCommit(MatViewRefreshTask task, long seqTxn);
 
     void removeViewState(TableToken matViewToken);
 

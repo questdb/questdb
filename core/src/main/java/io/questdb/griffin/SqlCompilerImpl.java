@@ -1986,6 +1986,111 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.withContext(executionContext);
     }
 
+    private InsertOperation compileInsert(InsertModel insertModel, SqlExecutionContext executionContext) throws SqlException {
+        // todo: consider moving this method to InsertModel
+        final ExpressionNode tableNameExpr = insertModel.getTableNameExpr();
+        ObjList<Function> valueFunctions = null;
+        TableToken token = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
+
+        try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(token)) {
+            final long metadataVersion = metadata.getMetadataVersion();
+            final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, metadata.getTableToken(), metadataVersion);
+            final int metadataTimestampIndex = metadata.getTimestampIndex();
+            final ObjList<CharSequence> columnNameList = insertModel.getColumnNameList();
+            final int columnSetSize = columnNameList.size();
+            for (int tupleIndex = 0, n = insertModel.getRowTupleCount(); tupleIndex < n; tupleIndex++) {
+                Function timestampFunction = null;
+                listColumnFilter.clear();
+                if (columnSetSize > 0) {
+                    valueFunctions = new ObjList<>(columnSetSize);
+                    for (int i = 0; i < columnSetSize; i++) {
+                        int metadataColumnIndex = metadata.getColumnIndexQuiet(columnNameList.getQuick(i));
+                        if (metadataColumnIndex > -1) {
+                            final ExpressionNode node = insertModel.getRowTupleValues(tupleIndex).getQuick(i);
+                            final Function function = functionParser.parseFunction(
+                                    node,
+                                    EmptyRecordMetadata.INSTANCE,
+                                    executionContext
+                            );
+
+                            insertValidateFunctionAndAddToList(
+                                    insertModel,
+                                    tupleIndex,
+                                    valueFunctions,
+                                    metadata,
+                                    metadataTimestampIndex,
+                                    i,
+                                    metadataColumnIndex,
+                                    function,
+                                    node.position,
+                                    executionContext.getBindVariableService()
+                            );
+
+                            if (metadataTimestampIndex == metadataColumnIndex) {
+                                timestampFunction = function;
+                            }
+
+                        } else {
+                            throw SqlException.invalidColumn(insertModel.getColumnPosition(i), columnNameList.getQuick(i));
+                        }
+                    }
+                } else {
+                    final int columnCount = metadata.getColumnCount();
+                    final ObjList<ExpressionNode> values = insertModel.getRowTupleValues(tupleIndex);
+                    final int valueCount = values.size();
+                    if (columnCount != valueCount) {
+                        throw SqlException.$(
+                                        insertModel.getEndOfRowTupleValuesPosition(tupleIndex),
+                                        "row value count does not match column count [expected="
+                                ).put(columnCount).put(", actual=").put(values.size())
+                                .put(", tuple=").put(tupleIndex + 1).put(']');
+                    }
+                    valueFunctions = new ObjList<>(columnCount);
+
+                    for (int i = 0; i < columnCount; i++) {
+                        final ExpressionNode node = values.getQuick(i);
+
+                        Function function = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, executionContext);
+                        insertValidateFunctionAndAddToList(
+                                insertModel,
+                                tupleIndex,
+                                valueFunctions,
+                                metadata,
+                                metadataTimestampIndex,
+                                i,
+                                i,
+                                function,
+                                node.position,
+                                executionContext.getBindVariableService()
+                        );
+
+                        if (metadataTimestampIndex == i) {
+                            timestampFunction = function;
+                        }
+                    }
+                }
+
+                // validate timestamp
+                if (metadataTimestampIndex > -1) {
+                    if (timestampFunction == null) {
+                        throw SqlException.$(0, "insert statement must populate timestamp");
+                    } else if (ColumnType.isNull(timestampFunction.getType()) || timestampFunction.isNullConstant()) {
+                        throw SqlException.$(0, "designated timestamp column cannot be NULL");
+                    }
+                }
+
+
+                VirtualRecord record = new VirtualRecord(valueFunctions);
+                RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(asm, record, metadata, listColumnFilter);
+                insertOperation.addInsertRow(new InsertRowImpl(record, copier, timestampFunction, tupleIndex));
+            }
+            return insertOperation;
+        } catch (SqlException e) {
+            Misc.freeObjList(valueFunctions);
+            throw e;
+        }
+    }
+
     private void compileLegacyCheckpoint(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         executionContext.getSecurityContext().authorizeDatabaseSnapshot();
         CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
@@ -2358,7 +2463,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         );
                     } else {
                         // we use SQL Compiler state (reusing objects) to generate InsertOperation
-                        compiledQuery.ofInsert(insert(sqlText, insertModel, executionContext));
+                        compiledQuery.ofInsert(compileInsert(insertModel, executionContext));
                     }
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     break;
@@ -3267,118 +3372,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         return lexer.getPosition();
-    }
-
-    private InsertOperation insert(
-            CharSequence sqlText,
-            InsertModel insertModel,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        // todo: rename method to compileInsert()
-        //       consider moving this method to InsertModel
-        final ExpressionNode tableNameExpr = insertModel.getTableNameExpr();
-        ObjList<Function> valueFunctions = null;
-        TableToken token = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
-
-        try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(token)) {
-            final long metadataVersion = metadata.getMetadataVersion();
-            final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, metadata.getTableToken(), metadataVersion);
-            final int metadataTimestampIndex = metadata.getTimestampIndex();
-            final ObjList<CharSequence> columnNameList = insertModel.getColumnNameList();
-            final int columnSetSize = columnNameList.size();
-            for (int tupleIndex = 0, n = insertModel.getRowTupleCount(); tupleIndex < n; tupleIndex++) {
-                Function timestampFunction = null;
-                listColumnFilter.clear();
-                if (columnSetSize > 0) {
-                    valueFunctions = new ObjList<>(columnSetSize);
-                    for (int i = 0; i < columnSetSize; i++) {
-                        int metadataColumnIndex = metadata.getColumnIndexQuiet(columnNameList.getQuick(i));
-                        if (metadataColumnIndex > -1) {
-                            final ExpressionNode node = insertModel.getRowTupleValues(tupleIndex).getQuick(i);
-                            final Function function = functionParser.parseFunction(
-                                    node,
-                                    EmptyRecordMetadata.INSTANCE,
-                                    executionContext
-                            );
-
-                            insertValidateFunctionAndAddToList(
-                                    insertModel,
-                                    tupleIndex,
-                                    valueFunctions,
-                                    metadata,
-                                    metadataTimestampIndex,
-                                    i,
-                                    metadataColumnIndex,
-                                    function,
-                                    node.position,
-                                    executionContext.getBindVariableService()
-                            );
-
-                            if (metadataTimestampIndex == metadataColumnIndex) {
-                                timestampFunction = function;
-                            }
-
-                        } else {
-                            throw SqlException.invalidColumn(insertModel.getColumnPosition(i), columnNameList.getQuick(i));
-                        }
-                    }
-                } else {
-                    final int columnCount = metadata.getColumnCount();
-                    final ObjList<ExpressionNode> values = insertModel.getRowTupleValues(tupleIndex);
-                    final int valueCount = values.size();
-                    if (columnCount != valueCount) {
-                        throw SqlException.$(
-                                        insertModel.getEndOfRowTupleValuesPosition(tupleIndex),
-                                        "row value count does not match column count [expected="
-                                ).put(columnCount).put(", actual=").put(values.size())
-                                .put(", tuple=").put(tupleIndex + 1).put(']');
-                    }
-                    valueFunctions = new ObjList<>(columnCount);
-
-                    for (int i = 0; i < columnCount; i++) {
-                        final ExpressionNode node = values.getQuick(i);
-
-                        Function function = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, executionContext);
-                        insertValidateFunctionAndAddToList(
-                                insertModel,
-                                tupleIndex,
-                                valueFunctions,
-                                metadata,
-                                metadataTimestampIndex,
-                                i,
-                                i,
-                                function,
-                                node.position,
-                                executionContext.getBindVariableService()
-                        );
-
-                        if (metadataTimestampIndex == i) {
-                            timestampFunction = function;
-                        }
-                    }
-                }
-
-                // validate timestamp
-                if (metadataTimestampIndex > -1) {
-                    if (timestampFunction == null) {
-                        throw SqlException.$(0, "insert statement must populate timestamp");
-                    } else if (ColumnType.isNull(timestampFunction.getType()) || timestampFunction.isNullConstant()) {
-                        throw SqlException.$(0, "designated timestamp column cannot be NULL");
-                    }
-                }
-
-
-                VirtualRecord record = new VirtualRecord(valueFunctions);
-                RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(asm, record, metadata, listColumnFilter);
-                insertOperation.addInsertRow(new InsertRowImpl(record, copier, timestampFunction, tupleIndex));
-            }
-
-            insertOperation.setInsertSql(sqlText);
-            return insertOperation;
-        } catch (SqlException e) {
-            Misc.freeObjList(valueFunctions);
-            throw e;
-        }
     }
 
     private void insertAsSelect(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {

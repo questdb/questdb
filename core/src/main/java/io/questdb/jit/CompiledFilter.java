@@ -26,7 +26,9 @@ package io.questdb.jit;
 
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ThreadLocal;
+import io.questdb.std.Unsafe;
 
 import java.io.Closeable;
 
@@ -63,6 +65,7 @@ public class CompiledFilter implements Closeable {
     public void close() {
         if (fnAddress > 0) {
             FiltersCompiler.freeFunction(fnAddress);
+            Unsafe.recordMemAlloc(-1, MemoryTag.NATIVE_JIT);
             fnAddress = 0;
         }
     }
@@ -79,5 +82,6 @@ public class CompiledFilter implements Closeable {
                     .put("JIT compilation failed [errorCode").put(error.errorCode())
                     .put(", msg=").put(error.message()).put("]");
         }
+        Unsafe.recordMemAlloc(1, MemoryTag.NATIVE_JIT);
     }
 }

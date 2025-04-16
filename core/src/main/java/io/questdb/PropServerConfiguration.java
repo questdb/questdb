@@ -378,11 +378,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlCreateTableModelBatchSize;
     private final int sqlDistinctTimestampKeyCapacity;
     private final double sqlDistinctTimestampLoadFactor;
-    private final int sqlDoubleToStrCastScale;
     private final int sqlExplainModelPoolCapacity;
     private final int sqlExpressionPoolCapacity;
     private final double sqlFastMapLoadFactor;
-    private final int sqlFloatToStrCastScale;
     private final long sqlGroupByAllocatorChunkSize;
     private final long sqlGroupByAllocatorMaxChunkSize;
     private final int sqlGroupByMapCapacity;
@@ -544,8 +542,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpRecvBufferSize;
     private short integerDefaultColumnType;
     private int jsonQueryConnectionCheckFrequency;
-    private int jsonQueryDoubleScale;
-    private int jsonQueryFloatScale;
     private boolean lineLogMessageOnError;
     private long lineTcpCommitIntervalDefault;
     private double lineTcpCommitIntervalFraction;
@@ -610,6 +606,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgNetIdleConnectionTimeout;
     private String pgPassword;
     private int pgPendingWritersCacheCapacity;
+    private int pgPipelineCapacity;
     private String pgReadOnlyPassword;
     private boolean pgReadOnlySecurityContext;
     private boolean pgReadOnlyUserEnabled;
@@ -1165,14 +1162,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             if (loadAdditionalConfigurations && httpServerEnabled) {
                 this.jsonQueryConnectionCheckFrequency = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_CONNECTION_CHECK_FREQUENCY, 1_000_000);
-                this.jsonQueryFloatScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_FLOAT_SCALE, 4);
-                if (jsonQueryFloatScale > Numbers.MAX_FLOAT_SCALE) {
-                    throw new ServerConfigurationException(PropertyKey.HTTP_JSON_QUERY_FLOAT_SCALE.getPropertyPath() + " cannot be greater than " + Numbers.MAX_FLOAT_SCALE);
-                }
-                this.jsonQueryDoubleScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_DOUBLE_SCALE, 12);
-                if (jsonQueryDoubleScale > Numbers.MAX_DOUBLE_SCALE) {
-                    throw new ServerConfigurationException(PropertyKey.HTTP_JSON_QUERY_DOUBLE_SCALE.getPropertyPath() + " cannot be greater than " + Numbers.MAX_DOUBLE_SCALE);
-                }
                 String httpBindTo = getString(properties, env, PropertyKey.HTTP_BIND_TO, "0.0.0.0:9000");
                 parseBindTo(properties, env, PropertyKey.HTTP_NET_BIND_TO, httpBindTo, (a, p) -> {
                     httpNetBindIPv4Address = a;
@@ -1261,6 +1250,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgNamesStatementPoolCapacity = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_POOL_CAPACITY, 32);
                 this.pgPendingWritersCacheCapacity = getInt(properties, env, PropertyKey.PG_PENDING_WRITERS_CACHE_CAPACITY, 16);
                 this.pgNamedStatementLimit = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_LIMIT, 10_000);
+                this.pgPipelineCapacity = getInt(properties, env, PropertyKey.PG_PIPELINE_CAPACITY, 64);
             }
 
             this.walApplyWorkerCount = getInt(properties, env, PropertyKey.WAL_APPLY_WORKER_COUNT, cpuWalApplyWorkers);
@@ -1359,16 +1349,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.sqlSampleByIndexSearchPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_PAGE_SIZE, 0);
             this.sqlSampleByDefaultAlignment = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_DEFAULT_ALIGNMENT_CALENDAR, true);
-
-            this.sqlDoubleToStrCastScale = getInt(properties, env, PropertyKey.CAIRO_SQL_DOUBLE_CAST_SCALE, 12);
-            if (sqlDoubleToStrCastScale > Numbers.MAX_DOUBLE_SCALE) {
-                throw new ServerConfigurationException(PropertyKey.CAIRO_SQL_DOUBLE_CAST_SCALE.getPropertyPath() + " cannot be greater than " + Numbers.MAX_DOUBLE_SCALE);
-            }
-            this.sqlFloatToStrCastScale = getInt(properties, env, PropertyKey.CAIRO_SQL_FLOAT_CAST_SCALE, 4);
-            if (sqlFloatToStrCastScale > Numbers.MAX_FLOAT_SCALE) {
-                throw new ServerConfigurationException(PropertyKey.CAIRO_SQL_FLOAT_CAST_SCALE.getPropertyPath() + " cannot be greater than " + Numbers.MAX_FLOAT_SCALE);
-            }
-
             this.sqlGroupByMapCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_MAP_CAPACITY, 1024);
             this.sqlGroupByAllocatorChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_DEFAULT_CHUNK_SIZE, 128 * 1024);
             this.sqlGroupByAllocatorMaxChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_MAX_CHUNK_SIZE, 4 * Numbers.SIZE_1GB);
@@ -2381,6 +2361,18 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.CAIRO_SQL_COLUMN_CAST_MODEL_POOL_CAPACITY,
                     PropertyKey.CAIRO_SQL_CREATE_TABLE_COLUMN_MODEL_POOL_CAPACITY
             );
+            registerDeprecated(
+                    PropertyKey.HTTP_JSON_QUERY_DOUBLE_SCALE
+            );
+            registerDeprecated(
+                    PropertyKey.HTTP_JSON_QUERY_FLOAT_SCALE
+            );
+            registerDeprecated(
+                    PropertyKey.CAIRO_SQL_DOUBLE_CAST_SCALE
+            );
+            registerDeprecated(
+                    PropertyKey.CAIRO_SQL_FLOAT_CAST_SCALE
+            );
         }
 
         public ValidationResult validate(Properties properties) {
@@ -2764,11 +2756,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getDoubleToStrCastScale() {
-            return sqlDoubleToStrCastScale;
-        }
-
-        @Override
         public int getExplainPoolCapacity() {
             return sqlExplainModelPoolCapacity;
         }
@@ -2786,11 +2773,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull FilesFacade getFilesFacade() {
             return filesFacade;
-        }
-
-        @Override
-        public int getFloatToStrCastScale() {
-            return sqlFloatToStrCastScale;
         }
 
         @Override
@@ -4289,11 +4271,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getDoubleScale() {
-            return jsonQueryDoubleScale;
-        }
-
-        @Override
         public FactoryProvider getFactoryProvider() {
             return factoryProvider;
         }
@@ -4301,11 +4278,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public FilesFacade getFilesFacade() {
             return FilesFacadeImpl.INSTANCE;
-        }
-
-        @Override
-        public int getFloatScale() {
-            return jsonQueryFloatScale;
         }
 
         @Override
@@ -5096,6 +5068,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPendingWritersCacheSize() {
             return pgPendingWritersCacheCapacity;
+        }
+
+        @Override
+        public int getPipelineCapacity() {
+            return pgPipelineCapacity;
         }
 
         @Override
