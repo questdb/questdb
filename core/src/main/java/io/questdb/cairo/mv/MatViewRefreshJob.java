@@ -176,12 +176,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             long lastRefreshTxn
     ) throws SqlException {
         final long lastTxn = baseTableReader.getSeqTxn();
+        final TableToken baseTableToken = baseTableReader.getTableToken();
+        final TableToken matViewToken = viewDefinition.getMatViewToken();
 
         long minTs;
         long maxTs;
         if (lastRefreshTxn > 0) {
             // Find min/max timestamps from WAL transactions.
-            txnRangeLoader.load(engine, Path.PATH.get(), baseTableReader.getTableToken(), lastRefreshTxn, lastTxn);
+            txnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, lastRefreshTxn, lastTxn);
             minTs = txnRangeLoader.getMinTimestamp();
             maxTs = txnRangeLoader.getMaxTimestamp();
         } else {
@@ -226,12 +228,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     step
             );
 
-            LOG.info().$("refreshing materialized view [view=").$(viewDefinition.getMatViewToken())
-                    .$(", base=").$(baseTableReader.getTableToken())
+            final long iteratorMinTs = intervalIterator.getMinTimestamp();
+            final long iteratorMaxTs = intervalIterator.getMaxTimestamp();
+
+            LOG.info().$("refreshing materialized view [view=").$(matViewToken)
+                    .$(", base=").$(baseTableToken)
                     .$(", fromTxn=").$(lastRefreshTxn)
                     .$(", toTxn=").$(lastTxn)
-                    .$(", ts>=").$ts(intervalIterator.getMinTimestamp())
-                    .$(", ts<").$ts(intervalIterator.getMaxTimestamp())
+                    .$(", iteratorMinTs>=").$ts(iteratorMinTs)
+                    .$(", iteratorMaxTs<").$ts(iteratorMaxTs)
                     .I$();
 
             return intervalIterator;
@@ -253,7 +258,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         if (!state.tryLock()) {
             // Someone is refreshing the view, so we're going for another attempt.
             // Just mark the view invalid to prevent intermediate incremental refreshes and republish the task.
-            LOG.info().$("delaying full refresh of materialized view, locked by another refresh run [view=").$(viewToken).I$();
+            LOG.debug().$("could not lock materialized view for full refresh, will retry [view=").$(viewToken).I$();
             state.markAsPendingInvalidation();
             stateStore.enqueueFullRefresh(viewToken);
             return false;
@@ -261,11 +266,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
             final TableToken baseTableToken;
+            final String baseTableName = state.getViewDefinition().getBaseTableName();
             try {
                 baseTableToken = engine.verifyTableName(state.getViewDefinition().getBaseTableName());
             } catch (CairoException e) {
-                LOG.error().$("full refresh error, cannot resolve base table [view=").$(viewToken)
-                        .$(", error=").$(e.getFlyweightMessage())
+                LOG.error()
+                        .$("could not perform full refresh, could not verify base table [view=").$(viewToken)
+                        .$(", baseTableName=").$(baseTableName)
+                        .$(", errno=").$(e.getErrno())
+                        .$(", errorMsg=").$(e.getFlyweightMessage())
                         .I$();
                 refreshFailState(state, walWriter, microsecondClock.getTicks(), e.getMessage());
                 return false;
@@ -305,14 +314,20 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     engine.attachReader(baseTableReader);
                 }
             } catch (Throwable th) {
-                LOG.error().$("full refresh error [view=").$(viewToken).$(", error=").$(th).I$();
+                LOG.error()
+                        .$("could not perform full refresh [view=").$(viewToken)
+                        .$(", baseTableToken=").$(baseTableToken)
+                        .$(", ex=").$(th).I$();
                 refreshFailState(state, walWriter, microsecondClock.getTicks(), th.getMessage());
                 return false;
             }
         } catch (Throwable th) {
             // If we're here, we either couldn't obtain the WAL writer or the writer couldn't write
             // invalid state transaction. Update the in-memory state and call it a day.
-            LOG.error().$("failed to write materialized view state transaction [view=").$(viewToken).$(", error=").$(th).I$();
+            LOG.critical()
+                    .$("could not perform incremental refresh, unexpected error [view=").$(viewToken)
+                    .$(", ex=").$(th)
+                    .I$();
             refreshFailState(state, null, microsecondClock.getTicks(), th.getMessage());
             return false;
         } finally {
@@ -365,6 +380,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         int intervalStep = intervalIterator.getStep();
         long rowCount = 0;
         long refreshTimestamp = microsecondClock.getTicks();
+        final TableToken viewTableToken = viewDef.getMatViewToken();
         try {
             factory = state.acquireRecordFactory();
             copier = state.getRecordToRowCopier();
@@ -372,18 +388,21 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             for (int i = 0; i <= maxRetries; i++) {
                 try {
                     if (factory == null) {
+                        final String viewSql = viewDef.getMatViewSql();
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                            LOG.info().$("compiling materialized view [view=").$(viewDef.getMatViewToken()).$(", attempt=").$(i).I$();
-                            final CompiledQuery compiledQuery = compiler.compile(viewDef.getMatViewSql(), refreshExecutionContext);
+                            LOG.info().$("compiling materialized view [view=").$(viewTableToken).$(", attempt=").$(i).I$();
+                            final CompiledQuery compiledQuery = compiler.compile(viewSql, refreshExecutionContext);
                             assert compiledQuery.getType() == CompiledQuery.SELECT;
                             factory = compiledQuery.getRecordCursorFactory();
-
                             if (copier == null || walWriter.getMetadata().getMetadataVersion() != state.getRecordRowCopierMetadataVersion()) {
                                 copier = getRecordToRowCopier(walWriter, factory, compiler);
                             }
                         } catch (SqlException e) {
                             factory = Misc.free(factory);
-                            LOG.error().$("error refreshing materialized view, compilation error [view=").$(viewDef.getMatViewToken())
+                            LOG.error().$("could not compile materialized view [view=").$(viewTableToken)
+                                    .$(", sql=").$(viewSql)
+                                    .$(", errorPos=").$(e.getPosition())
+                                    .$(", attempt=").$(i)
                                     .$(", error=").$(e.getFlyweightMessage())
                                     .I$();
                             refreshFailState(state, walWriter, refreshTimestamp, e.getMessage());
@@ -421,18 +440,19 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 } catch (TableReferenceOutOfDateException e) {
                     factory = Misc.free(factory);
                     if (i == maxRetries) {
-                        LOG.info().$("base table is under heavy DDL changes, will retry refresh later [view=").$(viewDef.getMatViewToken())
-                                .$(", recompileAttempts=").$(maxRetries)
+                        LOG.info().$("base table is under heavy DDL changes, will retry refresh later [view=").$(viewTableToken)
+                                .$(", totalAttempts=").$(maxRetries)
+                                .$(", msg=").$(e.getFlyweightMessage())
                                 .I$();
-                        stateStore.enqueueIncrementalRefresh(viewDef.getMatViewToken());
+                        stateStore.enqueueIncrementalRefresh(viewTableToken);
                         return false;
                     }
                 } catch (Throwable th) {
                     factory = Misc.free(factory);
-                    if (CairoException.isCairoOomError(th) && i < maxRetries && intervalStep > 1) {
+                    if (th instanceof CairoException && CairoException.isCairoOomError(th) && i < maxRetries && intervalStep > 1) {
                         intervalStep /= 2;
                         LOG.info().$("query failed with out-of-memory, retrying with a reduced intervalStep")
-                                .$(" [view=").$(viewDef.getMatViewToken())
+                                .$(" [view=").$(viewTableToken)
                                 .$(", intervalStep=").$(intervalStep)
                                 .$(", error=").$(((CairoException) th).getFlyweightMessage())
                                 .I$();
@@ -449,8 +469,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 state.setLastRefreshBaseTableTxn(baseTableTxn);
             }
         } catch (Throwable th) {
-            LOG.error().$("error refreshing materialized view [view=").$(viewDef.getMatViewToken()).$(", error=").$(th).I$();
             Misc.free(factory);
+            LOG.error()
+                    .$("could not perform incremental view update [view=").$(viewTableToken)
+                    .$(", ex=").$(th)
+                    .I$();
             refreshFailState(state, walWriter, refreshTimestamp, th.getMessage());
             return false;
         }
@@ -583,13 +606,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     try {
                         refreshed |= refreshIncremental0(state, baseTableToken, walWriter, refreshTriggeredTimestamp);
                     } catch (Throwable th) {
-                        LOG.error().$("error refreshing materialized view [view=").$(viewToken).$(", error=").$(th).I$();
                         refreshFailState(state, walWriter, microsecondClock.getTicks(), th.getMessage());
                     }
                 } catch (Throwable th) {
                     // If we're here, we either couldn't obtain the WAL writer or the writer couldn't write
                     // invalid state transaction. Update the in-memory state and call it a day.
-                    LOG.error().$("failed to write materialized view state transaction [view=").$(viewToken).$(", error=").$(th).I$();
+                    LOG.error()
+                            .$("could not get table writer for view [view=").$(viewToken)
+                            .$(", ex=").$(th)
+                            .I$();
                     refreshFailState(state, null, microsecondClock.getTicks(), th.getMessage());
                 } finally {
                     state.unlock();
@@ -624,18 +649,22 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
 
         if (!state.tryLock()) {
-            LOG.debug().$("skipping materialized view refresh, locked by another refresh run [view=").$(viewToken).I$();
+            LOG.debug().$("could not lock materialized view for incremental refresh, will retry [view=").$(viewToken).I$();
             stateStore.enqueueIncrementalRefresh(viewToken);
             return false;
         }
 
+        final String baseTableName = state.getViewDefinition().getBaseTableName();
         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
             final TableToken baseTableToken;
             try {
-                baseTableToken = engine.verifyTableName(state.getViewDefinition().getBaseTableName());
+                baseTableToken = engine.verifyTableName(baseTableName);
             } catch (CairoException e) {
-                LOG.error().$("error refreshing materialized view, cannot resolve base table [view=").$(viewToken)
-                        .$(", error=").$(e.getFlyweightMessage())
+                LOG.error()
+                        .$("could not perform incremental refresh, could not verify base table [view=").$(viewToken)
+                        .$(", baseTableName=").$(baseTableName)
+                        .$(", errno=").$(e.getErrno())
+                        .$(", errorMsg=").$(e.getFlyweightMessage())
                         .I$();
                 refreshFailState(state, walWriter, microsecondClock.getTicks(), e.getMessage());
                 return false;
@@ -649,14 +678,21 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             try {
                 return refreshIncremental0(state, baseTableToken, walWriter, refreshTriggeredTimestamp);
             } catch (Throwable th) {
-                LOG.error().$("error refreshing materialized view [view=").$(viewToken).$(", error=").$(th).I$();
+                LOG.error()
+                        .$("could not perform incremental refresh [view=").$(viewToken)
+                        .$(", baseTableToken=").$(baseTableToken)
+                        .$(", ex=").$(th)
+                        .I$();
                 refreshFailState(state, walWriter, microsecondClock.getTicks(), th.getMessage());
                 return false;
             }
         } catch (Throwable th) {
             // If we're here, we either couldn't obtain the WAL writer or the writer couldn't write
             // invalid state transaction. Update the in-memory state and call it a day.
-            LOG.error().$("failed to write materialized view state transaction [view=").$(viewToken).$(", error=").$(th).I$();
+            LOG.critical()
+                    .$("could not perform incremental refresh, unexpected error [view=").$(viewToken)
+                    .$(", ex=").$(th)
+                    .I$();
             refreshFailState(state, null, microsecondClock.getTicks(), th.getMessage());
             return false;
         } finally {

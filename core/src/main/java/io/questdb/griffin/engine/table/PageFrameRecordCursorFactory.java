@@ -162,7 +162,6 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
                 && rowCursorFactory.isEntity() && !rowCursorFactory.isUsingIndex()
                 && getMetadata().getTimestampIndex() != -1
                 && partitionFrameCursorFactory.getOrder() == ORDER_ASC
-                && !partitionFrameCursorFactory.hasInterval()
                 && filter == null;
     }
 
