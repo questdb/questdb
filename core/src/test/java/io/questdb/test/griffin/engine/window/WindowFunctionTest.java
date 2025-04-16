@@ -3141,9 +3141,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
         );
 
         assertExceptionNoLeakCheck(
-                "select lag(d, 1, i) over () from tab",
+                "select lag(d, 1, s) over () from tab",
                 17,
-                "default value must be a double"
+                "default value must be can cast to double"
         );
 
         assertExceptionNoLeakCheck(
