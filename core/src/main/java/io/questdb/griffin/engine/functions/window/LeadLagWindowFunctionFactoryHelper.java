@@ -128,6 +128,7 @@ public class LeadLagWindowFunctionFactoryHelper {
         );
         return LagConstructor.newFunction(args.get(0), defaultValue, offset, mem, windowContext.isIgnoreNulls());
     }
+
     @FunctionalInterface
     interface DefaultValueExtraChecker {
         void check(Function defaultValue) throws SqlException;
