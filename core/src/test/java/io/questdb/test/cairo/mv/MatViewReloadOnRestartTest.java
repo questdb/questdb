@@ -57,6 +57,7 @@ import static io.questdb.test.tools.TestUtils.assertContains;
 
 
 public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
+
     @Before
     public void setUp() {
         super.setUp();
@@ -67,8 +68,6 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     public void testMatViewsCheckUpdates() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain main1 = startWithEnvVariables0(
-                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
-                    PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
                     PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
                     PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
                     PropertyKey.PG_ENABLED.getEnvVarName(), "false"
@@ -634,8 +633,6 @@ public class MatViewReloadOnRestartTest extends AbstractBootstrapTest {
     @NotNull
     private static TestServerMain startMainPortsDisabled() {
         return startWithEnvVariables0(
-                PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true",
-                PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
                 PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true",
                 PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
                 PropertyKey.LINE_UDP_ENABLED.getEnvVarName(), "false",
