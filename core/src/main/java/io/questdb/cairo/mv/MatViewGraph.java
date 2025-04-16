@@ -26,9 +26,9 @@ package io.questdb.cairo.mv;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
-import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -48,8 +48,8 @@ public class MatViewGraph implements Mutable {
     private final Function<CharSequence, MatViewDependencyList> createDependencyList;
     private final ConcurrentHashMap<MatViewDefinition> definitionByTableDirName = new ConcurrentHashMap<>();
     // Note: this map is grow-only, i.e. keys are never removed.
-    private final ConcurrentHashMap<MatViewDependencyList> dependentViewsByTableName = new ConcurrentHashMap<>();
-    private static final ThreadLocal<CharSequenceHashSet> tlSeen = new ThreadLocal<>(CharSequenceHashSet::new);
+    private final ConcurrentHashMap<MatViewDependencyList> dependentViewsByTableName = new ConcurrentHashMap<>(false);
+    private static final ThreadLocal<LowerCaseCharSequenceHashSet> tlSeen = new ThreadLocal<>(LowerCaseCharSequenceHashSet::new);
     private static final ThreadLocal<ArrayDeque<CharSequence>> tlStack = new ThreadLocal<>(ArrayDeque::new);
 
     public MatViewGraph() {
@@ -161,7 +161,7 @@ public class MatViewGraph implements Mutable {
     }
 
     private boolean hasDependencyLoop(CharSequence baseTableName, TableToken newMatViewToken) {
-        CharSequenceHashSet seen = tlSeen.get();
+        LowerCaseCharSequenceHashSet seen = tlSeen.get();
         ArrayDeque<CharSequence> stack = tlStack.get();
 
         seen.clear();

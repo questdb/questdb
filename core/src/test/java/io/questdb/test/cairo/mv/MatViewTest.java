@@ -2160,7 +2160,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             try {
-                execute("create MATERIALIZED view a as (\n" +
+                execute("create MATERIALIZED view A as (\n" +
                         "  SELECT\n" +
                         "    timestamp,\n" +
                         "    symbol,\n" +
