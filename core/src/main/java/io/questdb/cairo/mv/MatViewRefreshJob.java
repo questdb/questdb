@@ -471,7 +471,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         } catch (Throwable th) {
             Misc.free(factory);
             LOG.error()
-                    .$("could not perform incremental view update [view=").$(viewTableToken)
+                    .$("could not perform materialized view refresh [view=").$(viewTableToken)
                     .$(", ex=").$(th)
                     .I$();
             refreshFailState(state, walWriter, refreshTimestamp, th.getMessage());
