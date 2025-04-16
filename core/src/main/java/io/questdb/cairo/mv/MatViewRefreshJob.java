@@ -380,7 +380,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         RecordCursorFactory factory = null;
         RecordToRowCopier copier;
         int intervalStep = intervalIterator.getStep();
-        long rowCount = 0;
         long refreshTimestamp = microsecondClock.getTicks();
         final TableToken viewTableToken = viewDef.getMatViewToken();
         try {
@@ -420,7 +419,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     assert cursorTimestampIndex > -1;
 
                     long commitTarget = batchSize;
-                    rowCount = 0;
+                    long rowCount = 0;
 
                     intervalIterator.toTop(intervalStep);
                     while (intervalIterator.next()) {
@@ -467,9 +466,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
             walWriter.commitMatView(baseTableTxn, refreshTimestamp);
             state.refreshSuccess(factory, copier, walWriter.getMetadata().getMetadataVersion(), refreshTimestamp, refreshTriggeredTimestamp, baseTableTxn);
-            if (rowCount > 0) {
-                state.setLastRefreshBaseTableTxn(baseTableTxn);
-            }
+            state.setLastRefreshBaseTableTxn(baseTableTxn);
         } catch (Throwable th) {
             Misc.free(factory);
             LOG.error()
@@ -480,7 +477,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
 
-        return rowCount > 0;
+        return true;
     }
 
     private SampleByIntervalIterator intervalIterator(
@@ -758,6 +755,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     private void resetInvalidState(MatViewState state, WalWriter walWriter) {
         state.markAsValid();
+        state.setLastRefreshBaseTableTxn(-1);
         walWriter.invalidateMatView(state.getLastRefreshBaseTxn(), state.getLastRefreshTimestamp(), false, null);
     }
 
