@@ -960,7 +960,7 @@ public class SqlParser {
                 }
             }
 
-            final String matViewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);
+            final CharSequence matViewSql = lexer.getContent().subSequence(startOfQuery, endOfQuery);
             tableOpBuilder.setSelectText(matViewSql, startOfQuery);
             tableOpBuilder.setSelectModel(queryModel); // transient model, for toSink() purposes only
 
@@ -1313,7 +1313,7 @@ public class SqlParser {
         // It'll be compiled and optimized later, at the execution phase.
         final QueryModel selectModel = parseDml(lexer, null, startOfSelect, true, sqlParserCallback, null);
         final int endOfSelect = lexer.getPosition() - 1;
-        final String selectText = Chars.toString(lexer.getContent(), startOfSelect, endOfSelect);
+        final CharSequence selectText = lexer.getContent().subSequence(startOfSelect, endOfSelect);
         createTableOperationBuilder.setSelectText(selectText, startOfSelect);
         createTableOperationBuilder.setSelectModel(selectModel); // transient model, for toSink() purposes only
         expectTok(lexer, ')');
