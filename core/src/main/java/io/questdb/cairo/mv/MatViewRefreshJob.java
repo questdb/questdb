@@ -368,7 +368,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             SampleByIntervalIterator intervalIterator,
             long baseTableTxn,
             long refreshTriggeredTimestamp
-    ) {
+    ) throws SqlException {
         assert state.isLocked();
 
         final int maxRetries = configuration.getMatViewMaxRefreshRetries();
