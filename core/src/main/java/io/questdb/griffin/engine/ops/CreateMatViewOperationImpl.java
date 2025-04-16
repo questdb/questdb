@@ -81,7 +81,7 @@ import static io.questdb.griffin.model.ExpressionNode.LITERAL;
  */
 public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final IntList baseKeyColumnNamePositions = new IntList();
-    private final ObjList<CharSequence> baseKeyColumnNames = new ObjList<>();
+    private final ObjList<String> baseKeyColumnNames = new ObjList<>();
     private final CharSequenceHashSet baseTableDedupKeys = new CharSequenceHashSet();
     private final String baseTableName;
     private final int baseTableNamePosition;
@@ -499,7 +499,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             ExpressionNode node,
             QueryModel model,
             CharSequence baseTableName,
-            ObjList<CharSequence> baseKeyColumnNames,
+            ObjList<String> baseKeyColumnNames,
             IntList baseKeyColumnNamePositions,
             int selectTextPosition
     ) throws SqlException {
