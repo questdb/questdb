@@ -50,6 +50,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
@@ -756,6 +757,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private void resetInvalidState(MatViewState state, WalWriter walWriter) {
         state.markAsValid();
         state.setLastRefreshBaseTableTxn(-1);
+        state.setLastRefreshTimestamp(Numbers.LONG_NULL);
         walWriter.invalidateMatView(state.getLastRefreshBaseTxn(), state.getLastRefreshTimestamp(), false, null);
     }
 
