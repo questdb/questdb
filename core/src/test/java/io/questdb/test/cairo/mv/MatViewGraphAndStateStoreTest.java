@@ -38,7 +38,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-public class MatViewStateStoreTest extends AbstractCairoTest {
+public class MatViewGraphAndStateStoreTest extends AbstractCairoTest {
     private final MatViewGraph graph = new MatViewGraph();
     private final ObjList<TableToken> ordered = new ObjList<>();
     private final MatViewStateStoreImpl stateStore = new MatViewStateStoreImpl(engine);
@@ -149,7 +149,7 @@ public class MatViewStateStoreTest extends AbstractCairoTest {
             graph.addView(viewDefinition);
             Assert.fail("Expected a dependency loop exception");
         } catch (CairoException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "dependency loop detected");
+            TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
         }
     }
 
@@ -165,7 +165,7 @@ public class MatViewStateStoreTest extends AbstractCairoTest {
             graph.addView(viewDefinition);
             Assert.fail("Expected a dependency loop exception");
         } catch (CairoException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "dependency loop detected");
+            TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
         }
     }
 
@@ -183,7 +183,7 @@ public class MatViewStateStoreTest extends AbstractCairoTest {
             graph.addView(viewDefinition);
             Assert.fail("Expected a dependency loop exception");
         } catch (CairoException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "dependency loop detected");
+            TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
         }
     }
 
@@ -201,7 +201,7 @@ public class MatViewStateStoreTest extends AbstractCairoTest {
             graph.addView(viewDefinition);
             Assert.fail("Expected a dependency loop exception");
         } catch (CairoException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "dependency loop detected");
+            TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
         }
     }
 

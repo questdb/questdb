@@ -2170,7 +2170,7 @@ public class MatViewTest extends AbstractCairoTest {
                         ") partition by HOUR;");
                 Assert.fail("Expected a dependency loop exception");
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "dependency loop detected");
+                TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
             }
             // mat view table should be dropped
             TableToken token = engine.getTableTokenIfExists("a");

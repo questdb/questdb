@@ -64,11 +64,13 @@ public class MatViewGraph implements Mutable {
             return false;
         }
 
-        synchronized(this) {
+        synchronized (this) {
             if (hasDependencyLoop(viewDefinition.getBaseTableName(), matViewToken)) {
-                throw CairoException.critical(0).put("materialized view dependency loop detected [base=")
-                        .put(viewDefinition.getBaseTableName()).put(", view=")
-                        .put(matViewToken.getDirName());
+                throw CairoException.critical(0).put("circular dependency detected for materialized view [view=")
+                        .put(matViewToken.getTableName())
+                        .put(", dependentOn=")
+                        .put(viewDefinition.getBaseTableName())
+                        .put(']');
             }
             final MatViewDependencyList list = getOrCreateDependentViews(viewDefinition.getBaseTableName());
             final ObjList<TableToken> matViews = list.lockForWrite();
@@ -165,7 +167,7 @@ public class MatViewGraph implements Mutable {
         seen.clear();
         stack.clear();
 
-        if (Chars.equals(baseTableName, newMatViewToken.getTableName())) {
+        if (Chars.equalsIgnoreCase(baseTableName, newMatViewToken.getTableName())) {
             return true; // Self-loop
         }
 
@@ -183,7 +185,7 @@ public class MatViewGraph implements Mutable {
                 try {
                     for (int i = 0, n = matViews.size(); i < n; i++) {
                         TableToken matView = matViews.get(i);
-                        if (Chars.equals(matView.getTableName(), baseTableName)) {
+                        if (Chars.equalsIgnoreCase(matView.getTableName(), baseTableName)) {
                             return true; // Cycle detected
                         }
                         stack.push(matView.getTableName());
