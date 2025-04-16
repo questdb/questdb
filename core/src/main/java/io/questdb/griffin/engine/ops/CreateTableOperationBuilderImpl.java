@@ -64,11 +64,13 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     // transient field, unoptimized AS SELECT model, used in toSink()
     private QueryModel selectModel;
     private CharSequence selectText;
+    private int selectTextPosition;
     private ExpressionNode tableNameExpr;
     private ExpressionNode timestampExpr;
     private int ttlHoursOrMonths;
     private int ttlPosition;
     private CharSequence volumeAlias;
+    private int volumePosition;
     private boolean walEnabled;
 
     public void addColumnModel(CharSequence columnName, CreateTableColumnModel model) throws SqlException {
@@ -86,12 +88,15 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             return new CreateTableOperationImpl(
                     Chars.toString(sqlText),
                     Chars.toString(tableNameExpr.token),
-                    Chars.toString(selectText),
                     tableNameExpr.position,
+                    Chars.toString(selectText),
+                    selectTextPosition,
                     ignoreIfExists,
                     getPartitionByFromExpr(),
                     timestampExpr != null ? Chars.toString(timestampExpr.token) : null,
-                    timestampExpr != null ? timestampExpr.position : 0, Chars.toString(volumeAlias),
+                    timestampExpr != null ? timestampExpr.position : 0,
+                    Chars.toString(volumeAlias),
+                    volumePosition,
                     ttlHoursOrMonths,
                     ttlPosition,
                     walEnabled,
@@ -115,6 +120,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     tableNameExpr.position,
                     getPartitionByFromExpr(),
                     Chars.toString(volumeAlias),
+                    volumePosition,
                     likeTableNameToken.getTableName(),
                     likeTableNameExpr.position,
                     ignoreIfExists
@@ -127,6 +133,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 tableNameExpr.position,
                 getPartitionByFromExpr(),
                 Chars.toString(volumeAlias),
+                volumePosition,
                 ignoreIfExists,
                 columnNames,
                 columnModels,
@@ -155,8 +162,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         tableNameExpr = null;
         timestampExpr = null;
         selectText = null;
+        selectTextPosition = 0;
         selectModel = null;
         volumeAlias = null;
+        volumePosition = 0;
         ttlHoursOrMonths = 0;
         ttlPosition = 0;
         walEnabled = false;
@@ -262,8 +271,9 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         this.selectModel = selectModel;
     }
 
-    public void setSelectText(CharSequence selectText) {
+    public void setSelectText(CharSequence selectText, int selectTextPosition) {
         this.selectText = selectText;
+        this.selectTextPosition = selectTextPosition;
     }
 
     public void setTableNameExpr(ExpressionNode expr) {
@@ -282,10 +292,11 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         this.ttlPosition = ttlPosition;
     }
 
-    public void setVolumeAlias(CharSequence volumeAlias) {
+    public void setVolumeAlias(CharSequence volumeAlias, int volumePosition) {
         // set if the "create table" statement contains IN VOLUME 'volumeAlias'.
         // volumePath will be resolved by the compiler
         this.volumeAlias = Chars.toString(volumeAlias);
+        this.volumePosition = volumePosition;
     }
 
     public void setWalEnabled(boolean walEnabled) {

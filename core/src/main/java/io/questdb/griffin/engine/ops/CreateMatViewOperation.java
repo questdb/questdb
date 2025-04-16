@@ -47,6 +47,8 @@ public interface CreateMatViewOperation extends TableStructure, Operation {
 
     CharSequence getVolumeAlias();
 
+    int getVolumePosition();
+
     boolean ignoreIfExists();
 
     void updateOperationFutureTableToken(TableToken tableToken);
