@@ -55,7 +55,6 @@ import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -77,12 +76,6 @@ public class InsertTest extends AbstractCairoTest {
         return Arrays.asList(new Object[][]{{false}, {true}});
     }
 
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
-        AbstractCairoTest.setUpStatic();
-    }
-
     public void assertReaderCheckWal(String expected, CharSequence tableName) {
         if (walEnabled) {
             drainWalQueue();
@@ -94,7 +87,6 @@ public class InsertTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
-        node1.setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
         engine.getMatViewStateStore().clear();
     }
 

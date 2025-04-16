@@ -459,7 +459,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         Os.sleep(oomRetryTimeout);
                         continue;
                     }
-                    refreshFailState(state, walWriter, refreshTimestamp, th.getMessage());
                     throw th;
                 }
             }
@@ -476,7 +475,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     .$(", ex=").$(th)
                     .I$();
             refreshFailState(state, walWriter, refreshTimestamp, th.getMessage());
-            throw th;
+            return false;
         }
 
         return rowCount > 0;
@@ -605,10 +604,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
                 try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
                     try {
-                        refreshed = refreshIncremental0(state, baseTableToken, walWriter, refreshTriggeredTimestamp);
+                        refreshed |= refreshIncremental0(state, baseTableToken, walWriter, refreshTriggeredTimestamp);
                     } catch (Throwable th) {
                         refreshFailState(state, walWriter, microsecondClock.getTicks(), th.getMessage());
-                        return false;
                     }
                 } catch (Throwable th) {
                     // If we're here, we either couldn't obtain the WAL writer or the writer couldn't write
