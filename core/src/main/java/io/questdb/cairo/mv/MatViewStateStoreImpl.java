@@ -67,7 +67,7 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     }
 
     // kept public for tests
-    public static boolean notifyOnBaseTableCommit(AtomicLong lastNotifiedBaseTableTxn, long seqTxn) {
+    public static boolean notifyBaseTableCommit(AtomicLong lastNotifiedBaseTableTxn, long seqTxn) {
         long lastNotified;
         boolean retry;
         do {
@@ -177,25 +177,27 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     }
 
     @Override
-    public void notifyTxnApplied(MatViewRefreshTask task, long seqTxn) {
-        final AtomicLong lastNotifiedTxn = lastNotifiedTxnByTableName.get(task.baseTableToken.getTableName());
-        if (lastNotifiedTxn != null) {
+    public void notifyBaseTableCommit(MatViewRefreshTask task, long seqTxn) {
+        final TableToken baseTableToken = task.baseTableToken;
+        final AtomicLong lastNotifiedBaseTableTxn = lastNotifiedTxnByTableName.get(baseTableToken.getTableName());
+        if (lastNotifiedBaseTableTxn != null) {
             // Always notify refresh job in case of mat view invalidation or full refresh.
             // For incremental refresh we check if we haven't already notified on the given txn.
-            if (task.operation != MatViewRefreshTask.INCREMENTAL_REFRESH || notifyOnBaseTableCommit(lastNotifiedTxn, seqTxn)) {
+            if (task.operation != MatViewRefreshTask.INCREMENTAL_REFRESH || notifyBaseTableCommit(lastNotifiedBaseTableTxn, seqTxn)) {
                 task.refreshTriggeredTimestamp = microsecondClock.getTicks();
                 taskQueue.enqueue(task);
                 if (task.operation == MatViewRefreshTask.INVALIDATE) {
-                    LOG.info().$("notified refresh job to invalidate dependent materialized views [baseTable=").$(task.baseTableToken)
+                    LOG.error()
+                            .$("will invalidate all views for [baseTable=").$(baseTableToken)
                             .$(", reason=").$(task.invalidationReason)
                             .I$();
                 } else {
-                    LOG.info().$("refresh job notified [baseTable=").$(task.baseTableToken)
+                    LOG.debug().$("refresh job notified [baseTable=").$(baseTableToken)
                             .$(", op=").$(task.operation)
                             .I$();
                 }
             } else {
-                LOG.info().$("no need to notify to refresh job [baseTable=").$(task.baseTableToken).I$();
+                LOG.debug().$("no need to notify to refresh job [baseTable=").$(baseTableToken).I$();
             }
         }
     }

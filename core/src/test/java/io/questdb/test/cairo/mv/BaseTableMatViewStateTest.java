@@ -62,7 +62,7 @@ public class BaseTableMatViewStateTest extends AbstractCairoTest {
                     barrier.await();
                     long nextTxn;
                     while ((nextTxn = seqTxn.incrementAndGet()) < commits) {
-                        if (MatViewStateStoreImpl.notifyOnBaseTableCommit(lastNotifiedTxn, nextTxn)) {
+                        if (MatViewStateStoreImpl.notifyBaseTableCommit(lastNotifiedTxn, nextTxn)) {
                             long refreshNot = refreshNotification.incrementAndGet();
                             System.out.println("refresh notification:" + refreshNot + " added on commit " + nextTxn);
                         }
@@ -129,6 +129,6 @@ public class BaseTableMatViewStateTest extends AbstractCairoTest {
             }
         }
 
-        Assert.assertTrue(MatViewStateStoreImpl.notifyOnBaseTableCommit(lastNotifiedTxn, commits));
+        Assert.assertTrue(MatViewStateStoreImpl.notifyBaseTableCommit(lastNotifiedTxn, commits));
     }
 }
