@@ -243,7 +243,9 @@ public final class TableUtils {
     }
 
     public static int calculateTxRecordSize(int bytesSymbols, int bytesPartitions) {
-        return TX_RECORD_HEADER_SIZE + Integer.BYTES + bytesSymbols + Integer.BYTES + bytesPartitions;
+        // Note that 32 bit symbol length is included in TX_RECORD_HEADER_SIZE,
+        // hence the record size is head + symbol sizes + 32bit partition count + bytes to store partitions
+        return TX_RECORD_HEADER_SIZE + bytesSymbols + Integer.BYTES + bytesPartitions;
     }
 
     public static int calculateTxnLagChecksum(long txn, long seqTxn, int lagRowCount, long lagMinTimestamp, long lagMaxTimestamp, int lagTxnCount) {
