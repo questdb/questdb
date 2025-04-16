@@ -35,7 +35,15 @@ import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.ByteFunction;
+import io.questdb.griffin.engine.functions.CharFunction;
+import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.ShortFunction;
+import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -65,8 +73,12 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                 configuration,
                 sqlExecutionContext,
                 (defaultValue) -> {
-                    if (!(defaultValue instanceof DoubleFunction)) {
-                        throw SqlException.$(argPositions.getQuick(2), "default value must be a double");
+                    if (!(defaultValue instanceof DoubleFunction || defaultValue instanceof ByteFunction
+                            || defaultValue instanceof CharFunction || defaultValue instanceof ShortFunction
+                            || defaultValue instanceof IntFunction || defaultValue instanceof LongFunction
+                            || defaultValue instanceof StrFunction || defaultValue instanceof TimestampFunction
+                            || defaultValue instanceof DateFunction)) {
+                        throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to double");
                     }
                 },
                 LeadFunction::new,

@@ -34,6 +34,10 @@ import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.DateFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -64,8 +68,10 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
                 configuration,
                 sqlExecutionContext,
                 (defaultValue) -> {
-                    if (!(defaultValue instanceof TimestampFunction)) {
-                        throw SqlException.$(argPositions.getQuick(2), "default value must be a Long");
+                    if (!(defaultValue instanceof TimestampFunction
+                            || defaultValue instanceof IntFunction || defaultValue instanceof StrFunction
+                            || defaultValue instanceof LongFunction || defaultValue instanceof DateFunction)) {
+                        throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to timestamp");
                     }
                 },
                 LagFunction::new,
