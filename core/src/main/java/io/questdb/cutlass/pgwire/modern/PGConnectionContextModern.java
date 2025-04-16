@@ -741,7 +741,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             return;
         }
 
-        if (pipelineCurrentEntry != null && pipelineCurrentEntry.isStateExec()) {
+        if (pipelineCurrentEntry != null && (pipelineCurrentEntry.isStateExec() || pipelineCurrentEntry.isStateClosed())) {
             // this is the sequence of B/E/B/E where B starts a new pipeline entry
             pipeline.add(pipelineCurrentEntry);
             pipelineCurrentEntry = null;
@@ -901,7 +901,13 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             // we are liable to look up the current entry, depending on how protocol is used
             // if this the case, we should not attempt to save the current entry prematurely
         } else if (lookedUpPipelineEntry != pipelineCurrentEntry) {
-            addPipelineEntry();
+            if (pipelineCurrentEntry != null) {
+                if (pipelineCurrentEntry.isDirty()) {
+                    addPipelineEntry();
+                } else {
+                    releaseToPoolIfAbandoned(pipelineCurrentEntry);
+                }
+            }
             pipelineCurrentEntry = lookedUpPipelineEntry;
         }
 
