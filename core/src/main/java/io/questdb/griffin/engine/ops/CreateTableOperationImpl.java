@@ -75,10 +75,12 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     // position of the "like" table name in the SQL text, for error reporting
     private final int likeTableNamePosition;
     private final String selectText;
+    private final int selectTextPosition;
     private final String sqlText;
     private final String tableName;
     private final int tableNamePosition;
     private final String volumeAlias;
+    private final int volumePosition;
     private int defaultSymbolCapacity = -1;
     private int maxUncommittedRows;
     private long o3MaxLag;
@@ -96,6 +98,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int tableNamePosition,
             int partitionBy,
             @Nullable String volumeAlias,
+            int volumePosition,
             @Nullable String likeTableName,
             int likeTableNamePosition,
             boolean ignoreIfExists
@@ -105,10 +108,12 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.tableNamePosition = tableNamePosition;
         this.partitionBy = partitionBy;
         this.volumeAlias = volumeAlias;
+        this.volumePosition = volumePosition;
         this.likeTableName = likeTableName;
         this.likeTableNamePosition = likeTableNamePosition;
         this.ignoreIfExists = ignoreIfExists;
         this.selectText = null;
+        this.selectTextPosition = 0;
         this.timestampColumnName = null;
         this.timestampColumnNamePosition = 0;
         this.batchSize = 0;
@@ -121,6 +126,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int tableNamePosition,
             int partitionBy,
             @Nullable String volumeAlias,
+            int volumePosition,
             boolean ignoreIfExists,
             @Transient ObjList<CharSequence> columnNames,
             @Transient LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap,
@@ -136,6 +142,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.tableNamePosition = tableNamePosition;
         this.partitionBy = partitionBy;
         this.volumeAlias = volumeAlias;
+        this.volumePosition = volumePosition;
         this.ignoreIfExists = ignoreIfExists;
         for (int i = 0, n = columnNames.size(); i < n; i++) {
             CharSequence colName = columnNames.get(i);
@@ -161,6 +168,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.walEnabled = walEnabled;
 
         this.selectText = null;
+        this.selectTextPosition = 0;
         this.likeTableName = null;
         this.likeTableNamePosition = -1;
         this.batchSize = 0;
@@ -175,8 +183,9 @@ public class CreateTableOperationImpl implements CreateTableOperation {
      *
      * @param sqlText                     text of the SQL, that includes "create table..."
      * @param tableName                   name of the table to be created
-     * @param selectText                  text of the nested AS SELECT statement
      * @param tableNamePosition           the position of table name in user's input, it is used for error reporting
+     * @param selectText                  text of the nested AS SELECT statement
+     * @param selectTextPosition          the position of the nested AS SELECT statement, it is used for error reporting
      * @param ignoreIfExists              "if exists" flag, table won't be created silently if it exists already
      * @param partitionBy                 partition type
      * @param timestampColumnName         designated timestamp column name
@@ -194,13 +203,15 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     public CreateTableOperationImpl(
             String sqlText,
             @NotNull String tableName,
-            @NotNull String selectText,
             int tableNamePosition,
+            @NotNull String selectText,
+            int selectTextPosition,
             boolean ignoreIfExists,
             int partitionBy,
             @Nullable String timestampColumnName,
             int timestampColumnNamePosition,
             @Nullable String volumeAlias,
+            int volumePosition,
             int ttlHoursOrMonths,
             int ttlPosition,
             boolean walEnabled,
@@ -213,10 +224,12 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     ) {
         this.sqlText = sqlText;
         this.tableName = tableName;
-        this.selectText = selectText;
         this.tableNamePosition = tableNamePosition;
+        this.selectText = selectText;
+        this.selectTextPosition = selectTextPosition;
         this.partitionBy = partitionBy;
         this.volumeAlias = volumeAlias;
+        this.volumePosition = volumePosition;
         this.ignoreIfExists = ignoreIfExists;
         this.timestampColumnName = timestampColumnName;
         this.timestampColumnNamePosition = timestampColumnNamePosition;
@@ -327,6 +340,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     }
 
     @Override
+    public int getSelectTextPosition() {
+        return selectTextPosition;
+    }
+
+    @Override
     public String getSqlText() {
         return sqlText;
     }
@@ -370,6 +388,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     @Override
     public CharSequence getVolumeAlias() {
         return volumeAlias;
+    }
+
+    @Override
+    public int getVolumePosition() {
+        return volumePosition;
     }
 
     @Override

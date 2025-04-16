@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableFlagResolver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -49,6 +50,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
+import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -184,6 +186,15 @@ public class CairoEngineTest extends AbstractCairoTest {
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "table exists");
             }
+        });
+    }
+
+    @Test
+    public void testGetTableFlagResolver() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableFlagResolver tableFlagResolver = engine.getTableFlagResolver();
+            assertTrue(tableFlagResolver.isSystem(engine.getConfiguration().getSystemTableNamePrefix() + ".tableName"));
+            assertTrue(tableFlagResolver.isPublic(TelemetryTask.TABLE_NAME));
         });
     }
 

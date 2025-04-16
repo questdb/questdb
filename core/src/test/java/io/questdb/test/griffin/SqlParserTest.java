@@ -2540,8 +2540,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
             } catch (SqlException e) {
                 if (Os.isWindows()) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported on Windows");
+                    Assert.assertEquals(89, e.getPosition());
                 } else {
                     TestUtils.assertContains(e.getFlyweightMessage(), "volume alias is not allowed [alias=12]");
+                    Assert.assertEquals(96, e.getPosition());
                 }
             }
         });
@@ -2569,8 +2571,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "t TIMESTAMP) " +
                         "TIMESTAMP(t) " +
                         "PARTITION BY YEAR IN peterson",
-                97,
-                "expected 'volume'"
+                89,
+                "'volume' expected"
         );
 
         assertSyntaxError(

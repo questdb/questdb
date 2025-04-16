@@ -79,6 +79,7 @@ public class SqlParser {
     private static final RewriteDeclaredVariablesInExpressionVisitor rewriteDeclaredVariablesInExpressionVisitor = new RewriteDeclaredVariablesInExpressionVisitor();
     private static final LowerCaseAsciiCharSequenceHashSet setOperations = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet tableAliasStop = new LowerCaseAsciiCharSequenceHashSet();
+    private static final IntList tableNamePositions = new IntList();
     private static final LowerCaseCharSequenceHashSet tableNames = new LowerCaseCharSequenceHashSet();
     private final IntList accumulatedColumnPositions = new IntList();
     private final ObjList<QueryColumn> accumulatedColumns = new ObjList<>();
@@ -256,12 +257,16 @@ public class SqlParser {
         return visitor.visit(node);
     }
 
-    private static void collectAllTableNames(QueryModel model, LowerCaseCharSequenceHashSet tableNames) {
+    private static void collectAllTableNames(
+            QueryModel model, LowerCaseCharSequenceHashSet outTableNames, IntList outTableNamePositions
+    ) {
         QueryModel m = model;
         do {
             final ExpressionNode tableNameExpr = m.getTableNameExpr();
             if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
-                tableNames.add(unquote(tableNameExpr.token));
+                if (outTableNames.add(unquote(tableNameExpr.token))) {
+                    outTableNamePositions.add(tableNameExpr.position);
+                }
             }
 
             final ObjList<QueryModel> joinModels = m.getJoinModels();
@@ -270,12 +275,12 @@ public class SqlParser {
                 if (joinModel == m) {
                     continue;
                 }
-                collectAllTableNames(joinModel, tableNames);
+                collectAllTableNames(joinModel, outTableNames, outTableNamePositions);
             }
 
             final QueryModel unionModel = m.getUnionModel();
             if (unionModel != null) {
-                collectAllTableNames(unionModel, tableNames);
+                collectAllTableNames(unionModel, outTableNames, outTableNamePositions);
             }
 
             m = m.getNestedModel();
@@ -375,7 +380,7 @@ public class SqlParser {
             final boolean baseTableQueried = isTableQueried(m, baseTableName);
             if (baseTableQueried) {
                 if (m.getSampleBy() != null && m.getSampleByOffset() == null) {
-                    throw SqlException.position(m.getSampleBy().position)
+                    throw SqlException.position(m.getSampleBy().position + m.getSampleBy().token.length() + 1)
                             .put("ALIGN TO FIRST OBSERVATION on base table is not supported for materialized views: ").put(baseTableName);
                 }
 
@@ -839,7 +844,7 @@ public class SqlParser {
         final CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch' or 'materialized'");
         if (isMaterializedKeyword(tok)) {
             if (!configuration.isMatViewEnabled()) {
-                throw SqlException.$(lexer.lastTokenPosition(), "materialized views are disabled");
+                throw SqlException.$(0, "materialized views are disabled");
             }
             return parseCreateMatView(lexer, executionContext, sqlParserCallback);
         }
@@ -926,14 +931,16 @@ public class SqlParser {
             // Find base table name if not set explicitly.
             if (baseTableName == null) {
                 tableNames.clear();
-                collectAllTableNames(queryModel, tableNames);
+                tableNamePositions.clear();
+                collectAllTableNames(queryModel, tableNames, tableNamePositions);
                 if (tableNames.size() < 1) {
-                    throw SqlException.$(0, "missing base table, materialized views have to be based on a table");
+                    throw SqlException.$(startOfQuery, "missing base table, materialized views have to be based on a table");
                 }
                 if (tableNames.size() > 1) {
-                    throw SqlException.$(0, "more than one table used in query, base table has to be set using 'WITH BASE'");
+                    throw SqlException.$(startOfQuery, "more than one table used in query, base table has to be set using 'WITH BASE'");
                 }
                 baseTableName = Chars.toString(tableNames.getAny());
+                baseTableNamePos = tableNamePositions.getQuick(0);
             }
 
             mvOpBuilder.setBaseTableNamePosition(baseTableNamePos);
@@ -953,7 +960,7 @@ public class SqlParser {
                 }
             }
 
-            tableOpBuilder.setSelectText(lexer.getContent().subSequence(startOfQuery, endOfQuery));
+            tableOpBuilder.setSelectText(lexer.getContent().subSequence(startOfQuery, endOfQuery), startOfQuery);
             tableOpBuilder.setSelectModel(queryModel); // transient model, for toSink() purposes only
 
             if (enclosedInParentheses) {
@@ -995,7 +1002,7 @@ public class SqlParser {
                 throw SqlException.$(partitionByExpr.position, "'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
             }
             if (!PartitionBy.isPartitioned(partitionBy)) {
-                throw SqlException.position(0).put("materialized view has to be partitioned");
+                throw SqlException.position(partitionByExpr.position).put("materialized view has to be partitioned");
             }
             tableOpBuilder.setPartitionByExpr(partitionByExpr);
             tok = optTok(lexer);
@@ -1013,12 +1020,7 @@ public class SqlParser {
         }
 
         if (tok != null && isInKeyword(tok)) {
-            expectTok(lexer, "volume");
-            tok = tok(lexer, "path for volume");
-            if (Os.isWindows()) {
-                throw SqlException.position(lexer.getPosition()).put("'in volume' is not supported on Windows");
-            }
-            tableOpBuilder.setVolumeAlias(GenericLexer.unquote(tok));
+            parseInVolume(lexer, tableOpBuilder);
             tok = optTok(lexer);
         }
 
@@ -1239,15 +1241,7 @@ public class SqlParser {
         builder.setO3MaxLag(o3MaxLag);
 
         if (tok != null && isInKeyword(tok)) {
-            tok = tok(lexer, "volume");
-            if (!isVolumeKeyword(tok)) {
-                throw SqlException.position(lexer.getPosition()).put("expected 'volume'");
-            }
-            tok = tok(lexer, "path for volume");
-            if (Os.isWindows()) {
-                throw SqlException.position(lexer.getPosition()).put("'in volume' is not supported on Windows");
-            }
-            builder.setVolumeAlias(unquote(tok));
+            parseInVolume(lexer, builder);
             tok = optTok(lexer);
         }
 
@@ -1318,7 +1312,8 @@ public class SqlParser {
         // It'll be compiled and optimized later, at the execution phase.
         final QueryModel selectModel = parseDml(lexer, null, startOfSelect, true, sqlParserCallback, null);
         final int endOfSelect = lexer.getPosition() - 1;
-        createTableOperationBuilder.setSelectText(lexer.getContent().subSequence(startOfSelect, endOfSelect));
+        final String selectText = Chars.toString(lexer.getContent(), startOfSelect, endOfSelect);
+        createTableOperationBuilder.setSelectText(selectText, startOfSelect);
         createTableOperationBuilder.setSelectModel(selectModel); // transient model, for toSink() purposes only
         expectTok(lexer, ')');
     }
@@ -2250,6 +2245,16 @@ public class SqlParser {
             throw SqlException.position(lexer.lastTokenPosition()).put("expected 'from'");
         }
         parseTableName(lexer, model);
+    }
+
+    private void parseInVolume(GenericLexer lexer, CreateTableOperationBuilderImpl tableOpBuilder) throws SqlException {
+        int volumeKwPos = lexer.getPosition();
+        expectTok(lexer, "volume");
+        CharSequence tok = tok(lexer, "path for volume");
+        if (Os.isWindows()) {
+            throw SqlException.position(volumeKwPos).put("'in volume' is not supported on Windows");
+        }
+        tableOpBuilder.setVolumeAlias(GenericLexer.unquote(tok), lexer.lastTokenPosition());
     }
 
     private ExecutionModel parseInsert(
