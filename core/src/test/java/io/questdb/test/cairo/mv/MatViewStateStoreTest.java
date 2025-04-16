@@ -144,6 +144,72 @@ public class MatViewStateStoreTest extends AbstractCairoTest {
         Assert.assertEquals("table1", ordered.getQuick(1).getTableName());
     }
 
+    // loops
+    @Test
+    public void testDirectSelfLoop() {
+        TableToken viewA = newViewToken("viewA");
+
+        MatViewDefinition viewDefinition = createDefinition(viewA, viewA);
+        try {
+            graph.addView(viewDefinition);
+            Assert.fail("Expected a dependency loop exception");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "dependency loop detected");
+        }
+    }
+
+    @Test
+    public void testTwoLevelLoop() {
+        TableToken viewA = newViewToken("viewA");
+        TableToken viewB = newViewToken("viewB");
+
+        addDefinition(viewA, viewB);
+        MatViewDefinition viewDefinition = createDefinition(viewB, viewA);
+
+        try {
+            graph.addView(viewDefinition);
+            Assert.fail("Expected a dependency loop exception");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "dependency loop detected");
+        }
+    }
+
+    @Test
+    public void testThreeLevelLoop() {
+        TableToken viewA = newViewToken("viewA");
+        TableToken viewB = newViewToken("viewB");
+        TableToken viewC = newViewToken("viewC");
+
+        addDefinition(viewA, viewB);
+        addDefinition(viewB, viewC);
+        MatViewDefinition viewDefinition = createDefinition(viewC, viewA);
+
+        try {
+            graph.addView(viewDefinition);
+            Assert.fail("Expected a dependency loop exception");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "dependency loop detected");
+        }
+    }
+
+    @Test
+    public void testIndirectLoopViaSharedDependency() {
+        TableToken viewA = newViewToken("viewA");
+        TableToken viewB = newViewToken("viewB");
+        TableToken viewC = newViewToken("viewC");
+
+        addDefinition(viewA, viewB);
+        addDefinition(viewC, viewB);
+        MatViewDefinition viewDefinition = createDefinition(viewB, viewA);
+
+        try {
+            graph.addView(viewDefinition);
+            Assert.fail("Expected a dependency loop exception");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "dependency loop detected");
+        }
+    }
+
     private void addDefinition(TableToken viewToken, TableToken baseTableToken) {
         MatViewDefinition viewDefinition = createDefinition(viewToken, baseTableToken);
         stateStore.addViewState(viewDefinition);

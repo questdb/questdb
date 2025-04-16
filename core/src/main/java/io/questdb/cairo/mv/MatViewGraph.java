@@ -26,6 +26,8 @@ package io.questdb.cairo.mv;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjHashSet;
@@ -46,6 +48,8 @@ public class MatViewGraph implements Mutable {
     private final ConcurrentHashMap<MatViewDefinition> definitionByTableDirName = new ConcurrentHashMap<>();
     // Note: this map is grow-only, i.e. keys are never removed.
     private final ConcurrentHashMap<MatViewDependencyList> dependentViewsByTableName = new ConcurrentHashMap<>();
+    private final ArrayDeque<CharSequence> stack = new ArrayDeque<>();
+    private final CharSequenceHashSet seen = new CharSequenceHashSet();
 
     public MatViewGraph() {
         this.createDependencyList = name -> new MatViewDependencyList();
@@ -57,6 +61,11 @@ public class MatViewGraph implements Mutable {
         // WAL table directories are unique, so we don't expect previous value
         if (prevDefinition != null) {
             throw CairoException.critical(0).put("materialized view definition already exists [dir=").put(matViewToken.getDirName());
+        }
+
+        // Check for dependency loop
+        if (hasDependencyLoop(viewDefinition.getBaseTableName(), matViewToken)) {
+            throw CairoException.critical(0).put("dependency loop detected for materialized view [view=").put(matViewToken.getTableName()).put(']');
         }
 
         final MatViewDependencyList list = getOrCreateDependentViews(viewDefinition.getBaseTableName());
@@ -143,6 +152,41 @@ public class MatViewGraph implements Mutable {
     @NotNull
     private MatViewDependencyList getOrCreateDependentViews(CharSequence baseTableName) {
         return dependentViewsByTableName.computeIfAbsent(baseTableName, createDependencyList);
+    }
+
+    private boolean hasDependencyLoop(CharSequence baseTableName, TableToken newMatViewToken) {
+        seen.clear();
+        stack.clear();
+
+        if (Chars.equals(baseTableName, newMatViewToken.getTableName())) {
+            return true; // Self-loop
+        }
+
+        stack.push(newMatViewToken.getTableName());
+
+        while (!stack.isEmpty()) {
+            CharSequence currentTableName = stack.pop();
+            if (!seen.add(currentTableName)) {
+                continue;
+            }
+
+            MatViewDependencyList dependentViews = dependentViewsByTableName.get(currentTableName);
+            if (dependentViews != null) {
+                ReadOnlyObjList<TableToken> matViews = dependentViews.lockForRead();
+                try {
+                    for (int i = 0, n = matViews.size(); i < n; i++) {
+                        TableToken matView = matViews.get(i);
+                        if (Chars.equals(matView.getTableName(), baseTableName)) {
+                            return true; // Cycle detected
+                        }
+                        stack.push(matView.getTableName());
+                    }
+                } finally {
+                    dependentViews.unlockAfterRead();
+                }
+            }
+        }
+        return false;
     }
 
     private void orderByDependentViews(
