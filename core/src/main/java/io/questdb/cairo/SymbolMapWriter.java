@@ -424,7 +424,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     private void jumpCharMemToSymbolCount(int symbolCount) {
         if (symbolCount > 0) {
             long cFileSize = offsetMem.getLong(keyToOffset(symbolCount));
-            long minExpectedSize = symbolCount * Vm.getStorageLength(1) - 1;
+            long minExpectedSize = symbolCount * Vm.getStorageLength(1) - 2;
             if (cFileSize < minExpectedSize) {
                 // There should be at least 1 character per symbol
                 // the size read from .o file is less than that
