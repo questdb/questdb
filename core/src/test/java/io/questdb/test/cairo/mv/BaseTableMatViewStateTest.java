@@ -24,7 +24,7 @@
 
 package io.questdb.test.cairo.mv;
 
-import io.questdb.cairo.mv.MatViewRefreshList;
+import io.questdb.cairo.mv.MatViewStateStoreImpl;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -37,7 +37,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
-public class BaseTableMatViewRefreshStateTest extends AbstractCairoTest {
+public class BaseTableMatViewStateTest extends AbstractCairoTest {
 
     @Test
     public void testNoMissingNotifications() {
@@ -49,7 +49,7 @@ public class BaseTableMatViewRefreshStateTest extends AbstractCairoTest {
         AtomicLong refreshNotificationProcessed = new AtomicLong();
         AtomicBoolean stop = new AtomicBoolean();
 
-        MatViewRefreshList state = new MatViewRefreshList();
+        AtomicLong lastNotifiedTxn = new AtomicLong();
         int commits = rnd.nextInt(1_000_000);
         System.out.println("commits: " + commits);
 
@@ -62,7 +62,7 @@ public class BaseTableMatViewRefreshStateTest extends AbstractCairoTest {
                     barrier.await();
                     long nextTxn;
                     while ((nextTxn = seqTxn.incrementAndGet()) < commits) {
-                        if (state.notifyOnBaseTableCommitNoLock(nextTxn)) {
+                        if (MatViewStateStoreImpl.notifyBaseTableCommit(lastNotifiedTxn, nextTxn)) {
                             long refreshNot = refreshNotification.incrementAndGet();
                             System.out.println("refresh notification:" + refreshNot + " added on commit " + nextTxn);
                         }
@@ -83,7 +83,7 @@ public class BaseTableMatViewRefreshStateTest extends AbstractCairoTest {
                         long notification = refreshNotification.get();
                         if (notification > refreshNotificationProcessed.get()) {
                             long refreshToSeqTxn = Math.min(seqTxn.get(), commits - 1);
-                            boolean notifyAgain = state.notifyOnBaseTableRefreshedNoLock(refreshToSeqTxn);
+                            boolean notifyAgain = MatViewStateStoreImpl.notifyOnBaseTableRefreshed(lastNotifiedTxn, refreshToSeqTxn);
                             System.out.println("notification " + notification + " processed, refreshed to: " + refreshToSeqTxn + " out of " + (commits - 1) + ", will notify again: " + notifyAgain);
 
                             long processed;
@@ -129,6 +129,6 @@ public class BaseTableMatViewRefreshStateTest extends AbstractCairoTest {
             }
         }
 
-        Assert.assertTrue(state.notifyOnBaseTableCommitNoLock(commits));
+        Assert.assertTrue(MatViewStateStoreImpl.notifyBaseTableCommit(lastNotifiedTxn, commits));
     }
 }

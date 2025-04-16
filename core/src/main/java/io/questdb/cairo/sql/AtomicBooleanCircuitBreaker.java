@@ -35,7 +35,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     private final int throttle;
-    protected AtomicBoolean cancelledFlag;
+    protected volatile AtomicBoolean cancelledFlag;
     private long fd = -1;
     private int testCount = 0;
 
@@ -49,8 +49,10 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     public void cancel() {
-        if (cancelledFlag != null) {
-            cancelledFlag.set(true);
+        // This call can be concurrent with the call to setCancelledFlag
+        AtomicBoolean cf = cancelledFlag;
+        if (cf != null) {
+            cf.set(true);
         }
     }
 

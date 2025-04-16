@@ -22,29 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.math;
+package io.questdb.cairo.mv;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
+/**
+ * Allows iterating through SAMPLE BY buckets with the given step.
+ * The goal is to split a potentially large time interval to be scanned by
+ * the materialized view query into smaller intervals, thus minimizing
+ * chances of out-of-memory kills.
+ */
+public interface SampleByIntervalIterator {
 
-public class IPv4StrMinusIPv4StrFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "-(ss)";
-    }
+    long getMaxTimestamp();
 
-    @Override
-    public Function newInstance(
-            int position,
-            ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) {
-        return new IPv4MinusIPv4FunctionFactory.IPv4MinusIPv4Function(args.getQuick(0), args.getQuick(1));
-    }
+    long getMinTimestamp();
+
+    int getStep();
+
+    long getTimestampHi();
+
+    long getTimestampLo();
+
+    boolean next();
+
+    void toTop(int step);
 }

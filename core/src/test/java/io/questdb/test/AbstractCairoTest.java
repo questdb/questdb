@@ -543,7 +543,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         // 30% chance to enable paranoia checking FD mode
         Files.PARANOIA_FD_MODE = new Rnd(System.nanoTime(), System.currentTimeMillis()).nextInt(100) > 70;
         engine.getMetrics().clear();
-        engine.getMatViewGraph().clear();
+        engine.getMatViewStateStore().clear();
     }
 
     @After
@@ -1484,7 +1484,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static void printSql(CharSequence sql, boolean fullFatJoins) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.setFullFatJoins(fullFatJoins);
-            TestUtils.printSql(compiler, sqlExecutionContext, sql, sink);
+            try {
+                TestUtils.printSql(compiler, sqlExecutionContext, sql, sink);
+            } finally {
+                compiler.setFullFatJoins(false);
+            }
         }
     }
 

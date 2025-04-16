@@ -177,7 +177,11 @@ void radix_sort_long_index_asc_in_place(T *array, uint64_t size, T *cpy) {
     radix_shuffle(counts.c2, array, cpy, size, 48u);
     radix_shuffle(counts.c1, cpy, array, size, 56u);
 }
-
+template<typename T1, typename T2>
+inline bool arrays_dont_overlap(const T1 *a, size_t a_count, const T2 *b, size_t b_count) {
+    return ((uintptr_t) a + a_count * sizeof(T1) <= (uintptr_t) b ||
+            (uintptr_t) b + b_count * sizeof(T2) <= (uintptr_t) a);
+}
 
 template<uint16_t N>
 void
@@ -271,8 +275,12 @@ radix_sort_ab_long_index_asc(const int64_t *arrayA, const uint64_t sizeA, const 
             __MEMCPY(out, cpy, size * sizeof(index_t));
         }
     } else {
-        radix_shuffle_ab_one_pass(counts[N - 1], arrayA, sizeA, arrayB, sizeB, ucpy, minValue);
-        __MEMCPY(out, cpy, size * sizeof(index_t));
+        if (arrays_dont_overlap(arrayB, sizeB, out, size) && arrays_dont_overlap(arrayA, sizeA, out, size)) {
+            radix_shuffle_ab_one_pass(counts[N - 1], arrayA, sizeA, arrayB, sizeB, uout, minValue);
+        } else {
+            radix_shuffle_ab_one_pass(counts[N - 1], arrayA, sizeA, arrayB, sizeB, ucpy, minValue);
+            __MEMCPY(out, cpy, size * sizeof(index_t));
+        }
     }
 }
 
@@ -642,12 +650,22 @@ Java_io_questdb_std_Vect_radixSortLongIndexAscInPlace(JNIEnv *env, jclass cl, jl
                                                 reinterpret_cast<index_t *>(pCpy));
 }
 
-JNIEXPORT void JNICALL
+JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_radixSortABLongIndexAsc(JNIEnv *env, jclass cl, jlong pDataA, jlong countA, jlong pDataB,
                                                  jlong countB, jlong pDataOut, jlong pDataCpy, jlong minTimestamp,
                                                  jlong maxTimestamp) {
     auto minTs = __JLONG_REINTERPRET_CAST__(int64_t, minTimestamp);
     auto maxTs = __JLONG_REINTERPRET_CAST__(int64_t, maxTimestamp);
+
+    if (minTs > maxTs) {
+        // invalid min/max timestamp
+        return -1;
+    }
+
+    if (minTs < 0 && maxTs > INT64_MAX + minTs) {
+        // difference overflows 64 bits
+        return -2;
+    }
 
     auto ts_range_bytes = range_bytes(maxTs - minTs + 1);
 
@@ -657,6 +675,16 @@ Java_io_questdb_std_Vect_radixSortABLongIndexAsc(JNIEnv *env, jclass cl, jlong p
     auto *cpy = reinterpret_cast<index_l *>(pDataCpy);
 
     switch (ts_range_bytes) {
+        case 0:
+            // All rows same timestamp
+            // Copy A and B to out
+            // In case B is the same as out, use memmove and copy it first
+            __MEMMOVE(&out[countA], b, countB * sizeof(index_l));
+            for (int64_t l = 0; l < countA; l++) {
+                out[l].ts = minTs;
+                out[l].i = l | (1ull << 63);
+            }
+            break;
         case 1:
             radix_sort_ab_long_index_asc<1>(a, countA, b, countB, out, cpy, minTs);
             break;
@@ -682,17 +710,17 @@ Java_io_questdb_std_Vect_radixSortABLongIndexAsc(JNIEnv *env, jclass cl, jlong p
             radix_sort_ab_long_index_asc<8>(a, countA, b, countB, out, cpy, minTs);
             break;
         default:
-            assert(false || "range is too big");
-            break;
+            return -3;
     }
 
+    return countA + countB;
 }
 
 
-JNIEXPORT void JNICALL
-Java_io_questdb_std_Vect_radixSortLongIndexAscInPlaceBounded(JNIEnv *env, jclass cl, jlong pLong, jlong len, jlong pCpy,
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_radixSortLongIndexAsc(JNIEnv *env, jclass cl, jlong pLong, jlong len, jlong pCpy,
                                                              jlong min, jlong max) {
-    Java_io_questdb_std_Vect_radixSortABLongIndexAsc(
+    return Java_io_questdb_std_Vect_radixSortABLongIndexAsc(
             env, cl,
             0, 0,
             pLong, len,
@@ -759,7 +787,7 @@ Java_io_questdb_std_Vect_radixSortManySegmentsIndexAsc(
         return merge_index_format(error_sort_row_count_overflow, 0, 0, 0);
     }
 
-    auto sorted_count = radix_copy_segments_index_asc_precompiled(
+    auto sorted_count = radix_sort_segments_index_asc_precompiled(
             ts_range_bytes * 8u, txn_bytes * 8u, segments_range_bytes * 8u,
             lag_ts_addr, lag_row_count,
             segment_map_addresses, txn_info_addr, txn_count, out, cpy,

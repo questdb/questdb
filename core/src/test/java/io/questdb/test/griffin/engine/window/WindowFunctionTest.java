@@ -4818,6 +4818,34 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnSupportImplicitCast() throws Exception {
+        assertException(
+                "SELECT ts, side, lead(side) OVER ( PARTITION BY symbol ORDER BY ts ) " +
+                        "AS next_price FROM trades " +
+                        "WHERE ts  >= '1970-03-08 00:00:00' AND ts < '2025-03-08 23:59:59'",
+                "create table trades as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(100) price," +
+                        " rnd_symbol('XX','YY','ZZ') side," +
+                        " rnd_symbol('AA','BB','CC') symbol," +
+                        " timestamp_sequence(0, 100000000000) ts" +
+                        " from long_sequence(10)" +
+                        ") timestamp(ts) partition by day",
+                22,
+                "argument type mismatch for function `lead` at #1 expected: DOUBLE, actual: SYMBOL"
+        );
+
+        assertException(
+                "SELECT ts, side, first_value(side) OVER ( PARTITION BY symbol ORDER BY ts ) " +
+                        "AS next_price FROM trades " +
+                        "WHERE ts  >= '1970-03-08 00:00:00' AND ts < '2025-03-08 23:59:59'",
+                29,
+                "argument type mismatch for function `first_value` at #1 expected: DOUBLE, actual: SYMBOL"
+        );
+    }
+
+    @Test
     public void testWindowBufferExceedsLimit() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 4096);
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES, 10);
@@ -5534,8 +5562,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertException(
                 "SELECT pickup_datetime, row_number() OVER (PARTITION BY row_number())\n" +
                         "FROM trips\n" +
-                        "WHERE pickup_datetime >= '2018-12-30' and pickup_datetime <= '2018-12-31'\n" +
-                        "SAMPLE BY 1d",
+                        "WHERE pickup_datetime >= '2018-12-30' and pickup_datetime <= '2018-12-31'",
                 "create table trips as " +
                         "(" +
                         "select" +

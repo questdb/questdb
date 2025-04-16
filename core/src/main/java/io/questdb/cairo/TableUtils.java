@@ -30,7 +30,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.mv.MatViewDefinition;
-import io.questdb.cairo.mv.MatViewRefreshState;
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -547,8 +547,6 @@ public final class TableUtils {
                 try (BlockFileWriter writer = blockFileWriter) {
                     writer.of(path.trimTo(rootLen).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).$());
                     MatViewDefinition.append(structure.getMatViewDefinition(), writer);
-                    writer.of(path.trimTo(rootLen).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME).$());
-                    MatViewRefreshState.append(null, writer);
                 }
             }
 
@@ -913,7 +911,7 @@ public final class TableUtils {
 
     public static boolean isMatViewStateFileExists(CairoConfiguration configuration, Path path, CharSequence dirName) {
         FilesFacade ff = configuration.getFilesFacade();
-        path.of(configuration.getDbRoot()).concat(dirName).concat(MatViewRefreshState.MAT_VIEW_STATE_FILE_NAME);
+        path.of(configuration.getDbRoot()).concat(dirName).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
         return ff.exists(path.$());
     }
 
@@ -1457,12 +1455,6 @@ public final class TableUtils {
         columnNameIndexMap.remove(columnName);
         final TableColumnMetadata deletedMeta = columnMetadata.getQuick(columnIndex);
         deletedMeta.markDeleted();
-    }
-
-    public static void removeOrException(FilesFacade ff, long fd, LPSZ path) {
-        if (ff.exists(path) && !ff.closeRemove(fd, path)) {
-            throw CairoException.critical(ff.errno()).put("Cannot remove ").put(path);
-        }
     }
 
     public static void renameColumnInMetadata(
@@ -2012,6 +2004,7 @@ public final class TableUtils {
                         // right, cannot open file for some reason?
                         LOG.error()
                                 .$("could not open swap [file=").$(path)
+                                .$(", msg=").$(e.getFlyweightMessage())
                                 .$(", errno=").$(e.getErrno())
                                 .I$();
                     }

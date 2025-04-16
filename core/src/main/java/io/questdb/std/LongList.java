@@ -154,14 +154,14 @@ public class LongList implements Mutable, LongVec, Sinkable {
                 high = mid - 1;
             } else {
                 // In case of multiple equal values, find the first
-                return scanDir == Vect.BIN_SEARCH_SCAN_UP ?
-                        scrollUp(mid, midVal) :
-                        scrollDown(mid, high, midVal);
+                return scanDir == Vect.BIN_SEARCH_SCAN_UP
+                        ? scrollUp(mid, midVal)
+                        : scrollDown(mid, high, midVal);
             }
         }
-        return scanDir == Vect.BIN_SEARCH_SCAN_UP ?
-                scanUp(value, low, high + 1) :
-                scanDown(value, low, high + 1);
+        return scanDir == Vect.BIN_SEARCH_SCAN_UP
+                ? scanUp(value, low, high + 1)
+                : scanDown(value, low, high + 1);
     }
 
     public int binarySearchBlock(int shl, long value, int scanDir) {
@@ -195,14 +195,14 @@ public class LongList implements Mutable, LongVec, Sinkable {
                 high = mid - 1;
             } else {
                 // In case of multiple equal values, find the first
-                return scanDir == Vect.BIN_SEARCH_SCAN_UP ?
-                        scrollUpBlock(shl, mid, midVal) :
-                        scrollDownBlock(shl, mid, high, midVal);
+                return scanDir == Vect.BIN_SEARCH_SCAN_UP
+                        ? scrollUpBlock(shl, mid, midVal)
+                        : scrollDownBlock(shl, mid, high, midVal);
             }
         }
-        return scanDir == Vect.BIN_SEARCH_SCAN_UP ?
-                scanUpBlock(shl, value, low, high + 1) :
-                scanDownBlock(shl, value, low, high + 1);
+        return scanDir == Vect.BIN_SEARCH_SCAN_UP
+                ? scanUpBlock(shl, value, low, high + 1)
+                : scanDownBlock(shl, value, low, high + 1);
     }
 
     public int capacity() {
@@ -280,7 +280,7 @@ public class LongList implements Mutable, LongVec, Sinkable {
     /**
      * Returns element at the specified position. This method does not do
      * bounds check and may cause memory corruption if index is out of bounds.
-     * Instead the responsibility to check bounds is placed on application code,
+     * Instead, the responsibility to check bounds is placed on application code,
      * which is often the case anyway, for example in indexed for() loop.
      *
      * @param index of the element

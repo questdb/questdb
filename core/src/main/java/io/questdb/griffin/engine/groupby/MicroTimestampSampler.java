@@ -36,13 +36,23 @@ public class MicroTimestampSampler implements TimestampSampler {
     }
 
     @Override
+    public long getApproxBucketSize() {
+        return bucket;
+    }
+
+    @Override
     public long getBucketSize() {
-        return this.bucket;
+        return bucket;
     }
 
     @Override
     public long nextTimestamp(long timestamp) {
         return timestamp + bucket;
+    }
+
+    @Override
+    public long nextTimestamp(long timestamp, int numSteps) {
+        return timestamp + numSteps * bucket;
     }
 
     @Override

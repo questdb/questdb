@@ -147,7 +147,7 @@ public class ContainsEqIPv4Utils {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             BinaryFunction.super.init(symbolTableSource, executionContext);
 
-            CharSequence value = strFunc.getStrA(null);
+            final CharSequence value = strFunc.getStrA(null);
             if (value == null) {
                 // act as a null check
                 subnet = IPv4_NULL;

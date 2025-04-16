@@ -1720,6 +1720,44 @@ public class AsOfJoinTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWithIntrisifiedTimestampFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (pair SYMBOL, ts TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY YEAR");
+
+            execute(
+                    "INSERT INTO trades VALUES " +
+                            "('BTC-USD', '2000-01-01T00:00:00.000000Z', 1)," +
+                            "('BTC-USD', '2000-02-01T00:00:00.000000Z', 2)," +
+                            "('BTC-USD', '2000-03-01T00:00:00.000000Z', 3)," +
+                            "('BTC-USD', '2000-04-01T00:00:00.000000Z', 4)," +
+                            "('BTC-USD', '2000-05-01T00:00:00.000000Z', 5)," +
+                            "('BTC-USD', '2000-06-01T00:00:00.000000Z', 6)"
+            );
+
+            assertQuery("pair\tts\tprice\tpair1\tts1\tprice1\n" +
+                            "BTC-USD\t2000-01-01T00:00:00.000000Z\t1\t\t\tnull\n" +
+                            "BTC-USD\t2000-02-01T00:00:00.000000Z\t2\t\t\tnull\n" +
+                            "BTC-USD\t2000-03-01T00:00:00.000000Z\t3\tBTC-USD\t2000-03-01T00:00:00.000000Z\t3\n" +
+                            "BTC-USD\t2000-04-01T00:00:00.000000Z\t4\tBTC-USD\t2000-03-01T00:00:00.000000Z\t3\n" +
+                            "BTC-USD\t2000-05-01T00:00:00.000000Z\t5\tBTC-USD\t2000-03-01T00:00:00.000000Z\t3\n" +
+                            "BTC-USD\t2000-06-01T00:00:00.000000Z\t6\tBTC-USD\t2000-03-01T00:00:00.000000Z\t3\n",
+                    "select * from trades\n" +
+                            "asof join (\n" +
+                            "  select * from trades\n" +
+                            "  where ts in '2000-03'\n" +
+                            ") t;",
+                    null,
+                    "ts",
+                    null,
+                    null,
+                    false,
+                    true,
+                    false
+            );
+        });
+    }
+
     private void assertResultSetsMatch(String leftTable, String rightTable) throws Exception {
         final StringSink expectedSink = new StringSink();
         // equivalent of the below query, but uses slow factory

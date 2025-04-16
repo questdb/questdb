@@ -25,15 +25,13 @@
 package io.questdb.cairo.mv;
 
 import io.questdb.cairo.TableToken;
-import io.questdb.std.ObjHashSet;
-import io.questdb.std.ObjList;
 import org.jetbrains.annotations.TestOnly;
 
-public class NoOpMatViewGraph implements MatViewGraph {
-    public static final NoOpMatViewGraph INSTANCE = new NoOpMatViewGraph();
+public class NoOpMatViewStateStore implements MatViewStateStore {
+    public static final NoOpMatViewStateStore INSTANCE = new NoOpMatViewStateStore();
 
     @Override
-    public MatViewRefreshState addView(MatViewDefinition viewDefinition) {
+    public MatViewState addViewState(MatViewDefinition viewDefinition) {
         return null;
     }
 
@@ -47,11 +45,7 @@ public class NoOpMatViewGraph implements MatViewGraph {
     }
 
     @Override
-    public void createView(MatViewDefinition viewDefinition) {
-    }
-
-    @Override
-    public void dropViewIfExists(TableToken matViewToken) {
+    public void createViewState(MatViewDefinition viewDefinition) {
     }
 
     @Override
@@ -67,21 +61,8 @@ public class NoOpMatViewGraph implements MatViewGraph {
     }
 
     @Override
-    public void getDependentMatViews(TableToken baseTableToken, ObjList<TableToken> sink) {
-    }
-
-    @Override
-    public MatViewDefinition getViewDefinition(TableToken matViewToken) {
+    public MatViewState getViewState(TableToken matViewToken) {
         return null;
-    }
-
-    @Override
-    public MatViewRefreshState getViewRefreshState(TableToken matViewToken) {
-        return null;
-    }
-
-    @Override
-    public void getViews(ObjList<TableToken> bucket) {
     }
 
     @Override
@@ -93,15 +74,11 @@ public class NoOpMatViewGraph implements MatViewGraph {
     }
 
     @Override
-    public void notifyTxnApplied(MatViewRefreshTask task, long seqTxn) {
+    public void notifyBaseTableCommit(MatViewRefreshTask task, long seqTxn) {
     }
 
     @Override
-    public void orderByDependentViews(ObjHashSet<TableToken> tables, ObjList<TableToken> orderedSink) {
-        orderedSink.clear();
-        for (int i = 0, n = tables.size(); i < n; i++) {
-            orderedSink.add(tables.get(i));
-        }
+    public void removeViewState(TableToken matViewToken) {
     }
 
     @Override

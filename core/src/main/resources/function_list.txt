@@ -282,7 +282,8 @@ io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory
 io.questdb.griffin.engine.functions.date.ToPgDateFunctionFactory
 io.questdb.griffin.engine.functions.date.VarcharToPgDateFunctionFactory
 io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory
-io.questdb.griffin.engine.functions.date.TimestampFloorOffsetFunctionFactory
+io.questdb.griffin.engine.functions.date.TimestampFloorFromFunctionFactory
+io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetFunctionFactory
 io.questdb.griffin.engine.functions.date.TimestampCeilFunctionFactory
 io.questdb.griffin.engine.functions.date.DateTruncFunctionFactory
 io.questdb.griffin.engine.functions.date.PgPostmasterStartTimeFunctionFactory
@@ -874,18 +875,13 @@ io.questdb.griffin.engine.functions.math.BitwiseOrStrIPv4FunctionFactory
 io.questdb.griffin.engine.functions.math.BitwiseOrIntFunctionFactory
 io.questdb.griffin.engine.functions.math.BitwiseXorIntFunctionFactory
 io.questdb.griffin.engine.functions.math.BitwiseNotIPv4FunctionFactory
-io.questdb.griffin.engine.functions.math.BitwiseNotIPv4StrFunctionFactory
 io.questdb.griffin.engine.functions.math.BitwiseNotIntFunctionFactory
 
 # IPv4 operators
 io.questdb.griffin.engine.functions.math.IPv4PlusIntFunctionFactory
-io.questdb.griffin.engine.functions.math.IPv4StrPlusIntFunctionFactory
 io.questdb.griffin.engine.functions.math.IntPlusIPv4FunctionFactory
-io.questdb.griffin.engine.functions.math.IntPlusIPv4StrFunctionFactory
 io.questdb.griffin.engine.functions.math.IPv4MinusIntFunctionFactory
-io.questdb.griffin.engine.functions.math.IPv4StrMinusIntFunctionFactory
 io.questdb.griffin.engine.functions.math.IPv4MinusIPv4FunctionFactory
-io.questdb.griffin.engine.functions.math.IPv4StrMinusIPv4StrFunctionFactory
 io.questdb.griffin.engine.functions.math.IPv4StrMinusIPv4FunctionFactory
 io.questdb.griffin.engine.functions.math.IPv4MinusIPv4StrFunctionFactory
 

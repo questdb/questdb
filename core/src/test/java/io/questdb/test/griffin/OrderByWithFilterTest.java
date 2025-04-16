@@ -38,8 +38,8 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
     @Test
     public void testOrderByAscInOverClause() throws Exception {
         String expected = "ts\ttemp\n" +
-                "1970-05-23T02:00:00.000000Z\t0.0049\n" +
-                "1971-02-21T16:00:00.000000Z\t0.3032\n";
+                "1970-05-23T02:00:00.000000Z\t0.004941225\n" +
+                "1971-02-21T16:00:00.000000Z\t0.30323267\n";
         String direction = "asc";
 
         assertOrderByInOverClause(expected, direction);
@@ -98,8 +98,8 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
     @Test
     public void testOrderByDescInOverClause() throws Exception {
         String expected = "ts\ttemp\n" +
-                "1970-04-23T22:00:00.000000Z\t99.9780\n" +
-                "1971-02-02T02:00:00.000000Z\t98.3369\n";
+                "1970-04-23T22:00:00.000000Z\t99.97797\n" +
+                "1971-02-02T02:00:00.000000Z\t98.336945\n";
         String direction = "desc";
 
         assertOrderByInOverClause(expected, direction);
@@ -983,7 +983,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
         String expectedResult;
         switch (type) {
             case "float":
-                expectedResult = order == ORDER_ASC ? "x\n1.0000\n2.0000\n3.0000\n" : "x\n3.0000\n2.0000\n1.0000\n";
+                expectedResult = order == ORDER_ASC ? "x\n1.0\n2.0\n3.0\n" : "x\n3.0\n2.0\n1.0\n";
                 break;
             case "double":
                 expectedResult = order == ORDER_ASC ? "x\n1.0\n2.0\n3.0\n" : "x\n3.0\n2.0\n1.0\n";

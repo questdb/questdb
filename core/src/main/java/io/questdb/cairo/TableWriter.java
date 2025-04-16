@@ -134,9 +134,9 @@ import java.util.function.LongConsumer;
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
-import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableUtils.openAppend;
 import static io.questdb.cairo.TableUtils.openRO;
+import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.*;
 import static io.questdb.tasks.TableWriterTask.*;
@@ -2689,7 +2689,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         final long tsLagBufferAddr = mapAppendColumnBuffer(timestampColumn, tsLagOffset, tsLagSize, false);
                         try {
-                            Vect.radixSortABLongIndexAsc(
+                            long rowCount = Vect.radixSortABLongIndexAsc(
                                     Math.abs(tsLagBufferAddr),
                                     walLagRowCount,
                                     mappedTimestampIndexAddr,
@@ -2699,6 +2699,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     txWriter.getLagMinTimestamp(),
                                     txWriter.getLagMaxTimestamp()
                             );
+                            assert rowCount == totalUncommitted : "radix sort error, result: " + rowCount + " expected " + totalUncommitted;
                         } finally {
                             mapAppendColumnBufferRelease(tsLagBufferAddr, tsLagOffset, tsLagSize);
                         }
@@ -3211,6 +3212,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (col != null) {
                 col.shiftAddressRight(0);
             }
+        }
+    }
+
+    private static void closeRemove(FilesFacade ff, long fd, LPSZ path) {
+        if (!ff.closeRemove(fd, path)) {
+            throw CairoException.critical(ff.errno()).put("cannot remove ").put(path);
         }
     }
 
@@ -4314,6 +4321,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // lets not leave half-baked file sitting around
                 LOG.error()
                         .$("could not create index [name=").$(path)
+                        .$(", msg=").$(e.getFlyweightMessage())
                         .$(", errno=").$(e.getErrno())
                         .I$();
                 if (!ff.removeQuiet(path.$())) {
@@ -5108,7 +5116,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", totalRows=").$(longIndexLength)
                     .$(", lagRows=").$(lagRows)
                     .$(", dups=")
-                    .$(longIndexLength + lagRows - deduplicatedRowCount)
+                    .$(deduplicatedRowCount > 0 ? longIndexLength - deduplicatedRowCount : 0)
                     .I$();
             return deduplicatedRowCount;
         } finally {
@@ -5230,7 +5238,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (tempMem16b != 0) {
                 tempMem16b = Unsafe.free(tempMem16b, 16, MemoryTag.NATIVE_TABLE_WRITER);
             }
-            LOG.info().$("closed '").utf8(tableToken.getTableName()).$('\'').$();
+            LOG.info().$("closed '").$(tableToken).I$();
         }
     }
 
@@ -8165,7 +8173,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             try {
-                removeOrException(ff, lockFd, lockName(path));
+                closeRemove(ff, lockFd, lockName(path));
             } finally {
                 path.trimTo(pathSize);
             }
@@ -9130,13 +9138,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void throwApplyBlockColumnShuffleFailed(int columnIndex, int columnType, long totalRows, long rowCount) {
-        LOG.error().$("wal block apply failed [table=").$(tableToken.getDirName())
+        LOG.error().$("wal block apply failed [table=").$(tableToken)
                 .$(", column=").$(metadata.getColumnName(columnIndex))
                 .$(", columnType=").$(ColumnType.nameOf(columnType))
                 .$(", expectedResult=").$(totalRows)
                 .$(", actualResult=").$(rowCount)
                 .I$();
 
+        if (configuration.getDebugWalApplyBlockFailureNoRetry()) {
+            // This exception is thrown to indicate that the apply block failed,
+            // and it is not of CairoException type so that it is not intercepted and re-tried in tests.
+            // The purpose is to have the special debug test mode where this exception
+            // suspends the table and fails the testing code instead of switching to 1 by 1 commit mode.
+            throw new IllegalStateException("apply block failed");
+        }
         throw CairoException.txnApplyBlockError(tableToken);
     }
 
