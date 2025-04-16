@@ -368,8 +368,9 @@ public class CairoEngine implements Closeable, WriterSource {
                                     pathLen,
                                     tableToken
                             );
-                            matViewGraph.addView(matViewDefinition);
-                            matViewStateStore.createViewState(matViewDefinition);
+                            if (matViewGraph.addView(matViewDefinition)) {
+                                matViewStateStore.createViewState(matViewDefinition);
+                            }
                         }
 
                         MatViewState state = matViewStateStore.getViewState(tableToken);
@@ -516,8 +517,14 @@ public class CairoEngine implements Closeable, WriterSource {
         final TableToken matViewToken = createTableOrMatViewUnsecure(mem, blockFileWriter, path, ifNotExists, struct, keepLock, inVolume);
         getDdlListener(matViewToken).onTableOrMatViewCreated(securityContext, matViewToken);
         final MatViewDefinition matViewDefinition = struct.getMatViewDefinition();
-        matViewGraph.addView(matViewDefinition);
-        matViewStateStore.createViewState(matViewDefinition);
+        try {
+            if (matViewGraph.addView(matViewDefinition)) {
+                matViewStateStore.createViewState(matViewDefinition);
+            }
+        } catch (CairoException e) {
+            dropTableOrMatView(path, matViewToken);
+            throw e;
+        }
         return matViewDefinition;
     }
 
@@ -1596,14 +1603,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 boolean locked = true;
                 if (lockedReason == null) {
                     try {
-                        if (struct.isMatView()) {
-                            final MatViewDefinition matViewDefinition = struct.getMatViewDefinition();
-                            if (getMatViewGraph().hasDependencyLoop(matViewDefinition.getBaseTableName(), tableToken)) {
-                                throw CairoException.critical(0)
-                                        .put("dependency loop detected for materialized view [view=").put(tableToken.getTableName())
-                                        .put(']');
-                            }
-                        }
                         if (inVolume) {
                             createTableOrMatViewInVolumeUnsafe(mem, blockFileWriter, path, struct, tableToken);
                         } else {

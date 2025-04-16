@@ -56,21 +56,29 @@ public class MatViewGraph implements Mutable {
         this.createDependencyList = name -> new MatViewDependencyList();
     }
 
-    public void addView(MatViewDefinition viewDefinition) {
+    public boolean addView(MatViewDefinition viewDefinition) {
         final TableToken matViewToken = viewDefinition.getMatViewToken();
         final MatViewDefinition prevDefinition = definitionByTableDirName.putIfAbsent(matViewToken.getDirName(), viewDefinition);
         // WAL table directories are unique, so we don't expect previous value
         if (prevDefinition != null) {
-            throw CairoException.critical(0).put("materialized view definition already exists [dir=").put(matViewToken.getDirName());
+            return false;
         }
 
-        final MatViewDependencyList list = getOrCreateDependentViews(viewDefinition.getBaseTableName());
-        final ObjList<TableToken> matViews = list.lockForWrite();
-        try {
-            matViews.add(matViewToken);
-        } finally {
-            list.unlockAfterWrite();
+        synchronized(this) {
+            if (hasDependencyLoop(viewDefinition.getBaseTableName(), matViewToken)) {
+                throw CairoException.critical(0).put("materialized view dependency loop detected [base=")
+                        .put(viewDefinition.getBaseTableName()).put(", view=")
+                        .put(matViewToken.getDirName());
+            }
+            final MatViewDependencyList list = getOrCreateDependentViews(viewDefinition.getBaseTableName());
+            final ObjList<TableToken> matViews = list.lockForWrite();
+            try {
+                matViews.add(matViewToken);
+            } finally {
+                list.unlockAfterWrite();
+            }
         }
+        return true;
     }
 
     @TestOnly
@@ -150,7 +158,7 @@ public class MatViewGraph implements Mutable {
         return dependentViewsByTableName.computeIfAbsent(baseTableName, createDependencyList);
     }
 
-    public boolean hasDependencyLoop(CharSequence baseTableName, TableToken newMatViewToken) {
+    private boolean hasDependencyLoop(CharSequence baseTableName, TableToken newMatViewToken) {
         CharSequenceHashSet seen = tlSeen.get();
         ArrayDeque<CharSequence> stack = tlStack.get();
 
