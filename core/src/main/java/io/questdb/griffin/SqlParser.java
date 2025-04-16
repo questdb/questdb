@@ -953,8 +953,7 @@ public class SqlParser {
                 }
             }
 
-            final String matViewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);
-            tableOpBuilder.setSelectText(matViewSql);
+            tableOpBuilder.setSelectText(lexer.getContent().subSequence(startOfQuery, endOfQuery));
             tableOpBuilder.setSelectModel(queryModel); // transient model, for toSink() purposes only
 
             if (enclosedInParentheses) {

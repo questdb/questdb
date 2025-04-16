@@ -305,7 +305,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     // Specify -1 as the last refresh txn, so that we scan all partitions.
                     final SampleByIntervalIterator intervalIterator = findSampleByIntervals(baseTableReader, viewDef, -1);
                     if (intervalIterator != null) {
-                        insertAsSelect(state, viewDef, walWriter, intervalIterator, toBaseTxn, refreshTriggeredTimestamp);
+                        if (!insertAsSelect(state, viewDef, walWriter, intervalIterator, toBaseTxn, refreshTriggeredTimestamp)) {
+                            return false;
+                        }
                     }
 
                     resetInvalidState(state, walWriter);
@@ -336,7 +338,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
 
         // Kickstart incremental refresh.
-        stateStore.enqueueIncrementalRefresh(viewToken);
+        //stateStore.enqueueIncrementalRefresh(viewToken);
         return true;
     }
 
@@ -368,7 +370,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             SampleByIntervalIterator intervalIterator,
             long baseTableTxn,
             long refreshTriggeredTimestamp
-    ) throws SqlException {
+    ) {
         assert state.isLocked();
 
         final int maxRetries = configuration.getMatViewMaxRefreshRetries();
