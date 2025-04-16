@@ -1035,31 +1035,31 @@ public class SqlOptimiser implements Mutable {
                 if (m.getUnionModel() == null) {
                     // last model in the linked list
                     QueryModel un = m.getNestedModel();
-                    int n = un.getOrderBy().size();
-                    // order by clause is on the nested model
-                    final ObjList<ExpressionNode> orderBy = un.getOrderBy();
-                    final IntList orderByDirection = un.getOrderByDirection();
-                    // limit is on the parent model
-                    final ExpressionNode limitLo = m.getLimitLo();
-                    final ExpressionNode limitHi = m.getLimitHi();
+                    if (un != null) {
+                        int n = un.getOrderBy().size();
+                        // order by clause is on the nested model
+                        final ObjList<ExpressionNode> orderBy = un.getOrderBy();
+                        final IntList orderByDirection = un.getOrderByDirection();
+                        // limit is on the parent model
+                        final ExpressionNode limitLo = m.getLimitLo();
+                        final ExpressionNode limitHi = m.getLimitHi();
 
-                    if (n > 0 || limitHi != null || limitLo != null) {
-                        // we have some order by clauses to move
-                        QueryModel _nested = queryModelPool.next();
-                        for (int i = 0; i < n; i++) {
-                            _nested.addOrderBy(orderBy.getQuick(i), orderByDirection.getQuick(i));
+                        if (n > 0 || limitHi != null || limitLo != null) {
+                            // we have some order by clauses to move
+                            QueryModel _nested = queryModelPool.next();
+                            for (int i = 0; i < n; i++) {
+                                _nested.addOrderBy(orderBy.getQuick(i), orderByDirection.getQuick(i));
+                            }
+                            orderBy.clear();
+                            orderByDirection.clear();
+                            m.setLimit(null, null);
+                            _nested.setNestedModel(model);
+                            QueryModel _model = queryModelPool.next();
+                            _model.setNestedModel(_nested);
+                            SqlUtil.addSelectStar(_model, queryColumnPool, expressionNodePool);
+                            _model.setLimit(limitLo, limitHi);
+                            return _model;
                         }
-                        orderBy.clear();
-                        orderByDirection.clear();
-
-                        m.setLimit(null, null);
-
-                        _nested.setNestedModel(model);
-                        QueryModel _model = queryModelPool.next();
-                        _model.setNestedModel(_nested);
-                        SqlUtil.addSelectStar(_model, queryColumnPool, expressionNodePool);
-                        _model.setLimit(limitLo, limitHi);
-                        return _model;
                     }
                     break;
                 }
@@ -3092,7 +3092,7 @@ public class SqlOptimiser implements Mutable {
             optimiseBooleanNot(joinModels.getQuick(i));
         }
 
-        if (model.getUnionModel() != null) {
+        if (model.getUnionModel() != null && model.getNestedModel() != null) {
             optimiseBooleanNot(model.getNestedModel());
         }
     }
