@@ -302,7 +302,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         // We do not know types of columns at this stage.
         // Compiler must put table together using query metadata.
         createColumnModelMap.clear();
-        final LowerCaseCharSequenceObjHashMap<TableColumnMetadata> augColumnMetadataMap = createTableOperation.getAugmentedColumnMetadata();
+        final LowerCaseCharSequenceObjHashMap<TableColumnMetadata> augColumnMetadataMap =
+                createTableOperation.getAugmentedColumnMetadata();
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn qc = columns.getQuick(i);
             final CharSequence columnName = qc.getName();
@@ -322,12 +323,14 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         if (timestamp != null) {
             final CreateTableColumnModel timestampModel = createColumnModelMap.get(timestamp);
             if (timestampModel == null) {
-                throw SqlException.position(timestampPos).put("TIMESTAMP column does not exist [name=").put(timestamp).put(']');
+                throw SqlException.position(timestampPos).put("TIMESTAMP column does not exist [name=")
+                        .put(timestamp).put(']');
             }
             final int timestampType = timestampModel.getColumnType();
             // type can be -1 for create table as select because types aren't known yet
             if (timestampType != ColumnType.TIMESTAMP && timestampType != ColumnType.UNDEFINED) {
-                throw SqlException.position(timestampPos).put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampType)).put(']');
+                throw SqlException.position(timestampPos).put("TIMESTAMP column expected [actual=")
+                        .put(ColumnType.nameOf(timestampType)).put(']');
             }
             timestampModel.setIsDedupKey(); // set dedup for timestamp column
         }
@@ -426,7 +429,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 }
                 model.setIsDedupKey();
                 // Copy column names into builder to be validated later.
-                copyBaseTableColumnNames(column.getAst(), queryModel, baseTableName, baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition);
+                copyBaseTableColumnNames(column.getAst(), queryModel, baseTableName,
+                        baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition);
             }
         }
 
@@ -435,7 +439,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     @Override
-    public void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, TableReaderMetadata baseTableMetadata) throws SqlException {
+    public void validateAndUpdateMetadataFromSelect(
+            RecordMetadata selectMetadata, TableReaderMetadata baseTableMetadata
+    ) throws SqlException {
         final int selectTextPosition = createTableOperation.getSelectTextPosition();
         // SELECT validation
         if (createTableOperation.getTimestampColumnName() == null) {
@@ -464,7 +470,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 final int baseKeyColumnIndex = baseTableMetadata.getColumnIndexQuiet(baseKeyColumnName);
                 if (baseKeyColumnIndex > -1 && !baseTableMetadata.isDedupKey(baseKeyColumnIndex)) {
                     throw SqlException.position(baseKeyColumnNamePositions.get(i) + selectTextPosition)
-                            .put("key column must be one of the base table's dedup keys [columnName=").put(baseKeyColumnName)
+                            .put("key column must be one of the base table's dedup keys")
+                            .put(" [columnName=").put(baseKeyColumnName)
                             .put(", baseTableName=").put(baseTableName)
                             .put(", baseTableDedupKeys=").put(baseTableDedupKeys)
                             .put(']');
@@ -497,8 +504,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                         if (Chars.equalsIgnoreCase(model.getName(), node.token, 0, dotIndex)) {
                             if (!Chars.equalsIgnoreCase(model.getTableName(), baseTableName)) {
                                 throw SqlException.position(node.position + selectTextPosition)
-                                        .put("only base table columns can be used as materialized view keys [invalid key=")
-                                        .put(node.token)
+                                        .put("only base table columns can be used as materialized view keys")
+                                        .put(" [invalid key=").put(node.token)
                                         .put(']');
                             }
                             baseKeyColumnNames.add(Chars.toString(node.token, dotIndex + 1, node.token.length()));
@@ -508,8 +515,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                     } else {
                         if (!Chars.equalsIgnoreCase(model.getTableName(), baseTableName)) {
                             throw SqlException.position(node.position + selectTextPosition)
-                                    .put("only base table columns can be used as materialized view keys [invalid key=")
-                                    .put(node.token)
+                                    .put("only base table columns can be used as materialized view keys")
+                                    .put(" [invalid key=").put(node.token)
                                     .put(']');
                         }
                         baseKeyColumnNames.add(Chars.toString(node.token));
@@ -520,25 +527,30 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                     // Check nested model.
                     final QueryColumn column = model.getAliasToColumnMap().get(node.token);
                     copyBaseTableColumnNames(column != null ? column.getAst() : node,
-                            model.getNestedModel(), baseTableName, baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition
+                            model.getNestedModel(), baseTableName,
+                            baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition
                     );
                 }
             }
 
             // Check node children for functions/operators.
             for (int i = 0, n = node.args.size(); i < n; i++) {
-                copyBaseTableColumnNames(node.args.getQuick(i), model, baseTableName, baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition);
+                copyBaseTableColumnNames(node.args.getQuick(i), model, baseTableName,
+                        baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition);
             }
             if (node.lhs != null) {
-                copyBaseTableColumnNames(node.lhs, model, baseTableName, baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition);
+                copyBaseTableColumnNames(node.lhs, model, baseTableName,
+                        baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition);
             }
             if (node.rhs != null) {
-                copyBaseTableColumnNames(node.rhs, model, baseTableName, baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition);
+                copyBaseTableColumnNames(node.rhs, model, baseTableName,
+                        baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition);
             }
 
             // Check join models.
             for (int i = 1, n = model.getJoinModels().size(); i < n; i++) {
-                copyBaseTableColumnNames(node, model.getJoinModels().getQuick(i), baseTableName, baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition);
+                copyBaseTableColumnNames(node, model.getJoinModels().getQuick(i), baseTableName,
+                        baseKeyColumnNames, baseKeyColumnNamePositions, selectTextPosition);
             }
         }
     }

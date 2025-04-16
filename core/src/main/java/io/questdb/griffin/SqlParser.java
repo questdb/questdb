@@ -257,7 +257,9 @@ public class SqlParser {
         return visitor.visit(node);
     }
 
-    private static void collectAllTableNames(QueryModel model, LowerCaseCharSequenceHashSet outTableNames, IntList outTableNamePositions) {
+    private static void collectAllTableNames(
+            QueryModel model, LowerCaseCharSequenceHashSet outTableNames, IntList outTableNamePositions
+    ) {
         QueryModel m = model;
         do {
             final ExpressionNode tableNameExpr = m.getTableNameExpr();

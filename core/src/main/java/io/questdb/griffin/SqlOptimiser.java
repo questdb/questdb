@@ -6523,8 +6523,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void validateWindowFunctions(
-            QueryModel model, SqlExecutionContext sqlExecutionContext,
-            int recursionLevel
+            QueryModel model, SqlExecutionContext sqlExecutionContext, int recursionLevel
     ) throws SqlException {
         if (model == null) {
             return;
