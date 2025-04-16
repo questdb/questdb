@@ -249,92 +249,108 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             int newCapacity,
             boolean newCacheFlag
     ) {
-        // Re-open files and re-build indexes keeping .c, .o files.
-        // This is very similar to the constructor, but we need to keep .c, .o files and re-nitialize k,v files.
-        // Also cache is conditionally re-used.
+        try {
+            // Re-open files and re-build indexes keeping .c, .o files.
+            // This is very similar to the constructor, but we need to keep .c, .o files and re-nitialize k,v files.
+            // Also cache is conditionally re-used.
 
-        final int plen = path.size();
-        int symbolCount = getSymbolCount();
-        final FilesFacade ff = configuration.getFilesFacade();
-        final long mapPageSize = configuration.getMiscAppendPageSize();
+            final int plen = path.size();
+            int symbolCount = getSymbolCount();
+            final FilesFacade ff = configuration.getFilesFacade();
+            final long mapPageSize = configuration.getMiscAppendPageSize();
 
-        // formula for calculating symbol capacity needs to be in agreement with symbol reader
-        this.symbolCapacity = newCapacity;
-        assert symbolCapacity > 0;
+            // formula for calculating symbol capacity needs to be in agreement with symbol reader
+            this.symbolCapacity = newCapacity;
+            assert symbolCapacity > 0;
 
-        // init key files, use offsetMem for that
-        this.offsetMem.smallFile(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn), MemoryTag.MMAP_INDEX_WRITER);
-        BitmapIndexWriter.initKeyMemory(this.offsetMem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
-        ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn));
-        this.indexWriter.of(path.trimTo(plen), columnName, columnNameTxn);
+            // init key files, use offsetMem for that
+            this.offsetMem.smallFile(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn), MemoryTag.MMAP_INDEX_WRITER);
+            BitmapIndexWriter.initKeyMemory(this.offsetMem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
+            ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn));
+            this.indexWriter.of(path.trimTo(plen), columnName, columnNameTxn);
 
-        // open .o, .c files, they should exist
-        if (!ff.exists(offsetFileName(path.trimTo(plen), columnName, columnNameTxn))) {
-            LOG.error().$(path).$(" is not found").$();
-            throw CairoException.fileNotFound().put("SymbolMap does not exist: ").put(path);
-        }
+            // open .o, .c files, they should exist
+            if (!ff.exists(offsetFileName(path.trimTo(plen), columnName, columnNameTxn))) {
+                LOG.error().$(path).$(" is not found").$();
+                throw CairoException.fileNotFound().put("SymbolMap does not exist: ").put(path);
+            }
 
-        // is there enough length in "offset" file for "header"?
-        LPSZ lpsz = path.$();
-        long len = ff.length(lpsz);
-        if (len < HEADER_SIZE) {
-            LOG.error().$(path).$(" is too short [len=").$(len).$(']').$();
-            throw CairoException.critical(0).put("SymbolMap is too short [path=").put(path)
-                    .put(", expected=").put(HEADER_SIZE)
-                    .put(", actual=").put(len)
-                    .put(']');
-        }
+            // is there enough length in "offset" file for "header"?
+            LPSZ lpsz = path.$();
+            long len = ff.length(lpsz);
+            if (len < HEADER_SIZE) {
+                LOG.error().$(path).$(" is too short [len=").$(len).$(']').$();
+                throw CairoException.critical(0).put("SymbolMap is too short [path=").put(path)
+                        .put(", expected=").put(HEADER_SIZE)
+                        .put(", actual=").put(len)
+                        .put(']');
+            }
 
-        // open "offset" memory and make sure we start appending from where
-        // we left off. Where we left off is stored externally to symbol map
-        this.offsetMem.of(
-                ff,
-                lpsz,
-                mapPageSize,
-                MemoryTag.MMAP_INDEX_WRITER,
-                configuration.getWriterFileOpenOpts()
-        );
+            // open "offset" memory and make sure we start appending from where
+            // we left off. Where we left off is stored externally to symbol map
+            this.offsetMem.of(
+                    ff,
+                    lpsz,
+                    mapPageSize,
+                    MemoryTag.MMAP_INDEX_WRITER,
+                    configuration.getWriterFileOpenOpts()
+            );
 
-        offsetMem.putInt(HEADER_CAPACITY, symbolCapacity);
-        offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
+            offsetMem.putInt(HEADER_CAPACITY, symbolCapacity);
+            offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
 
-        // this is the place where symbol values are stored
-        this.charMem.of(
-                ff,
-                charFileName(path.trimTo(plen), columnName, columnNameTxn),
-                mapPageSize,
-                MemoryTag.MMAP_INDEX_WRITER,
-                configuration.getWriterFileOpenOpts()
-        );
+            // this is the place where symbol values are stored
+            this.charMem.of(
+                    ff,
+                    charFileName(path.trimTo(plen), columnName, columnNameTxn),
+                    mapPageSize,
+                    MemoryTag.MMAP_INDEX_WRITER,
+                    configuration.getWriterFileOpenOpts()
+            );
 
-        // move append pointer for symbol values in the correct place
-        jumpCharMemToSymbolCount(symbolCount);
+            // move append pointer for symbol values in the correct place
+            jumpCharMemToSymbolCount(symbolCount);
 
-        // we use index hash maximum equals to half of symbol capacity, which
-        // theoretically should require 2 value cells in index per hash
-        // we use 4 cells to compensate for occasionally unlucky hash distribution
-        this.maxHash = calculateMaxHashFromCapacity();
+            // we use index hash maximum equals to half of symbol capacity, which
+            // theoretically should require 2 value cells in index per hash
+            // we use 4 cells to compensate for occasionally unlucky hash distribution
+            this.maxHash = calculateMaxHashFromCapacity();
 
-        if (newCacheFlag != cachedFlag) {
-            setupCache(newCacheFlag);
-        }
+            if (newCacheFlag != cachedFlag) {
+                setupCache(newCacheFlag);
+            }
 
-        LOG.debug()
-                .$("open [columnName=").$(path.trimTo(plen).concat(columnName).$())
-                .$(", fd=").$(offsetMem.getFd())
-                .$(", cache=").$(cache != null)
-                .$(", capacity=").$(symbolCapacity)
-                .I$();
+            LOG.debug()
+                    .$("open [columnName=").$(path.trimTo(plen).concat(columnName).$())
+                    .$(", fd=").$(offsetMem.getFd())
+                    .$(", cache=").$(cache != null)
+                    .$(", capacity=").$(symbolCapacity)
+                    .I$();
 
 
-        // Re-index the existing symbols, reading values from .c, .o files
-        // and re-writing .k, .v files
-        for (int i = 0; i < symbolCount; i++) {
-            long offset = SymbolMapWriter.keyToOffset(i);
-            long strOffset = offsetMem.getLong(offset);
-            CharSequence symbol = charMem.getStrA(strOffset);
-            int hash = Hash.boundedHash(symbol, maxHash);
-            indexWriter.add(hash, offset);
+            // Re-index the existing symbols, reading values from .c, .o files
+            // and re-writing .k, .v files
+            for (int i = 0; i < symbolCount; i++) {
+                long offset = SymbolMapWriter.keyToOffset(i);
+                long strOffset = offsetMem.getLong(offset);
+                CharSequence symbol = charMem.getStrA(strOffset);
+                int hash = Hash.boundedHash(symbol, maxHash);
+                indexWriter.add(hash, offset);
+            }
+        } catch (Throwable th) {
+            // if we fail to rebuild files, we need to close them without truncates
+            // the files are links to previous version of symbol map
+            // truncating them will corrupt the symbol map we are trying to rebuild
+            if (charMem != null) {
+                charMem.close(false);
+            }
+            if (offsetMem != null) {
+                offsetMem.close(false);
+            }
+            if (indexWriter != null) {
+                indexWriter.closeNoTruncate();
+            }
+            throw th;
         }
     }
 

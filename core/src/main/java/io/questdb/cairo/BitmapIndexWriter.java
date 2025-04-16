@@ -157,6 +157,11 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         }
     }
 
+    public void closeNoTruncate() {
+        keyMem.close(false);
+        valueMem.close(false);
+    }
+
     public void commit() {
         int commitMode = configuration.getCommitMode();
         if (commitMode != CommitMode.NOSYNC) {
