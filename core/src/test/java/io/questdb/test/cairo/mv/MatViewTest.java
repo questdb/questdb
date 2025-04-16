@@ -2172,6 +2172,9 @@ public class MatViewTest extends AbstractCairoTest {
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "dependency loop detected");
             }
+            // mat view table should not be created
+            TableToken token = engine.getTableTokenIfExists("a");
+            Assert.assertNull(token);
         });
     }
     private static void assertCannotModifyMatView(String updateSql) {

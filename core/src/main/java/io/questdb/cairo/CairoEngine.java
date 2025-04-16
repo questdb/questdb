@@ -1596,6 +1596,14 @@ public class CairoEngine implements Closeable, WriterSource {
                 boolean locked = true;
                 if (lockedReason == null) {
                     try {
+                        if (struct.isMatView()) {
+                            final MatViewDefinition matViewDefinition = struct.getMatViewDefinition();
+                            if (getMatViewGraph().hasDependencyLoop(matViewDefinition.getBaseTableName(), tableToken)) {
+                                throw CairoException.critical(0)
+                                        .put("dependency loop detected for materialized view [view=").put(tableToken.getTableName())
+                                        .put(']');
+                            }
+                        }
                         if (inVolume) {
                             createTableOrMatViewInVolumeUnsafe(mem, blockFileWriter, path, struct, tableToken);
                         } else {
