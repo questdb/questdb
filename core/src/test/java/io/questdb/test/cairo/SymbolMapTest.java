@@ -243,6 +243,97 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCorruptOffsetFile() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int N = 1024;
+            try (Path path = new Path().of(configuration.getDbRoot()); Path path2 = new Path()) {
+                create(path, "x", N, true);
+                int pathSize = path.size();
+                int symbolCount = 6;
+
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path,
+                                "x",
+                                COLUMN_NAME_TXN_NONE,
+                                0,
+                                -1,
+                                NOOP_COLLECTOR
+                        )
+                ) {
+                    Assert.assertEquals(0, writer.put("A1"));
+                    Assert.assertEquals(1, writer.put("A2"));
+                    Assert.assertEquals(2, writer.put("A3"));
+                    Assert.assertEquals(3, writer.put("A4"));
+                    Assert.assertEquals(4, writer.put("A5"));
+                    Assert.assertEquals(5, writer.put("A6"));
+                }
+
+                // Corrupt offset file, backup it first
+                var oFile = offsetFileName(path.trimTo(pathSize), "x", -1);
+                path2.of(path).put(".bak");
+                FilesFacade ff = configuration.getFilesFacade();
+                ff.copy(oFile, path2.$());
+
+                try (MemoryCMARW mem = Vm.getSmallCMARWInstance(
+                        configuration.getFilesFacade(),
+                        offsetFileName(path.trimTo(pathSize), "x", -1),
+                        MemoryTag.MMAP_DEFAULT,
+                        configuration.getWriterFileOpenOpts()
+                )) {
+                    for (long l = SymbolMapWriter.HEADER_SIZE; l < mem.size(); l += 8) {
+                        Unsafe.getUnsafe().putLong(mem.addressOf(l), 0);
+                    }
+                    mem.jumpTo(mem.size());
+                }
+
+                try (
+                        SymbolMapWriter ignore = new SymbolMapWriter(
+                                configuration,
+                                path.trimTo(pathSize),
+                                "x",
+                                COLUMN_NAME_TXN_NONE,
+                                symbolCount,
+                                -1,
+                                NOOP_COLLECTOR
+                        )
+                ) {
+                    Assert.fail("expected corrupt exception");
+                } catch (CairoException e) {
+                    Assert.assertTrue(Chars.contains(e.getMessage(), "symbol column map is corrupt"));
+                }
+
+                // restore .o file
+                oFile = offsetFileName(path.trimTo(pathSize), "x", -1);
+                path2.of(path).put(".bak");
+                ff.remove(oFile);
+                ff.copy(path2.$(), oFile);
+
+                // Check that .c file still has the values
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path.trimTo(pathSize),
+                                "x",
+                                COLUMN_NAME_TXN_NONE,
+                                symbolCount,
+                                -1,
+                                NOOP_COLLECTOR
+                        )
+                ) {
+                    Assert.assertEquals(5, writer.put("A6"));
+                    Assert.assertEquals(4, writer.put("A5"));
+                    Assert.assertEquals(3, writer.put("A4"));
+                    Assert.assertEquals(2, writer.put("A3"));
+                    Assert.assertEquals(1, writer.put("A2"));
+                    Assert.assertEquals(0, writer.put("A1"));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLookupPerformance() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10000000;
