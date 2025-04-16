@@ -302,6 +302,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 refreshExecutionContext.of(baseTableReader);
                 try {
                     walWriter.truncateSoft();
+                    resetInvalidState(state, walWriter);
 
                     final long toBaseTxn = baseTableReader.getSeqTxn();
                     final MatViewDefinition viewDef = state.getViewDefinition();
@@ -310,8 +311,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     if (intervalIterator != null) {
                         insertAsSelect(state, viewDef, walWriter, intervalIterator, toBaseTxn, refreshTriggeredTimestamp);
                     }
-
-                    resetInvalidState(state, walWriter);
                 } finally {
                     refreshExecutionContext.clearReader();
                     engine.attachReader(baseTableReader);
