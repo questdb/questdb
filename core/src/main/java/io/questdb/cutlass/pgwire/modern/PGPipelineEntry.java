@@ -2723,7 +2723,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     boolean isDirty() {
-        return error || stateSync != SYNC_PARSE | stateParse || stateBind || stateDesc != SYNC_DESC_NONE || stateExec || stateClosed;
+        return error || stateSync != SYNC_PARSE || stateParse || stateBind || stateDesc != SYNC_DESC_NONE || stateExec || stateClosed;
     }
 
     // When we pick up SQL (insert or select) from cache we have to check that the SQL was compiled with
