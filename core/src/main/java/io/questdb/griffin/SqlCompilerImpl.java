@@ -1998,6 +1998,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final int metadataTimestampIndex = metadata.getTimestampIndex();
             final ObjList<CharSequence> columnNameList = insertModel.getColumnNameList();
             final int columnSetSize = columnNameList.size();
+            int designatedTimestampPosition = 0;
             for (int tupleIndex = 0, n = insertModel.getRowTupleCount(); tupleIndex < n; tupleIndex++) {
                 Function timestampFunction = null;
                 listColumnFilter.clear();
@@ -2028,8 +2029,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                             if (metadataTimestampIndex == metadataColumnIndex) {
                                 timestampFunction = function;
+                                designatedTimestampPosition = node.position;
                             }
-
                         } else {
                             throw SqlException.invalidColumn(insertModel.getColumnPosition(i), columnNameList.getQuick(i));
                         }
@@ -2066,6 +2067,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                         if (metadataTimestampIndex == i) {
                             timestampFunction = function;
+                            designatedTimestampPosition = node.position;
                         }
                     }
                 }
@@ -2075,14 +2077,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     if (timestampFunction == null) {
                         throw SqlException.$(0, "insert statement must populate timestamp");
                     } else if (ColumnType.isNull(timestampFunction.getType()) || timestampFunction.isNullConstant()) {
-                        throw SqlException.$(0, "designated timestamp column cannot be NULL");
+                        throw SqlException.$(designatedTimestampPosition, "designated timestamp column cannot be NULL");
                     }
                 }
 
 
                 VirtualRecord record = new VirtualRecord(valueFunctions);
                 RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(asm, record, metadata, listColumnFilter);
-                insertOperation.addInsertRow(new InsertRowImpl(record, copier, timestampFunction, tupleIndex));
+                insertOperation.addInsertRow(new InsertRowImpl(record, copier, timestampFunction, designatedTimestampPosition, tupleIndex));
             }
             return insertOperation;
         } catch (SqlException e) {
@@ -2124,23 +2126,33 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         lexer.unparseLast();
 
-        this.sqlText = createTableOp.getSelectText();
+        sqlText = createTableOp.getSelectText();
         compiledQuery.withContext(executionContext);
 
         final int startPos = lexer.getPosition();
         final long beginNanos = configuration.getNanosecondClock().getTicks();
 
+        final int selectTextPosition = createTableOp.getSelectTextPosition();
         try {
-            final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
-            if (executionModel.getModelType() != ExecutionModel.QUERY) {
-                throw SqlException.$(startPos, "SELECT query expected");
+            final QueryModel queryModel;
+            try {
+                final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
+                if (executionModel.getModelType() != ExecutionModel.QUERY) {
+                    throw SqlException.$(startPos, "SELECT query expected");
+                }
+                queryModel = optimiser.optimise((QueryModel) executionModel, executionContext, this);
+            } catch (SqlException e) {
+                e.setPosition(e.getPosition() + selectTextPosition);
+                throw e;
             }
-            final QueryModel queryModel = optimiser.optimise((QueryModel) executionModel, executionContext, this);
             createMatViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
             queryModel.setIsMatView(true);
-            compiledQuery.ofSelect(
-                    generateSelectWithRetries(queryModel, executionContext, false)
-            );
+            try {
+                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, executionContext, false));
+            } catch (SqlException e) {
+                e.setPosition(e.getPosition() + selectTextPosition);
+                throw e;
+            }
         } catch (Throwable th) {
             QueryProgress.logError(th, -1, sqlText, executionContext, beginNanos);
             throw th;
@@ -2812,11 +2824,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     CharSequence volumePath = configuration.getVolumeDefinitions().resolveAlias(volumeAlias);
                     if (volumePath != null) {
                         if (!ff.isDirOrSoftLinkDir(path.of(volumePath).$())) {
-                            throw CairoException.critical(0).put("not a valid path for volume [alias=")
+                            throw CairoException.critical(0).position(createMatViewOp.getVolumePosition())
+                                    .put("not a valid path for volume [alias=")
                                     .put(volumeAlias).put(", path=").put(path).put(']');
                         }
                     } else {
-                        throw SqlException.position(0).put("volume alias is not allowed [alias=")
+                        throw SqlException.position(createMatViewOp.getVolumePosition()).put("volume alias is not allowed [alias=")
                                 .put(volumeAlias).put(']');
                     }
                 }
@@ -2912,11 +2925,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     CharSequence volumePath = configuration.getVolumeDefinitions().resolveAlias(volumeAlias);
                     if (volumePath != null) {
                         if (!ff.isDirOrSoftLinkDir(path.of(volumePath).$())) {
-                            throw CairoException.critical(0).put("not a valid path for volume [alias=")
+                            throw CairoException.critical(0).position(createTableOp.getVolumePosition())
+                                    .put("not a valid path for volume [alias=")
                                     .put(volumeAlias).put(", path=").put(path).put(']');
                         }
                     } else {
-                        throw SqlException.position(0).put("volume alias is not allowed [alias=")
+                        throw SqlException.position(createTableOp.getVolumePosition()).put("volume alias is not allowed [alias=")
                                 .put(volumeAlias).put(']');
                     }
                 }
