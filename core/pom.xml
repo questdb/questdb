@@ -314,7 +314,7 @@
                     <plugin>
                         <groupId>org.sonatype.plugins</groupId>
                         <artifactId>nexus-staging-maven-plugin</artifactId>
-                        <version>1.6.3</version>
+                        <version>1.6.14</version>
                         <executions>
                             <execution>
                                 <id>default-deploy</id>
