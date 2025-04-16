@@ -2124,7 +2124,7 @@ public class MatViewTest extends AbstractCairoTest {
             );
 
             execute("INSERT INTO trades VALUES('BTC-USD', 'BUY', 29432.50, 0.5, '2023-08-15T09:30:45.789Z');");
-            execute( "INSERT INTO trades VALUES('BTC-USD', 'SELL', 29435.20, 1.2, '2023-08-15T09:31:12.345Z');");
+            execute("INSERT INTO trades VALUES('BTC-USD', 'SELL', 29435.20, 1.2, '2023-08-15T09:31:12.345Z');");
 
             drainQueues();
             execute("CREATE MATERIALIZED VIEW a AS (\n" +
@@ -2177,6 +2177,7 @@ public class MatViewTest extends AbstractCairoTest {
             Assert.assertNull(token);
         });
     }
+
     private static void assertCannotModifyMatView(String updateSql) {
         try {
             execute(updateSql);
