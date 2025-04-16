@@ -81,6 +81,7 @@ class OperationExecutor implements Closeable {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             executionContext.remapTableNameResolutionTo(tableToken);
             CompiledQuery compiledQuery;
+            int stallCount = 0;
             while (true) {
                 try {
                     compiledQuery = compiler.compile(alterSql, executionContext);
@@ -93,7 +94,14 @@ class OperationExecutor implements Closeable {
                         tableWriter.updateTableToken(updatedToken);
                         executionContext.remapTableNameResolutionTo(updatedToken);
                     } else {
-                        throw ex;
+                        // This is a transient error, we should retry
+                        // it can happen if the table renamed in the middle
+                        // of alter compilation but then renamed back.
+                        // This is highly unlikely to stall in real life
+                        // but keeping the DB in live lock is not a good idea, hence there is a limit
+                        if (stallCount++ > 10) {
+                            throw ex;
+                        }
                     }
                 }
             }
