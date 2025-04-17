@@ -36,6 +36,7 @@ public class FunctionFactoryDescriptor {
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
     private final long[] argTypes;
     private final FunctionFactory factory;
+    private final int notVarArgsSigCount;
     private final int openParenIndex;
     private final int sigArgCount;
 
@@ -46,6 +47,7 @@ public class FunctionFactoryDescriptor {
         this.openParenIndex = validateSignatureAndGetNameSeparator(sig);
         // validate data types
         int typeCount = 0;
+        int notVarArgCount = 0;
         for (
                 int i = openParenIndex + 1, n = sig.length() - 1;
                 i < n; typeCount++
@@ -70,6 +72,9 @@ public class FunctionFactoryDescriptor {
         for (int i = openParenIndex + 1, n = sig.length() - 1, typeIndex = 0; i < n; ) {
             final char c = sig.charAt(i);
             int type = FunctionFactoryDescriptor.getArgTypeTag(c);
+            if (type != ColumnType.VAR_ARG) {
+                notVarArgCount++;
+            }
             final int arrayIndex = typeIndex / 2;
             final int arrayValueOffset = (typeIndex % 2) * 32;
             // check if this is an array
@@ -87,6 +92,7 @@ public class FunctionFactoryDescriptor {
             types[arrayIndex] |= (toUnsignedLong(type) << (32 - arrayValueOffset));
             typeIndex++;
         }
+        this.notVarArgsSigCount = notVarArgCount;
         this.argTypes = types;
         this.sigArgCount = typeCount;
     }
@@ -301,6 +307,10 @@ public class FunctionFactoryDescriptor {
 
     public String getName() {
         return factory.getSignature().substring(0, openParenIndex);
+    }
+
+    public int getNotVarArgsSigCount() {
+        return notVarArgsSigCount;
     }
 
     public int getSigArgCount() {

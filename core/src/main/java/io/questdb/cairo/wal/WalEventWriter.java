@@ -283,6 +283,23 @@ class WalEventWriter implements Closeable {
         return appendData(msgType, startRowID, endRowID, minTimestamp, maxTimestamp, outOfOrder, lastRefreshBaseTxn, lastRefreshTimestamp);
     }
 
+    int appendMatViewInvalidate(long lastRefreshBaseTxn, long lastRefreshTimestamp, boolean invalid, @Nullable CharSequence invalidationReason) {
+        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
+        eventMem.putLong(txn);
+        eventMem.putByte(WalTxnType.MAT_VIEW_INVALIDATE);
+        eventMem.putLong(lastRefreshBaseTxn);
+        eventMem.putLong(lastRefreshTimestamp);
+        eventMem.putBool(invalid);
+        eventMem.putStr(invalidationReason);
+        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
+        eventMem.putInt(-1);
+
+        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
+        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        eventMem.putInt(WAL_FORMAT_OFFSET_32, WALE_MAT_VIEW_FORMAT_VERSION);
+        return txn++;
+    }
+
     int appendSql(int cmdType, CharSequence sqlText, SqlExecutionContext sqlExecutionContext) {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
@@ -300,21 +317,6 @@ class WalEventWriter implements Closeable {
 
         appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
         eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
-        return txn++;
-    }
-
-    int invalidate(boolean invalid, @Nullable CharSequence invalidationReason) {
-        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
-        eventMem.putLong(txn);
-        eventMem.putByte(WalTxnType.MAT_VIEW_INVALIDATE);
-        eventMem.putBool(invalid);
-        eventMem.putStr(invalidationReason);
-        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
-        eventMem.putInt(-1);
-
-        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
-        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
-        eventMem.putInt(WAL_FORMAT_OFFSET_32, WALE_MAT_VIEW_FORMAT_VERSION);
         return txn++;
     }
 

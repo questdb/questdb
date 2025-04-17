@@ -128,7 +128,7 @@ public class QueryRegistryTest extends AbstractTest {
     public void testExplain() throws Exception {
         TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
             assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE tab (value LONG)");
-            assertGet("{\"dml\":\"OK\"}", "INSERT INTO tab (value) VALUES (10)");
+            assertGet("{\"ddl\":\"OK\"}", "INSERT INTO tab select 10");
             assertGet(
                     "{\"query\":\"explain tab\"," +
                             "\"columns\":[{\"name\":\"QUERY PLAN\",\"type\":\"STRING\"}]," +
@@ -145,14 +145,13 @@ public class QueryRegistryTest extends AbstractTest {
     public void testInsertAsSelect() throws Exception {
         TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
             assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE tab (value LONG)");
-            assertGet("{\"dml\":\"OK\"}", "INSERT INTO tab (value) VALUES (1)");
             assertGet("{\"ddl\":\"OK\"}", "INSERT INTO tab SELECT x+5 FROM long_sequence(2)");
             assertGet(
                     "{\"query\":\"tab\"," +
                             "\"columns\":[{\"name\":\"value\",\"type\":\"LONG\"}]," +
                             "\"timestamp\":-1," +
-                            "\"dataset\":[[1],[6],[7]]," +
-                            "\"count\":3}",
+                            "\"dataset\":[[6],[7]]," +
+                            "\"count\":2}",
                     "tab"
             );
             assertQueryRegistry();
@@ -181,7 +180,7 @@ public class QueryRegistryTest extends AbstractTest {
     public void testUpdateTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
             assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE tab (value LONG)");
-            assertGet("{\"dml\":\"OK\"}", "INSERT INTO tab (value) VALUES (6)");
+            assertGet("{\"ddl\":\"OK\"}", "INSERT INTO tab select 6");
             assertGet("{\"dml\":\"OK\",\"updated\":1}", "UPDATE tab SET value=5");
             assertGet(
                     "{\"query\":\"tab\"," +

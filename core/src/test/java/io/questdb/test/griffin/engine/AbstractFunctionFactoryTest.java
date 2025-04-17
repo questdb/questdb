@@ -242,7 +242,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 }
                 break;
             case ColumnType.FLOAT:
-                sink.put((Float) value, 5).put("f");
+                sink.put((Float) value).put("f");
                 break;
             case ColumnType.LONG:
                 sink.put((Long) value);

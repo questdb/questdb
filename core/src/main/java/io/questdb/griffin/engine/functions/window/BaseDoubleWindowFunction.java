@@ -53,7 +53,7 @@ public abstract class BaseDoubleWindowFunction extends DoubleFunction implements
 
     @Override
     public double getDouble(Record rec) {
-        //unused
+        // unused
         throw new UnsupportedOperationException();
     }
 
@@ -68,7 +68,6 @@ public abstract class BaseDoubleWindowFunction extends DoubleFunction implements
 
     @Override
     public void reset() {
-
     }
 
     @Override

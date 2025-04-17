@@ -249,7 +249,7 @@ public class AggregateTest extends AbstractCairoTest {
                 new TypeVal(ColumnType.LONG, "null:LONG", "1:LONG"),
                 new TypeVal(ColumnType.DATE, ":DATE", "1970-01-01T00:00:00.001Z:DATE"),
                 new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP", "1970-01-01T00:00:00.000001Z:TIMESTAMP"),
-                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0000:FLOAT"),
+                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0:FLOAT"),
                 new TypeVal(ColumnType.DOUBLE, "null:DOUBLE", "1.0:DOUBLE"),
                 new TypeVal(ColumnType.IPv4, ":IPv4", "0.0.0.1:IPv4"),
                 new TypeVal(ColumnType.UUID, ":UUID", "00000000-0000-0001-0000-000000000001:UUID"),
@@ -1201,7 +1201,7 @@ public class AggregateTest extends AbstractCairoTest {
                 new TypeVal(ColumnType.LONG, "null:LONG", "1:LONG"),
                 new TypeVal(ColumnType.DATE, ":DATE", "1970-01-01T00:00:00.001Z:DATE"),
                 new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP", "1970-01-01T00:00:00.000001Z:TIMESTAMP"),
-                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0000:FLOAT"),
+                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0:FLOAT"),
                 new TypeVal(ColumnType.DOUBLE, "null:DOUBLE", "1.0:DOUBLE"),
                 new TypeVal(ColumnType.IPv4, ":IPv4", "0.0.0.1:IPv4"),
                 new TypeVal(ColumnType.UUID, ":UUID", "00000000-0000-0001-0000-000000000001:UUID"),
@@ -1225,7 +1225,7 @@ public class AggregateTest extends AbstractCairoTest {
                 new TypeVal(ColumnType.LONG, "null:LONG", "1:LONG"),
                 new TypeVal(ColumnType.DATE, ":DATE", "1970-01-01T00:00:00.001Z:DATE"),
                 new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP", "1970-01-01T00:00:00.000001Z:TIMESTAMP"),
-                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0000:FLOAT"),
+                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0:FLOAT"),
                 new TypeVal(ColumnType.DOUBLE, "null:DOUBLE", "1.0:DOUBLE"),
                 new TypeVal(ColumnType.IPv4, ":IPv4", "0.0.0.1:IPv4")
         };
@@ -1244,7 +1244,7 @@ public class AggregateTest extends AbstractCairoTest {
                 new TypeVal(ColumnType.LONG, "null:LONG", "1:LONG"),
                 new TypeVal(ColumnType.DATE, ":DATE", "1970-01-01T00:00:00.001Z:DATE"),
                 new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP", "1970-01-01T00:00:00.000001Z:TIMESTAMP"),
-                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0000:FLOAT"),
+                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0:FLOAT"),
                 new TypeVal(ColumnType.DOUBLE, "null:DOUBLE", "1.0:DOUBLE"),
                 new TypeVal(ColumnType.IPv4, ":IPv4", "0.0.0.1:IPv4")
         };
@@ -1623,7 +1623,7 @@ public class AggregateTest extends AbstractCairoTest {
                 new TypeVal(ColumnType.SHORT, "0:LONG", "1:LONG"),
                 new TypeVal(ColumnType.INT, "null:LONG", "1:LONG"),
                 new TypeVal(ColumnType.LONG, "null:LONG", "1:LONG"),
-                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0000:FLOAT"),
+                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0:FLOAT"),
                 new TypeVal(ColumnType.DOUBLE, "null:DOUBLE", "1.0:DOUBLE"),
                 new TypeVal(ColumnType.LONG256, ":LONG256", "0x01000000000000000100000000000000010000000000000001:LONG256")
         };

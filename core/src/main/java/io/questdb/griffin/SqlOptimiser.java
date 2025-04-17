@@ -48,6 +48,8 @@ import io.questdb.griffin.engine.functions.catalogue.ShowStandardConformingStrin
 import io.questdb.griffin.engine.functions.catalogue.ShowTimeZoneFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLevelCursorFactory;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
+import io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
@@ -100,9 +102,11 @@ public class SqlOptimiser implements Mutable {
     private static final int NOT_OP_NOT_EQ = 9;
     private static final int NOT_OP_OR = 3;
 
+    // these are bit flags
     private static final int SAMPLE_BY_REWRITE_NO_WRAP = 0;
-    private static final int SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES = 0x2;
-    private static final int SAMPLE_BY_REWRITE_WRAP_REMOVE_TIMESTAMP = 0x1;
+    private static final int SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES = 2;
+    private static final int SAMPLE_BY_REWRITE_WRAP_CONVERT_TIME_ZONE = 4;
+    private static final int SAMPLE_BY_REWRITE_WRAP_REMOVE_TIMESTAMP = 1;
     private static final IntHashSet flexColumnModelTypes = new IntHashSet();
     // list of join types that don't support all optimisations (e.g. pushing table-specific predicates to both left and right table)
     private static final IntHashSet joinBarriers;
@@ -245,6 +249,10 @@ public class SqlOptimiser implements Mutable {
         constNameToToken.clear();
     }
 
+    public FunctionFactoryCache getFunctionFactoryCache() {
+        return functionParser.getFunctionFactoryCache();
+    }
+
     public boolean hasAggregates(ExpressionNode node) {
         sqlNodeStack.clear();
 
@@ -375,7 +383,7 @@ public class SqlOptimiser implements Mutable {
             QueryModel validatingModel
     ) throws SqlException {
         if (validatingModel != null) {
-            CharSequence refColumn = column.getAst().token;
+            final CharSequence refColumn = column.getAst().token;
             final int dot = Chars.indexOfUnquoted(refColumn, '.');
             validateColumnAndGetModelIndex(validatingModel, refColumn, dot, column.getAst().position);
             // when we have only one model, e.g. this is not a join
@@ -1027,31 +1035,31 @@ public class SqlOptimiser implements Mutable {
                 if (m.getUnionModel() == null) {
                     // last model in the linked list
                     QueryModel un = m.getNestedModel();
-                    int n = un.getOrderBy().size();
-                    // order by clause is on the nested model
-                    final ObjList<ExpressionNode> orderBy = un.getOrderBy();
-                    final IntList orderByDirection = un.getOrderByDirection();
-                    // limit is on the parent model
-                    final ExpressionNode limitLo = m.getLimitLo();
-                    final ExpressionNode limitHi = m.getLimitHi();
+                    if (un != null) {
+                        int n = un.getOrderBy().size();
+                        // order by clause is on the nested model
+                        final ObjList<ExpressionNode> orderBy = un.getOrderBy();
+                        final IntList orderByDirection = un.getOrderByDirection();
+                        // limit is on the parent model
+                        final ExpressionNode limitLo = m.getLimitLo();
+                        final ExpressionNode limitHi = m.getLimitHi();
 
-                    if (n > 0 || limitHi != null || limitLo != null) {
-                        // we have some order by clauses to move
-                        QueryModel _nested = queryModelPool.next();
-                        for (int i = 0; i < n; i++) {
-                            _nested.addOrderBy(orderBy.getQuick(i), orderByDirection.getQuick(i));
+                        if (n > 0 || limitHi != null || limitLo != null) {
+                            // we have some order by clauses to move
+                            QueryModel _nested = queryModelPool.next();
+                            for (int i = 0; i < n; i++) {
+                                _nested.addOrderBy(orderBy.getQuick(i), orderByDirection.getQuick(i));
+                            }
+                            orderBy.clear();
+                            orderByDirection.clear();
+                            m.setLimit(null, null);
+                            _nested.setNestedModel(model);
+                            QueryModel _model = queryModelPool.next();
+                            _model.setNestedModel(_nested);
+                            SqlUtil.addSelectStar(_model, queryColumnPool, expressionNodePool);
+                            _model.setLimit(limitLo, limitHi);
+                            return _model;
                         }
-                        orderBy.clear();
-                        orderByDirection.clear();
-
-                        m.setLimit(null, null);
-
-                        _nested.setNestedModel(model);
-                        QueryModel _model = queryModelPool.next();
-                        _model.setNestedModel(_nested);
-                        SqlUtil.addSelectStar(_model, queryColumnPool, expressionNodePool);
-                        _model.setLimit(limitLo, limitHi);
-                        return _model;
                     }
                     break;
                 }
@@ -1246,8 +1254,8 @@ public class SqlOptimiser implements Mutable {
         if (parent.addModelAliasIndex(alias, modelIndex)) {
             return;
         }
-        // if both models are the same and we already added the alias to it via a subquery, it's not a duplicate
-        // it's only a duplicate if its being applied to a different model
+        // If both models are the same, and we already added the alias to it via a subquery, it's not a duplicate
+        // it's only a duplicate if its being applied to a different model.
         if (parent != model) {
             throw SqlException.position(alias.position).put("Duplicate table or alias: ").put(alias.token);
         }
@@ -1307,11 +1315,11 @@ public class SqlOptimiser implements Mutable {
     }
 
     private CharSequence createColumnAlias(CharSequence name, QueryModel model, boolean nonLiteral) {
-        return SqlUtil.createColumnAlias(characterStore, name, -1, model.getAliasToColumnMap(), nonLiteral);
+        return SqlUtil.createColumnAlias(characterStore, name, Chars.indexOfUnquoted(name, '.'), model.getAliasToColumnMap(), nonLiteral);
     }
 
     private CharSequence createColumnAlias(CharSequence name, QueryModel model) {
-        return SqlUtil.createColumnAlias(characterStore, name, -1, model.getAliasToColumnMap());
+        return SqlUtil.createColumnAlias(characterStore, name, Chars.indexOfUnquoted(name, '.'), model.getAliasToColumnMap());
     }
 
     private CharSequence createColumnAlias(ExpressionNode node, QueryModel model) {
@@ -1508,7 +1516,7 @@ public class SqlOptimiser implements Mutable {
                     validatingModel
             );
 
-            final QueryColumn translatedColumn = nextColumn(alias);
+            final QueryColumn translatedColumn = nextColumn(alias, columnAst.position);
 
             // create column that references inner alias we just created
             innerModel.addBottomUpColumn(translatedColumn);
@@ -1658,7 +1666,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     @NotNull
-    private QueryModel createdWrapperModel(QueryModel model) {
+    private QueryModel createWrapperModel(QueryModel model) {
         // these are early stages of model processing
         // to create outer query, we will need a pair of models
         QueryModel _model = queryModelPool.next();
@@ -1667,6 +1675,9 @@ public class SqlOptimiser implements Mutable {
         // nest them
         _model.setNestedModel(_nested);
         _nested.setNestedModel(model);
+
+        _model.setModelPosition(model.getModelPosition());
+        _nested.setModelPosition(model.getModelPosition());
 
         // bubble up the union model, so that wrapper models are
         // subject to set operations
@@ -2429,6 +2440,24 @@ public class SqlOptimiser implements Mutable {
         opAnd = registry.map.get("and");
     }
 
+    private boolean isAmbiguousColumn(QueryModel model, CharSequence columnName) {
+        final int dot = Chars.indexOfUnquoted(columnName, '.');
+        if (dot == -1) {
+            ObjList<QueryModel> joinModels = model.getJoinModels();
+            int index = -1;
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                if (joinModels.getQuick(i).getColumnNameToAliasMap().excludes(columnName)) {
+                    continue;
+                }
+                if (index != -1) {
+                    return true;
+                }
+                index = i;
+            }
+        }
+        return false;
+    }
+
     private boolean isEffectivelyConstantExpression(ExpressionNode node) {
         sqlNodeStack.clear();
         while (node != null) {
@@ -2853,11 +2882,15 @@ public class SqlOptimiser implements Mutable {
     }
 
     private QueryColumn nextColumn(CharSequence name) {
-        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, name, name);
+        return nextColumn(name, 0);
+    }
+
+    private QueryColumn nextColumn(CharSequence name, int position) {
+        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, name, name, position);
     }
 
     private QueryColumn nextColumn(CharSequence alias, CharSequence column) {
-        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, alias, column);
+        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, alias, column, 0);
     }
 
     private ExpressionNode nextLiteral(CharSequence token, int position) {
@@ -3063,7 +3096,7 @@ public class SqlOptimiser implements Mutable {
             optimiseBooleanNot(joinModels.getQuick(i));
         }
 
-        if (model.getUnionModel() != null) {
+        if (model.getUnionModel() != null && model.getNestedModel() != null) {
             optimiseBooleanNot(model.getNestedModel());
         }
     }
@@ -3220,11 +3253,12 @@ public class SqlOptimiser implements Mutable {
         final ObjList<ExpressionNode> orderByAdvice = getOrderByAdvice(model, orderByMnemonic);
         final IntList orderByDirectionAdvice = getOrderByAdviceDirection(model, orderByMnemonic);
 
-        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_WINDOW
-                && model.getOrderBy().size() > 0
-                && model.getOrderByAdvice().size() > 0
-                && model.getLimitLo() == null) {
-
+        if (
+                model.getSelectModelType() == QueryModel.SELECT_MODEL_WINDOW
+                        && model.getOrderBy().size() > 0
+                        && model.getOrderByAdvice().size() > 0
+                        && model.getLimitLo() == null
+        ) {
             boolean orderChanges = false;
             if (orderByAdvice.size() != model.getOrderByAdvice().size()) {
                 orderChanges = true;
@@ -3803,6 +3837,79 @@ public class SqlOptimiser implements Mutable {
         assert root != -1;
     }
 
+    private ExpressionNode replaceColumnWithAlias(ExpressionNode node, QueryModel model) throws SqlException {
+        if (node != null && node.type == LITERAL) {
+            final CharSequence col = node.token;
+            final int dot = Chars.indexOfUnquoted(col, '.');
+            final CharSequence alias = validateColumnAndGetAlias(model, col, dot, node.position);
+            if (alias != null) {
+                return expressionNodePool.next().of(LITERAL, alias, node.precedence, node.position);
+            }
+        }
+        return node;
+    }
+
+    private void replaceColumnsWithAliases(ExpressionNode node, QueryModel model) throws SqlException {
+        sqlNodeStack.clear();
+
+        ExpressionNode temp = replaceColumnWithAlias(node, model);
+        if (temp != node) {
+            node.of(LITERAL, temp.token, node.precedence, node.position);
+            return;
+        }
+
+        // pre-order iterative tree traversal
+        // see: http://en.wikipedia.org/wiki/Tree_traversal
+
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                if (node.paramCount < 3) {
+                    if (node.rhs != null) {
+                        temp = replaceColumnWithAlias(node.rhs, model);
+                        if (node.rhs == temp) {
+                            sqlNodeStack.push(node.rhs);
+                        } else {
+                            node.rhs = temp;
+                        }
+                    }
+
+                    if (node.lhs != null) {
+                        temp = replaceColumnWithAlias(node.lhs, model);
+                        if (temp == node.lhs) {
+                            node = node.lhs;
+                        } else {
+                            node.lhs = temp;
+                            node = null;
+                        }
+                    } else {
+                        node = null;
+                    }
+                } else {
+                    for (int i = 1, k = node.paramCount; i < k; i++) {
+                        ExpressionNode e = node.args.getQuick(i);
+                        temp = replaceColumnWithAlias(e, model);
+                        if (e == temp) {
+                            sqlNodeStack.push(e);
+                        } else {
+                            node.args.setQuick(i, temp);
+                        }
+                    }
+
+                    ExpressionNode e = node.args.getQuick(0);
+                    temp = replaceColumnWithAlias(e, model);
+                    if (e == temp) {
+                        node = e;
+                    } else {
+                        node.args.setQuick(0, temp);
+                        node = null;
+                    }
+                }
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+    }
+
     private ExpressionNode replaceIfAggregateOrLiteral(
             @Transient ExpressionNode node,
             QueryModel groupByModel,
@@ -3985,12 +4092,13 @@ public class SqlOptimiser implements Mutable {
         }
 
         ExpressionNode op = agg.rhs;
-
-        if (op != null &&
-                agg.type == FUNCTION &&
-                functionParser.getFunctionFactoryCache().isGroupBy(agg.token) &&
-                Chars.equalsIgnoreCase("sum", agg.token) &&
-                op.type == OPERATION) {
+        if (
+                op != null
+                        && agg.type == FUNCTION
+                        && functionParser.getFunctionFactoryCache().isGroupBy(agg.token)
+                        && Chars.equalsIgnoreCase("sum", agg.token)
+                        && op.type == OPERATION
+        ) {
             if (Chars.equals(op.token, '*')) { // sum(x*10) == sum(x)*10
                 if (isIntegerConstant(op.rhs) && isSimpleIntegerColumn(op.lhs, model)) {
                     agg.rhs = op.lhs;
@@ -4162,7 +4270,6 @@ public class SqlOptimiser implements Mutable {
             }
 
             if (!abandonRewrite) {
-
                 // remove the distinct flag, model is no longer that
                 model.setDistinct(false);
 
@@ -4311,11 +4418,9 @@ public class SqlOptimiser implements Mutable {
                             && model.getLimitHi() == null
                             && Chars.equals(model.getLimitLo().token, '-')
             ) {
-
                 QueryModel nested = model.getNestedModel();
 
                 int firstOrderByDir = nested.getOrderByDirection().get(0);
-
                 if (firstOrderByDir != ORDER_DIRECTION_ASCENDING) {
                     return;
                 }
@@ -4332,7 +4437,6 @@ public class SqlOptimiser implements Mutable {
                 for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
                     model.addOrderBy(nested.getOrderBy().get(i), nested.getOrderByDirection().get(i));
                 }
-
 
                 if (nested.getOrderByAdvice().size() == 0) {
                     for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
@@ -4353,13 +4457,12 @@ public class SqlOptimiser implements Mutable {
 
                 nested.setAllowPropagationOfOrderByAdvice(false); // stop propagation
 
-                // copy the integral part i.e if it's -3, then 3
+                // copy the integral part, i.e. if it's -3, then 3
                 nested.setLimit(model.getLimitLo().rhs, null);
 
                 // remove limit from outer
                 model.setLimit(null, null);
                 rewriteMultipleTermLimitedOrderByPart1(nested.getNestedModel());
-
             } else {
                 rewriteMultipleTermLimitedOrderByPart1(model.getNestedModel());
             }
@@ -4501,12 +4604,11 @@ public class SqlOptimiser implements Mutable {
                         }
 
                         if (index > -1) {
-                            QueryColumn qc = this.getQueryColumn(baseParent, column, dot);
+                            QueryColumn qc = getQueryColumn(baseParent, column, dot);
                             if (qc != null) {
                                 index = map.keyIndex(qc.getAst().token);
                             }
                         }
-
 
                         if (index < 0) {
                             // we have found alias, rewrite order by column
@@ -4518,13 +4620,12 @@ public class SqlOptimiser implements Mutable {
                             // if necessary, propagate column to limit model that'll receive order by
                             if (limitModel != baseParent) {
                                 CharSequence translatedColumnAlias = getTranslatedColumnAlias(limitModel, baseParent, orderBy.token);
-
                                 if (translatedColumnAlias == null) {
-                                    //add column ref to the most-nested model that doesn't have it
+                                    // add column ref to the most-nested model that doesn't have it
                                     alias = SqlUtil.createColumnAlias(characterStore, tempColumnAlias, Chars.indexOf(tempColumnAlias, '.'), tempQueryModel.getAliasToColumnMap());
                                     tempQueryModel.addBottomUpColumn(nextColumn(alias, tempColumnAlias));
 
-                                    //and then push to upper models
+                                    // and then push to upper models
                                     QueryModel m = limitModel;
                                     while (m != tempQueryModel) {
                                         m.addBottomUpColumn(nextColumn(alias));
@@ -4535,7 +4636,7 @@ public class SqlOptimiser implements Mutable {
                                     tempColumnAlias = null;
                                     orderBy.token = alias;
 
-                                    //if necessary, add external model to maintain output
+                                    // if necessary, add external model to maintain output
                                     if (limitModel == model && wrapper == null) {
                                         wrapper = queryModelPool.next();
                                         wrapper.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
@@ -4565,7 +4666,7 @@ public class SqlOptimiser implements Mutable {
                                 if (dot > -1
                                         && base.getModelAliasIndexes().contains(column, 0, dot)
                                         && base.getModelAliasIndexes().size() == 1) {
-                                    column = column.subSequence(dot + 1, column.length());//remove alias
+                                    column = column.subSequence(dot + 1, column.length()); // remove alias
                                     dot = -1;
                                 }
 
@@ -4621,7 +4722,7 @@ public class SqlOptimiser implements Mutable {
                         }
                     }
                 }
-                //order by can't be pushed through limit clause because it'll produce bad results
+                // order by can't be pushed through limit clause because it'll produce bad results
                 if (base != baseParent && base != limitModel) {
                     limitModel.addOrderBy(orderBy, base.getOrderByDirection().getQuick(i));
                 }
@@ -4731,8 +4832,10 @@ public class SqlOptimiser implements Mutable {
                         if (baseParent.getAliasToColumnMap().get(column) != null) {
                             continue;
                         } else {
-                            throw SqlException.$(orderBy.position,
-                                            "order column position is out of range [max=")
+                            throw SqlException.$(
+                                            orderBy.position,
+                                            "order column position is out of range [max="
+                                    )
                                     .put(columnCount)
                                     .put(']');
                         }
@@ -4786,35 +4889,39 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Recursive. Replaces "sample by" models with group-by. Not all forms of "sample by"
-     * can be implemented via this method. Therefore, the rewrite avoids the following:
+     * Recursive. Replaces SAMPLE BY models with GROUP BY + ORDER BY. For now, the rewrite
+     * avoids the following:
      * - linear and prev fills
-     * - custom non-wall-clock alignments
+     * <p>
+     * When "timestamp" column is not explicitly selected, this method has to do
+     * a trick to add artificial timestamp to the original model and then wrap the original
+     * model into a sub-query, to select all the intended columns but the artificial timestamp.
+     * <p>
+     * When time zone or offset is specified, an intermediate model is also added.
      *
      * @param model the input model, it is expected to be very early in optimisation process
      *              the typical sample by model consists of two objects, the outer one with the
      *              list of columns and the inner one with sample by clauses
-     * @return when "timestamp" column is not explicitly selected, this method has to do
-     * a trick to add artificial timestamp to the original model and then wrap the original
-     * model into a sub-query, to select all the intended columns but the artificial timestamp.
      */
-    private QueryModel rewriteSampleBy(@Nullable QueryModel model) throws SqlException {
+    private QueryModel rewriteSampleBy(@Nullable QueryModel model, @Transient SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (model == null) {
             return null;
         }
 
-        QueryModel nested = model.getNestedModel();
+        final QueryModel nested = model.getNestedModel();
         if (nested != null) {
             // "sample by" details will be on the nested model of the query
             final ExpressionNode sampleBy = nested.getSampleBy();
             final ExpressionNode sampleByOffset = nested.getSampleByOffset();
             final ObjList<ExpressionNode> sampleByFill = nested.getSampleByFill();
-            final ExpressionNode sampleByTimezoneName = nested.getSampleByTimezoneName();
+            final ExpressionNode sampleByTimezoneName = nested.getSampleByTimezoneName() != null && !isUTC(nested.getSampleByTimezoneName().token)
+                    ? nested.getSampleByTimezoneName()
+                    : null;
             final ExpressionNode sampleByUnit = nested.getSampleByUnit();
             final ExpressionNode timestamp = nested.getTimestamp();
             final int sampleByFillSize = sampleByFill.size();
-            ExpressionNode sampleByFrom = nested.getSampleByFrom();
-            ExpressionNode sampleByTo = nested.getSampleByTo();
+            final ExpressionNode sampleByFrom = nested.getSampleByFrom();
+            final ExpressionNode sampleByTo = nested.getSampleByTo();
 
             final ObjList<ExpressionNode> groupBy = nested.getGroupBy();
             if (sampleBy != null && groupBy != null && groupBy.size() > 0) {
@@ -4824,7 +4931,10 @@ public class SqlOptimiser implements Mutable {
             if (
                     sampleBy != null
                             && timestamp != null
-                            && (sampleByOffset != null && isZeroOffset(sampleByOffset.token) && (sampleByTimezoneName == null || isUTC(sampleByTimezoneName.token)))
+                            // null offset means ALIGN TO FIRST OBSERVATION, and we only support ALIGN TO CALENDAR
+                            && sampleByOffset != null
+                            // for now, time zone and offset are supported only when there is no FILL()
+                            && (sampleByFillSize == 0 || (sampleByTimezoneName == null && isZeroOffset(sampleByOffset.token)))
                             && (sampleByFillSize == 0 || (sampleByFillSize == 1 && !isPrevKeyword(sampleByFill.getQuick(0).token) && !isLinearKeyword(sampleByFill.getQuick(0).token)))
                             && sampleByUnit == null
                             && (sampleByFrom == null || ((sampleByFrom.type != BIND_VARIABLE) && (sampleByFrom.type != FUNCTION) && (sampleByFrom.type != OPERATION)))
@@ -4834,9 +4944,7 @@ public class SqlOptimiser implements Mutable {
                 // error-prone. For example, additive table metadata changes (adding a column)
                 // will change the outcome of existing queries, if those supported wildcards for
                 // as group-by keys.
-
-                ObjList<ExpressionNode> maybeKeyed = new ObjList<>();
-
+                final ObjList<ExpressionNode> maybeKeyed = new ObjList<>();
                 for (int i = 0, n = model.getColumns().size(); i < n; i++) {
                     final QueryColumn column = model.getColumns().getQuick(i);
                     final ExpressionNode ast = column.getAst();
@@ -4849,6 +4957,12 @@ public class SqlOptimiser implements Mutable {
                     }
                 }
 
+                if (hasNoAggregateQueryColumns(model)) {
+                    throw SqlException.$(nested.getSampleBy().position, "at least one aggregation function must be present in 'select' clause");
+                }
+
+                validateConstOrRuntimeConstFunction(sampleByTimezoneName, sqlExecutionContext);
+
                 // When timestamp is not explicitly selected, we will
                 // need to add it artificially to enable group-by to
                 // have access to bucket key. If this happens, the artificial
@@ -4858,22 +4972,30 @@ public class SqlOptimiser implements Mutable {
                 // Another reason for creating the wrapper is to re-introduce the copies of the
                 // timestamp column. These are actively removed from the group-by model, to make sure they
                 // don't pollute the group-by keys.
-                // SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES
 
                 int wrapAction = SAMPLE_BY_REWRITE_NO_WRAP;
+
+                if (sampleByTimezoneName != null && !isUTC(sampleByTimezoneName.token)) {
+                    wrapAction |= SAMPLE_BY_REWRITE_WRAP_CONVERT_TIME_ZONE;
+                }
 
                 // this may or may not be our guy, but may not be, depending on fill settings
 
                 // plan of action:
-                // 1. analyze sample by expression and replace expression in the same
-                //    position where timestamp is in the select clause (timestamp may not be selected, we have to
-                //    have a wrapper)
+                // 1. analyze sample by expression and replace expression in the same position where timestamp
+                //    is in the select clause (timestamp may not be selected, we have to have a wrapper)
                 // 2. clear the sample by clause
                 // 3. wrap the result into an order by to maintain the timestamp order, but this can be optional
 
                 // the timestamp could be selected but also aliased
                 CharSequence timestampColumn = timestamp.token;
-                CharSequence timestampAlias = model.getColumnNameToAliasMap().get(timestampColumn);
+                CharSequence timestampAlias = null;
+                for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+                    final QueryColumn qc = model.getBottomUpColumns().getQuick(i);
+                    if (qc.getAst().type == LITERAL && Chars.equalsIgnoreCase(qc.getAst().token, timestampColumn)) {
+                        timestampAlias = qc.getAlias();
+                    }
+                }
 
                 if (timestampAlias == null) {
                     // Let's not give up yet, the timestamp column might be prefixed
@@ -4895,14 +5017,22 @@ public class SqlOptimiser implements Mutable {
                         e.put(nested.getTableName()).putAscii('.').put(timestamp.token);
                         CharSequence tableNamePrefixedTimestampColumn = e.toImmutable();
                         timestampAlias = model.getColumnNameToAliasMap().get(tableNamePrefixedTimestampColumn);
-
                         if (timestampAlias != null) {
                             timestampColumn = tableNamePrefixedTimestampColumn;
                         }
                     }
                 }
 
-                if (maybeKeyed.size() > 0 && ((sampleByFrom != null || sampleByTo != null) || (sampleByFillSize > 0 && !isNoneKeyword(sampleByFill.getQuick(0).token)))) {
+                if (timestampAlias == null && nested.getJoinModels().size() > 1 && isAmbiguousColumn(nested, timestampColumn)) {
+                    // We're dealing with a join, let's check if the timestamp needs a prefix.
+                    final CharSequence tableAlias = nested.getAlias() != null ? nested.getAlias().token : nested.getTableName();
+                    final CharacterStoreEntry e = characterStore.newEntry();
+                    e.put(tableAlias).putAscii('.').put(timestamp.token);
+                    timestampColumn = e.toImmutable();
+                }
+
+                if (maybeKeyed.size() > 0 &&
+                        ((sampleByFrom != null || sampleByTo != null) || (sampleByFillSize > 0 && !isNoneKeyword(sampleByFill.getQuick(0).token)))) {
                     boolean isKeyed = false;
 
                     final CharSequence tableName = nested.getTableName();
@@ -4932,23 +5062,23 @@ public class SqlOptimiser implements Mutable {
 
                     if (isKeyed) {
                         // drop out early, since we don't handle keyed
-                        nested.setNestedModel(rewriteSampleBy(nested.getNestedModel()));
+                        nested.setNestedModel(rewriteSampleBy(nested.getNestedModel(), sqlExecutionContext));
 
                         // join models
                         for (int j = 1, m = nested.getJoinModels().size(); j < m; j++) {
                             QueryModel joinModel = nested.getJoinModels().getQuick(j);
-                            joinModel.setNestedModel(rewriteSampleBy(joinModel.getNestedModel()));
+                            joinModel.setNestedModel(rewriteSampleBy(joinModel.getNestedModel(), sqlExecutionContext));
                         }
 
                         // unions
-                        model.setUnionModel(rewriteSampleBy(model.getUnionModel()));
+                        model.setUnionModel(rewriteSampleBy(model.getUnionModel(), sqlExecutionContext));
                         return model;
                     }
                 }
 
                 // These lists collect timestamp copies that we remove from the group-by model.
                 // The goal is to re-populate the wrapper model with the copies in the correct positions.
-                ObjList<QueryColumn> insetColumnAliases = new ObjList<>();
+                final ObjList<QueryColumn> insetColumnAliases = new ObjList<>();
                 tempList.clear();
                 existsDependedTokens.clear();
                 existsDependedTokens.add(timestampColumn);
@@ -4963,17 +5093,17 @@ public class SqlOptimiser implements Mutable {
                 // to find other aliases we have to loop thru all the columns. We are removing
                 // columns in this loop, that is why there is no auto-increment.
                 for (int i = 0, k = 0, n = model.getBottomUpColumns().size(); i < n; k++) {
-                    QueryColumn qc = model.getBottomUpColumns().getQuick(i);
-                    boolean isAFunctionUsingTimestampColumn = (qc.getAst().type == FUNCTION || qc.getAst().type == OPERATION)
+                    final QueryColumn qc = model.getBottomUpColumns().getQuick(i);
+                    final boolean isFunctionWithTsColumn = (qc.getAst().type == FUNCTION || qc.getAst().type == OPERATION)
                             && nonAggregateFunctionDependsOn(qc.getAst(), nested.getTimestamp());
 
                     if (
-                            isAFunctionUsingTimestampColumn ||
+                            isFunctionWithTsColumn ||
                                     // check all literals that refer timestamp column, except the one
-                                    // with our chosen timestamp alias.
-                                    timestampAlias != null && qc.getAst().type == LITERAL
+                                    // with our chosen timestamp alias
+                                    (timestampAlias != null && qc.getAst().type == LITERAL
                                             && Chars.equalsIgnoreCase(qc.getAst().token, timestampColumn)
-                                            && !Chars.equalsIgnoreCase(qc.getAlias(), timestampAlias)
+                                            && !Chars.equalsIgnoreCase(qc.getAlias(), timestampAlias))
                     ) {
                         model.removeColumn(i);
                         // Collect indexes of the removed columns, as they appear in the original list.
@@ -4982,8 +5112,8 @@ public class SqlOptimiser implements Mutable {
                         tempList.add(k);
                         insetColumnAliases.add(qc);
                         n--;
-                        wrapAction = SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES;
-                        if (isAFunctionUsingTimestampColumn) {
+                        wrapAction |= SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES;
+                        if (isFunctionWithTsColumn) {
                             timestampOnly = false;
                         }
                     } else {
@@ -5000,71 +5130,76 @@ public class SqlOptimiser implements Mutable {
 
                     // Add artificial timestamp column at the end of the
                     // selected column list. While doing that we also
-                    // need to avoid alias conflicts1
+                    // need to avoid alias conflicts.
 
                     timestampAlias = createColumnAlias(timestampColumn, model);
-                    model.addBottomUpColumnIfNotExists(nextColumn(timestampAlias));
+                    model.addBottomUpColumnIfNotExists(nextColumn(timestampAlias, timestamp.position));
 
                     timestampOnly = false;
                     needRemoveColumns++;
                 }
+
                 if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0) {
                     // column alias indexes have shifted because of the removal of duplicate timestamp columns
                     model.updateColumnAliasIndexes();
                 }
 
-                int timestampPos = model.getColumnAliasIndex(timestampAlias);
+                final int timestampPos = model.getColumnAliasIndex(timestampAlias);
+                if (timestampPos == -1) {
+                    throw SqlException.$(timestamp.position, "unexpected timestamp expression");
+                }
 
-                ExpressionNode timestampFunc = expressionNodePool.next();
-                timestampFunc.token = "timestamp_floor";
-                timestampFunc.type = FUNCTION;
-                timestampFunc.paramCount = sampleByFrom != null ? 3 : 2;
+                final ExpressionNode tsFloorFunc = expressionNodePool.next();
+                tsFloorFunc.token = TimestampFloorFunctionFactory.NAME;
+                tsFloorFunc.type = FUNCTION;
+                tsFloorFunc.paramCount = 5;
 
                 CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
                 characterStoreEntry.put('\'').put(sampleBy.token).put('\'');
 
-                final ExpressionNode param1 = expressionNodePool.next();
-                param1.token = characterStoreEntry.toImmutable();
-                param1.paramCount = 0;
-                param1.type = CONSTANT;
+                final ExpressionNode tsFloorIntervalParam = expressionNodePool.next();
+                tsFloorIntervalParam.token = characterStoreEntry.toImmutable();
+                tsFloorIntervalParam.paramCount = 0;
+                tsFloorIntervalParam.type = CONSTANT;
 
-                final ExpressionNode param2 = expressionNodePool.next();
-                param2.token = timestampColumn;
-                param2.position = timestamp.position;
-                param2.paramCount = 0;
-                param2.type = LITERAL;
+                final ExpressionNode tsFloorTsParam = expressionNodePool.next();
+                tsFloorTsParam.token = timestampColumn;
+                tsFloorTsParam.position = model.getBottomUpColumns().getQuick(timestampPos).getAst().position;
+                tsFloorTsParam.paramCount = 0;
+                tsFloorTsParam.type = LITERAL;
 
-                // If SAMPLE BY FROM ... is present, we need to use the variant of timestamp_floor
-                // which includes the `offset` parameter. This value is populated from the FROM clause and anchors
-                // the calendar-aligned buckets to an offset other than the unix epoch.
-                if (sampleByFrom != null) {
-                    timestampFunc.args.add(sampleByFrom);
-                    timestampFunc.args.add(param2);
-                    timestampFunc.args.add(param1);
+                if (sampleByTimezoneName != null) {
+                    tsFloorFunc.args.add(sampleByTimezoneName);
                 } else {
-                    timestampFunc.lhs = param1;
-                    timestampFunc.rhs = param2;
+                    final ExpressionNode nullTimezone = expressionNodePool.next();
+                    nullTimezone.type = CONSTANT;
+                    nullTimezone.token = "null";
+                    nullTimezone.precedence = 0;
+                    tsFloorFunc.args.add(nullTimezone);
                 }
+                tsFloorFunc.args.add(sampleByOffset);
+                // If SAMPLE BY FROM ... is present, we need to include it in the timestamp_floor() call.
+                // This value is populated from the FROM clause and anchors the calendar-aligned buckets
+                // to an offset other than the unix epoch.
+                if (sampleByFrom != null) {
+                    tsFloorFunc.args.add(sampleByFrom);
+                } else {
+                    final ExpressionNode nullExpr = expressionNodePool.next();
+                    nullExpr.type = CONSTANT;
+                    nullExpr.token = "null";
+                    nullExpr.precedence = 0;
+                    tsFloorFunc.args.add(nullExpr);
+                }
+                tsFloorFunc.args.add(tsFloorTsParam);
+                tsFloorFunc.args.add(tsFloorIntervalParam);
 
                 model.getBottomUpColumns().setQuick(
                         timestampPos,
-                        queryColumnPool.next().of(timestampAlias, timestampFunc)
+                        queryColumnPool.next().of(timestampAlias, tsFloorFunc)
                 );
 
                 if (timestampOnly || nested.getGroupBy().size() > 0) {
-                    nested.addGroupBy(timestampFunc);
-                }
-
-                // check if order by is already present
-                if (nested.getOrderBy().size() == 0) {
-                    characterStoreEntry = characterStore.newEntry();
-                    characterStoreEntry.put(timestampPos + 1);
-                    ExpressionNode orderBy = expressionNodePool.next();
-                    orderBy.token = characterStoreEntry.toImmutable();
-                    orderBy.type = CONSTANT;
-                    nested.getOrderBy().add(orderBy);
-                    nested.getOrderByDirection().add(0);
-                    nested.setTimestamp(nextLiteral(timestamp.token));
+                    nested.addGroupBy(tsFloorFunc);
                 }
 
                 nested.setFillFrom(sampleByFrom);
@@ -5088,13 +5223,62 @@ public class SqlOptimiser implements Mutable {
                     needRemoveColumns += missingDependedTokens.size();
                 }
 
+                // Normalize ORDER BY by replacing column names with their aliases.
+                // That's because we may have to move explicit ORDER BY to an upper level, e.g. after to_utc() conversion.
+                if (nested.getOrderBy().size() > 0) {
+                    final ObjList<ExpressionNode> orderBy = nested.getOrderBy();
+                    for (int i = 0, n = orderBy.size(); i < n; i++) {
+                        replaceColumnsWithAliases(orderBy.getQuick(i), model);
+                    }
+                }
+
+                QueryModel orderByModel = nested;
+                CharSequence orderByTimestamp = timestamp.token;
+                // Inject an intermediate model with to_utc() function in place of the timestamp.
+                if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_CONVERT_TIME_ZONE) != 0) {
+                    model = wrapWithSelectModel(model, model.getBottomUpColumns().size());
+                    model.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+                    orderByModel = model.getNestedModel();
+                    orderByTimestamp = timestampAlias;
+
+                    final QueryColumn qc = model.getBottomUpColumns().getQuick(timestampPos);
+                    if (timestampAlias == null || qc.getAst().type != LITERAL && !Chars.equalsIgnoreCase(qc.getAlias(), timestampAlias)) {
+                        throw SqlException.$(qc.getAst().position, "unexpected non-timestamp column at position ").put(timestampPos);
+                    }
+
+                    final ExpressionNode toUtcFunc = expressionNodePool.next();
+                    toUtcFunc.token = ToUTCTimestampFunctionFactory.NAME;
+                    toUtcFunc.type = FUNCTION;
+                    toUtcFunc.paramCount = 2;
+                    final ExpressionNode toUtcParam = expressionNodePool.next();
+                    toUtcParam.token = timestampAlias;
+                    toUtcParam.position = timestamp.position;
+                    toUtcParam.paramCount = 0;
+                    toUtcParam.type = LITERAL;
+                    toUtcFunc.lhs = toUtcParam;
+                    toUtcFunc.rhs = sampleByTimezoneName;
+                    qc.of(timestampAlias, toUtcFunc);
+                }
+
+                if (nested.getOrderBy().size() == 0) {
+                    // There is no explicit ORDER BY, so we need to add one.
+                    final ExpressionNode orderBy = expressionNodePool.next();
+                    orderBy.token = timestampAlias;
+                    orderBy.type = LITERAL;
+                    orderByModel.getOrderBy().add(orderBy);
+                    orderByModel.getOrderByDirection().add(0);
+                    orderByModel.setTimestamp(nextLiteral(orderByTimestamp));
+                }
+
                 if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0 && needRemoveColumns > 0) {
                     model = wrapWithSelectModel(model, model.getBottomUpColumns().size() - needRemoveColumns);
                     addColumnToSelectModel(model, tempList, insetColumnAliases, timestampAlias);
+                    orderByModel = model.getNestedModel();
                 } else if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0) {
                     model = wrapWithSelectModel(model, tempList, insetColumnAliases, timestampAlias);
+                    orderByModel = model.getNestedModel();
                 } else if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_REMOVE_TIMESTAMP) != 0) {
-                    // we added artificial timestamp, which has to be removed
+                    // We added artificial timestamp, which has to be removed
                     // in the outer query. Single query consists of two
                     // nested QueryModel instances. The outer of the two is
                     // SELECT model and the inner of the two is the model providing
@@ -5102,21 +5286,39 @@ public class SqlOptimiser implements Mutable {
 
                     // copy columns from the "sample by" SELECT model
                     model = wrapWithSelectModel(model, model.getBottomUpColumns().size() - 1);
+                    orderByModel = model.getNestedModel();
+                }
+
+                // We need to move explicit ORDER BY upper level in two cases:
+                // 1. If there is to_utc() conversion due to time zone, we need to place the ORDER BY
+                //    at the to_utc() level as to_utc() may change the order of rows.
+                // 2. If we removed functions with timestamp column as an argument, they could be
+                //    used in the ORDER BY clause, so we need to move it at the level where
+                //    the functions are restored.
+                final boolean orderByMoveRequired = (wrapAction & SAMPLE_BY_REWRITE_WRAP_CONVERT_TIME_ZONE) != 0
+                        || (wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0;
+                if (orderByMoveRequired && nested.getOrderBy().size() > 0) {
+                    final ObjList<ExpressionNode> orderBy = nested.getOrderBy();
+                    final IntList orderByDirection = nested.getOrderByDirection();
+                    for (int i = 0, n = orderBy.size(); i < n; i++) {
+                        orderByModel.addOrderBy(orderBy.getQuick(i), orderByDirection.getQuick(i));
+                    }
+                    nested.clearOrderBy();
                 }
             }
 
             // recurse nested models
-            nested.setNestedModel(rewriteSampleBy(nested.getNestedModel()));
+            nested.setNestedModel(rewriteSampleBy(nested.getNestedModel(), sqlExecutionContext));
 
             // join models
             for (int i = 1, n = nested.getJoinModels().size(); i < n; i++) {
                 QueryModel joinModel = nested.getJoinModels().getQuick(i);
-                joinModel.setNestedModel(rewriteSampleBy(joinModel.getNestedModel()));
+                joinModel.setNestedModel(rewriteSampleBy(joinModel.getNestedModel(), sqlExecutionContext));
             }
         }
 
         // unions
-        model.setUnionModel(rewriteSampleBy(model.getUnionModel()));
+        model.setUnionModel(rewriteSampleBy(model.getUnionModel(), sqlExecutionContext));
         return model;
     }
 
@@ -5126,7 +5328,6 @@ public class SqlOptimiser implements Mutable {
      * <p>
      * This is to allow for the generation of an interval scan and minimise reading of un-needed data.
      */
-    @SuppressWarnings("ConstantValue")
     private void rewriteSampleByFromTo(QueryModel model) {
         QueryModel curr;
         QueryModel fromToModel;
@@ -5141,7 +5342,6 @@ public class SqlOptimiser implements Mutable {
         }
 
         fromToModel = model.getNestedModel();
-
         if (fromToModel == null) {
             return;
         }
@@ -5149,12 +5349,10 @@ public class SqlOptimiser implements Mutable {
         sampleFrom = fromToModel.getSampleByFrom();
         sampleTo = fromToModel.getSampleByTo();
 
-        // if no from-to
+        // if from-to is present
         if (sampleFrom != null || sampleTo != null) {
             curr = model;
-
             ExpressionNode whereClause = null;
-
             while (curr != null && whereClause == null) {
                 whereClause = curr.getWhereClause();
                 if (whereClause != null) {
@@ -5168,9 +5366,7 @@ public class SqlOptimiser implements Mutable {
             // add it anyway, as it will be ANDed with the existing clause narrowing down existing filtering.
 
             ExpressionNode intervalClause = null;
-
             ExpressionNode timestamp = fromToModel.getTimestamp();
-
             QueryModel toAddWhereClause = fromToModel;
 
             if (timestamp == null) {
@@ -5180,7 +5376,6 @@ public class SqlOptimiser implements Mutable {
                     timestamp = whereModel.getTimestamp();
                 }
             }
-
             assert timestamp != null;
 
             if (Chars.indexOf(timestamp.token, '.') < 0) {
@@ -5222,15 +5417,12 @@ public class SqlOptimiser implements Mutable {
                 geqNode.rhs = sampleFrom;
                 geqNode.paramCount = 2;
                 intervalClause = geqNode;
-            } else if (sampleTo != null) {
+            } else { // sampleTo != null
                 ExpressionNode ltNode = expressionNodePool.next().of(OPERATION, opLt.operator.token, opLt.precedence, 0);
                 ltNode.lhs = timestamp;
                 ltNode.rhs = sampleTo;
                 ltNode.paramCount = 2;
                 intervalClause = ltNode;
-            } else {
-                // unreachable
-                assert false;
             }
 
             if (whereClause != null) {
@@ -5862,17 +6054,30 @@ public class SqlOptimiser implements Mutable {
                     // columns were renamed,
                     if (translatingModel.getColumnNameToAliasMap().excludes(timestamp)) {
                         // make alias name
-                        CharacterStoreEntry e = characterStore.newEntry();
+                        final CharacterStoreEntry e = characterStore.newEntry();
                         e.put(baseModel.getName()).put('.').put(timestamp);
-                        if (translatingModel.getColumnNameToAliasMap().excludes(e.toImmutable())) {
-                            createSelectColumn0(
-                                    baseModel.getTimestamp().token,
-                                    baseModel.getTimestamp(),
-                                    baseModel,
-                                    translatingModel,
-                                    innerVirtualModel,
-                                    windowModel
-                            );
+                        final CharSequence prefixedTimestampName = e.toImmutable();
+                        if (translatingModel.getColumnNameToAliasMap().excludes(prefixedTimestampName)) {
+                            if (baseModel.getJoinModels().size() > 0 && isAmbiguousColumn(baseModel, baseModel.getTimestamp().token)) {
+                                // add prefixed column since the name is ambiguous
+                                createSelectColumn0(
+                                        prefixedTimestampName,
+                                        nextLiteral(prefixedTimestampName),
+                                        baseModel,
+                                        translatingModel,
+                                        innerVirtualModel,
+                                        windowModel
+                                );
+                            } else {
+                                createSelectColumn0(
+                                        baseModel.getTimestamp().token,
+                                        baseModel.getTimestamp(),
+                                        baseModel,
+                                        translatingModel,
+                                        innerVirtualModel,
+                                        windowModel
+                                );
+                            }
                         }
                     }
                 }
@@ -6192,37 +6397,75 @@ public class SqlOptimiser implements Mutable {
         traversalAlgo.traverse(node.rhs, literalCollector.rhs());
     }
 
-    private int validateColumnAndGetModelIndex(QueryModel model, CharSequence columnName, int dot, int position) throws SqlException {
+    private CharSequence validateColumnAndGetAlias(QueryModel model, CharSequence columnName, int dot, int position) throws SqlException {
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        CharSequence alias = null;
+        if (dot == -1) {
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final QueryModel jm = joinModels.getQuick(i);
+                if (jm.getColumnNameToAliasMap().excludes(columnName)) {
+                    continue;
+                }
+                if (alias != null) {
+                    throw SqlException.ambiguousColumn(position, columnName);
+                }
+                alias = jm.getColumnNameToAliasMap().get(columnName);
+            }
+        } else {
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final QueryModel jm = joinModels.getQuick(i);
+                final ExpressionNode tableAlias = jm.getAlias() != null ? jm.getAlias() : jm.getTableNameExpr();
+                if (Chars.equalsIgnoreCase(tableAlias.token, columnName, 0, dot)) {
+                    alias = jm.getColumnNameToAliasMap().get(columnName);
+                    if (alias == null) {
+                        alias = jm.getColumnNameToAliasMap().get(columnName, dot + 1, columnName.length());
+                    }
+                }
+            }
+        }
+        return alias;
+    }
+
+    private int validateColumnAndGetModelIndex(QueryModel model, CharSequence columnAlias, int dot, int position) throws SqlException {
         ObjList<QueryModel> joinModels = model.getJoinModels();
         int index = -1;
         if (dot == -1) {
             for (int i = 0, n = joinModels.size(); i < n; i++) {
-                if (joinModels.getQuick(i).getAliasToColumnMap().excludes(columnName)) {
+                if (joinModels.getQuick(i).getAliasToColumnMap().excludes(columnAlias)) {
                     continue;
                 }
-
                 if (index != -1) {
-                    throw SqlException.ambiguousColumn(position, columnName);
+                    throw SqlException.ambiguousColumn(position, columnAlias);
                 }
-
                 index = i;
             }
 
             if (index == -1) {
-                throw SqlException.invalidColumn(position, columnName);
+                throw SqlException.invalidColumn(position, columnAlias);
             }
         } else {
-            index = model.getModelAliasIndex(columnName, 0, dot);
-
+            index = model.getModelAliasIndex(columnAlias, 0, dot);
             if (index == -1) {
                 throw SqlException.$(position, "Invalid table name or alias");
             }
-
-            if (joinModels.getQuick(index).getAliasToColumnMap().excludes(columnName, dot + 1, columnName.length())) {
-                throw SqlException.invalidColumn(position, columnName);
+            if (joinModels.getQuick(index).getAliasToColumnMap().excludes(columnAlias, dot + 1, columnAlias.length())) {
+                throw SqlException.invalidColumn(position, columnAlias);
             }
         }
         return index;
+    }
+
+    private void validateConstOrRuntimeConstFunction(ExpressionNode expr, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (expr != null) {
+            final Function func = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
+            try {
+                if (!func.isConstant() && !func.isRuntimeConstant()) {
+                    throw SqlException.$(expr.position, "timezone must be a constant expression of STRING or CHAR type");
+                }
+            } finally {
+                Misc.free(func);
+            }
+        }
     }
 
     /* Throws exception if given node tree contains reference to aggregate or window function that are not allowed in GROUP BY clause. */
@@ -6279,8 +6522,9 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void validateWindowFunctions(QueryModel model, SqlExecutionContext sqlExecutionContext,
-                                         int recursionLevel) throws SqlException {
+    private void validateWindowFunctions(
+            QueryModel model, SqlExecutionContext sqlExecutionContext, int recursionLevel
+    ) throws SqlException {
         if (model == null) {
             return;
         }
@@ -6347,7 +6591,7 @@ public class SqlOptimiser implements Mutable {
 
     @NotNull
     private QueryModel wrapWithSelectModel(QueryModel model, int columnCount) {
-        final QueryModel _model = createdWrapperModel(model);
+        final QueryModel _model = createWrapperModel(model);
         // then create columns on the outermost model
         for (int i = 0; i < columnCount; i++) {
             QueryColumn qcFrom = model.getBottomUpColumns().getQuick(i);
@@ -6358,16 +6602,15 @@ public class SqlOptimiser implements Mutable {
 
     @NotNull
     private QueryModel wrapWithSelectModel(QueryModel model, IntList insetColumnIndexes, ObjList<QueryColumn> insertColumnAliases, CharSequence timestampAlias) {
-        QueryModel _model = createdWrapperModel(model);
+        final QueryModel _model = createWrapperModel(model);
 
         // These are merged columns, the assumption is that the insetColumnIndexes are ordered.
         // This loop will fail miserably in indexes are unordered.
-        int src1ColumnCount = model.getBottomUpColumns().size();
-        int src2ColumnCount = insetColumnIndexes.size();
+        final int src1ColumnCount = model.getBottomUpColumns().size();
+        final int src2ColumnCount = insetColumnIndexes.size();
         for (int i = 0, k = 0, m = 0; i < src1ColumnCount || k < src2ColumnCount; m++) {
-
             if (k < src2ColumnCount && insetColumnIndexes.getQuick(k) == m) {
-                QueryColumn column = insertColumnAliases.get(k);
+                final QueryColumn column = insertColumnAliases.get(k);
                 // insert column at this position, this column must reference our timestamp, that
                 // comes out of the group-by result set, but with user-provided aliases.
                 if (column.getAst().type == LITERAL) {
@@ -6377,7 +6620,7 @@ public class SqlOptimiser implements Mutable {
                 }
                 k++;
             } else {
-                QueryColumn qcFrom = model.getBottomUpColumns().getQuick(i);
+                final QueryColumn qcFrom = model.getBottomUpColumns().getQuick(i);
                 _model.addBottomUpColumnIfNotExists(nextColumn(qcFrom.getAlias()));
                 i++;
             }
@@ -6407,7 +6650,7 @@ public class SqlOptimiser implements Mutable {
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
             rewriteSampleByFromTo(rewrittenModel);
             rewrittenModel = rewriteDistinct(rewrittenModel);
-            rewrittenModel = rewriteSampleBy(rewrittenModel);
+            rewrittenModel = rewriteSampleBy(rewrittenModel, sqlExecutionContext);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             rewriteCount(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
@@ -6455,8 +6698,9 @@ public class SqlOptimiser implements Mutable {
         validateUpdateColumns(updateQueryModel, metadata, sqlExecutionContext);
     }
 
-    void validateUpdateColumns(QueryModel updateQueryModel, TableRecordMetadata metadata, SqlExecutionContext
-            sqlExecutionContext) throws SqlException {
+    void validateUpdateColumns(
+            QueryModel updateQueryModel, TableRecordMetadata metadata, SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         try {
             literalCollectorANames.clear();
             tempList.clear(metadata.getColumnCount());

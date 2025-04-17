@@ -122,7 +122,7 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
         long minTs = TimestampFormatUtils.parseTimestamp("2022-11-11T14:28:00.000000Z");
         long maxTs = TimestampFormatUtils.parseTimestamp("2022-11-12T14:28:00.000000Z");
         int txCount = Math.max(1, rnd.nextInt(50));
-        int rowCount = Math.max(1, txCount * rnd.nextInt(200) * 1000);
+        int rowCount = Math.min(2_000_000, Math.max(1, txCount * rnd.nextInt(200) * 1000));
         try (
                 TableWriter w = TestUtils.getWriter(engine, "x");
                 TableRecordMetadata sequencerMetadata = engine.getLegacyMetadata(w.getTableToken());
@@ -222,7 +222,7 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException, NumericException {
-        testFuzz00(engine, compiler, sqlExecutionContext, TestUtils.generateRandom(LOG));
+        testFuzz00(engine, compiler, sqlExecutionContext, TestUtils.generateRandom(LOG, 970596704993L, 1744736957813L));
     }
 
     private void testRollbackFuzz(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {

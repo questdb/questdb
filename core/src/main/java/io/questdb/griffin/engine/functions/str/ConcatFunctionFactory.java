@@ -115,7 +115,7 @@ public class ConcatFunctionFactory implements FunctionFactory {
     }
 
     private static void sinkFloat(Utf16Sink sink, Function function, Record record) {
-        sink.put(function.getFloat(record), 3);
+        sink.put(function.getFloat(record));
     }
 
     private static void sinkIPv4(Utf16Sink utf16Sink, Function function, Record record) {

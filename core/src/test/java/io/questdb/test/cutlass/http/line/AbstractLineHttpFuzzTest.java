@@ -76,7 +76,6 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
     private static final int SEND_SYMBOLS_WITH_SPACE_RANDOMIZE_FACTOR = 2;
     private static final short[] integerColumnTypes = new short[]{ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG};
     private static final StringSink sink = new StringSink();
-    private static int defaultFloatScale;
     protected final short[] colTypes = new short[]{STRING, DOUBLE, DOUBLE, DOUBLE, STRING, DOUBLE};
     private final int batchSize = 10;
     private final String[][] colNameBases = new String[][]{
@@ -145,18 +144,11 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        defaultFloatScale = CursorPrinter.FLOAT_SCALE;
         AbstractBootstrapTest.setUpStatic();
-        // Max out printer float scale so that float printed same as doubles, e.g.
-        // Without that float 54.0 is printed as 54.0000 and double 54.0 is printed as 54.0
-        // This is needed to allow random column conversions that can change a double column to float
-        // in the table and still match the expected sent row values.
-        CursorPrinter.FLOAT_SCALE = 10;
     }
 
     @AfterClass
     public static void tearDownStatic() {
-        CursorPrinter.FLOAT_SCALE = defaultFloatScale;
         AbstractBootstrapTest.tearDownStatic();
     }
 

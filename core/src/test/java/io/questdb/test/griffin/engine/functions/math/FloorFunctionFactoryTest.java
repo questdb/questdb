@@ -57,7 +57,7 @@ public class FloorFunctionFactoryTest extends AbstractCairoTest {
     public void testFloatNegative() throws Exception {
         assertQuery(
                 "floor\n" +
-                        "-14.0000\n",
+                        "-14.0\n",
                 "select floor(-13.1f)",
                 null,
                 true,
@@ -69,7 +69,7 @@ public class FloorFunctionFactoryTest extends AbstractCairoTest {
     public void testFloatPositive() throws Exception {
         assertQuery(
                 "floor\n" +
-                        "13.0000\n",
+                        "13.0\n",
                 "select floor(13.1f)",
                 null,
                 true,

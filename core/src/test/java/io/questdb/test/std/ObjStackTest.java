@@ -25,6 +25,8 @@
 package io.questdb.test.std;
 
 import io.questdb.std.ObjStack;
+import io.questdb.std.Rnd;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -235,6 +237,55 @@ public class ObjStackTest {
     }
 
     @Test
+    public void testResetCapacity() {
+        ObjStack<Integer> s = new ObjStack<>();
+        int n = ObjStack.DEFAULT_INITIAL_CAPACITY * 2;
+        for (int i = 0; i < n; i++) {
+            s.push(i);
+        }
+
+        Assert.assertEquals(n, s.size());
+        s.resetCapacity();
+        Assert.assertEquals(ObjStack.DEFAULT_INITIAL_CAPACITY - 1, s.size());
+
+        // we must be able to pop the latest items out
+        for (int i = n - 1; i >= n / 2 + 1; i--) {
+            Assert.assertEquals(i, s.pop().intValue());
+        }
+        Assert.assertEquals(0, s.size());
+    }
+
+    @Test
+    public void testResetCapacityEmpty() {
+        ObjStack<Integer> s = new ObjStack<>();
+        int n = ObjStack.DEFAULT_INITIAL_CAPACITY * 2;
+        for (int i = 0; i < n; i++) {
+            s.push(i);
+        }
+
+        for (int i = 0; i < n; i++) {
+            s.pop();
+        }
+
+        s.resetCapacity();
+        Assert.assertEquals(ObjStack.DEFAULT_INITIAL_CAPACITY, s.getCapacity());
+        Assert.assertEquals(0, s.size());
+    }
+
+    @Test
+    public void testResetCapacityFuzz() {
+        ObjStack<Integer> s = new ObjStack<>();
+        Rnd rnd = TestUtils.generateRandom(null);
+        int n = 1 + rnd.nextInt(ObjStack.DEFAULT_INITIAL_CAPACITY * 4);
+        int p = rnd.nextInt(n);
+        pushPop(n, p, s);
+
+        int n1 = 1 + rnd.nextInt(ObjStack.DEFAULT_INITIAL_CAPACITY * 3);
+        int p1 = rnd.nextInt(n1);
+        pushPop(n1, p1, s);
+    }
+
+    @Test
     public void updateTest() {
         ObjStack<Integer> s = new ObjStack<>();
         for (int i = 0; i < 10; i++) {
@@ -245,5 +296,25 @@ public class ObjStackTest {
         s.update(20);
         assertEquals(20, (int) s.peek());
         assertEquals(20, (int) s.pop());
+    }
+
+    private static void pushPop(int n, int p, ObjStack<Integer> s) {
+        for (int i = 0; i < n; i++) {
+            s.push(i);
+        }
+
+        for (int i = 0; i < p; i++) {
+            Assert.assertEquals(n - i - 1, s.pop().intValue());
+        }
+
+        Assert.assertEquals(n - p, s.size());
+        s.resetCapacity();
+        Assert.assertEquals(Math.min(ObjStack.DEFAULT_INITIAL_CAPACITY - 1, n - p), s.size());
+
+        // we must be able to pop the latest items out
+        for (int i = 0, size = s.size(); i < size; i++) {
+            Assert.assertEquals(n - p - i - 1, s.pop().intValue());
+        }
+        Assert.assertEquals(0, s.size());
     }
 }

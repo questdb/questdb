@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
@@ -68,7 +69,7 @@ public abstract class CharFunction implements Function {
 
     @Override
     public final byte getByte(Record rec) {
-        throw new UnsupportedOperationException();
+        return castCharToNumber(rec, ColumnType.BYTE);
     }
 
     @Override
@@ -78,12 +79,12 @@ public abstract class CharFunction implements Function {
 
     @Override
     public double getDouble(Record rec) {
-        return getChar(rec);
+        return castCharToNumber(rec, ColumnType.DOUBLE);
     }
 
     @Override
     public float getFloat(Record rec) {
-        return getChar(rec);
+        return castCharToNumber(rec, ColumnType.FLOAT);
     }
 
     @Override
@@ -113,7 +114,7 @@ public abstract class CharFunction implements Function {
 
     @Override
     public int getInt(Record rec) {
-        return getChar(rec);
+        return castCharToNumber(rec, ColumnType.INT);
     }
 
     @Override
@@ -123,7 +124,7 @@ public abstract class CharFunction implements Function {
 
     @Override
     public long getLong(Record rec) {
-        return getChar(rec);
+        return castCharToNumber(rec, ColumnType.LONG);
     }
 
     @Override
@@ -158,7 +159,7 @@ public abstract class CharFunction implements Function {
 
     @Override
     public short getShort(Record rec) {
-        return (short) getChar(rec);
+        return castCharToNumber(rec, ColumnType.SHORT);
     }
 
     @Override
@@ -243,5 +244,14 @@ public abstract class CharFunction implements Function {
         utf8SinkA.clear();
         utf8SinkA.put(getChar(rec));
         return utf8SinkA.size();
+    }
+
+    private byte castCharToNumber(Record rec, int toType) {
+        char c = getChar(rec);
+        final byte v = (byte) (c - '0');
+        if (v > -1 && v < 10) {
+            return v;
+        }
+        throw ImplicitCastException.inconvertibleValue(c, ColumnType.CHAR, toType);
     }
 }

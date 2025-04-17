@@ -38,7 +38,6 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.NanosecondClock;
-import io.questdb.std.Numbers;
 import io.questdb.std.StationaryMillisClock;
 import io.questdb.std.StationaryNanosClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -75,11 +74,6 @@ public class HttpServerConfigurationBuilder {
                 }
 
                 @Override
-                public int getDoubleScale() {
-                    return Numbers.MAX_DOUBLE_SCALE;
-                }
-
-                @Override
                 public FactoryProvider getFactoryProvider() {
                     return DefaultFactoryProvider.INSTANCE;
                 }
@@ -87,11 +81,6 @@ public class HttpServerConfigurationBuilder {
                 @Override
                 public FilesFacade getFilesFacade() {
                     return TestFilesFacadeImpl.INSTANCE;
-                }
-
-                @Override
-                public int getFloatScale() {
-                    return Numbers.MAX_FLOAT_SCALE;
                 }
 
                 @Override

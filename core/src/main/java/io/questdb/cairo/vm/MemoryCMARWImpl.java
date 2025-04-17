@@ -105,8 +105,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
                         }
                     } catch (CairoException e) {
                         LOG.error().$("cannot determine file length to safely truncate [fd=").$(fd)
+                                .$(", msg=").$(e.getFlyweightMessage())
                                 .$(", errno=").$(e.getErrno())
-                                .$(", error=").$(e.getFlyweightMessage())
                                 .I$();
                     }
                 }

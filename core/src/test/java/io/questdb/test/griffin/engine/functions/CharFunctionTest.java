@@ -35,6 +35,7 @@ import org.junit.Test;
 public class CharFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
+    private final static byte expect = 4;
     private final static char value = '4';
     private static final CharFunction function = new CharFunction() {
         @Override
@@ -80,9 +81,9 @@ public class CharFunctionTest {
         function.getBool(null);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
+    @Test
     public void testGetByte() {
-        function.getByte(null);
+        Assert.assertEquals(expect, function.getByte(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -92,12 +93,12 @@ public class CharFunctionTest {
 
     @Test
     public void testGetDouble() {
-        Assert.assertEquals(value, function.getDouble(null), 0.0001);
+        Assert.assertEquals(expect, function.getDouble(null), 0.0001);
     }
 
     @Test
     public void testGetFloat() {
-        Assert.assertEquals(value, function.getFloat(null), 0.0001);
+        Assert.assertEquals(expect, function.getFloat(null), 0.0001);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -127,12 +128,12 @@ public class CharFunctionTest {
 
     @Test
     public void testGetInt() {
-        Assert.assertEquals(value, function.getInt(null));
+        Assert.assertEquals(expect, function.getInt(null));
     }
 
     @Test
     public void testGetLong() {
-        Assert.assertEquals(value, function.getLong(null));
+        Assert.assertEquals(expect, function.getLong(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -167,7 +168,7 @@ public class CharFunctionTest {
 
     @Test
     public void testGetShort() {
-        Assert.assertEquals(value, function.getShort(null));
+        Assert.assertEquals(expect, function.getShort(null));
     }
 
     @Test

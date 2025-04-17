@@ -233,6 +233,32 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShowCreateTableUnion() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t1 ( ts timestamp, s symbol ) timestamp(ts)");
+            execute("create table t2 ( ts timestamp, s symbol ) timestamp(ts)");
+            execute("create table t3 ( ts timestamp, s symbol ) timestamp(ts)");
+            assertSql("ddl\n" +
+                            "CREATE TABLE 't1' ( \n" +
+                            "\tts TIMESTAMP,\n" +
+                            "\ts SYMBOL CAPACITY 128 CACHE\n" +
+                            ") timestamp(ts) PARTITION BY NONE BYPASS WAL\n" +
+                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n" +
+                            "CREATE TABLE 't2' ( \n" +
+                            "\tts TIMESTAMP,\n" +
+                            "\ts SYMBOL CAPACITY 128 CACHE\n" +
+                            ") timestamp(ts) PARTITION BY NONE BYPASS WAL\n" +
+                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n" +
+                            "CREATE TABLE 't3' ( \n" +
+                            "\tts TIMESTAMP,\n" +
+                            "\ts SYMBOL CAPACITY 128 CACHE\n" +
+                            ") timestamp(ts) PARTITION BY NONE BYPASS WAL\n" +
+                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+                    "show create table t1 union show create table t2 union show create table t3");
+        });
+    }
+
+    @Test
     public void testSymbol() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo (ts timestamp, s symbol capacity 512 nocache)");

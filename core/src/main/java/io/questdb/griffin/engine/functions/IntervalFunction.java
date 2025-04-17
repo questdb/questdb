@@ -59,7 +59,7 @@ public abstract class IntervalFunction implements Function {
 
     @Override
     public byte getByte(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override

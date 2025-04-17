@@ -196,54 +196,6 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         return false;
     }
 
-    public class DefaultJsonQueryProcessorConfiguration implements JsonQueryProcessorConfiguration {
-
-        @Override
-        public int getConnectionCheckFrequency() {
-            return 1_000_000;
-        }
-
-        @Override
-        public int getDoubleScale() {
-            return Numbers.MAX_DOUBLE_SCALE;
-        }
-
-        @Override
-        public FactoryProvider getFactoryProvider() {
-            return DefaultFactoryProvider.INSTANCE;
-        }
-
-        @Override
-        public FilesFacade getFilesFacade() {
-            return FilesFacadeImpl.INSTANCE;
-        }
-
-        @Override
-        public int getFloatScale() {
-            return Numbers.MAX_FLOAT_SCALE;
-        }
-
-        @Override
-        public CharSequence getKeepAliveHeader() {
-            return "Keep-Alive: timeout=5, max=10000\r\n";
-        }
-
-        @Override
-        public long getMaxQueryResponseRowLimit() {
-            return Long.MAX_VALUE;
-        }
-
-        @Override
-        public MillisecondClock getMillisecondClock() {
-            return httpContextConfiguration.getMillisecondClock();
-        }
-
-        @Override
-        public NanosecondClock getNanosecondClock() {
-            return httpContextConfiguration.getNanosecondClock();
-        }
-    }
-
     public static class DefaultLineHttpProcessorConfiguration implements LineHttpProcessorConfiguration {
         private final CairoConfiguration cairoConfiguration;
 
@@ -324,6 +276,44 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         @Override
         public boolean logMessageOnError() {
             return true;
+        }
+    }
+
+    public class DefaultJsonQueryProcessorConfiguration implements JsonQueryProcessorConfiguration {
+
+        @Override
+        public int getConnectionCheckFrequency() {
+            return 1_000_000;
+        }
+
+        @Override
+        public FactoryProvider getFactoryProvider() {
+            return DefaultFactoryProvider.INSTANCE;
+        }
+
+        @Override
+        public FilesFacade getFilesFacade() {
+            return FilesFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public CharSequence getKeepAliveHeader() {
+            return "Keep-Alive: timeout=5, max=10000\r\n";
+        }
+
+        @Override
+        public long getMaxQueryResponseRowLimit() {
+            return Long.MAX_VALUE;
+        }
+
+        @Override
+        public MillisecondClock getMillisecondClock() {
+            return httpContextConfiguration.getMillisecondClock();
+        }
+
+        @Override
+        public NanosecondClock getNanosecondClock() {
+            return httpContextConfiguration.getNanosecondClock();
         }
     }
 }

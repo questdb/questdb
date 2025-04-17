@@ -82,8 +82,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.ObjectStackPool;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.SimpleAssociativeCache;
+import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Uuid;
 import io.questdb.std.Vect;
@@ -94,6 +96,8 @@ import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -125,7 +129,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private static final int SYNC_DONE = 5;
     private static final int SYNC_PARSE = 0;
     private final ObjectPool<PgNonNullBinaryArrayView> arrayViewPool = new ObjectPool<>(PgNonNullBinaryArrayView::new, 1);
-    private final CompiledQueryImpl compiledQueryCopy;
     private final CairoEngine engine;
     private final StringSink errorMessageSink = new StringSink();
     private final int maxRecompileAttempts;
@@ -136,6 +139,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private final BitSet msgBindSelectFormatCodes = new BitSet();
     // types are sent to us via "parse" message
     private final IntList msgParseParameterTypeOIDs;
+    private final ObjList<Utf8String> namedPortals = new ObjList<>();
     // List with encoded bind variable types. It combines types client sent to us in PARSE message and types
     // inferred by the SQL compiler. Each entry uses lower 32 bits for QuestDB native type and upper 32 bits
     // contains PGWire OID type. If a client sent us a type, then the high 32 bits (=OID type) is set to the same value.
@@ -150,7 +154,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private final ObjList<String> pgResultSetColumnNames;
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private final IntList pgResultSetColumnTypes;
-    private final ObjList<CharSequence> portalNames = new ObjList<>();
+    private final Utf8StringSink utf8StringSink = new Utf8StringSink();
     boolean isCopy;
     private boolean cacheHit = false;    // extended protocol cursor resume callback
     private CompiledQueryImpl compiledQuery;
@@ -164,6 +168,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private InsertOperation insertOp = null;
     private int msgBindParameterValueCount;
     private short msgBindSelectFormatCodeCount = 0;
+    private Utf8String namedPortal;
+    private Utf8String namedStatement;
     private Operation operation = null;
     private int outResendColumnIndex = 0;
     private boolean outResendCursorRecord = false;
@@ -173,13 +179,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private long parameterValueArenaPtr = 0;
     private PGPipelineEntry parentPreparedStatementPipelineEntry;
     private boolean portal = false;
-    private String portalName;
-    private boolean preparedStatement = false;
-    private String preparedStatementName;
     // the name of the prepared statement as used by "deallocate" SQL
     // not to be confused with prepared statements that come on the
     // PostgresSQL wire.
-    private CharSequence preparedStatementNameToDeallocate;
+    private Utf8Sequence preparedStatementNameToDeallocate;
     private long sqlAffectedRowCount = 0;
     // The count of rows sent that have been sent to the client per fetch. Client can either
     // fetch all rows at once, or in batches. In case of full fetch, this is the
@@ -213,8 +216,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     public PGPipelineEntry(CairoEngine engine) {
         this.isCopy = false;
         this.engine = engine;
-        this.compiledQuery = new CompiledQueryImpl(engine);
-        this.compiledQueryCopy = compiledQuery;
         this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
         this.msgParseParameterTypeOIDs = new IntList();
         this.outParameterTypeDescriptionTypes = new LongList();
@@ -222,8 +223,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.pgResultSetColumnNames = new ObjList<>();
     }
 
-    public void bindPortalName(CharSequence portalName) {
-        portalNames.add(portalName);
+    public void bindPortalName(Utf8String portalName) {
+        namedPortals.add(portalName);
     }
 
     public void cacheIfPossible(@Nullable AssociativeCache<TypesAndSelectModern> tasCache, @Nullable SimpleAssociativeCache<TypesAndInsertModern> taiCache) {
@@ -278,7 +279,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // so we just null them out and let the original entry close them
             insertOp = Misc.free(insertOp);
             operation = Misc.free(operation);
-            Misc.free(compiledQuery.getUpdateOperation());
+            if (compiledQuery != null) {
+                Misc.free(compiledQuery.getUpdateOperation());
+            }
         } else {
             insertOp = null;
             operation = null;
@@ -291,10 +294,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         outParameterTypeDescriptionTypes.clear();
         pgResultSetColumnNames.clear();
         pgResultSetColumnTypes.clear();
-        portalNames.clear();
+        namedPortals.clear();
         isCopy = false;
         cacheHit = false;
-        compiledQuery = compiledQueryCopy;
         cursor = Misc.free(cursor);
         error = false;
         empty = false;
@@ -311,9 +313,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
         parentPreparedStatementPipelineEntry = null;
         portal = false;
-        portalName = null;
-        preparedStatement = false;
-        preparedStatementName = null;
+        namedPortal = null;
+        namedStatement = null;
         preparedStatementNameToDeallocate = null;
         sqlAffectedRowCount = 0;
         sqlReturnRowCount = 0;
@@ -334,6 +335,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         tai = null;
         tas = null;
         arrayViewPool.clear();
+        utf8StringSink.clear();
     }
 
     public void commit(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) throws BadProtocolException {
@@ -399,7 +401,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    public @NotNull PGPipelineEntry copyIfExecuted(ObjectPool<PGPipelineEntry> entryPool) {
+    public @NotNull PGPipelineEntry copyIfExecuted(ObjectStackPool<PGPipelineEntry> entryPool) {
         if (!stateExec) {
             return this;
         }
@@ -428,20 +430,20 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         throw kaput().put(errorMessage);
     }
 
+    public Utf8String getNamedPortal() {
+        return namedPortal;
+    }
+
+    public ObjList<Utf8String> getNamedPortals() {
+        return namedPortals;
+    }
+
+    public Utf8String getNamedStatement() {
+        return namedStatement;
+    }
+
     public PGPipelineEntry getParentPreparedStatementPipelineEntry() {
         return parentPreparedStatementPipelineEntry;
-    }
-
-    public String getPortalName() {
-        return portalName;
-    }
-
-    public ObjList<CharSequence> getPortalNames() {
-        return portalNames;
-    }
-
-    public String getPreparedStatementName() {
-        return preparedStatementName;
     }
 
     public short getShort(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
@@ -468,7 +470,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     public boolean isPreparedStatement() {
-        return preparedStatement;
+        return namedStatement != null;
     }
 
     public boolean isStateClosed() {
@@ -576,11 +578,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             WriterSource writerSource,
-            CharacterStore characterStore,
-            DirectUtf8String utf8String,
-            ObjectPool<DirectBinarySequence> binarySequenceParamsPool,
-            SCSequence tempSequence,
-            Consumer<? super CharSequence> namedStatementDeallocator
+            @Transient CharacterStore bindVariableCharacterStore,
+            @Transient DirectUtf8String directUtf8String,
+            @Transient ObjectPool<DirectBinarySequence> binarySequenceParamsPool,
+            @Transient SCSequence tempSequence,
+            Consumer<? super Utf8Sequence> namedStatementDeallocator
     ) throws BadProtocolException {
         // do not execute anything, that has been parse-executed
         if (stateParseExecuted) {
@@ -593,52 +595,33 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 case CompiledQuery.EXPLAIN:
                 case CompiledQuery.SELECT:
                 case CompiledQuery.PSEUDO_SELECT:
-                    msgExecuteSelect(
+                case CompiledQuery.INSERT:
+                case CompiledQuery.UPDATE:
+                case CompiledQuery.ALTER:
+                    copyParameterValuesToBindVariableService(
                             sqlExecutionContext,
-                            transactionState,
-                            pendingWriters,
-                            characterStore,
-                            utf8String,
-                            binarySequenceParamsPool,
-                            taiPool,
-                            maxRecompileAttempts
+                            bindVariableCharacterStore,
+                            directUtf8String,
+                            binarySequenceParamsPool
                     );
+                    break;
+                default:
+                    break;
+            }
+            switch (this.sqlType) {
+                case CompiledQuery.EXPLAIN:
+                case CompiledQuery.SELECT:
+                case CompiledQuery.PSEUDO_SELECT:
+                    msgExecuteSelect(sqlExecutionContext, transactionState, pendingWriters, taiPool, maxRecompileAttempts);
                     break;
                 case CompiledQuery.INSERT:
-                    msgExecuteInsert(
-                            sqlExecutionContext,
-                            transactionState,
-                            taiCache,
-                            pendingWriters,
-                            writerSource,
-                            characterStore,
-                            utf8String,
-                            binarySequenceParamsPool,
-                            taiPool
-                    );
+                    msgExecuteInsert(sqlExecutionContext, transactionState, taiCache, pendingWriters, writerSource, taiPool);
                     break;
                 case CompiledQuery.UPDATE:
-                    msgExecuteUpdate(
-                            sqlExecutionContext,
-                            transactionState,
-                            pendingWriters,
-                            characterStore,
-                            utf8String,
-                            binarySequenceParamsPool,
-                            tempSequence,
-                            taiPool
-                    );
+                    msgExecuteUpdate(sqlExecutionContext, transactionState, pendingWriters, tempSequence, taiPool);
                     break;
                 case CompiledQuery.ALTER:
-                    msgExecuteDDL(
-                            sqlExecutionContext,
-                            transactionState,
-                            characterStore,
-                            utf8String,
-                            binarySequenceParamsPool,
-                            tempSequence,
-                            taiPool
-                    );
+                    msgExecuteDDL(sqlExecutionContext, transactionState, tempSequence, taiPool);
                     break;
                 case CompiledQuery.DEALLOCATE:
                     // this is supposed to work instead of sending 'close' message via the
@@ -710,6 +693,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 }
             }
             LOG.error().$(getErrorMessageSink()).$();
+        } finally {
+            // after execute is complete, bind variable values have been used and no longer needed in the cache
+            bindVariableCharacterStore.clear();
         }
         return transactionState;
     }
@@ -790,7 +776,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 case SYNC_COMPUTE_CURSOR_SIZE:
                 case SYNC_DATA:
                     // state goes deeper
-                    if (empty && !preparedStatement && !portal) {
+                    if (empty && !isPreparedStatement() && !portal) {
                         // strangely, Java driver does not need the server to produce
                         // empty query if his query was "prepared"
                         outEmptyQuery(utf8Sink);
@@ -975,24 +961,23 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.errorMessagePosition = errorMessagePosition;
     }
 
-    public void setParentPreparedStatement(PGPipelineEntry preparedStatementPipelineEntry) {
-        this.parentPreparedStatementPipelineEntry = preparedStatementPipelineEntry;
-    }
-
-    public void setPortal(boolean portal, String portalName) {
+    public void setNamedPortal(boolean portal, Utf8String namedPortal) {
         this.portal = portal;
         // because this is now a prepared statement, it means the entry is
         // cached. All flyweight objects referenced from cache have to be internalized
         this.sqlText = Chars.toString(this.sqlText);
-        this.portalName = portalName;
+        this.namedPortal = namedPortal;
     }
 
-    public void setPreparedStatement(boolean preparedStatement, String preparedStatementName) {
-        this.preparedStatement = preparedStatement;
+    public void setNamedStatement(Utf8String namedStatement) {
         // because this is now a prepared statement, it means the entry is
         // cached. All flyweight objects referenced from cache have to be internalized
         this.sqlText = Chars.toString(this.sqlText);
-        this.preparedStatementName = preparedStatementName;
+        this.namedStatement = namedStatement;
+    }
+
+    public void setParentPreparedStatement(PGPipelineEntry preparedStatementPipelineEntry) {
+        this.parentPreparedStatementPipelineEntry = preparedStatementPipelineEntry;
     }
 
     public void setReturnRowCountLimit(int rowCountLimit) {
@@ -1005,10 +990,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public void setStateClosed(boolean stateClosed, boolean isStatementClose) {
         this.stateClosed = stateClosed;
-        this.portalName = null;
+        this.namedPortal = null;
         this.portal = false;
         if (isStatementClose) {
-            this.preparedStatement = false;
+            this.namedStatement = null;
         }
     }
 
@@ -1116,8 +1101,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.insertOp = blueprint.insertOp;
         this.operation = blueprint.operation;
         this.parentPreparedStatementPipelineEntry = blueprint.parentPreparedStatementPipelineEntry;
-        this.preparedStatement = blueprint.preparedStatement;
-        this.preparedStatementName = blueprint.preparedStatementName;
+        this.namedStatement = blueprint.namedStatement;
         this.sqlTag = blueprint.sqlTag;
         this.sqlText = blueprint.sqlText;
         this.sqlType = blueprint.sqlType;
@@ -1129,8 +1113,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private void copyParameterValuesToBindVariableService(
             SqlExecutionContext sqlExecutionContext,
             CharacterStore characterStore,
-            DirectUtf8String utf8String,
-            ObjectPool<DirectBinarySequence> binarySequenceParamsPool
+            @Transient DirectUtf8String directUtf8String,
+            @Transient ObjectPool<DirectBinarySequence> binarySequenceParamsPool
     ) throws BadProtocolException, SqlException {
         // Bind variables have to be configured for the cursor.
         // We have stored the following:
@@ -1240,12 +1224,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         default:
                             // before we bind a string, we need to define the type of the variable
                             // so the binding process can cast the string as required
-                            setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, utf8String);
+                            setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, directUtf8String);
                             break;
                     }
                 } else {
                     // read as a string
-                    setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, utf8String);
+                    setBindVariableAsStr(i, lo, valueSize, bindVariableService, characterStore, directUtf8String);
                 }
             }
             lo += valueSize;
@@ -1329,6 +1313,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
+    private void ensureCompiledQuery() {
+        if (compiledQuery == null) {
+            compiledQuery = new CompiledQueryImpl(engine);
+        }
+    }
+
     private void ensureValueLength(int variableIndex, int sizeRequired, int sizeActual) throws BadProtocolException {
         if (sizeRequired == sizeActual) {
             return;
@@ -1408,9 +1398,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private void msgExecuteDDL(
             SqlExecutionContext sqlExecutionContext,
             int transactionState,
-            CharacterStore characterStore,
-            DirectUtf8String utf8String,
-            ObjectPool<DirectBinarySequence> binarySequenceParamsPool,
             SCSequence tempSequence,
             WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
     ) throws SqlException, BadProtocolException {
@@ -1418,13 +1405,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             engine.getMetrics().pgWireMetrics().markStart();
             // execute against writer from the engine, synchronously (null sequence)
             try {
+                ensureCompiledQuery();
                 for (int attempt = 1; ; attempt++) {
-                    copyParameterValuesToBindVariableService(
-                            sqlExecutionContext,
-                            characterStore,
-                            utf8String,
-                            binarySequenceParamsPool
-                    );
                     try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, false)) {
                         // this doesn't actually wait, because the call is synchronous
                         fut.await();
@@ -1452,9 +1434,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             SimpleAssociativeCache<TypesAndInsertModern> taiCache,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             WriterSource writerSource,
-            CharacterStore characterStore,
-            DirectUtf8String utf8String,
-            ObjectPool<DirectBinarySequence> binarySequenceParamsPool,
             WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
     ) throws SqlException, BadProtocolException {
         switch (transactionState) {
@@ -1464,12 +1443,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 engine.getMetrics().pgWireMetrics().markStart();
                 try {
                     for (int attempt = 1; ; attempt++) {
-                        copyParameterValuesToBindVariableService(
-                                sqlExecutionContext,
-                                characterStore,
-                                utf8String,
-                                binarySequenceParamsPool
-                        );
                         InsertMethod m;
                         try {
                             m = insertOp.createMethod(sqlExecutionContext, writerSource);
@@ -1515,9 +1488,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             SqlExecutionContext sqlExecutionContext,
             int transactionState,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
-            CharacterStore characterStore,
-            DirectUtf8String utf8String,
-            ObjectPool<DirectBinarySequence> binarySequenceParamsPool,
             WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool,
             int maxRecompileAttempts
     ) throws SqlException, BadProtocolException {
@@ -1534,30 +1504,17 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             sqlExecutionContext.setCacheHit(cacheHit);
             // if the current execution is in the execute stage of prepare-execute mode, we always set the `cacheHit` to true after the first execution.
             // (The execute stage always does not compile the query, while the first execution corresponds to the prepare stage's cacheHit flag.)
-            if (preparedStatement) {
+            if (isPreparedStatement()) {
                 cacheHit = true;
             }
 
             try {
-                copyParameterValuesToBindVariableService(
-                        sqlExecutionContext,
-                        characterStore,
-                        utf8String,
-                        binarySequenceParamsPool
-                );
-
                 for (int attempt = 1; ; attempt++) {
                     // check if factory is null, what might happen is that
                     // prepared statement (entry we held on to) failed to compile, factory is null
                     // The goal would be to just recompile from text.
                     if (factory != null) {
                         try {
-                            copyParameterValuesToBindVariableService(
-                                    sqlExecutionContext,
-                                    characterStore,
-                                    utf8String,
-                                    binarySequenceParamsPool
-                            );
                             cursor = factory.getCursor(sqlExecutionContext);
                             // when factory is not null, and we can obtain cursor without issues
                             // we would exit early
@@ -1584,23 +1541,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             SqlExecutionContext sqlExecutionContext,
             int transactionState,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
-            CharacterStore characterStore,
-            DirectUtf8String utf8String,
-            ObjectPool<DirectBinarySequence> binarySequenceParamsPool,
             SCSequence tempSequence,
             WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
     ) throws SqlException, BadProtocolException {
         if (transactionState != ERROR_TRANSACTION) {
             engine.getMetrics().pgWireMetrics().markStart();
             // execute against writer from the engine, synchronously (null sequence)
+            ensureCompiledQuery();
             try {
                 for (int attempt = 1; ; attempt++) {
-                    copyParameterValuesToBindVariableService(
-                            sqlExecutionContext,
-                            characterStore,
-                            utf8String,
-                            binarySequenceParamsPool
-                    );
                     try {
                         UpdateOperation updateOperation = compiledQuery.getUpdateOperation();
                         TableToken tableToken = updateOperation.getTableToken();
@@ -1976,7 +1925,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             responseUtf8Sink.setNullValue();
         } else {
             final long a = responseUtf8Sink.skipInt();
-            responseUtf8Sink.put(floatValue, 3);
+            responseUtf8Sink.put(floatValue);
             responseUtf8Sink.putLenEx(a);
         }
     }
@@ -2790,6 +2739,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 String sqlText = cq.getSqlText();
                 UpdateOperation updateOperation = cq.getUpdateOperation();
                 updateOperation.withSqlStatement(sqlText);
+                ensureCompiledQuery();
                 compiledQuery.ofUpdate(updateOperation);
                 compiledQuery.withSqlText(sqlText);
                 sqlTag = TAG_UPDATE;
@@ -2802,7 +2752,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 sqlTag = TAG_SET;
                 break;
             case CompiledQuery.DEALLOCATE:
-                this.preparedStatementNameToDeallocate = Chars.toString(cq.getStatementName());
+                utf8StringSink.clear();
+                utf8StringSink.put(cq.getStatementName());
+                this.preparedStatementNameToDeallocate = utf8StringSink;
                 sqlTag = TAG_DEALLOCATE;
                 break;
             case CompiledQuery.BEGIN:
@@ -2822,6 +2774,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 break;
             case CompiledQuery.ALTER:
                 // future-proofing ALTER execution
+                ensureCompiledQuery();
                 compiledQuery.ofAlter(AlterOperation.deepCloneOf(cq.getAlterOperation()));
                 compiledQuery.withSqlText(cq.getSqlText());
                 sqlTag = TAG_OK;
@@ -2921,6 +2874,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateDesc = that.stateDesc;
         stateExec = that.stateExec;
         stateClosed = that.stateClosed;
+    }
+
+    boolean isDirty() {
+        return error || stateSync != SYNC_PARSE || stateParse || stateBind || stateDesc != SYNC_DESC_NONE || stateExec || stateClosed;
     }
 
     // When we pick up SQL (insert or select) from cache we have to check that the SQL was compiled with

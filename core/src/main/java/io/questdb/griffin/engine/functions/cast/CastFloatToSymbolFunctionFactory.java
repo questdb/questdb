@@ -45,7 +45,7 @@ public class CastFloatToSymbolFunctionFactory implements FunctionFactory {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
             final StringSink sink = Misc.getThreadLocalSink();
-            sink.put(arg.getFloat(null), 4);
+            sink.put(arg.getFloat(null));
             return SymbolConstant.newInstance(sink);
         }
         return new Func(arg);
@@ -82,7 +82,7 @@ public class CastFloatToSymbolFunctionFactory implements FunctionFactory {
 
             symbolTableShortcut.putAt(keyIndex, key, next++);
             sink.clear();
-            sink.put(value, 4);
+            sink.put(value);
             final String str = Chars.toString(sink);
             symbols.add(Chars.toString(sink));
             return str;

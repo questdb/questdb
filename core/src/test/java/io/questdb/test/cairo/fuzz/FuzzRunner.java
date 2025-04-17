@@ -497,7 +497,16 @@ public class FuzzRunner {
         return generateTransactions(cairoConfiguration, tableName, rnd, start, end);
     }
 
-    public ObjList<FuzzTransaction> generateTransactions(CairoConfiguration cairoConfiguration, String tableName, Rnd rnd, long start, long end) {
+    public ObjList<FuzzTransaction> generateTransactions(
+            CairoConfiguration cairoConfiguration, String tableName, Rnd rnd, long start
+    ) {
+        long end = start + partitionCount * Timestamps.DAY_MICROS;
+        return generateTransactions(cairoConfiguration, tableName, rnd, start, end);
+    }
+
+    public ObjList<FuzzTransaction> generateTransactions(
+            CairoConfiguration cairoConfiguration, String tableName, Rnd rnd, long start, long end
+    ) {
         TableToken tableToken = engine.verifyTableName(tableName);
         try (TableRecordMetadata sequencerMetadata = engine.getLegacyMetadata(tableToken);
              TableMetadata tableMetadata = engine.getTableMetadata(tableToken)

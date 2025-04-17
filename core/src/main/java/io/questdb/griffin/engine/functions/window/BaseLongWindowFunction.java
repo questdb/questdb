@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.functions.window;
 
-import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.Function;
@@ -33,9 +32,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.std.IntList;
 
 public abstract class BaseLongWindowFunction extends LongFunction implements WindowFunction, Function {
     protected final Function arg;
@@ -61,7 +58,7 @@ public abstract class BaseLongWindowFunction extends LongFunction implements Win
 
     @Override
     public long getLong(Record rec) {
-        //unused
+        // unused
         throw new UnsupportedOperationException();
     }
 

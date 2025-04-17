@@ -37,62 +37,6 @@ import java.util.Random;
 public class IntervalUtilsTest {
     private final StringSink sink = new StringSink();
 
-    public static long getIntervalHi(LongList intervals, int pos) {
-        return intervals.getQuick((pos << 1) + 1);
-    }
-
-    public static long getIntervalLo(LongList intervals, int pos) {
-        return intervals.getQuick(pos << 1);
-    }
-
-    /**
-     * This is alternative intersect implementation used to be in main code base
-     * but not used anymore and refactored to the tests code for comparison with in place intersect method.
-     * <p>
-     * Intersects two lists of intervals and returns result list. Both lists are expected
-     * to be chronologically ordered and result list will be ordered as well.
-     *
-     * @param a   list of intervals
-     * @param b   list of intervals
-     * @param out intersection target
-     */
-    public static void intersect(LongList a, LongList b, LongList out) {
-        final int sizeA = a.size() / 2;
-        final int sizeB = b.size() / 2;
-        int intervalA = 0;
-        int intervalB = 0;
-
-        while (intervalA != sizeA && intervalB != sizeB) {
-            long aLo = getIntervalLo(a, intervalA);
-            long aHi = getIntervalHi(a, intervalA);
-
-            long bLo = getIntervalLo(b, intervalB);
-            long bHi = getIntervalHi(b, intervalB);
-
-            // a fully above b
-            if (aHi < bLo) {
-                // a loses
-                intervalA++;
-            } else if (getIntervalLo(a, intervalA) > getIntervalHi(b, intervalB)) {
-                // a fully below b
-                // b loses
-                intervalB++;
-            } else {
-                append(out, Math.max(aLo, bLo), Math.min(aHi, bHi));
-
-                if (aHi < bHi) {
-                    // b hanging lower than a
-                    // a loses
-                    intervalA++;
-                } else {
-                    // otherwise a lower than b
-                    // a loses
-                    intervalB++;
-                }
-            }
-        }
-    }
-
     @Test
     public void testIntersectEmpty() {
         LongList intervals = new LongList();
@@ -257,6 +201,7 @@ public class IntervalUtilsTest {
     public void testIsInEmptyIntervalList() {
         LongList intervals = new LongList();
         Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 123));
+        Assert.assertEquals(-1, IntervalUtils.findInterval(intervals, 123));
     }
 
     @Test
@@ -264,11 +209,27 @@ public class IntervalUtilsTest {
         LongList intervals = new LongList();
         add(intervals, 100, 102);
         add(intervals, 122, 124);
+
         Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 99));
+        Assert.assertEquals(-1, IntervalUtils.findInterval(intervals, 99));
+
         Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 101));
+        Assert.assertEquals(0, IntervalUtils.findInterval(intervals, 101));
+
         Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 103));
+        Assert.assertEquals(-1, IntervalUtils.findInterval(intervals, 103));
+
+        Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 122));
+        Assert.assertEquals(1, IntervalUtils.findInterval(intervals, 122));
+
         Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 123));
+        Assert.assertEquals(1, IntervalUtils.findInterval(intervals, 123));
+
+        Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 124));
+        Assert.assertEquals(1, IntervalUtils.findInterval(intervals, 124));
+
         Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 125));
+        Assert.assertEquals(-1, IntervalUtils.findInterval(intervals, 125));
     }
 
     @Test
@@ -277,24 +238,48 @@ public class IntervalUtilsTest {
         add(intervals, 100, 102);
         add(intervals, 122, 124);
         add(intervals, 150, 155);
+
         Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 99));
+        Assert.assertEquals(-1, IntervalUtils.findInterval(intervals, 99));
+
         Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 101));
+        Assert.assertEquals(0, IntervalUtils.findInterval(intervals, 101));
+
         Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 103));
+        Assert.assertEquals(-1, IntervalUtils.findInterval(intervals, 103));
+
         Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 123));
+        Assert.assertEquals(1, IntervalUtils.findInterval(intervals, 123));
+
         Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 125));
+        Assert.assertEquals(-1, IntervalUtils.findInterval(intervals, 125));
+
         Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 151));
+        Assert.assertEquals(2, IntervalUtils.findInterval(intervals, 151));
+
         Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 156));
+        Assert.assertEquals(-1, IntervalUtils.findInterval(intervals, 156));
     }
 
     @Test
     public void testIsInListWithOneInterval() {
         LongList intervals = new LongList();
         add(intervals, 100, 102);
+
         Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 99));
+        Assert.assertEquals(-1, IntervalUtils.findInterval(intervals, 99));
+
         Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 100));
+        Assert.assertEquals(0, IntervalUtils.findInterval(intervals, 100));
+
         Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 101));
+        Assert.assertEquals(0, IntervalUtils.findInterval(intervals, 101));
+
         Assert.assertTrue(IntervalUtils.isInIntervals(intervals, 102));
+        Assert.assertEquals(0, IntervalUtils.findInterval(intervals, 102));
+
         Assert.assertFalse(IntervalUtils.isInIntervals(intervals, 103));
+        Assert.assertEquals(-1, IntervalUtils.findInterval(intervals, 103));
     }
 
     @Test
@@ -391,6 +376,62 @@ public class IntervalUtilsTest {
 
     private static void assertParseFloorPartialTimestampEquals(long expectedTimestamp, CharSequence actual) throws NumericException {
         Assert.assertEquals(expectedTimestamp, IntervalUtils.parseFloorPartialTimestamp(actual));
+    }
+
+    private static long getIntervalHi(LongList intervals, int pos) {
+        return intervals.getQuick((pos << 1) + 1);
+    }
+
+    private static long getIntervalLo(LongList intervals, int pos) {
+        return intervals.getQuick(pos << 1);
+    }
+
+    /**
+     * This is alternative intersect implementation used to be in main code base
+     * but not used anymore and refactored to the tests code for comparison with in place intersect method.
+     * <p>
+     * Intersects two lists of intervals and returns result list. Both lists are expected
+     * to be chronologically ordered and result list will be ordered as well.
+     *
+     * @param a   list of intervals
+     * @param b   list of intervals
+     * @param out intersection target
+     */
+    private static void intersect(LongList a, LongList b, LongList out) {
+        final int sizeA = a.size() / 2;
+        final int sizeB = b.size() / 2;
+        int intervalA = 0;
+        int intervalB = 0;
+
+        while (intervalA != sizeA && intervalB != sizeB) {
+            long aLo = getIntervalLo(a, intervalA);
+            long aHi = getIntervalHi(a, intervalA);
+
+            long bLo = getIntervalLo(b, intervalB);
+            long bHi = getIntervalHi(b, intervalB);
+
+            // a fully above b
+            if (aHi < bLo) {
+                // a loses
+                intervalA++;
+            } else if (getIntervalLo(a, intervalA) > getIntervalHi(b, intervalB)) {
+                // a fully below b
+                // b loses
+                intervalB++;
+            } else {
+                append(out, Math.max(aLo, bLo), Math.min(aHi, bHi));
+
+                if (aHi < bHi) {
+                    // b hanging lower than a
+                    // a loses
+                    intervalA++;
+                } else {
+                    // otherwise a lower than b
+                    // a loses
+                    intervalB++;
+                }
+            }
+        }
     }
 
     private void add(LongList intervals, long lo, long hi) {

@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Uuid;
@@ -52,6 +53,7 @@ import static io.questdb.cutlass.line.tcp.TableUpdateDetails.ThreadLocalDetails.
 public class LineWalAppender {
     private static final Log LOG = LogFactory.getLog(LineWalAppender.class);
     private final boolean autoCreateNewColumns;
+    private final Long256Impl long256;
     private final int maxFileNameLength;
     private final MicrosecondClock microsecondClock;
     private final boolean stringToCharCastAllowed;
@@ -69,6 +71,7 @@ public class LineWalAppender {
         this.timestampAdapter = timestampAdapter;
         this.maxFileNameLength = maxFileNameLength;
         this.microsecondClock = microsecondClock;
+        this.long256 = new Long256Impl();
     }
 
     public void appendToWal(
@@ -349,6 +352,13 @@ public class LineWalAppender {
                                         throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
                                     }
                                     break;
+                                case ColumnType.LONG256:
+                                    CharSequence cs = entityValue.asAsciiCharSequence();
+                                    if (Numbers.extractLong256(cs, long256)) {
+                                        r.putLong256(columnIndex, long256);
+                                        break;
+                                    }
+                                    throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
                                 default:
                                     throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
                             }

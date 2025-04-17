@@ -38,7 +38,8 @@ public interface CreateTableOperation extends TableStructure, Operation {
 
     long getBatchSize();
 
-    @Nullable CharSequence getLikeTableName();
+    @Nullable
+    CharSequence getLikeTableName();
 
     int getLikeTableNamePosition();
 
@@ -46,11 +47,15 @@ public interface CreateTableOperation extends TableStructure, Operation {
 
     CharSequence getSelectText();
 
+    int getSelectTextPosition();
+
     CharSequence getSqlText();
 
     int getTableNamePosition();
 
     CharSequence getVolumeAlias();
+
+    int getVolumePosition();
 
     boolean ignoreIfExists();
 

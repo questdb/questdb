@@ -112,24 +112,8 @@ public interface CharSink<T extends CharSink<?>> {
     /**
      * Appends a string representation of the supplied number to this sink.
      */
-    default T put(float value, int scale) {
-        Numbers.append(this, value, scale);
-        return (T) this;
-    }
-
-    /**
-     * Appends a string representation of the supplied number to this sink.
-     */
     default T put(double value) {
         Numbers.append(this, value);
-        return (T) this;
-    }
-
-    /**
-     * Appends a string representation of the supplied number to this sink.
-     */
-    default T put(double value, int scale) {
-        Numbers.append(this, value, scale);
         return (T) this;
     }
 

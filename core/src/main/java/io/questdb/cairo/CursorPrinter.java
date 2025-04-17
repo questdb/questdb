@@ -46,7 +46,6 @@ import static io.questdb.std.Numbers.IPv4_NULL;
 
 public class CursorPrinter {
     private static final char COLUMN_DELIMITER = '\t';
-    public static int FLOAT_SCALE = 4;
 
     public static void printColumn(Record r, RecordMetadata m, int columnIndex, CharSink<?> sink, boolean printTypes) {
         printColumn(r, m, columnIndex, sink, false, printTypes);
@@ -76,7 +75,7 @@ public class CursorPrinter {
             case ColumnType.FLOAT:
                 float f = record.getFloat(columnIndex);
                 if (Numbers.isFinite(f)) {
-                    sink.put(f, FLOAT_SCALE);
+                    sink.put(f);
                 } else {
                     sink.put("null");
                 }
