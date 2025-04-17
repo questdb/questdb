@@ -23,7 +23,7 @@
  ******************************************************************************/
 
 #include <stdlib.h>
-#include <src/main/c/share/zlib-1.2.8/zutil.h>
+#include <src/main/c/share/zlib-1.3.1/zutil.h>
 #include <src/main/c/share/zip.h>
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Zip_deflateInit

@@ -191,7 +191,7 @@ endif ()
 
 #zlib
 
-set(ZLIB_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/zlib-1.2.8)
+set(ZLIB_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/zlib-1.3.1)
 
 include(${ZLIB_SOURCE_DIR}/CMakeLists.txt)
 
