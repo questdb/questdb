@@ -2263,6 +2263,74 @@ public class MatViewTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCreateMatViewLoop() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE 'trades' (" +
+                            "symbol SYMBOL CAPACITY 256 CACHE, " +
+                            "side SYMBOL CAPACITY 256 CACHE, " +
+                            "price DOUBLE, " +
+                            "amount DOUBLE, " +
+                            "timestamp TIMESTAMP " +
+                            ") timestamp(timestamp) PARTITION BY HOUR WAL;"
+            );
+
+            execute("INSERT INTO trades VALUES('BTC-USD', 'BUY', 29432.50, 0.5, '2023-08-15T09:30:45.789Z');");
+            execute("INSERT INTO trades VALUES('BTC-USD', 'SELL', 29435.20, 1.2, '2023-08-15T09:31:12.345Z');");
+
+            drainQueues();
+            execute("CREATE MATERIALIZED VIEW a AS (\n" +
+                    "  SELECT\n" +
+                    "    timestamp,\n" +
+                    "    symbol,\n" +
+                    "    avg(price) AS avg_price\n" +
+                    "  FROM trades\n" +
+                    "  SAMPLE BY 1d\n" +
+                    ") partition by HOUR;");
+
+            execute("create MATERIALIZED view b as (\n" +
+                    "  SELECT\n" +
+                    "    timestamp,\n" +
+                    "    symbol,\n" +
+                    "    avg(avg_price) AS avg_price\n" +
+                    "  FROM a\n" +
+                    "  SAMPLE BY 2d\n" +
+                    ") partition by HOUR;");
+
+            execute("create MATERIALIZED view c as (\n" +
+                    "  SELECT\n" +
+                    "    timestamp,\n" +
+                    "    symbol,\n" +
+                    "    avg(avg_price) AS avg_price\n" +
+                    "  FROM b\n" +
+                    "  SAMPLE BY 2d\n" +
+                    ") partition by HOUR;");
+
+            drainQueues();
+            execute("drop MATERIALIZED VIEW a;");
+
+            drainQueues();
+
+            try {
+                execute("create MATERIALIZED view A as (\n" +
+                        "  SELECT\n" +
+                        "    timestamp,\n" +
+                        "    symbol,\n" +
+                        "    avg(avg_price) AS avg_price\n" +
+                        "  FROM c\n" +
+                        "  SAMPLE BY 2d\n" +
+                        ") partition by HOUR;");
+                Assert.fail("Expected a dependency loop exception");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
+            }
+            // mat view table should be dropped
+            TableToken token = engine.getTableTokenIfExists("a");
+            Assert.assertNull(token);
+        });
+    }
+
     private static void assertCannotModifyMatView(String updateSql) {
         try {
             execute(updateSql);

@@ -600,6 +600,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
         readRecordSize = calculateTxRecordSize(bytesSymbols, bytesPartitions);
         readBaseOffset = areaOffset;
+
+        assert readBaseOffset + readRecordSize <= txMemBase.size();
         super.switchRecord(readBaseOffset, readRecordSize);
 
         if (commitMode != CommitMode.NOSYNC) {
