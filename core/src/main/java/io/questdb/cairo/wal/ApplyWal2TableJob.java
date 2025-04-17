@@ -116,6 +116,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         mvStateWriter = new BlockFileWriter(config.getFilesFacade(), config.getCommitMode());
     }
 
+    public void applyTable(TableToken tableToken) {
+        applyWal(tableToken, engine, operationExecutor, Job.RUNNING_STATUS);
+    }
+
     @Override
     public void close() {
         Misc.free(operationExecutor);
