@@ -106,7 +106,7 @@ public class ArrayTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[[1.0, 2], [3.0, 4]] arr FROM long_sequence(1))");
             assertExceptionNoLeakCheck("SELECT arr['1',1] FROM tango",
-                    10, "there is no matching function `[]` with the argument types: (DOUBLE[][], CHAR, INT)");
+                    11, "invalid argument type [type=4]");
             assertExceptionNoLeakCheck("SELECT arr[1,1::long] FROM tango",
                     14, "invalid argument type [type=6]");
             assertExceptionNoLeakCheck("SELECT arr[1,true] FROM tango",
