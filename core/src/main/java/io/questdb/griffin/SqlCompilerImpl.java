@@ -1692,6 +1692,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void compileCheckpoint(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         executionContext.getSecurityContext().authorizeDatabaseSnapshot();
+        executionContext.getCircuitBreaker().resetTimer();
         CharSequence tok = expectToken(lexer, "'create' or 'release'");
 
         if (isCreateKeyword(tok)) {
