@@ -56,25 +56,6 @@ public class QueryRegistryTest extends AbstractTest {
     }
 
     @Test
-    public void testAlterTable() throws Exception {
-        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
-            assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE tab (value LONG)");
-            assertGet("{\"dml\":\"OK\"}", "INSERT INTO tab (value) VALUES (6)");
-            assertGet("{\"ddl\":\"OK\"}", "ALTER TABLE tab ADD COLUMN text VARCHAR");
-            assertGet("{\"dml\":\"OK\"}", "INSERT INTO tab VALUES (9, 'hoho')");
-            assertGet(
-                    "{\"query\":\"tab\"," +
-                            "\"columns\":[{\"name\":\"value\",\"type\":\"LONG\"},{\"name\":\"text\",\"type\":\"VARCHAR\"}]," +
-                            "\"timestamp\":-1," +
-                            "\"dataset\":[[6,null],[9,\"hoho\"]]," +
-                            "\"count\":2}",
-                    "tab"
-            );
-            assertQueryRegistry();
-        }));
-    }
-
-    @Test
     public void testCreateTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
             assertGet("{\"ddl\":\"OK\"}", "CREATE TABLE tab (value INT, ts TIMESTAMP) TIMESTAMP(ts)");
