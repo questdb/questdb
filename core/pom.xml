@@ -46,7 +46,7 @@
         <qdbr.rustflags>-D warnings</qdbr.rustflags>
     </properties>
 
-    <version>8.2.4-SNAPSHOT</version>
+    <version>8.3.1-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
@@ -317,7 +317,7 @@
                     <plugin>
                         <groupId>org.sonatype.plugins</groupId>
                         <artifactId>nexus-staging-maven-plugin</artifactId>
-                        <version>1.6.3</version>
+                        <version>1.6.14</version>
                         <executions>
                             <execution>
                                 <id>default-deploy</id>
