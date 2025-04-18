@@ -55,7 +55,7 @@ import java.io.Closeable;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 
-public final class LineHttpSender implements Sender {
+public abstract class AbstractLineHttpSender implements Sender {
     private static final String PATH = "/write?precision=n";
     private static final int RETRY_BACKOFF_MULTIPLIER = 2;
     private static final int RETRY_INITIAL_BACKOFF_MS = 10;
@@ -76,16 +76,16 @@ public final class LineHttpSender implements Sender {
     private final StringSink sink = new StringSink();
     private final String url;
     private final String username;
+    protected HttpClient.Request request;
     private HttpClient client;
     private boolean closed;
     private long flushAfterNanos = Long.MAX_VALUE;
     private JsonErrorParser jsonErrorParser;
     private long pendingRows;
-    private HttpClient.Request request;
     private int rowBookmark;
     private RequestState state = RequestState.EMPTY;
 
-    public LineHttpSender(
+    protected AbstractLineHttpSender(
             String host,
             int port,
             HttpClientConfiguration clientConfiguration,
@@ -114,7 +114,7 @@ public final class LineHttpSender implements Sender {
         );
     }
 
-    public LineHttpSender(
+    protected AbstractLineHttpSender(
             String host,
             int port,
             String path,
@@ -216,13 +216,6 @@ public final class LineHttpSender implements Sender {
     }
 
     @Override
-    public Sender doubleColumn(CharSequence name, double value) {
-        writeFieldName(name);
-        request.put(value);
-        return this;
-    }
-
-    @Override
     public void flush() {
         flush0(false);
     }
@@ -303,7 +296,9 @@ public final class LineHttpSender implements Sender {
     @Override
     public Sender timestampColumn(CharSequence name, Instant value) {
         // micros
-        writeFieldName(name).put((value.getEpochSecond() * Timestamps.SECOND_MICROS + value.getNano() / 1000L)).put('t');
+        writeFieldName(name)
+                .put((value.getEpochSecond() * Timestamps.SECOND_MICROS + value.getNano() / 1000L))
+                .put('t');
         return this;
     }
 
@@ -327,6 +322,7 @@ public final class LineHttpSender implements Sender {
         return connectionHeader != null && Utf8s.equalsAscii("close", connectionHeader);
     }
 
+
     private int backoff(int retryBackoff) {
         int jitter = rnd.nextInt(RETRY_MAX_JITTER_MS);
         int backoff = retryBackoff + jitter;
@@ -341,25 +337,6 @@ public final class LineHttpSender implements Sender {
         Response chunkedRsp = response.getResponse();
         while ((chunkedRsp.recv()) != null) {
             // we don't care about the response, just consume it, so it won't stay in the socket receive buffer
-        }
-    }
-
-    private void escapeQuotedString(CharSequence name) {
-        for (int i = 0, n = name.length(); i < n; i++) {
-            char c = name.charAt(i);
-            switch (c) {
-                case ' ':
-                case ',':
-                case '=':
-                case '\n':
-                case '\r':
-                case '\\':
-                    request.put((byte) '\\').put((byte) c);
-                    break;
-                default:
-                    request.put(c);
-                    break;
-            }
         }
     }
 
@@ -382,7 +359,9 @@ public final class LineHttpSender implements Sender {
 
     private void flush0(boolean closing) {
         if (state != RequestState.EMPTY && !closing) {
-            throw new LineSenderException("Cannot flush buffer while row is in progress. Use sender.at() or sender.atNow() to finish the current row first.");
+            throw new LineSenderException(
+                    "Cannot flush buffer while row is in progress. " +
+                            "Use sender.at() or sender.atNow() to finish the current row first.");
         }
         if (pendingRows == 0) {
             return;
@@ -423,7 +402,10 @@ public final class LineHttpSender implements Sender {
                 assert response.isChunked();
                 if (isRetryableHttpStatus(statusCode)) {
                     long nowNanos = System.nanoTime();
-                    retryingDeadlineNanos = (retryingDeadlineNanos == Long.MIN_VALUE && !closing) ? nowNanos + maxRetriesNanos : retryingDeadlineNanos;
+                    retryingDeadlineNanos =
+                            (retryingDeadlineNanos == Long.MIN_VALUE && !closing)
+                                    ? nowNanos + maxRetriesNanos
+                                    : retryingDeadlineNanos;
                     if (nowNanos >= retryingDeadlineNanos) {
                         throwOnHttpErrorResponse(statusCode, response);
                     }
@@ -436,13 +418,17 @@ public final class LineHttpSender implements Sender {
                 // this is a network error, we can retry
                 client.disconnect(); // forces reconnect
                 long nowNanos = System.nanoTime();
-                retryingDeadlineNanos = (retryingDeadlineNanos == Long.MIN_VALUE && !closing) ? nowNanos + maxRetriesNanos : retryingDeadlineNanos;
+                retryingDeadlineNanos =
+                        (retryingDeadlineNanos == Long.MIN_VALUE && !closing)
+                                ? nowNanos + maxRetriesNanos
+                                : retryingDeadlineNanos;
                 if (nowNanos >= retryingDeadlineNanos) {
                     // we did our best, give up
                     pendingRows = 0;
                     flushAfterNanos = Long.MAX_VALUE;
                     request = newRequest();
-                    throw new LineSenderException("Could not flush buffer: ").put(url).put(" Connection Failed").put(": ").put(e.getMessage());
+                    throw new LineSenderException("Could not flush buffer: ").put(url)
+                            .put(" Connection Failed").put(": ").put(e.getMessage());
                 }
                 retryBackoff = backoff(retryBackoff);
             }
@@ -493,6 +479,7 @@ public final class LineHttpSender implements Sender {
         rowBookmark = r.getContentLength();
         return r;
     }
+
 
     /**
      * @return true if flush is required
@@ -550,13 +537,6 @@ public final class LineHttpSender implements Sender {
         throw new LineSenderException(sink);
     }
 
-    private void validateColumnName(CharSequence name) {
-        if (!TableUtils.isValidColumnName(name, Integer.MAX_VALUE)) {
-            throw new LineSenderException("column name contains an illegal char: '\\n', '\\r', '?', '.', ','" +
-                    ", ''', '\"', '\\', '/', ':', ')', '(', '+', '-', '*' '%%', '~', or a non-printable char: ").putAsPrintable(name);
-        }
-    }
-
     private void validateNotClosed() {
         if (closed) {
             throw new LineSenderException("sender already closed");
@@ -566,11 +546,39 @@ public final class LineHttpSender implements Sender {
     private void validateTableName(CharSequence name) {
         if (!TableUtils.isValidTableName(name, Integer.MAX_VALUE)) {
             throw new LineSenderException("table name contains an illegal char: '\\n', '\\r', '?', ',', ''', " +
-                    "'\"', '\\', '/', ':', ')', '(', '+', '*' '%%', '~', or a non-printable char: ").putAsPrintable(name);
+                    "'\"', '\\', '/', ':', ')', '(', '+', '*' '%%', '~', or a non-printable char: ")
+                    .putAsPrintable(name);
         }
     }
 
-    private HttpClient.Request writeFieldName(CharSequence name) {
+    protected void escapeQuotedString(CharSequence name) {
+        for (int i = 0, n = name.length(); i < n; i++) {
+            char c = name.charAt(i);
+            switch (c) {
+                case ' ':
+                case ',':
+                case '=':
+                case '\n':
+                case '\r':
+                case '\\':
+                    request.put((byte) '\\').put((byte) c);
+                    break;
+                default:
+                    request.put(c);
+                    break;
+            }
+        }
+    }
+
+    protected void validateColumnName(CharSequence name) {
+        if (!TableUtils.isValidColumnName(name, Integer.MAX_VALUE)) {
+            throw new LineSenderException("column name contains an illegal char: '\\n', '\\r', '?', '.', ','" +
+                    ", ''', '\"', '\\', '/', ':', ')', '(', '+', '-', '*' '%%', '~', or a non-printable char: ")
+                    .putAsPrintable(name);
+        }
+    }
+
+    protected HttpClient.Request writeFieldName(CharSequence name) {
         validateColumnName(name);
         switch (state) {
             case EMPTY:

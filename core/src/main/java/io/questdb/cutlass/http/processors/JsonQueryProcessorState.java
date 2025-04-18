@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -38,6 +39,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.http.HttpResponseArrayState;
 import io.questdb.cutlass.http.HttpResponseSink;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.SqlException;
@@ -85,6 +87,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_SUFFIX = 7;
     private static final byte DEFAULT_API_VERSION = 1;
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
+    private final HttpResponseArrayState arrayState = new HttpResponseArrayState();
     private final ObjList<String> columnNames = new ObjList<>();
     private final IntList columnSkewList = new IntList();
     private final IntList columnTypesAndFlags = new IntList();
@@ -101,6 +104,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private SqlExecutionCircuitBreaker circuitBreaker;
     private int columnCount;
     private int columnIndex;
+    // indicates to the state machine that column value was fully sent to
+    // the client, as opposed to being partially send
+    private boolean columnValueFullySent;
     private long compilerNanos;
     private boolean containsSecret;
     private long count;
@@ -172,6 +178,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         columnsQueryParameter.clear();
         queryState = QUERY_SETUP_FIRST_RECORD;
         columnIndex = 0;
+        columnValueFullySent = true;
+        arrayState.clear();
         countRows = false;
         explain = false;
         noMeta = false;
@@ -566,6 +574,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             case ColumnType.UUID:
             case ColumnType.IPv4:
             case ColumnType.INTERVAL:
+            case ColumnType.ARRAY:
                 break;
             default:
                 throw CairoException.nonCritical().put("column type not supported [column=").put(columnName).put(", type=").put(ColumnType.nameOf(columnType)).put(']');
@@ -597,9 +606,15 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             }
             int columnType = columnTypesAndFlags.getQuick(2 * columnIndex);
             response.putAscii('{')
-                    .putAsciiQuoted("name").putAscii(':').putQuote().escapeJsonStr(columnNames.getQuick(columnIndex)).putQuote().putAscii(',')
-                    .putAsciiQuoted("type").putAscii(':').putAsciiQuoted(ColumnType.nameOf(columnType == ColumnType.NULL ? ColumnType.STRING : columnType))
-                    .putAscii('}');
+                    .putAsciiQuoted("name").putAscii(':').putQuote().escapeJsonStr(columnNames.getQuick(columnIndex)).putQuote().putAscii(',');
+            if (ColumnType.tagOf(columnType) == ColumnType.ARRAY) {
+                response.putAsciiQuoted("type").putAscii(':').putAsciiQuoted("ARRAY").put(',');
+                response.putAsciiQuoted("dim").putAscii(':').put(ColumnType.decodeArrayDimensionality(columnType)).put(',');
+                response.putAsciiQuoted("elemType").putAscii(':').putAsciiQuoted(ColumnType.nameOf(ColumnType.decodeArrayElementType(columnType)));
+            } else {
+                response.putAsciiQuoted("type").putAscii(':').putAsciiQuoted(ColumnType.nameOf(columnType == ColumnType.NULL ? ColumnType.STRING : columnType));
+            }
+            response.putAscii('}');
         }
     }
 
@@ -632,6 +647,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(query).putQuote().putAscii(',')
                 .putAsciiQuoted("columns").putAscii(':').putAscii('[');
         columnIndex = 0;
+        columnValueFullySent = true;
         return true;
     }
 
@@ -639,7 +655,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         queryState = QUERY_RECORD;
         for (; columnIndex < columnCount; columnIndex++) {
             response.bookmark();
-            if (columnIndex > 0) {
+            if (columnIndex > 0 && columnValueFullySent) {
                 response.putAscii(',');
             }
 
@@ -717,6 +733,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     break;
                 case ColumnType.INTERVAL:
                     putIntervalValue(response, record, columnIdx);
+                    break;
+                case ColumnType.ARRAY:
+                    putArrayValue(response, columnIdx, columnType);
                     break;
                 default:
                     // this should never happen since metadata are already validated
@@ -873,6 +892,22 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         onQueryPrefix(response, columnCount);
     }
 
+    private void putArrayValue(HttpChunkedResponse response, int columnIdx, int columnType) {
+        arrayState.of(response);
+        var arrayView = arrayState.getArrayView() == null ? record.getArray(columnIdx, columnType) : arrayState.getArrayView();
+        try {
+            ArrayTypeDriver.arrayToJson(arrayView, response, arrayState);
+            arrayState.clear();
+            columnValueFullySent = true;
+        } catch (Throwable e) {
+            // we have to disambiguate here if this is very first attempt to send the value, which failed
+            // and we have any partial value we can send to the clint, or our state did not bookmark anything?
+            columnValueFullySent = arrayState.zeroState();
+            arrayState.reset(arrayView);
+            throw e;
+        }
+    }
+
     private void putBinValue(HttpChunkedResponse response) {
         response.putAscii('[');
         response.putAscii(']');
@@ -916,6 +951,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
 
         columnIndex = 0;
+        columnValueFullySent = true;
         record = cursor.getRecord();
         cursorHasRows = true;
     }

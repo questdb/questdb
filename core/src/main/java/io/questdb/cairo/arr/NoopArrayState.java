@@ -22,39 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.cairo.arr;
 
-import io.questdb.std.Interval;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.std.str.CharSink;
 
-public interface ScalarFunction extends Function {
-    @Override
-    default int getArrayLength() {
-        throw new UnsupportedOperationException();
+public class NoopArrayState implements ArrayState {
+    public static final NoopArrayState INSTANCE = new NoopArrayState();
+
+    private NoopArrayState() {
     }
 
     @Override
-    default @NotNull Interval getInterval(Record rec) {
-        throw new UnsupportedOperationException();
+    public void record(int flatIndex) {
     }
 
     @Override
-    default Record getRecord(Record rec) {
-        throw new UnsupportedOperationException();
+    public boolean notRecorded(int flatIndex) {
+        return true;
     }
 
     @Override
-    default CharSequence getStrA(Record rec, int arrayIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    default CharSequence getStrB(Record rec, int arrayIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    default int getStrLen(Record rec, int arrayIndex) {
-        throw new UnsupportedOperationException();
+    public void putAsciiIfNotRecorded(int eventType, int eventDelta, CharSink<?> sink, char symbol) {
+        sink.put(symbol);
     }
 }

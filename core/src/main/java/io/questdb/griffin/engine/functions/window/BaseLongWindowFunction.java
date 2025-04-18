@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -34,7 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
 
-public abstract class BaseLongWindowFunction extends LongFunction implements WindowFunction, ScalarFunction {
+public abstract class BaseLongWindowFunction extends LongFunction implements WindowFunction, Function {
     protected final Function arg;
     protected int columnIndex;
 

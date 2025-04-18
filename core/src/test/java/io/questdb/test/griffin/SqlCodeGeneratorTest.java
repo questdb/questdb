@@ -8031,6 +8031,9 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testUnionCastTypeSymmetry() {
         for (int typeA = 0; typeA <= ColumnType.INTERVAL; typeA++) {
             for (int typeB = 0; typeB <= typeA; typeB++) {
+                if (ColumnType.isGenericType(typeA) || ColumnType.isGenericType(typeB)) {
+                    continue;
+                }
                 Assert.assertEquals(
                         "typeA: " + typeA + ", typeB: " + typeB,
                         SqlCodeGenerator.getUnionCastType(typeA, typeB),

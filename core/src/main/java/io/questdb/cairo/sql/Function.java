@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
@@ -104,7 +105,11 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     default void cursorClosed() {
     }
 
-    int getArrayLength();
+    default FunctionExtension extendedOps() {
+        return null;
+    }
+
+    ArrayView getArray(Record rec);
 
     BinarySequence getBin(Record rec);
 
@@ -161,9 +166,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return getClass().getName();
     }
 
-    // function returns a record of values
-    Record getRecord(Record rec);
-
     // when function returns factory it becomes factory
     // on other words this is not a tear-away instance
     RecordCursorFactory getRecordCursorFactory();
@@ -172,15 +174,9 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     CharSequence getStrA(Record rec);
 
-    CharSequence getStrA(Record rec, int arrayIndex);
-
     CharSequence getStrB(Record rec);
 
-    CharSequence getStrB(Record rec, int arrayIndex);
-
     int getStrLen(Record rec);
-
-    int getStrLen(Record rec, int arrayIndex);
 
     CharSequence getSymbol(Record rec);
 

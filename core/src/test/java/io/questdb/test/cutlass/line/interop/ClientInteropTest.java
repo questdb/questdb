@@ -30,15 +30,21 @@ import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.json.JsonParser;
 import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.cutlass.line.LineTcpSender;
+import io.questdb.cutlass.line.LineTcpSenderV2;
 import io.questdb.griffin.SqlKeywords;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cutlass.line.tcp.StringChannel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.time.temporal.ChronoUnit;
@@ -46,6 +52,8 @@ import java.time.temporal.ChronoUnit;
 public class ClientInteropTest {
 
     @Test
+    @Ignore("This test assumes text ILP protocol. With the introduction of binary encoding this test is no longer valid")
+    // todo: reenable this once we have a switch to downgrade clients to purely text protocol
     public void testInterop() throws Exception {
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         String pp = TestUtils.getTestResourcePath("/io/questdb/test/cutlass/line/interop/ilp-client-interop-test.json");
@@ -53,7 +61,7 @@ public class ClientInteropTest {
         StringChannel channel = new StringChannel();
         try (JsonLexer lexer = new JsonLexer(1024, 1024);
              Path path = new Path().of(pp);
-             Sender sender = new LineTcpSender(channel, 1024)) {
+             Sender sender = new LineTcpSenderV2(channel, 1024)) {
             JsonTestSuiteParser parser = new JsonTestSuiteParser(sender, channel);
             long fd = ff.openRO(path.$());
             assert fd > 0;

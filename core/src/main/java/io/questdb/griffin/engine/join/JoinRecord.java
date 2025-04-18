@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.join;
 
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Interval;
@@ -38,6 +39,14 @@ public class JoinRecord implements Record {
 
     public JoinRecord(int split) {
         this.split = split;
+    }
+
+    @Override
+    public ArrayView getArray(int col, int columnType) {
+        if (col < split) {
+            return master.getArray(col, columnType);
+        }
+        return slave.getArray(col - split, columnType);
     }
 
     @Override

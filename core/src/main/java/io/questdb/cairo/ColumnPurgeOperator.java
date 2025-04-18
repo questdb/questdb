@@ -314,7 +314,7 @@ public class ColumnPurgeOperator implements Closeable {
                     }
                 }
 
-                LOG.info().$("purging [path=").$(path).I$();
+                LOG.debug().$("purging [path=").$(path).I$();
 
                 // No readers looking at the column version, files can be deleted
                 if (couldNotRemove(ff, path.$())) {

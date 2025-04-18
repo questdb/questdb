@@ -27,22 +27,30 @@ package io.questdb.griffin.engine.functions;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
+import org.jetbrains.annotations.NotNull;
 
-public abstract class CharFunction implements ScalarFunction {
+public abstract class CharFunction implements Function {
     private final StringSink utf16SinkA = new StringSink();
     private final StringSink utf16SinkB = new StringSink();
 
     private final Utf8StringSink utf8SinkA = new Utf8StringSink();
     private final Utf8StringSink utf8SinkB = new Utf8StringSink();
+
+    @Override
+    public ArrayView getArray(Record rec) {
+        throw new UnsupportedOperationException();
+    }
 
     @Override
     public final BinarySequence getBin(Record rec) {
@@ -107,6 +115,11 @@ public abstract class CharFunction implements ScalarFunction {
     @Override
     public int getInt(Record rec) {
         return castCharToNumber(rec, ColumnType.INT);
+    }
+
+    @Override
+    public @NotNull Interval getInterval(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

@@ -65,7 +65,7 @@ public class FunctionFactoryCache {
                             case "=":
                                 addFactoryToList(factories, createNegatingFactory("!=", factory));
                                 addFactoryToList(factories, createNegatingFactory("<>", factory));
-                                if (descriptor.getArgTypeMask(0) != descriptor.getArgTypeMask(1)) {
+                                if (descriptor.getArgTypeWithFlags(0) != descriptor.getArgTypeWithFlags(1)) {
                                     FunctionFactory swappingFactory = createSwappingFactory("=", factory);
                                     addFactoryToList(factories, swappingFactory);
                                     addFactoryToList(factories, createNegatingFactory("!=", swappingFactory));
