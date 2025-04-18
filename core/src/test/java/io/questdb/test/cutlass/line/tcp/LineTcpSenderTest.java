@@ -885,7 +885,7 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                     .col("u1", ColumnType.UUID)
                     .timestamp();
             AbstractCairoTest.create(model);
-            CountDownLatch released = createTableCommitNotifier("mytable", 2);
+            CountDownLatch released = createTableCommitNotifier("mytable", walEnabled ? 2 : 1);
 
             // this sender fails as the string is not UUID
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
