@@ -56,7 +56,8 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
             @NotNull Function slaveRecordFilter,
             int columnSplit,
             @NotNull Record slaveNullRecord,
-            @Nullable IntList slaveColumnCrossIndex) {
+            @Nullable IntList slaveColumnCrossIndex,
+            int slaveTimestampIndex) {
         super(metadata, null, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
         this.slaveRecordFilter = slaveRecordFilter;
@@ -64,7 +65,7 @@ public final class FilteredAsOfJoinNoKeyFastRecordCursorFactory extends Abstract
                 columnSplit,
                 slaveNullRecord,
                 masterFactory.getMetadata().getTimestampIndex(),
-                slaveFactory.getMetadata().getTimestampIndex(),
+                slaveTimestampIndex,
                 configuration.getSqlAsOfJoinLookAhead()
         );
         if (slaveColumnCrossIndex != null && SelectedRecordCursorFactory.isCrossedIndex(slaveColumnCrossIndex)) {
