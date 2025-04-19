@@ -418,11 +418,7 @@ public class CairoEngine implements Closeable, WriterSource {
                                         .$(", matViewBaseTxn=").$(state.getLastRefreshBaseTxn())
                                         .$(", baseTableTxn=").$(baseTableLastTxn)
                                         .I$();
-                                matViewStateStore.enqueueInvalidate(tableToken, "out of sync with base table");
-                                matViewStateStore.enqueueInvalidate(
-                                        tableToken,
-                                        "materialized view is ahead of base table and cannot be synchronized"
-                                );
+                                matViewStateStore.enqueueInvalidate(tableToken, "materialized view is ahead of base table and cannot be synchronized");
                             } else {
                                 matViewStateStore.enqueueIncrementalRefresh(tableToken);
                             }

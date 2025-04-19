@@ -53,6 +53,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 
 public class MatViewsFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(MatViewsFunctionFactory.class);
@@ -206,8 +207,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             }
 
             private static class MatViewsRecord implements Record {
+                private final StringSink invalidationReason = new StringSink();
                 private boolean invalid;
-                private String invalidationReason;
                 private long lastAppliedBaseTxn;
                 private long lastRefreshTimestamp;
                 private long lastRefreshTxn;
@@ -247,7 +248,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_VIEW_STATUS:
                             return invalid ? "invalid" : "valid";
                         case COLUMN_INVALIDATION_REASON:
-                            return invalidationReason != null && !invalidationReason.isEmpty() ? invalidationReason : null;
+                            return invalidationReason.length() > 0 ? invalidationReason : null;
                         default:
                             return null;
                     }
@@ -268,14 +269,15 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         long lastRefreshTimestamp,
                         long lastRefreshTxn,
                         long lastAppliedBaseTxn,
-                        String lastError,
+                        CharSequence invalidationReason,
                         boolean invalid
                 ) {
                     this.viewDefinition = viewDefinition;
                     this.lastRefreshTimestamp = lastRefreshTimestamp;
                     this.lastRefreshTxn = lastRefreshTxn;
                     this.lastAppliedBaseTxn = lastAppliedBaseTxn;
-                    this.invalidationReason = lastError;
+                    this.invalidationReason.clear();
+                    this.invalidationReason.put(invalidationReason);
                     this.invalid = invalid;
                 }
             }

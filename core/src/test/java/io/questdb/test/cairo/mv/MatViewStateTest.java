@@ -14,6 +14,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -175,7 +176,7 @@ public class MatViewStateTest extends AbstractCairoTest {
             assertEquals(invalid, viewState.isInvalid());
             assertEquals(lastRefreshBaseTxn, viewState.getLastRefreshBaseTxn());
             assertEquals(lastRefreshTimestamp, viewState.getLastRefreshTimestamp());
-            assertEquals(invalidationReason, viewState.getInvalidationReason());
+            TestUtils.assertEquals(invalidationReason, viewState.getInvalidationReason());
         }
     }
 }

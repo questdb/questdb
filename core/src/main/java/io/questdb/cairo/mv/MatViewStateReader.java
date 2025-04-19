@@ -29,50 +29,50 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.ReadableBlock;
 import io.questdb.cairo.wal.WalEventCursor;
-import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class MatViewStateReader implements ReadableMatViewState, Mutable {
+/**
+ * Contains all materialized view refresh state fields, including
+ * invalidation reason string.
+ */
+public class MatViewStateReader implements Mutable {
+    private final StringSink invalidationReason = new StringSink();
     private boolean invalid;
-    private String invalidationReason;
     private long lastRefreshBaseTxn = -1;
     private long lastRefreshTimestamp = Numbers.LONG_NULL;
 
     @Override
     public void clear() {
         invalid = false;
-        invalidationReason = null;
+        invalidationReason.clear();
         lastRefreshBaseTxn = -1;
         lastRefreshTimestamp = Numbers.LONG_NULL;
     }
 
-    @Override
     @Nullable
-    public String getInvalidationReason() {
-        return invalidationReason;
+    public CharSequence getInvalidationReason() {
+        return invalidationReason.length() > 0 ? invalidationReason : null;
     }
 
-    @Override
     public long getLastRefreshBaseTxn() {
         return lastRefreshBaseTxn;
     }
 
-    @Override
     public long getLastRefreshTimestamp() {
         return lastRefreshTimestamp;
     }
 
-    @Override
     public boolean isInvalid() {
         return invalid;
     }
 
     public MatViewStateReader of(@NotNull WalEventCursor.MatViewDataInfo info) {
         invalid = false;
-        invalidationReason = null;
+        invalidationReason.clear();
         lastRefreshBaseTxn = info.getLastRefreshBaseTableTxn();
         lastRefreshTimestamp = info.getLastRefreshTimestamp();
         return this;
@@ -80,7 +80,8 @@ public class MatViewStateReader implements ReadableMatViewState, Mutable {
 
     public MatViewStateReader of(@NotNull WalEventCursor.MatViewInvalidationInfo info) {
         invalid = info.isInvalid();
-        invalidationReason = Chars.toString(info.getInvalidationReason());
+        invalidationReason.clear();
+        invalidationReason.put(info.getInvalidationReason());
         lastRefreshBaseTxn = info.getLastRefreshBaseTableTxn();
         lastRefreshTimestamp = info.getLastRefreshTimestamp();
         return this;
@@ -98,7 +99,8 @@ public class MatViewStateReader implements ReadableMatViewState, Mutable {
                 matViewStateBlockFound = true;
                 invalid = block.getBool(0);
                 lastRefreshBaseTxn = block.getLong(Byte.BYTES);
-                invalidationReason = Chars.toString(block.getStr(Long.BYTES + Byte.BYTES));
+                invalidationReason.clear();
+                invalidationReason.put(block.getStr(Long.BYTES + Byte.BYTES));
                 lastRefreshTimestamp = Numbers.LONG_NULL;
                 // keep going, because V2 block might follow
                 continue;

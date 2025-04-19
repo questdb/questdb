@@ -1278,6 +1278,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 final MatViewState matViewState = engine.getMatViewStateStore().getViewState(matViewToken);
                 assertNotNull(matViewState);
 
+                final String invalidationReason = "test invalidation reason";
+
                 try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
                     writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
                     // Add unknown block.
@@ -1289,7 +1291,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     MatViewState.appendState(
                             matViewState.getLastRefreshBaseTxn(),
                             matViewState.isInvalid(),
-                            matViewState.getInvalidationReason(),
+                            invalidationReason,
                             block
                     );
                     block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_MSG_TYPE);
@@ -1307,7 +1309,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     assertEquals(matViewState.isInvalid(), actualState.isInvalid());
                     assertEquals(matViewState.getLastRefreshBaseTxn(), actualState.getLastRefreshBaseTxn());
                     assertEquals(matViewState.getLastRefreshTimestamp(), actualState.getLastRefreshTimestamp());
-                    assertEquals(matViewState.getInvalidationReason(), actualState.getInvalidationReason());
+                    TestUtils.assertEquals(invalidationReason, actualState.getInvalidationReason());
                 }
             }
         });
@@ -1386,13 +1388,15 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 final MatViewState matViewState = engine.getMatViewStateStore().getViewState(matViewToken);
                 assertNotNull(matViewState);
 
+                final String invalidationReason = "test invalidation reason";
+
                 // add V1 block, no last refresh timestamp
                 try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
                     writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
                     final AppendableBlock block = writer.append();
                     block.putBool(matViewState.isInvalid());
                     block.putLong(matViewState.getLastRefreshBaseTxn());
-                    block.putStr(matViewState.getInvalidationReason());
+                    block.putStr(invalidationReason);
                     block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_MSG_TYPE);
                     writer.commit();
                 }
@@ -1405,13 +1409,13 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     assertEquals(matViewState.isInvalid(), actualState.isInvalid());
                     assertEquals(matViewState.getLastRefreshBaseTxn(), actualState.getLastRefreshBaseTxn());
                     assertEquals(Numbers.LONG_NULL, actualState.getLastRefreshTimestamp());
-                    assertEquals(matViewState.getInvalidationReason(), actualState.getInvalidationReason());
-                }
+                    TestUtils.assertEquals(invalidationReason, actualState.getInvalidationReason());
 
-                // add V2 block
-                try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
-                    writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
-                    MatViewState.append(matViewState, writer);
+                    // add V1 and V2 blocks
+                    try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
+                        writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                        MatViewState.append(actualState, writer);
+                    }
                 }
 
                 // expect V2 state format
@@ -1421,20 +1425,23 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
                     assertEquals(matViewState.isInvalid(), actualState.isInvalid());
                     assertEquals(matViewState.getLastRefreshBaseTxn(), actualState.getLastRefreshBaseTxn());
-                    assertEquals(matViewState.getLastRefreshTimestamp(), actualState.getLastRefreshTimestamp());
-                    assertEquals(matViewState.getInvalidationReason(), actualState.getInvalidationReason());
+                    assertEquals(Numbers.LONG_NULL, actualState.getLastRefreshTimestamp());
+                    TestUtils.assertEquals(invalidationReason, actualState.getInvalidationReason());
                 }
 
                 // add V1 block, then V2 block
                 try (BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())) {
                     writer.of(path.of(configuration.getDbRoot()).concat(matViewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
-                    final AppendableBlock block = writer.append();
+                    AppendableBlock block = writer.append();
                     block.putBool(matViewState.isInvalid());
                     block.putLong(matViewState.getLastRefreshBaseTxn());
-                    block.putStr(matViewState.getInvalidationReason());
+                    block.putStr(invalidationReason);
                     block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_MSG_TYPE);
 
-                    MatViewState.append(matViewState, writer);
+                    block = writer.append();
+                    MatViewState.appendTs(matViewState.getLastRefreshTimestamp(), block);
+                    block.commit(MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE);
+                    writer.commit();
                 }
 
                 // expect V2 state format
@@ -1445,7 +1452,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     assertEquals(matViewState.isInvalid(), actualState.isInvalid());
                     assertEquals(matViewState.getLastRefreshBaseTxn(), actualState.getLastRefreshBaseTxn());
                     assertEquals(matViewState.getLastRefreshTimestamp(), actualState.getLastRefreshTimestamp());
-                    assertEquals(matViewState.getInvalidationReason(), actualState.getInvalidationReason());
+                    TestUtils.assertEquals(invalidationReason, actualState.getInvalidationReason());
                 }
             }
         });

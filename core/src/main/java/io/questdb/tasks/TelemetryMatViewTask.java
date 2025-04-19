@@ -33,6 +33,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class TelemetryMatViewTask implements AbstractTelemetryTask {
     public static final String NAME = "MAT VIEW TELEMETRY";
@@ -87,7 +88,7 @@ public class TelemetryMatViewTask implements AbstractTelemetryTask {
             short event,
             int viewTableId,
             long baseTableTxn,
-            CharSequence errorMessage,
+            @Nullable CharSequence errorMessage,
             long latencyUs
     ) {
         final TelemetryMatViewTask task = telemetry.nextTask();
