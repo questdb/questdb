@@ -308,7 +308,8 @@ public class WalWriter implements TableWriterAPI {
         commit0(Long.MIN_VALUE, Long.MIN_VALUE);
     }
 
-    public void commitWithExtra(long lastRefreshBaseTxn, long lastRefreshTimestamp) {
+    // Called as the last transaction of a materialized view refresh.
+    public void commitMatView(long lastRefreshBaseTxn, long lastRefreshTimestamp) {
         assert lastRefreshBaseTxn != Numbers.LONG_NULL;
         commit0(lastRefreshBaseTxn, lastRefreshTimestamp);
     }
@@ -325,7 +326,7 @@ public class WalWriter implements TableWriterAPI {
             freeSymbolMapReaders();
             freeColumns(truncate);
 
-            releaseSegmentLock(segmentId, segmentLockFd, segmentRowCount);
+            releaseSegmentLock(segmentId, segmentLockFd, lastSegmentTxn);
 
             try {
                 releaseWalLock();
@@ -392,8 +393,9 @@ public class WalWriter implements TableWriterAPI {
         } catch (CairoException e) {
             LOG.critical().$("could not apply structure changes, WAL will be closed [table=").$(tableToken.getTableName())
                     .$(", walId=").$(walId)
+                    .$(", ex=").$((Throwable) e)
                     .$(", errno=").$(e.getErrno())
-                    .$(", error=").$((Throwable) e).I$();
+                    .I$();
             distressed = true;
             return false;
         }
@@ -413,9 +415,16 @@ public class WalWriter implements TableWriterAPI {
         return segmentRowCount > currentTxnStartRowNum;
     }
 
-    public void invalidate(boolean invalid, @Nullable CharSequence invalidationReason) {
+    // Marks the materialized view as invalid or resets its invalidation status,
+    // depending on the input values.
+    public void invalidateMatView(
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            boolean invalid,
+            @Nullable CharSequence invalidationReason
+    ) {
         try {
-            lastSegmentTxn = events.invalidate(invalid, invalidationReason);
+            lastSegmentTxn = events.appendMatViewInvalidate(lastRefreshBaseTxn, lastRefreshTimestamp, invalid, invalidationReason);
             getSequencerTxn();
         } catch (Throwable th) {
             rollback();
@@ -492,7 +501,7 @@ public class WalWriter implements TableWriterAPI {
 
     public void rollUncommittedToNewSegment(int convertColumnIndex, int convertToColumnType) {
         final long uncommittedRows = getUncommittedRowCount();
-        final long oldSegmentRowCount = segmentRowCount;
+        final long oldLastSegmentTxn = lastSegmentTxn;
         long rowsRemainInCurrentSegment = currentTxnStartRowNum;
 
         if (uncommittedRows > 0) {
@@ -596,7 +605,7 @@ public class WalWriter implements TableWriterAPI {
                 segmentRowCount = uncommittedRows;
                 currentTxnStartRowNum = 0;
             } finally {
-                releaseSegmentLock(oldSegmentId, oldSegmentLockFd, oldSegmentRowCount);
+                releaseSegmentLock(oldSegmentId, oldSegmentLockFd, oldLastSegmentTxn);
             }
         } else if (segmentRowCount > 0 && uncommittedRows == 0) {
             rollSegmentOnNextRow = true;
@@ -1352,7 +1361,7 @@ public class WalWriter implements TableWriterAPI {
         final int newSegmentId = segmentId + 1;
         final long oldSegmentLockFd = segmentLockFd;
         segmentLockFd = -1;
-        final long oldSegmentRows = segmentRowCount;
+        final long oldLastSegmentTxn = lastSegmentTxn;
         try {
             totalSegmentsRowCount += Math.max(0, segmentRowCount);
             currentTxnStartRowNum = 0;
@@ -1397,19 +1406,20 @@ public class WalWriter implements TableWriterAPI {
             if (dirFd != -1) {
                 ff.fsyncAndClose(dirFd);
             }
-            lastSegmentTxn = 0;
+            lastSegmentTxn = -1;
             LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path.parent()).I$();
         } finally {
             if (oldSegmentLockFd > -1) {
-                releaseSegmentLock(oldSegmentId, oldSegmentLockFd, oldSegmentRows);
+                releaseSegmentLock(oldSegmentId, oldSegmentLockFd, oldLastSegmentTxn);
             }
             path.trimTo(pathSize);
         }
     }
 
-    private void releaseSegmentLock(int segmentId, long segmentLockFd, long segmentRowCount) {
+    private void releaseSegmentLock(int segmentId, long segmentLockFd, long segmentTxn) {
         if (ff.close(segmentLockFd)) {
-            if (segmentRowCount > 0) {
+            // if events file has some transactions
+            if (segmentTxn >= 0) {
                 sequencer.notifySegmentClosed(tableToken, lastSeqTxn, walId, segmentId);
                 LOG.debug().$("released segment lock [walId=").$(walId)
                         .$(", segmentId=").$(segmentId)
@@ -1542,6 +1552,7 @@ public class WalWriter implements TableWriterAPI {
         }
         path.trimTo(pathSize).slash().put(newSegmentId);
         events.openEventFile(path, path.size(), isTruncateFilesOnClose(), tableToken.isSystem());
+        lastSegmentTxn = -1;
         if (isCommittingData) {
             // When current transaction is not a data transaction but a column add transaction
             // there is no need to add a record about it to the new segment event file.

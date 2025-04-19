@@ -22,29 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.math;
+package io.questdb.std;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
-
-public class IPv4StrMinusIntFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "-(sI)";
-    }
-
-    @Override
-    public Function newInstance(
-            int position,
-            ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) {
-        return new IPv4MinusIntFunctionFactory.IPv4MinusIntFunction(args.getQuick(0), args.getQuick(1));
-    }
+@FunctionalInterface
+public interface BiIntFunction<U, R> {
+    R apply(int val1, U val2);
 }

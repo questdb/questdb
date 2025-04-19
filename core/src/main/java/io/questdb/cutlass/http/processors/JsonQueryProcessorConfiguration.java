@@ -34,13 +34,9 @@ public interface JsonQueryProcessorConfiguration {
 
     int getConnectionCheckFrequency();
 
-    int getDoubleScale();
-
     FactoryProvider getFactoryProvider();
 
     FilesFacade getFilesFacade();
-
-    int getFloatScale();
 
     CharSequence getKeepAliveHeader();
 

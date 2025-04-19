@@ -22,29 +22,20 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.math;
+package io.questdb.std.datetime;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
+/**
+ * Pre-calculated DST transition that belong to a given year.
+ */
+public class Transition {
+    public final long offsetAfter; // micros or millis
+    public final long offsetBefore; // micros or millis
+    // transition UTC timestamp
+    public final long transition;
 
-public class IntPlusIPv4StrFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "+(Is)";
-    }
-
-    @Override
-    public Function newInstance(
-            int position,
-            ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) {
-        return new IntPlusIPv4FunctionFactory.IntPlusIPv4Function(args.getQuick(0), args.getQuick(1));
+    public Transition(long offsetBefore, long offsetAfter, long transition) {
+        this.offsetBefore = offsetBefore;
+        this.offsetAfter = offsetAfter;
+        this.transition = transition;
     }
 }

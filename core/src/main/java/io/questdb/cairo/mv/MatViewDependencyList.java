@@ -22,35 +22,38 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.date;
+package io.questdb.cairo.mv;
 
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.engine.functions.TimestampFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.cairo.TableToken;
+import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
+import io.questdb.std.SimpleReadWriteLock;
 
-class OffsetTimestampFunctionFromOffset extends TimestampFunction implements UnaryFunction {
-    private final long offset;
-    private final Function timestamp;
+import java.util.concurrent.locks.ReadWriteLock;
 
-    public OffsetTimestampFunctionFromOffset(Function timestamp, long offset) {
-        this.timestamp = timestamp;
-        this.offset = offset;
+/**
+ * Holds the list of mat view tokens for the given base table (or base mat view).
+ * The list is protected with a R/W mutex, so it can be read concurrently.
+ */
+public class MatViewDependencyList {
+    private final ReadWriteLock lock = new SimpleReadWriteLock();
+    private final ObjList<TableToken> matViews = new ObjList<>();
+
+    ReadOnlyObjList<TableToken> lockForRead() {
+        lock.readLock().lock();
+        return matViews;
     }
 
-    @Override
-    public Function getArg() {
-        return timestamp;
+    ObjList<TableToken> lockForWrite() {
+        lock.writeLock().lock();
+        return matViews;
     }
 
-    @Override
-    public long getTimestamp(Record rec) {
-        return timestamp.getTimestamp(rec) + offset;
+    void unlockAfterRead() {
+        lock.readLock().unlock();
     }
 
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.val(timestamp).val('+').val(offset);
+    void unlockAfterWrite() {
+        lock.writeLock().unlock();
     }
 }

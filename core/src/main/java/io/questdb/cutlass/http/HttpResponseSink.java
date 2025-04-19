@@ -661,21 +661,21 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public Utf8Sink put(float value, int scale) {
+        public Utf8Sink put(double value) {
             if (Numbers.isNull(value)) {
                 putAscii("null");
                 return this;
             }
-            return Utf8Sink.super.put(value, scale);
+            return Utf8Sink.super.put(value);
         }
 
         @Override
-        public Utf8Sink put(double value, int scale) {
+        public Utf8Sink put(float value) {
             if (Numbers.isNull(value)) {
                 putAscii("null");
                 return this;
             }
-            return Utf8Sink.super.put(value, scale);
+            return Utf8Sink.super.put(value);
         }
 
         @Override

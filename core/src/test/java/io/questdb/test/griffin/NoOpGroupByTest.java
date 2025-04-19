@@ -624,10 +624,10 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                         "        rnd_double() cost \n" +
                         "    from long_sequence(20)) timestamp (ts)",
                 "ts\tsym2\ttotalCost\n" +
-                        "180000\tE\t1.7202\n" +
-                        "300000\tE\t1.7202\n" +
-                        "420000\tE\t1.7202\n" +
-                        "1200000\tE\t1.7202\n",
+                        "180000\tE\t1.7201583\n" +
+                        "300000\tE\t1.7201583\n" +
+                        "420000\tE\t1.7201583\n" +
+                        "1200000\tE\t1.7201583\n",
                 true,
                 true,
                 false

@@ -101,18 +101,18 @@ impl CoreError {
 
 impl CoreError {
     #[track_caller]
-    pub fn new(cause: CoreErrorReason) -> Self {
+    pub fn new(reason: CoreErrorReason) -> Self {
         Self {
-            reason: cause,
+            reason,
             context: Vec::new(),
             backtrace: Backtrace::capture().into(),
         }
     }
 
     #[track_caller]
-    pub fn with_descr(cause: CoreErrorReason, descr: impl Into<String>) -> Self {
+    pub fn with_descr(reason: CoreErrorReason, descr: impl Into<String>) -> Self {
         Self {
-            reason: cause,
+            reason,
             context: vec![descr.into()],
             backtrace: Backtrace::capture().into(),
         }

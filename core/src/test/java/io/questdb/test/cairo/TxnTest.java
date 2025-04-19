@@ -268,8 +268,8 @@ public class TxnTest extends AbstractCairoTest {
                     partitionCountCheck,
                     truncateIteration
             );
-            Rnd readerRnd = TestUtils.generateRandom(LOG);
 
+            Rnd readerRnd = new Rnd(rnd.nextLong(), rnd.nextLong());
             Thread[] readers = new Thread[readerThreads];
             for (int th = 0; th < readerThreads; th++) {
                 Thread readerThread = new Thread(() -> {
