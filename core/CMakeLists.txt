@@ -224,12 +224,8 @@ list(APPEND RELEASE_OPTIONS "${ASMJIT_CFLAGS};${COMMON_OPTIONS}")
 
 #zlib
 
-set(ZLIB_BUILD_TESTING OFF CACHE BOOL "Disable tests" FORCE)
-set(ZLIB_BUILD_SHARED OFF CACHE BOOL "Disable shared lib" FORCE)
-set(ZLIB_BUILD_STATIC ON CACHE BOOL "Enable static lib" FORCE)
-set(ZLIB_BUILD_MINIZIP OFF CACHE BOOL "Disable minizip" FORCE)
-set(ZLIB_INSTALL OFF CACHE BOOL "Disable installation" FORCE)
-set(ZLIB_PREFIX OFF CACHE BOOL "Disable prefix" FORCE)
+set(SKIP_INSTALL_ALL OFF CACHE BOOL "Disable install" FORCE)
+set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "Disable examples" FORCE)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/zlib)
 target_link_libraries(questdb zlibstatic)
 
