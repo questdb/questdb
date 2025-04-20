@@ -31,8 +31,9 @@ import io.questdb.std.Numbers;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
+public class TimeZoneIntervalIterator extends SampleByIntervalIterator {
     // Contains intervals with clock shifts, in UTC. Both low and high
     // boundaries are inclusive.
     //
@@ -60,12 +61,10 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
     private long localMaxTimestamp;
     private long localMinTimestamp;
     private long localTimestampHi;
-    private TimestampSampler sampler;
-    // index of next shift interval to check against
-    private int shiftIndex;
-    // time zone offset active up to the shiftIndex interval
+    // index of next shift interval lo to check against
+    private int shiftLoIndex;
+    // time zone offset active up to the shiftLoIndex interval
     private long shiftOffset;
-    private int step;
     private TimeZoneRules tzRules;
     private long utcMaxTimestamp; // computed from localMaxTimestamp
     private long utcMinTimestamp; // computed from localMinTimestamp
@@ -97,48 +96,16 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
         return utcTimestampLo;
     }
 
-    @Override
-    public boolean next() {
-        if (localTimestampHi == localMaxTimestamp) {
-            return false;
-        }
-
-        utcTimestampLo = utcTimestampHi;
-        localTimestampHi = Math.min(sampler.nextTimestamp(localTimestampHi, step), localMaxTimestamp);
-        if (localTimestampHi == localMaxTimestamp) {
-            utcTimestampHi = utcMaxTimestamp;
-            return true;
-        }
-        // Make sure to adjust the right boundary in case if we ended up
-        // in a gap or a backward shift interval.
-        for (int n = (localShifts.size() >>> 1); shiftIndex < n; shiftIndex++) {
-            final int idx = shiftIndex << 1;
-            final long shiftLo = IntervalUtils.getEncodedPeriodLo(localShifts, idx);
-            if (localTimestampHi <= shiftLo) {
-                break;
-            }
-            final long shiftHi = IntervalUtils.getEncodedPeriodHi(localShifts, idx);
-            if (localTimestampHi <= shiftHi) { // localTimestampHi > shiftLo is already true
-                localTimestampHi = sampler.nextTimestamp(sampler.round(shiftHi - 1));
-                shiftOffset = tzRules.getLocalOffset(shiftHi);
-                shiftIndex++;
-                break;
-            }
-            shiftOffset = tzRules.getLocalOffset(shiftHi);
-        }
-        utcTimestampHi = localTimestampHi - shiftOffset;
-        return true;
-    }
-
     public TimeZoneIntervalIterator of(
             @NotNull TimestampSampler sampler,
             @NotNull TimeZoneRules tzRules,
             long fixedOffset,
+            @Nullable LongList txnIntervals,
             long minTs,
             long maxTs,
             int step
     ) {
-        this.sampler = sampler;
+        super.of(sampler, txnIntervals);
         this.tzRules = tzRules;
 
         sampler.setStart(fixedOffset);
@@ -180,16 +147,6 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
         return this;
     }
 
-    @Override
-    public void toTop(int step) {
-        this.utcTimestampLo = Numbers.LONG_NULL;
-        this.localTimestampHi = localMinTimestamp;
-        this.utcTimestampHi = utcMinTimestamp;
-        this.shiftIndex = 0;
-        this.shiftOffset = tzRules.getLocalOffset(localMinTimestamp);
-        this.step = step;
-    }
-
     private long adjustHiBoundary(long localTs) {
         final int idx = IntervalUtils.findInterval(localShifts, localTs);
         if (idx != -1) {
@@ -206,5 +163,46 @@ public class TimeZoneIntervalIterator implements SampleByIntervalIterator {
             return sampler.round(shiftLo);
         }
         return localTs;
+    }
+
+    @Override
+    protected boolean next0() {
+        if (localTimestampHi == localMaxTimestamp) {
+            return false;
+        }
+
+        utcTimestampLo = utcTimestampHi;
+        localTimestampHi = Math.min(sampler.nextTimestamp(localTimestampHi, step), localMaxTimestamp);
+        if (localTimestampHi == localMaxTimestamp) {
+            utcTimestampHi = utcMaxTimestamp;
+            return true;
+        }
+        // Make sure to adjust the right boundary in case if we ended up
+        // in a gap or a backward shift interval.
+        for (int n = localShifts.size(); shiftLoIndex < n; shiftLoIndex += 2) {
+            final long shiftLo = localShifts.getQuick(shiftLoIndex);
+            if (localTimestampHi <= shiftLo) {
+                break;
+            }
+            final long shiftHi = localShifts.getQuick(shiftLoIndex + 1);
+            if (localTimestampHi <= shiftHi) { // localTimestampHi > shiftLo is already true
+                localTimestampHi = sampler.nextTimestamp(sampler.round(shiftHi - 1));
+                shiftOffset = tzRules.getLocalOffset(shiftHi);
+                shiftLoIndex += 2;
+                break;
+            }
+            shiftOffset = tzRules.getLocalOffset(shiftHi);
+        }
+        utcTimestampHi = localTimestampHi - shiftOffset;
+        return true;
+    }
+
+    @Override
+    protected void toTop0() {
+        this.utcTimestampLo = Numbers.LONG_NULL;
+        this.localTimestampHi = localMinTimestamp;
+        this.utcTimestampHi = utcMinTimestamp;
+        this.shiftLoIndex = 0;
+        this.shiftOffset = tzRules.getLocalOffset(localMinTimestamp);
     }
 }

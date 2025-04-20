@@ -49,6 +49,7 @@ import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -70,6 +71,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final CairoEngine engine;
     private final FixedOffsetIntervalIterator fixedOffsetIterator = new FixedOffsetIntervalIterator();
     private final MatViewGraph graph;
+    private final LongList intervals = new LongList();
     private final MicrosecondClock microsecondClock;
     private final MatViewRefreshExecutionContext refreshExecutionContext;
     private final MatViewRefreshTask refreshTask = new MatViewRefreshTask();
@@ -179,11 +181,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final TableToken baseTableToken = baseTableReader.getTableToken();
         final TableToken matViewToken = viewDefinition.getMatViewToken();
 
+        LongList txnIntervals = null;
         long minTs;
         long maxTs;
         if (lastRefreshTxn > 0) {
             // Find min/max timestamps from WAL transactions.
-            txnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, lastRefreshTxn, lastTxn);
+            txnIntervals = intervals;
+            txnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, txnIntervals, lastRefreshTxn, lastTxn);
             minTs = txnRangeLoader.getMinTimestamp();
             maxTs = txnRangeLoader.getMaxTimestamp();
         } else {
@@ -223,6 +227,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     timestampSampler,
                     viewDefinition.getTzRules(),
                     viewDefinition.getFixedOffset(),
+                    txnIntervals,
                     minTs,
                     maxTs,
                     step
@@ -485,6 +490,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @NotNull TimestampSampler sampler,
             @Nullable TimeZoneRules tzRules,
             long fixedOffset,
+            @Nullable LongList txnIntervals,
             long minTs,
             long maxTs,
             int step
@@ -494,6 +500,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return fixedOffsetIterator.of(
                     sampler,
                     fixedOffset - fixedTzOffset,
+                    txnIntervals,
                     minTs,
                     maxTs,
                     step
@@ -504,6 +511,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 sampler,
                 tzRules,
                 fixedOffset,
+                txnIntervals,
                 minTs,
                 maxTs,
                 step
