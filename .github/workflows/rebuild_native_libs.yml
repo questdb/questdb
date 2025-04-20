@@ -82,7 +82,7 @@ jobs:
         run: |
           ldd --version
           yum update -y
-          yum install perl-Font-TTF perl-Sort-Versions wget perf asciidoc xmlto ghostscript adobe-source-sans-pro-fonts adobe-source-code-pro-fonts rpm-build zstd curl -y
+          yum install 'perl(Env)' perl-Font-TTF perl-Sort-Versions gcc wget perf asciidoc xmlto ghostscript adobe-source-sans-pro-fonts adobe-source-code-pro-fonts rpm-build zstd curl -y
       - name: Build nasm
         # we need nasm 2.14+ due to this bug https://bugzilla.nasm.us/show_bug.cgi?id=3392205
         # manylinux2014 distribution includes nasm 2.10
@@ -90,9 +90,9 @@ jobs:
         # thus we take src.rpm from nasm project and rebuild it in the manylinux2014 container
         # this way we get a nasm binary that is compatible with the manylinux2014 environment
         run: |
-          wget https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/linux/nasm-2.16.03-0.fc39.src.rpm
-          rpmbuild --rebuild ./nasm-2.16.03-0.fc39.src.rpm
-          rpm -i ~/rpmbuild/RPMS/x86_64/nasm-2.16.03-0.el7.x86_64.rpm
+          wget https://kojipkgs.fedoraproject.org//packages/nasm/2.16.03/1.fc41/src/nasm-2.16.03-1.fc41.src.rpm
+          rpmbuild --rebuild ./nasm-2.16.03-1.fc41.src.rpm
+          rpm -i ~/rpmbuild/RPMS/x86_64/nasm-2.16.03-1.el7.x86_64.rpm
       - name: Install Node.js 20 glibc2.17
         # A hack to override default nodejs 20 to a build compatible with older glibc.
         # Inspired by https://github.com/pytorch/test-infra/pull/5959 If it's good for pytorch, it's good for us too! :)
