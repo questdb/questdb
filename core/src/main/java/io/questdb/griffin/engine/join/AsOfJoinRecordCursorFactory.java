@@ -67,7 +67,9 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             RecordValueSink slaveValueSink,
             IntList columnIndex, // this column index will be used to retrieve symbol tables from underlying slave
             JoinContext joinContext,
-            ColumnFilter masterTableKeyColumns
+            ColumnFilter masterTableKeyColumns,
+            long tolerance, // New parameter for time tolerance
+            boolean matchNearest // New parameter for nearest match
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         try {
@@ -84,7 +86,9 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                     slaveValueSink,
                     masterTableKeyColumns,
                     slaveWrappedOverMaster,
-                    columnIndex
+                    columnIndex,
+                    tolerance, // Pass tolerance to cursor
+                    matchNearest // Pass matchNearest to cursor
             );
             this.columnIndex = columnIndex;
         } catch (Throwable th) {
@@ -148,13 +152,13 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         private final SymbolWrapOverJoinRecord record;
         private final int slaveTimestampIndex;
         private final RecordValueSink valueSink;
-        private boolean danglingSlaveRecord = false;
+        private final long tolerance;
+        private final boolean matchNearest;
         private boolean isMasterHasNextPending;
         private boolean isOpen;
         private boolean masterHasNext;
         private Record masterRecord;
         private Record slaveRecord;
-        private long slaveTimestamp = Long.MIN_VALUE;
 
         public AsOfJoinRecordCursor(
                 int columnSplit,
@@ -165,7 +169,9 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                 RecordValueSink valueSink,
                 ColumnFilter masterTableKeyColumns,
                 int slaveWrappedOverMaster,
-                IntList slaveColumnIndex
+                IntList slaveColumnIndex,
+                long tolerance, // New parameter for time tolerance
+                boolean matchNearest // New parameter for nearest match
         ) {
             super(columnSplit, slaveWrappedOverMaster, masterTableKeyColumns, slaveColumnIndex);
             this.record = new SymbolWrapOverJoinRecord(columnSplit, nullRecord, slaveWrappedOverMaster, masterTableKeyColumns);
@@ -173,6 +179,8 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             this.masterTimestampIndex = masterTimestampIndex;
             this.slaveTimestampIndex = slaveTimestampIndex;
             this.valueSink = valueSink;
+            this.tolerance = tolerance; // Initialize tolerance
+            this.matchNearest = matchNearest; // Initialize matchNearest
             this.isOpen = true;
         }
 
@@ -201,34 +209,56 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                 masterHasNext = masterCursor.hasNext();
                 isMasterHasNextPending = false;
             }
+            
             if (masterHasNext) {
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
                 MapKey key;
                 MapValue value;
-                long slaveTimestamp = this.slaveTimestamp;
-                if (slaveTimestamp <= masterTimestamp) {
-                    if (danglingSlaveRecord) {
-                        key = joinKeyMap.withKey();
-                        key.put(slaveRecord, slaveKeySink);
-                        value = key.createValue();
-                        valueSink.copy(slaveRecord, value);
-                        danglingSlaveRecord = false;
-                    }
+                joinKeyMap.clear(); // Clear previous matches
 
+                if (matchNearest) {
+                    // Track the best match for nearest timestamp
+                    long bestDiff = Long.MAX_VALUE;
+                    Record bestMatch = null;
+                    
                     while (slaveCursor.hasNext()) {
-                        slaveTimestamp = slaveRecord.getTimestamp(slaveTimestampIndex);
-                        if (slaveTimestamp <= masterTimestamp) {
-                            key = joinKeyMap.withKey();
-                            key.put(slaveRecord, slaveKeySink);
-                            value = key.createValue();
-                            valueSink.copy(slaveRecord, value);
+                        long currentSlaveTimestamp = slaveRecord.getTimestamp(slaveTimestampIndex);
+                        long timeDiff = Math.abs(currentSlaveTimestamp - masterTimestamp);
+                        
+                        if (timeDiff <= tolerance && timeDiff < bestDiff) {
+                            bestDiff = timeDiff;
+                            bestMatch = slaveRecord;
+                        } else if (currentSlaveTimestamp > masterTimestamp) {
+                            break; // No need to look further
+                        }
+                    }
+                    
+                    if (bestMatch != null) {
+                        key = joinKeyMap.withKey();
+                        key.put(bestMatch, slaveKeySink);
+                        value = key.createValue();
+                        valueSink.copy(bestMatch, value);
+                    }
+                } else {
+                    // Standard ASOF join with tolerance
+                    Record bestMatch = null;
+                    while (slaveCursor.hasNext()) {
+                        long currentSlaveTimestamp = slaveRecord.getTimestamp(slaveTimestampIndex);
+                        if (currentSlaveTimestamp <= masterTimestamp) {
+                            if ((masterTimestamp - currentSlaveTimestamp) <= tolerance) {
+                                bestMatch = slaveRecord;
+                            }
                         } else {
-                            danglingSlaveRecord = true;
                             break;
                         }
                     }
-
-                    this.slaveTimestamp = slaveTimestamp;
+                    
+                    if (bestMatch != null) {
+                        key = joinKeyMap.withKey();
+                        key.put(bestMatch, slaveKeySink);
+                        value = key.createValue();
+                        valueSink.copy(bestMatch, value);
+                    }
                 }
 
                 key = joinKeyMap.withKey();
@@ -255,8 +285,6 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         @Override
         public void toTop() {
             joinKeyMap.clear();
-            slaveTimestamp = Long.MIN_VALUE;
-            danglingSlaveRecord = false;
             masterCursor.toTop();
             slaveCursor.toTop();
             isMasterHasNextPending = true;
@@ -269,8 +297,6 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             }
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
-            slaveTimestamp = Long.MIN_VALUE;
-            danglingSlaveRecord = false;
             masterRecord = masterCursor.getRecord();
             slaveRecord = slaveCursor.getRecord();
             MapRecord mapRecord = joinKeyMap.getRecord();

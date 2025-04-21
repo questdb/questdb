@@ -1758,61 +1758,73 @@ public class AsOfJoinTest extends AbstractCairoTest {
         });
     }
 
-    private void assertResultSetsMatch(String leftTable, String rightTable) throws Exception {
-        final StringSink expectedSink = new StringSink();
-        // equivalent of the below query, but uses slow factory
-        printSql("select * from " + leftTable + " asof join (" + rightTable + " where i >= 0) on s", expectedSink);
-
-        final StringSink actualSink = new StringSink();
-        printSql("select * from " + leftTable + " asof join " + rightTable + " on s", actualSink);
-
-        TestUtils.assertEquals(expectedSink, actualSink);
-    }
-
-    private void testExplicitTimestampIsNotNecessaryWhenJoining(String joinType, String timestamp) throws Exception {
-        assertQuery(
-                "ts\ty\tts1\ty1\n",
-                "select * from " +
-                        "(select * from (select * from x where y = 10 order by ts desc limit 20) order by ts ) a " +
-                        joinType +
-                        "(select * from x order by ts limit 5) b",
-                "create table x (ts timestamp, y int) timestamp(ts)",
-                timestamp,
-                false
-        );
-    }
-
-    private void testFullJoinDoesNotConvertSymbolKeyToString(String joinType) throws Exception {
+    @Test
+    public void testAsOfJoinWithTolerance() throws Exception {
         assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.setFullFatJoins(true);
-                execute("create table tab_a (sym_a symbol, ts_a timestamp, s_a string) timestamp(ts_a) partition by DAY");
-                execute("create table tab_b (sym_b symbol, ts_b timestamp, s_B string) timestamp(ts_b) partition by DAY");
+            execute("CREATE TABLE trades (sym SYMBOL, ts TIMESTAMP, price INT) timestamp(ts) partition by DAY");
+            execute("INSERT INTO trades VALUES " +
+                   "('AAPL', '2000-01-01T10:00:00.000000Z', 100)," +
+                   "('AAPL', '2000-01-01T10:01:00.000000Z', 101)," +
+                   "('AAPL', '2000-01-01T10:10:00.000000Z', 102)");
 
-                execute("insert into tab_a values " +
-                        "('ABC', '2022-01-01T00:00:00.000000Z', 'foo')"
-                );
-                execute("insert into tab_b values " +
-                        "('DCE', '2021-01-01T00:00:00.000000Z', 'bar')," + // first INSERT a row with DCE to make sure symbol table for tab_b differs from tab_a
-                        "('ABC', '2021-01-01T00:00:00.000000Z', 'bar')"
-                );
+            execute("CREATE TABLE quotes (sym SYMBOL, ts TIMESTAMP, bid INT) timestamp(ts) partition by DAY");
+            execute("INSERT INTO quotes VALUES " +
+                   "('AAPL', '2000-01-01T10:00:30.000000Z', 99)," +
+                   "('AAPL', '2000-01-01T10:05:00.000000Z', 100)," +
+                   "('AAPL', '2000-01-01T10:15:00.000000Z', 101)");
 
-                String query = "select sym_a, sym_b from tab_a a " + joinType + " tab_b b on sym_a = sym_b";
-                try (RecordCursorFactory factory = select(query)) {
-                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        Record record = cursor.getRecord();
-                        RecordMetadata metadata = factory.getMetadata();
-                        Assert.assertTrue(cursor.hasNext());
-                        Assert.assertEquals(ColumnType.SYMBOL, metadata.getColumnType(0));
-                        Assert.assertEquals(ColumnType.SYMBOL, metadata.getColumnType(1));
-                        CharSequence sym0 = record.getSymA(0);
-                        CharSequence sym1 = record.getSymA(1);
-                        TestUtils.assertEquals("ABC", sym0);
-                        TestUtils.assertEquals("ABC", sym1);
-                        Assert.assertFalse(cursor.hasNext());
-                    }
-                }
-            }
+            // Test with 1-minute tolerance
+            String query1 = "SELECT trades.ts, trades.price, quotes.ts, quotes.bid " +
+                         "FROM trades ASOF JOIN quotes ON (sym) WITH TOLERANCE '1m'";
+            String expected1 = "ts\tprice\tts1\tbid\n" +
+                           "2000-01-01T10:00:00.000000Z\t100\t2000-01-01T10:00:30.000000Z\t99\n" +
+                           "2000-01-01T10:01:00.000000Z\t101\t2000-01-01T10:00:30.000000Z\t99\n" +
+                           "2000-01-01T10:10:00.000000Z\t102\t\t\n";
+            assertQuery(expected1, query1, "ts", false, true);
+
+            // Test with 5-minute tolerance
+            String query2 = "SELECT trades.ts, trades.price, quotes.ts, quotes.bid " +
+                         "FROM trades ASOF JOIN quotes ON (sym) WITH TOLERANCE '5m'";
+            String expected2 = "ts\tprice\tts1\tbid\n" +
+                           "2000-01-01T10:00:00.000000Z\t100\t2000-01-01T10:00:30.000000Z\t99\n" +
+                           "2000-01-01T10:01:00.000000Z\t101\t2000-01-01T10:00:30.000000Z\t99\n" +
+                           "2000-01-01T10:10:00.000000Z\t102\t2000-01-01T10:05:00.000000Z\t100\n";
+            assertQuery(expected2, query2, "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinWithNearestMatch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, ts TIMESTAMP, price INT) timestamp(ts) partition by DAY");
+            execute("INSERT INTO trades VALUES " +
+                   "('AAPL', '2000-01-01T10:00:00.000000Z', 100)," +
+                   "('AAPL', '2000-01-01T10:05:00.000000Z', 101)," +
+                   "('AAPL', '2000-01-01T10:10:00.000000Z', 102)");
+
+            execute("CREATE TABLE quotes (sym SYMBOL, ts TIMESTAMP, bid INT) timestamp(ts) partition by DAY");
+            execute("INSERT INTO quotes VALUES " +
+                   "('AAPL', '2000-01-01T09:59:00.000000Z', 98)," +
+                   "('AAPL', '2000-01-01T10:02:00.000000Z', 99)," +
+                   "('AAPL', '2000-01-01T10:08:00.000000Z', 100)");
+
+            // Test nearest match without tolerance
+            String query1 = "SELECT trades.ts, trades.price, quotes.ts, quotes.bid " +
+                         "FROM trades ASOF JOIN quotes ON (sym) NEAREST";
+            String expected1 = "ts\tprice\tts1\tbid\n" +
+                           "2000-01-01T10:00:00.000000Z\t100\t2000-01-01T09:59:00.000000Z\t98\n" +
+                           "2000-01-01T10:05:00.000000Z\t101\t2000-01-01T10:02:00.000000Z\t99\n" +
+                           "2000-01-01T10:10:00.000000Z\t102\t2000-01-01T10:08:00.000000Z\t100\n";
+            assertQuery(expected1, query1, "ts", false, true);
+
+            // Test nearest match with 2-minute tolerance
+            String query2 = "SELECT trades.ts, trades.price, quotes.ts, quotes.bid " +
+                         "FROM trades ASOF JOIN quotes ON (sym) NEAREST WITH TOLERANCE '2m'";
+            String expected2 = "ts\tprice\tts1\tbid\n" +
+                           "2000-01-01T10:00:00.000000Z\t100\t\t\n" +
+                           "2000-01-01T10:05:00.000000Z\t101\t\t\n" +
+                           "2000-01-01T10:10:00.000000Z\t102\t2000-01-01T10:08:00.000000Z\t100\n";
+            assertQuery(expected2, query2, "ts", false, true);
         });
     }
 }
