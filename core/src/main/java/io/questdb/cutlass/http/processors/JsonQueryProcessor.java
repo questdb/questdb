@@ -33,6 +33,7 @@ import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
@@ -136,7 +137,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             this.queryExecutors.extendAndSet(CompiledQuery.DROP, this::executeDdl);
             this.queryExecutors.extendAndSet(CompiledQuery.PSEUDO_SELECT, this::executePseudoSelect);
             this.queryExecutors.extendAndSet(CompiledQuery.CREATE_TABLE, this::executeDdl);
-            this.queryExecutors.extendAndSet(CompiledQuery.INSERT_AS_SELECT, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.INSERT_AS_SELECT, this::executeInsert);
             this.queryExecutors.extendAndSet(CompiledQuery.COPY_REMOTE, JsonQueryProcessor::cannotCopyRemote);
             this.queryExecutors.extendAndSet(CompiledQuery.RENAME_TABLE, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.REPAIR, sendConfirmation);
@@ -636,9 +637,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CompiledQuery cq,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
-        cq.getInsertOperation().execute(sqlExecutionContext).await();
-        metrics.jsonQueryMetrics().markComplete();
-        sendInsertConfirmation(state, keepAliveHeader);
+        try (InsertOperation insert = cq.popInsertOperation()) {
+            insert.execute(sqlExecutionContext).await();
+            metrics.jsonQueryMetrics().markComplete();
+            sendInsertConfirmation(state, keepAliveHeader);
+        }
     }
 
     private void executeNewSelect(

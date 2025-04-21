@@ -136,7 +136,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                         sqlExecutionContext
                 );
 
-                compiler.compile("insert into x select rnd_symbol('C','D') s, timestamp_sequence(100000000000, 100000) from long_sequence(100)", sqlExecutionContext);
+                execute(
+                        compiler,
+                        "insert into x select rnd_symbol('C','D') s, timestamp_sequence(100000000000, 100000) from long_sequence(100)",
+                        sqlExecutionContext
+                );
 
                 // Verify that all symbol tables (original and views) are refreshed to include the new symbols.
                 assertCursor(
@@ -741,8 +745,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     sqlExecutionContext
             );
 
-            compiler.compile("insert into x select rnd_symbol('C','D') s, timestamp_sequence(1000000000, 100000) from long_sequence(100)", sqlExecutionContext);
-
+            execute(
+                    compiler,
+                    "insert into x select rnd_symbol('C','D') s, timestamp_sequence(1000000000, 100000) from long_sequence(100)",
+                    sqlExecutionContext
+            );
             // Verify that all symbol tables (original and views) are refreshed to include the new symbols.
             assertCursor(
                     "s\tt\n" +

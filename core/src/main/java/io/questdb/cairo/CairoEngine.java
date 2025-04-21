@@ -241,7 +241,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
                 break;
             case INSERT:
-                insert(compiler, sqlText, sqlExecutionContext);
+            case INSERT_AS_SELECT:
+                insert(cc, sqlText, sqlExecutionContext);
                 break;
             case SELECT:
                 throw SqlException.$(0, "use select()");
@@ -254,21 +255,17 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public static void insert(
-            SqlCompiler compiler,
+            CompiledQuery cq,
             CharSequence insertSql,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        CompiledQuery cq = compiler.compile(insertSql, sqlExecutionContext);
         switch (cq.getType()) {
             case INSERT:
             case INSERT_AS_SELECT:
-                final InsertOperation insertOperation = cq.getInsertOperation();
-                if (insertOperation != null) {
-                    // for insert as select the operation is null
-                    try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
-                        insertMethod.execute();
-                        insertMethod.commit();
-                    }
+                try (InsertOperation insertOperation = cq.popInsertOperation();
+                     InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
+                    insertMethod.execute(sqlExecutionContext);
+                    insertMethod.commit();
                 }
                 break;
             case SELECT:

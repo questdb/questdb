@@ -83,6 +83,7 @@ public class InsertTest extends AbstractCairoTest {
         assertReader(expected, tableName);
     }
 
+    @Override
     @Before
     public void setUp() {
         super.setUp();
@@ -164,7 +165,7 @@ public class InsertTest extends AbstractCairoTest {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 final CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
                 Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
-                InsertOperation insert = cq.getInsertOperation();
+                InsertOperation insert = cq.popInsertOperation();
                 try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
                     for (int i = 0; i < 10_000; i++) {
                         bindVariableService.setGeoHash(0, rnd.nextGeoHashByte(6), ColumnType.getGeoHashTypeWithBits(6));
@@ -173,7 +174,7 @@ public class InsertTest extends AbstractCairoTest {
                         bindVariableService.setGeoHash(2, rnd.nextGeoHashInt(29), ColumnType.getGeoHashTypeWithBits(29));
                         bindVariableService.setGeoHash(3, rnd.nextGeoHashLong(44), ColumnType.getGeoHashTypeWithBits(44));
                         bindVariableService.setTimestamp(4, timestampFunction.getTimestamp());
-                        method.execute();
+                        method.execute(sqlExecutionContext);
                     }
                     method.commit();
                 }
@@ -399,10 +400,10 @@ public class InsertTest extends AbstractCairoTest {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CompiledQuery cq = compiler.compile("insert into balances values (1, 'GBP', :bal)", sqlExecutionContext);
                 Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
-                InsertOperation insertOperation = cq.getInsertOperation();
+                InsertOperation insertOperation = cq.popInsertOperation();
 
                 try (InsertMethod method = insertOperation.createMethod(sqlExecutionContext)) {
-                    method.execute();
+                    method.execute(sqlExecutionContext);
                     method.commit();
                 }
 
@@ -410,7 +411,7 @@ public class InsertTest extends AbstractCairoTest {
                 bindVariableService.setDouble("bal", 56.4);
 
                 try (SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, bindVariableService); InsertMethod method = insertOperation.createMethod(sqlExecutionContext)) {
-                    method.execute();
+                    method.execute(sqlExecutionContext);
                     method.commit();
                 }
             }
@@ -427,10 +428,10 @@ public class InsertTest extends AbstractCairoTest {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CompiledQuery cq = compiler.compile("insert into balances values (1, 'GBP'::varchar, :bal)", sqlExecutionContext);
                 Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
-                InsertOperation insertOperation = cq.getInsertOperation();
+                InsertOperation insertOperation = cq.popInsertOperation();
 
                 try (InsertMethod method = insertOperation.createMethod(sqlExecutionContext)) {
-                    method.execute();
+                    method.execute(sqlExecutionContext);
                     method.commit();
                 }
 
@@ -438,7 +439,7 @@ public class InsertTest extends AbstractCairoTest {
                 bindVariableService.setDouble("bal", 56.4);
 
                 try (SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, bindVariableService); InsertMethod method = insertOperation.createMethod(sqlExecutionContext)) {
-                    method.execute();
+                    method.execute(sqlExecutionContext);
                     method.commit();
                 }
             }
@@ -490,7 +491,7 @@ public class InsertTest extends AbstractCairoTest {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CompiledQuery cq = compiler.compile("insert into balances values (1, 'GBP', 356.12)", sqlExecutionContext);
                 Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
-                InsertOperation insertOperation = cq.getInsertOperation();
+                InsertOperation insertOperation = cq.popInsertOperation();
 
                 execute("alter table balances drop column ccy", sqlExecutionContext);
 
@@ -695,11 +696,11 @@ public class InsertTest extends AbstractCairoTest {
                 final String sql = "insert into trades VALUES (1262599200000000, $1), (3262599300000000, $2);";
                 final CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
                 Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
-                InsertOperation insert = cq.getInsertOperation();
+                InsertOperation insert = cq.popInsertOperation();
                 try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
                     bindVariableService.setStr(0, "USDJPY");
                     bindVariableService.setStr(1, "USDFJD");
-                    method.execute();
+                    method.execute(sqlExecutionContext);
                     method.commit();
                 }
             }
@@ -766,10 +767,10 @@ public class InsertTest extends AbstractCairoTest {
                 final String sql = "insert into t VALUES (1262599200000000, $1), (3262599300000000, $2);";
                 final CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
                 Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
-                InsertOperation insert = cq.getInsertOperation();
+                InsertOperation insert = cq.popInsertOperation();
                 try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
                     bindVariableService.setInt(0, 1);
-                    method.execute();
+                    method.execute(sqlExecutionContext);
                     method.commit();
                 }
             }
@@ -1347,7 +1348,7 @@ public class InsertTest extends AbstractCairoTest {
                 final CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
 
                 Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
-                InsertOperation insert = cq.getInsertOperation();
+                InsertOperation insert = cq.popInsertOperation();
                 try (InsertMethod method = insert.createMethod(sqlExecutionContext)) {
                     for (int i = 0; i < 10_000; i++) {
                         bindVariableService.setInt(0, rnd.nextInt());
@@ -1372,7 +1373,7 @@ public class InsertTest extends AbstractCairoTest {
                         bindVariableService.setStr(14, sink);
                         bindVariableService.setStr(15, rnd.nextChars(16));
                         bindVariableService.setTimestamp(16, timestampFunction.getTimestamp());
-                        method.execute();
+                        method.execute(sqlExecutionContext);
                     }
                     method.commit();
                 }

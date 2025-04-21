@@ -83,6 +83,7 @@ import static io.questdb.test.tools.TestUtils.assertEventually;
 
 public class WalTableFailureTest extends AbstractCairoTest {
 
+    @Override
     @Before
     public void setUp() {
         super.setUp();
@@ -871,6 +872,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                         return 0;
                     }
 
+                    @Override
                     public SqlExecutionContext getSqlExecutionContext() {
                         return sqlExecutionContext;
                     }
@@ -1787,14 +1789,14 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 CompiledQuery compiledQuery = compiler.compile("insert into " + tableName +
                         " values (101, 'a1a1', 'str-1', '2022-02-24T01', 'a2a2')", sqlExecutionContext);
                 try (
-                        InsertOperation insertOperation = compiledQuery.getInsertOperation();
+                        InsertOperation insertOperation = compiledQuery.popInsertOperation();
                         InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)
                 ) {
-                    insertMethod.execute();
-                    insertMethod.execute();
+                    insertMethod.execute(sqlExecutionContext);
+                    insertMethod.execute(sqlExecutionContext);
                     insertMethod.commit();
 
-                    insertMethod.execute();
+                    insertMethod.execute(sqlExecutionContext);
                     execute("alter table " + tableName + " add column new_column int");
 
                     try {
