@@ -30,10 +30,13 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Allows iterating through SAMPLE BY buckets with the given step.
- * The goal is to split a potentially large time interval to be scanned by
- * the materialized view query into smaller intervals, thus minimizing
- * chances of out-of-memory kills.
+ * Iterates through SAMPLE BY buckets with the given step. The goal is to split
+ * a potentially large time interval to be scanned by the materialized view query
+ * into smaller intervals, thus minimizing chances of out-of-memory kills.
+ * <p>
+ * When the list of txn min-max timestamp intervals is given, the iterated
+ * SAMPLE BY buckets that have no intersection with the intervals,
+ * i.e. remain unchanged, will be skipped.
  */
 public abstract class SampleByIntervalIterator {
     protected TimestampSampler sampler;
@@ -42,16 +45,38 @@ public abstract class SampleByIntervalIterator {
     private int txnIntervalLoIndex;
     private LongList txnIntervals;
 
+    /**
+     * Returns maximum timestamp that belong to the iterated intervals.
+     */
     public abstract long getMaxTimestamp();
 
+    /**
+     * Returns minimum timestamp that belong to the iterated intervals.
+     */
     public abstract long getMinTimestamp();
 
+    /**
+     * Returns minimal number of SAMPLE BY buckets for in a single iteration.
+     */
     public abstract int getStep();
 
+    /**
+     * High boundary for the current iteration's interval.
+     * Meant to be used as an exclusive boundary when querying.
+     */
     public abstract long getTimestampHi();
 
+    /**
+     * Low boundary for the current iteration's interval.
+     * Meant to be used as an inclusive boundary when querying.
+     */
     public abstract long getTimestampLo();
 
+    /**
+     * Iterates to the next interval.
+     *
+     * @return true if the iterator moved to the next interval; false if the iteration has ended
+     */
     public boolean next() {
         OUT:
         while (next0()) {
@@ -81,6 +106,11 @@ public abstract class SampleByIntervalIterator {
         return false;
     }
 
+    /**
+     * Reset the iterator for the given number of steps per iteration.
+     *
+     * @see #getStep()
+     */
     public void toTop(int step) {
         this.step = step;
         toTop0();
