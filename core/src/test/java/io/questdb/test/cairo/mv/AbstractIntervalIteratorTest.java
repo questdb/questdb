@@ -83,15 +83,18 @@ public abstract class AbstractIntervalIteratorTest {
 
         LongList txnIntervals = null;
         if (rnd.nextBoolean()) {
+            // generate a few txn min-max timestamp intervals
             final int intervalCount = 1 + rnd.nextInt(10);
             txnIntervals = new LongList(2 * intervalCount);
-            long lo = start + rnd.nextLong() % Timestamps.HOUR_MICROS;
-            long hi = lo + rnd.nextLong(Timestamps.HOUR_MICROS);
+            long lo = start;
+            long hi = Math.min(end, lo + rnd.nextLong(Timestamps.HOUR_MICROS));
             for (int i = 0; i < intervalCount; i++) {
                 unionInPlace(txnIntervals, lo, hi);
-                lo = hi + rnd.nextLong() % Timestamps.HOUR_MICROS;
-                hi = lo + rnd.nextLong(Timestamps.HOUR_MICROS);
+                lo = Math.min(end, hi + rnd.nextLong() % Timestamps.HOUR_MICROS);
+                hi = Math.min(end, lo + rnd.nextLong(Timestamps.HOUR_MICROS));
             }
+            // the very last txn interval has have end as the right boundary
+            txnIntervals.setQuick(txnIntervals.size() - 1, end);
         }
 
         final SampleByIntervalIterator iterator = createIterator(
