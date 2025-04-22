@@ -36,6 +36,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
@@ -58,7 +59,14 @@ public class WalTxnRangeLoader {
         return minTimestamp;
     }
 
-    public void load(CairoEngine engine, Path tempPath, TableToken tableToken, LongList intervals, long txnLo, long txnHi) {
+    public void load(
+            @NotNull CairoEngine engine,
+            @NotNull Path tempPath,
+            @NotNull TableToken tableToken,
+            @NotNull LongList intervals,
+            long txnLo,
+            long txnHi
+    ) {
         try (TransactionLogCursor transactionLogCursor = engine.getTableSequencerAPI().getCursor(tableToken, txnLo)) {
             if (transactionLogCursor.getVersion() == WAL_SEQUENCER_FORMAT_VERSION_V1) {
                 tempPath.of(engine.getConfiguration().getDbRoot()).concat(tableToken);
@@ -82,7 +90,6 @@ public class WalTxnRangeLoader {
     }
 
     private void loadTransactionDetailsV1(Path tempPath, int rootLen, TransactionLogCursor transactionLogCursor, LongList intervals, long txnLo, long txnHi) {
-        intervals.clear();
         txnDetails.clear();
         txnDetails.allocate((int) ((txnHi - txnLo) * 3));
 
@@ -131,14 +138,17 @@ public class WalTxnRangeLoader {
                     continue;
                 }
 
-                final long minTs = walEventCursor.getDataInfo().getMinTimestamp();
-                final long maxTs = walEventCursor.getDataInfo().getMaxTimestamp();
-                intervals.add(minTs, maxTs);
+                final WalEventCursor.DataInfo dataInfo = walEventCursor.getDataInfo();
+                intervals.add(dataInfo.getMinTimestamp(), dataInfo.getMaxTimestamp());
                 IntervalUtils.unionInPlace(intervals, intervals.size() - 2);
-                minTimestamp = Math.min(minTimestamp, minTs);
-                maxTimestamp = Math.max(maxTimestamp, maxTs);
             }
         }
+
+        if (intervals.size() > 0) {
+            minTimestamp = intervals.getQuick(0);
+            maxTimestamp = intervals.getQuick(intervals.size() - 1);
+        }
+
         txnDetails.clear();
     }
 
@@ -148,13 +158,14 @@ public class WalTxnRangeLoader {
 
         while (txnLo++ < txnHi && transactionLogCursor.hasNext()) {
             if (transactionLogCursor.getTxnRowCount() > 0) {
-                final long minTs = transactionLogCursor.getTxnMinTimestamp();
-                final long maxTs = transactionLogCursor.getTxnMaxTimestamp();
-                intervals.add(minTs, maxTs);
+                intervals.add(transactionLogCursor.getTxnMinTimestamp(), transactionLogCursor.getTxnMaxTimestamp());
                 IntervalUtils.unionInPlace(intervals, intervals.size() - 2);
-                minTimestamp = Math.min(minTimestamp, minTs);
-                maxTimestamp = Math.max(maxTimestamp, maxTs);
             }
+        }
+
+        if (intervals.size() > 0) {
+            minTimestamp = intervals.getQuick(0);
+            maxTimestamp = intervals.getQuick(intervals.size() - 1);
         }
     }
 }

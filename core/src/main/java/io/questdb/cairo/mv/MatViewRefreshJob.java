@@ -190,6 +190,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         if (lastRefreshTxn > 0) {
             // Find min/max timestamps from WAL transactions.
             txnIntervals = intervals;
+            txnIntervals.clear();
             txnRangeLoader.load(engine, Path.PATH.get(), baseTableToken, txnIntervals, lastRefreshTxn, lastTxn);
             minTs = txnRangeLoader.getMinTimestamp();
             maxTs = txnRangeLoader.getMaxTimestamp();
