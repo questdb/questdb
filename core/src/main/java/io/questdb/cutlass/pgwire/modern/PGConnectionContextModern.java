@@ -939,7 +939,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             throw msgKaput().put("spurious describe message received");
         }
 
-        pipelineCurrentEntry.setStateDesc(nullTargetName || isPortal ? PGPipelineEntry.SYNC_DESC_ROW_DESCRIPTION : PGPipelineEntry.SYNC_DESC_PARAMETER_DESCRIPTION);
+        pipelineCurrentEntry.setStateDesc(isPortal ? PGPipelineEntry.SYNC_DESC_ROW_DESCRIPTION : PGPipelineEntry.SYNC_DESC_PARAMETER_DESCRIPTION);
     }
 
     private void msgExecute(long lo, long msgLimit) throws BadProtocolException {
