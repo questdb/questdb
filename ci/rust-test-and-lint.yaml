@@ -23,22 +23,38 @@ jobs:
         displayName: "Ensure Rust is installed"
         # Note, the `prepare_rust_env.py` script exports a number of variables.
       - task: Cache@2
+        continueOnError: true
         inputs:
           key: '"cargo-registry" | "$(RUSTC_HOST_TRIPLE)" | "$(RUSTC_RELEASE)"'
           path: $(CARGO_HOME)/registry
         displayName: "Cache ~/.cargo/registry"
       - script: |
+          cd core/rust/qdb-core
+          cargo test --all-targets --all-features --no-fail-fast --verbose
+        displayName: "qdb-core: cargo test"
+        # We run these as part of the other CI runs anyway through the rust-maven-plugin,
+        # but if the Rust tests fail it's easier to see the output here
+        # since it doesn't get buried thousands of lines deep in the Java test logs.
+      - script: |
+          cd core/rust/qdb-core
+          cargo clippy --all-targets --all-features -- -D warnings
+        displayName: "qdb-core: cargo clippy"
+      - script: |
+          cd core/rust/qdb-core
+          cargo fmt --check
+        displayName: "qdb-core: cargo fmt"
+      - script: |
           cd core/rust/qdbr
           cargo test --all-targets --all-features --no-fail-fast --verbose
-        displayName: "cargo test"
+        displayName: "qdbr: cargo test"
         # We run these as part of the other CI runs anyway through the rust-maven-plugin,
         # but if the Rust tests fail it's easier to see the output here
         # since it doesn't get buried thousands of lines deep in the Java test logs.
       - script: |
           cd core/rust/qdbr
           cargo clippy --all-targets --all-features -- -D warnings
-        displayName: "cargo clippy"
+        displayName: "qdbr: cargo clippy"
       - script: |
           cd core/rust/qdbr
           cargo fmt --check
-        displayName: "cargo fmt"
+        displayName: "qdbr: cargo fmt"

@@ -145,6 +145,10 @@ async def main(yaml_file):
 
     for test in tests:
         iterations = test.get('iterations', 50)
+        exclusions = test.get('exclude', [])
+        if 'asyncpg' in exclusions:
+            print(f"Skipping test '{test['name']}' because it is excluded for asyncpg.")
+            continue
         for _ in range(iterations):
             print(f"Running test '{test['name']}' (iteration {_ + 1})")
             await run_test(test, global_variables)

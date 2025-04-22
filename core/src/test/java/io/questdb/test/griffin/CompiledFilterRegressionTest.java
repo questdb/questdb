@@ -27,7 +27,10 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
@@ -616,9 +619,6 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             LOG.info().$("generated ").$(filters.size()).$(" filter expressions for base query: ").$("select * from x").$();
             Assert.assertFalse(filters.isEmpty());
             for (String filter : filters) {
-                if (filter.equals("i8 + 3 + 42.5 + f32 > 1")) {
-                    System.out.println("ok");
-                }
                 long size = runQuery("select * from x" + " where " + filter);
                 maxSize = Math.max(maxSize, size);
 

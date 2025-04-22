@@ -273,6 +273,7 @@ public class FuzzRunner {
                         }
                     }
                 } catch (CairoException | CairoError e) {
+                    boolean housekeeping = (e instanceof CairoException) && ((CairoException) e).isHousekeeping();
                     int failures = ff.failureGenerated();
                     if (failures > failuresObserved) {
                         failuresObserved = failures;
@@ -298,7 +299,9 @@ public class FuzzRunner {
                             }
                         }
                         // Retry the last transaction now that the failure is handled.
-                        i--;
+                        if (!housekeeping) {
+                            i--;
+                        }
                     } else {
                         throw e;
                     }
@@ -487,6 +490,11 @@ public class FuzzRunner {
 
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd) throws NumericException {
         long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T17");
+        long end = start + partitionCount * Timestamps.DAY_MICROS;
+        return generateTransactions(tableName, rnd, start, end);
+    }
+
+    public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd, long start) throws NumericException {
         long end = start + partitionCount * Timestamps.DAY_MICROS;
         return generateTransactions(tableName, rnd, start, end);
     }

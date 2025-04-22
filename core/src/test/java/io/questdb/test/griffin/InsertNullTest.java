@@ -101,7 +101,7 @@ public class InsertNullTest extends AbstractCairoTest {
                 );
                 Assert.fail();
             } catch (CairoException expected) {
-                Assert.assertTrue(expected.getMessage().contains("timestamp before 1970-01-01 is not allowed"));
+                Assert.assertTrue(expected.getMessage().contains("designated timestamp column cannot be NULL"));
             }
         });
     }
@@ -123,7 +123,7 @@ public class InsertNullTest extends AbstractCairoTest {
                 );
                 Assert.fail();
             } catch (SqlException expected) {
-                Assert.assertEquals("[0] designated timestamp column cannot be NULL", expected.getMessage());
+                Assert.assertEquals("[28] designated timestamp column cannot be NULL", expected.getMessage());
             }
         });
     }

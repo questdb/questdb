@@ -91,6 +91,7 @@ import io.questdb.network.IODispatchers;
 import io.questdb.network.IOOperation;
 import io.questdb.network.IORequestProcessor;
 import io.questdb.network.Net;
+import io.questdb.network.NetworkError;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.PeerDisconnectedException;
@@ -603,37 +604,39 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testEmptyQuotedString() throws Exception {
-        testJsonQuery0(1, (engine, sqlExecutionContext) -> sendAndReceive(
-                NetworkFacadeImpl.INSTANCE,
-                // select '' from long_sequence(1)
-                "GET /exec?query=select%20%27%27%20from%20long_sequence%281%29 HTTP/1.1\n" +
-                        "Host: localhost:9000\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Accept: */*\r\n" +
-                        "X-Requested-With: XMLHttpRequest\r\n" +
-                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36\r\n" +
-                        "Sec-Fetch-Site: same-origin\r\n" +
-                        "Sec-Fetch-Mode: cors\r\n" +
-                        "Referer: http://localhost:9000/index.html\r\n" +
-                        "Accept-Encoding: gzip, deflate, br\r\n" +
-                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                        "Cookie: _ga=GA1.1.2124932001.1573824669; _gid=GA1.1.1731187971.1580598042\r\n" +
-                        "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json; charset=utf-8\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "83\r\n" +
-                        "{\"query\":\"select '' from long_sequence(1)\",\"columns\":[{\"name\":\"column\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"\"]],\"count\":1}\r\n" +
-                        "00\r\n" +
-                        "\r\n",
-                1,
-                0,
-                false
-        ), false);
+        testJsonQuery0(
+                1, (engine, sqlExecutionContext) -> sendAndReceive(
+                        NetworkFacadeImpl.INSTANCE,
+                        // select '' from long_sequence(1)
+                        "GET /exec?query=select%20%27%27%20from%20long_sequence%281%29 HTTP/1.1\n" +
+                                "Host: localhost:9000\r\n" +
+                                "Connection: keep-alive\r\n" +
+                                "Accept: */*\r\n" +
+                                "X-Requested-With: XMLHttpRequest\r\n" +
+                                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36\r\n" +
+                                "Sec-Fetch-Site: same-origin\r\n" +
+                                "Sec-Fetch-Mode: cors\r\n" +
+                                "Referer: http://localhost:9000/index.html\r\n" +
+                                "Accept-Encoding: gzip, deflate, br\r\n" +
+                                "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                "Cookie: _ga=GA1.1.2124932001.1573824669; _gid=GA1.1.1731187971.1580598042\r\n" +
+                                "\r\n",
+                        "HTTP/1.1 200 OK\r\n" +
+                                "Server: questDB/1.0\r\n" +
+                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                "Transfer-Encoding: chunked\r\n" +
+                                "Content-Type: application/json; charset=utf-8\r\n" +
+                                "Keep-Alive: timeout=5, max=10000\r\n" +
+                                "\r\n" +
+                                "83\r\n" +
+                                "{\"query\":\"select '' from long_sequence(1)\",\"columns\":[{\"name\":\"column\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"\"]],\"count\":1}\r\n" +
+                                "00\r\n" +
+                                "\r\n",
+                        1,
+                        0,
+                        false
+                ), false
+        );
     }
 
     @Test
@@ -1285,92 +1288,94 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testImplicitUuidCastOnInsert() throws Exception {
-        testJsonQuery0(1, (engine, sqlExecutionContext) -> {
-            // create table
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=create+table+xx+(value+uuid,+ts+timestamp)+timestamp(ts)&count=true HTTP/1.1\r\n" +
-                            "Host: localhost:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Accept: */*\r\n" +
-                            "X-Requested-With: XMLHttpRequest\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Referer: http://localhost:9000/index.html\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            JSON_DDL_RESPONSE,
-                    1,
-                    0,
-                    false
-            );
-            // insert one record
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=insert+into+xx+values('12345678-1234-1234-5678-123456789012',+0)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                            "Host: localhost:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Accept: */*\r\n" +
-                            "X-Requested-With: XMLHttpRequest\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Referer: http://localhost:9000/index.html\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            INSERT_QUERY_RESPONSE,
-                    1,
-                    0,
-                    false
-            );
-            // check if we have one record
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=select+*+from+xx+latest+on+ts+partition+by+value&count=true HTTP/1.1\r\n" +
-                            "Host: localhost:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Accept: */*\r\n" +
-                            "X-Requested-With: XMLHttpRequest\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Referer: http://localhost:9000/index.html\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            "f3\r\n" +
-                            "{\"query\":\"select * from xx latest on ts partition by value\",\"columns\":[{\"name\":\"value\",\"type\":\"UUID\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestamp\":1,\"dataset\":[[\"12345678-1234-1234-5678-123456789012\",\"1970-01-01T00:00:00.000000Z\"]],\"count\":1}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
-                    1,
-                    0,
-                    false
-            );
-        }, false);
+        testJsonQuery0(
+                1, (engine, sqlExecutionContext) -> {
+                    // create table
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=create+table+xx+(value+uuid,+ts+timestamp)+timestamp(ts)&count=true HTTP/1.1\r\n" +
+                                    "Host: localhost:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "X-Requested-With: XMLHttpRequest\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Referer: http://localhost:9000/index.html\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    JSON_DDL_RESPONSE,
+                            1,
+                            0,
+                            false
+                    );
+                    // insert one record
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=insert+into+xx+values('12345678-1234-1234-5678-123456789012',+0)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                                    "Host: localhost:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "X-Requested-With: XMLHttpRequest\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Referer: http://localhost:9000/index.html\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    INSERT_QUERY_RESPONSE,
+                            1,
+                            0,
+                            false
+                    );
+                    // check if we have one record
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=select+*+from+xx+latest+on+ts+partition+by+value&count=true HTTP/1.1\r\n" +
+                                    "Host: localhost:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "X-Requested-With: XMLHttpRequest\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Referer: http://localhost:9000/index.html\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    "f3\r\n" +
+                                    "{\"query\":\"select * from xx latest on ts partition by value\",\"columns\":[{\"name\":\"value\",\"type\":\"UUID\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestamp\":1,\"dataset\":[[\"12345678-1234-1234-5678-123456789012\",\"1970-01-01T00:00:00.000000Z\"]],\"count\":1}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n",
+                            1,
+                            0,
+                            false
+                    );
+                }, false
+        );
     }
 
     public void testImport(
@@ -1380,8 +1385,10 @@ public class IODispatcherTest extends AbstractTest {
             boolean expectReceiveDisconnect,
             int requestCount
     ) throws Exception {
-        testImport(response, request, nf, null, expectReceiveDisconnect, requestCount, (engine, sqlExecutionContext) -> {
-        });
+        testImport(
+                response, request, nf, null, expectReceiveDisconnect, requestCount, (engine, sqlExecutionContext) -> {
+                }
+        );
     }
 
     public void testImport(
@@ -3055,6 +3062,26 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testJsonFloatClipping() throws Exception {
+        getSimpleTester().run((engine, sqlExecutionContext) -> {
+            testHttpClient.assertGet(
+                    "{\"ddl\":\"OK\"}",
+                    "CREATE TABLE t0(f FLOAT, d DOUBLE);"
+            );
+
+            testHttpClient.assertGet(
+                    "{\"dml\":\"OK\"}",
+                    "INSERT INTO t0 VALUES (54321, 54321);"
+            );
+
+            testHttpClient.assertGet(
+                    "{\"query\":\"SELECT * FROM t0;\",\"columns\":[{\"name\":\"f\",\"type\":\"FLOAT\"},{\"name\":\"d\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[[54321.0,54321.0]],\"count\":1}",
+                    "SELECT * FROM t0;"
+            );
+        });
+    }
+
+    @Test
     public void testJsonImplicitCastException() throws Exception {
         testJsonQuery(
                 0,
@@ -3463,335 +3490,341 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonQueryCreateInsertNull() throws Exception {
-        testJsonQuery0(1, (engine, sqlExecutionContext) -> {
-            // create table
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=create+table+xx+(value+long256,+ts+timestamp)+timestamp(ts)&count=true HTTP/1.1\r\n" +
-                            "Host: localhost:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Accept: */*\r\n" +
-                            "X-Requested-With: XMLHttpRequest\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Referer: http://localhost:9000/index.html\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            JSON_DDL_RESPONSE,
-                    1,
-                    0,
-                    false
-            );
-            // insert one record
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=insert+into+xx+values(null,+0)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                            "Host: localhost:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Accept: */*\r\n" +
-                            "X-Requested-With: XMLHttpRequest\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Referer: http://localhost:9000/index.html\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            INSERT_QUERY_RESPONSE,
-                    1,
-                    0,
-                    false
-            );
-            // check if we have one record
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=select+*+from+xx+latest+on+ts+partition+by+value&count=true HTTP/1.1\r\n" +
-                            "Host: localhost:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Accept: */*\r\n" +
-                            "X-Requested-With: XMLHttpRequest\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Referer: http://localhost:9000/index.html\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            "d2\r\n" +
-                            "{\"query\":\"select * from xx latest on ts partition by value\",\"columns\":[{\"name\":\"value\",\"type\":\"LONG256\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestamp\":1,\"dataset\":[[\"\",\"1970-01-01T00:00:00.000000Z\"]],\"count\":1}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
-                    1,
-                    0,
-                    false
-            );
-        }, false);
+        testJsonQuery0(
+                1, (engine, sqlExecutionContext) -> {
+                    // create table
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=create+table+xx+(value+long256,+ts+timestamp)+timestamp(ts)&count=true HTTP/1.1\r\n" +
+                                    "Host: localhost:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "X-Requested-With: XMLHttpRequest\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Referer: http://localhost:9000/index.html\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    JSON_DDL_RESPONSE,
+                            1,
+                            0,
+                            false
+                    );
+                    // insert one record
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=insert+into+xx+values(null,+0)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                                    "Host: localhost:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "X-Requested-With: XMLHttpRequest\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Referer: http://localhost:9000/index.html\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    INSERT_QUERY_RESPONSE,
+                            1,
+                            0,
+                            false
+                    );
+                    // check if we have one record
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=select+*+from+xx+latest+on+ts+partition+by+value&count=true HTTP/1.1\r\n" +
+                                    "Host: localhost:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "X-Requested-With: XMLHttpRequest\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Referer: http://localhost:9000/index.html\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    "d2\r\n" +
+                                    "{\"query\":\"select * from xx latest on ts partition by value\",\"columns\":[{\"name\":\"value\",\"type\":\"LONG256\"},{\"name\":\"ts\",\"type\":\"TIMESTAMP\"}],\"timestamp\":1,\"dataset\":[[\"\",\"1970-01-01T00:00:00.000000Z\"]],\"count\":1}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n",
+                            1,
+                            0,
+                            false
+                    );
+                }, false
+        );
     }
 
     @Test
     public void testJsonQueryCreateInsertStringifiedJson() throws Exception {
-        testJsonQuery0(1, (engine, sqlExecutionContext) -> {
-            // create table
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?limit=0%2C1000&count=true&src=con&query=%0D%0Acreate%20table%20data(s%20string)&timings=true HTTP/1.1\r\n" +
-                            "Host: 127.0.0.1:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.75 Safari/537.36\r\n" +
-                            "Accept: */*\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Sec-Fetch-Dest: empty\r\n" +
-                            "Referer: http://127.0.0.1:9000/\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            JSON_DDL_RESPONSE,
-                    1,
-                    0,
-                    false
-            );
+        testJsonQuery0(
+                1, (engine, sqlExecutionContext) -> {
+                    // create table
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?limit=0%2C1000&count=true&src=con&query=%0D%0Acreate%20table%20data(s%20string)&timings=true HTTP/1.1\r\n" +
+                                    "Host: 127.0.0.1:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.75 Safari/537.36\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Sec-Fetch-Dest: empty\r\n" +
+                                    "Referer: http://127.0.0.1:9000/\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    JSON_DDL_RESPONSE,
+                            1,
+                            0,
+                            false
+                    );
 
-            // insert one record
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?limit=0%2C1000&count=true&src=con&query=%0D%0A%0D%0Ainsert%20into%20data%20values%20(%27%7B%20title%3A%20%5C%22Title%5C%22%7D%27)&timings=true HTTP/1.1\r\n" +
-                            "Host: 127.0.0.1:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.75 Safari/537.36\r\n" +
-                            "Accept: */*\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Sec-Fetch-Dest: empty\r\n" +
-                            "Referer: http://127.0.0.1:9000/\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            INSERT_QUERY_RESPONSE,
-                    1,
-                    0,
-                    false
-            );
+                    // insert one record
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?limit=0%2C1000&count=true&src=con&query=%0D%0A%0D%0Ainsert%20into%20data%20values%20(%27%7B%20title%3A%20%5C%22Title%5C%22%7D%27)&timings=true HTTP/1.1\r\n" +
+                                    "Host: 127.0.0.1:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.75 Safari/537.36\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Sec-Fetch-Dest: empty\r\n" +
+                                    "Referer: http://127.0.0.1:9000/\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    INSERT_QUERY_RESPONSE,
+                            1,
+                            0,
+                            false
+                    );
 
-            // check if we have one record
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?limit=0%2C1000&count=true&src=con&query=data&timings=false HTTP/1.1\r\n" +
-                            "Host: 127.0.0.1:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.75 Safari/537.36\r\n" +
-                            "Accept: */*\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Sec-Fetch-Dest: empty\r\n" +
-                            "Referer: http://127.0.0.1:9000/\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            "7a\r\n" +
-                            "{\"query\":\"data\",\"columns\":[{\"name\":\"s\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"{ title: \\\\\\\"Title\\\\\\\"}\"]],\"count\":1}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
-                    1,
-                    0,
-                    false
-            );
-        }, false);
+                    // check if we have one record
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?limit=0%2C1000&count=true&src=con&query=data&timings=false HTTP/1.1\r\n" +
+                                    "Host: 127.0.0.1:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.75 Safari/537.36\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Sec-Fetch-Dest: empty\r\n" +
+                                    "Referer: http://127.0.0.1:9000/\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    "7a\r\n" +
+                                    "{\"query\":\"data\",\"columns\":[{\"name\":\"s\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"{ title: \\\\\\\"Title\\\\\\\"}\"]],\"count\":1}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n",
+                            1,
+                            0,
+                            false
+                    );
+                }, false
+        );
     }
 
     @Test
     public void testJsonQueryCreateInsertTruncateAndDrop() throws Exception {
-        testJsonQuery0(1, (engine, sqlExecutionContext) -> {
-            // create table
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)%20timestamp%28timestamp%29&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                            "Host: localhost:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Accept: */*\r\n" +
-                            "X-Requested-With: XMLHttpRequest\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Referer: http://localhost:9000/index.html\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            JSON_DDL_RESPONSE,
-                    1,
-                    0,
-                    false
-            );
+        testJsonQuery0(
+                1, (engine, sqlExecutionContext) -> {
+                    // create table
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)%20timestamp%28timestamp%29&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                                    "Host: localhost:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "X-Requested-With: XMLHttpRequest\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Referer: http://localhost:9000/index.html\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    JSON_DDL_RESPONSE,
+                            1,
+                            0,
+                            false
+                    );
 
-            // insert one record
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                            "Host: localhost:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Accept: */*\r\n" +
-                            "X-Requested-With: XMLHttpRequest\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Referer: http://localhost:9000/index.html\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            INSERT_QUERY_RESPONSE,
-                    1,
-                    0,
-                    false
-            );
+                    // insert one record
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                                    "Host: localhost:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "X-Requested-With: XMLHttpRequest\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Referer: http://localhost:9000/index.html\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    INSERT_QUERY_RESPONSE,
+                            1,
+                            0,
+                            false
+                    );
 
-            // check if we have one record
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=%0A%0Aselect+*+from+balances_x+latest+on+timestamp+partition+by+cust_id%2C+balance_ccy&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                            "Host: localhost:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Accept: */*\r\n" +
-                            "X-Requested-With: XMLHttpRequest\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Referer: http://localhost:9000/index.html\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            "0171\r\n" +
-                            "{\"query\":\"\\n\\nselect * from balances_x latest on timestamp partition by cust_id, balance_ccy\",\"columns\":[{\"name\":\"cust_id\",\"type\":\"INT\"},{\"name\":\"balance_ccy\",\"type\":\"SYMBOL\"},{\"name\":\"balance\",\"type\":\"DOUBLE\"},{\"name\":\"status\",\"type\":\"BYTE\"},{\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}],\"timestamp\":4,\"dataset\":[[1,\"USD\",1500.0,0,\"1970-01-01T01:40:00.000001Z\"]],\"count\":1}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
-                    1,
-                    0,
-                    false
-            );
+                    // check if we have one record
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=%0A%0Aselect+*+from+balances_x+latest+on+timestamp+partition+by+cust_id%2C+balance_ccy&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                                    "Host: localhost:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "X-Requested-With: XMLHttpRequest\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Referer: http://localhost:9000/index.html\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    "0171\r\n" +
+                                    "{\"query\":\"\\n\\nselect * from balances_x latest on timestamp partition by cust_id, balance_ccy\",\"columns\":[{\"name\":\"cust_id\",\"type\":\"INT\"},{\"name\":\"balance_ccy\",\"type\":\"SYMBOL\"},{\"name\":\"balance\",\"type\":\"DOUBLE\"},{\"name\":\"status\",\"type\":\"BYTE\"},{\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}],\"timestamp\":4,\"dataset\":[[1,\"USD\",1500.0,0,\"1970-01-01T01:40:00.000001Z\"]],\"count\":1}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n",
+                            1,
+                            0,
+                            false
+                    );
 
-            // truncate table
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=%0A%0Atruncate+table+balances_x&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                            "Host: localhost:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Accept: */*\r\n" +
-                            "X-Requested-With: XMLHttpRequest\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Referer: http://localhost:9000/index.html\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            JSON_DDL_RESPONSE,
-                    1,
-                    0,
-                    false
-            );
+                    // truncate table
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=%0A%0Atruncate+table+balances_x&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                                    "Host: localhost:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "X-Requested-With: XMLHttpRequest\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Referer: http://localhost:9000/index.html\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    JSON_DDL_RESPONSE,
+                            1,
+                            0,
+                            false
+                    );
 
-            // select again expecting only metadata
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=%0A%0Aselect+*+from+balances_x+latest+on+timestamp+partition+by+cust_id%2C+balance_ccy&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                            "Host: localhost:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Accept: */*\r\n" +
-                            "X-Requested-With: XMLHttpRequest\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Referer: http://localhost:9000/index.html\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            "0141\r\n" +
-                            "{\"query\":\"\\n\\nselect * from balances_x latest on timestamp partition by cust_id, balance_ccy\",\"columns\":[{\"name\":\"cust_id\",\"type\":\"INT\"},{\"name\":\"balance_ccy\",\"type\":\"SYMBOL\"},{\"name\":\"balance\",\"type\":\"DOUBLE\"},{\"name\":\"status\",\"type\":\"BYTE\"},{\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}],\"timestamp\":4,\"dataset\":[],\"count\":0}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
-                    1,
-                    0,
-                    false
-            );
-        }, false);
+                    // select again expecting only metadata
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=%0A%0Aselect+*+from+balances_x+latest+on+timestamp+partition+by+cust_id%2C+balance_ccy&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                                    "Host: localhost:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "X-Requested-With: XMLHttpRequest\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Referer: http://localhost:9000/index.html\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    "0141\r\n" +
+                                    "{\"query\":\"\\n\\nselect * from balances_x latest on timestamp partition by cust_id, balance_ccy\",\"columns\":[{\"name\":\"cust_id\",\"type\":\"INT\"},{\"name\":\"balance_ccy\",\"type\":\"SYMBOL\"},{\"name\":\"balance\",\"type\":\"DOUBLE\"},{\"name\":\"status\",\"type\":\"BYTE\"},{\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}],\"timestamp\":4,\"dataset\":[],\"count\":0}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n",
+                            1,
+                            0,
+                            false
+                    );
+                }, false
+        );
     }
 
     @Test
@@ -3885,7 +3918,8 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonQueryEmptyColumnNameInLimitColumns() throws Exception {
-        testJsonQuery(20, "GET /query?query=x&cols=k,c,,d,f1,e,g,h,i,j,a,l HTTP/1.1\r\n" +
+        testJsonQuery(
+                20, "GET /query?query=x&cols=k,c,,d,f1,e,g,h,i,j,a,l HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
                         "Connection: keep-alive\r\n" +
                         "Cache-Control: max-age=0\r\n" +
@@ -4023,7 +4057,8 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonQueryInvalidColumnNameInLimitColumns() throws Exception {
-        testJsonQuery(20, "GET /query?query=x&cols=k,c,b,d,f1,e,g,h,i,j,a,l HTTP/1.1\r\n" +
+        testJsonQuery(
+                20, "GET /query?query=x&cols=k,c,b,d,f1,e,g,h,i,j,a,l HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
                         "Connection: keep-alive\r\n" +
                         "Cache-Control: max-age=0\r\n" +
@@ -4048,7 +4083,8 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonQueryInvalidLastColumnNameInLimitColumns() throws Exception {
-        testJsonQuery(20, "GET /query?query=x&cols=k,c,b,d,f,e,g,h,i,j,a,l2 HTTP/1.1\r\n" +
+        testJsonQuery(
+                20, "GET /query?query=x&cols=k,c,b,d,f,e,g,h,i,j,a,l2 HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
                         "Connection: keep-alive\r\n" +
                         "Cache-Control: max-age=0\r\n" +
@@ -4073,37 +4109,39 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonQueryJsonEncodeZeroCharacter() throws Exception {
-        testJsonQuery0(2, (engine, sqlExecutionContext) -> {
-            // create table with all column types
-            createTestTable(engine);
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=y HTTP/1.1\r\n" +
-                            "Host: localhost:9001\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Cache-Control: max-age=0\r\n" +
-                            "Upgrade-Insecure-Requests: 1\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            "0188\r\n" +
-                            "{\"query\":\"y\",\"columns\":[{\"name\":\"j\",\"type\":\"SYMBOL\"}],\"timestamp\":-1,\"dataset\":[[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"]],\"count\":20}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
-                    100,
-                    0,
-                    false
-            );
-        }, false);
+        testJsonQuery0(
+                2, (engine, sqlExecutionContext) -> {
+                    // create table with all column types
+                    createTestTable(engine);
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=y HTTP/1.1\r\n" +
+                                    "Host: localhost:9001\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Cache-Control: max-age=0\r\n" +
+                                    "Upgrade-Insecure-Requests: 1\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                                    "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    "0188\r\n" +
+                                    "{\"query\":\"y\",\"columns\":[{\"name\":\"j\",\"type\":\"SYMBOL\"}],\"timestamp\":-1,\"dataset\":[[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"],[\"ok\\u0000ok\"]],\"count\":20}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n",
+                            100,
+                            0,
+                            false
+                    );
+                }, false
+        );
     }
 
     @Test
@@ -4652,116 +4690,118 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonQueryRenameTable() throws Exception {
-        testJsonQuery0(2, (engine, sqlExecutionContext) -> {
-            // create table with all column types
-            createTableX(engine, 20);
+        testJsonQuery0(
+                2, (engine, sqlExecutionContext) -> {
+                    // create table with all column types
+                    createTableX(engine, 20);
 
-            // rename x -> y (quoted)
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=rename+table+%27x%27+to+%27y%27&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                            "Host: localhost:9001\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Cache-Control: max-age=0\r\n" +
-                            "Upgrade-Insecure-Requests: 1\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            JSON_DDL_RESPONSE,
-                    1,
-                    0,
-                    false
-            );
+                    // rename x -> y (quoted)
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=rename+table+%27x%27+to+%27y%27&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                                    "Host: localhost:9001\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Cache-Control: max-age=0\r\n" +
+                                    "Upgrade-Insecure-Requests: 1\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                                    "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    JSON_DDL_RESPONSE,
+                            1,
+                            0,
+                            false
+                    );
 
-            // query new table name
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=y%20where%20i%20%3D%20(%27EHNRX%27) HTTP/1.1\r\n" +
-                            "Host: localhost:9001\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Cache-Control: max-age=0\r\n" +
-                            "Upgrade-Insecure-Requests: 1\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            "02a1\r\n" +
-                            "{\"query\":\"y where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29",
-                    1,
-                    0,
-                    false
-            );
+                    // query new table name
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=y%20where%20i%20%3D%20(%27EHNRX%27) HTTP/1.1\r\n" +
+                                    "Host: localhost:9001\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Cache-Control: max-age=0\r\n" +
+                                    "Upgrade-Insecure-Requests: 1\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                                    "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    "02a1\r\n" +
+                                    "{\"query\":\"y where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29",
+                            1,
+                            0,
+                            false
+                    );
 
-            // rename y -> x (unquoted)
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=rename+table+y+to+x&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                            "Host: localhost:9001\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Cache-Control: max-age=0\r\n" +
-                            "Upgrade-Insecure-Requests: 1\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            JSON_DDL_RESPONSE,
-                    1,
-                    0,
-                    false
-            );
+                    // rename y -> x (unquoted)
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=rename+table+y+to+x&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                                    "Host: localhost:9001\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Cache-Control: max-age=0\r\n" +
+                                    "Upgrade-Insecure-Requests: 1\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                                    "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    JSON_DDL_RESPONSE,
+                            1,
+                            0,
+                            false
+                    );
 
-            // query table 'x'
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=x%20where%20i%20%3D%20(%27EHNRX%27) HTTP/1.1\r\n" +
-                            "Host: localhost:9001\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Cache-Control: max-age=0\r\n" +
-                            "Upgrade-Insecure-Requests: 1\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            "02a1\r\n" +
-                            "{\"query\":\"x where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29",
-                    1,
-                    0,
-                    false
-            );
-        }, false);
+                    // query table 'x'
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=x%20where%20i%20%3D%20(%27EHNRX%27) HTTP/1.1\r\n" +
+                                    "Host: localhost:9001\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Cache-Control: max-age=0\r\n" +
+                                    "Upgrade-Insecure-Requests: 1\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                                    "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    "02a1\r\n" +
+                                    "{\"query\":\"x where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29",
+                            1,
+                            0,
+                            false
+                    );
+                }, false
+        );
     }
 
     @Test
@@ -4795,157 +4835,159 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonQuerySelectAlterSelect() throws Exception {
-        testJsonQuery0(1, (engine, sqlExecutionContext) -> {
+        testJsonQuery0(
+                1, (engine, sqlExecutionContext) -> {
 
-            // create table
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)%20timestamp%28timestamp%29&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                            "Host: localhost:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Accept: */*\r\n" +
-                            "X-Requested-With: XMLHttpRequest\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Referer: http://localhost:9000/index.html\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            JSON_DDL_RESPONSE,
-                    1,
-                    0,
-                    false
-            );
+                    // create table
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)%20timestamp%28timestamp%29&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                                    "Host: localhost:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "X-Requested-With: XMLHttpRequest\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Referer: http://localhost:9000/index.html\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    JSON_DDL_RESPONSE,
+                            1,
+                            0,
+                            false
+                    );
 
-            // insert one record
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                            "Host: localhost:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Accept: */*\r\n" +
-                            "X-Requested-With: XMLHttpRequest\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Referer: http://localhost:9000/index.html\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            INSERT_QUERY_RESPONSE,
-                    1,
-                    0,
-                    false
-            );
+                    // insert one record
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                                    "Host: localhost:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "X-Requested-With: XMLHttpRequest\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Referer: http://localhost:9000/index.html\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    INSERT_QUERY_RESPONSE,
+                            1,
+                            0,
+                            false
+                    );
 
-            // check if we have one record
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=%0A%0Aselect+*+from+balances_x+latest+on+timestamp+partition+by+cust_id%2C+balance_ccy&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                            "Host: localhost:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Accept: */*\r\n" +
-                            "X-Requested-With: XMLHttpRequest\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Referer: http://localhost:9000/index.html\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            "0171\r\n" +
-                            "{\"query\":\"\\n\\nselect * from balances_x latest on timestamp partition by cust_id, balance_ccy\",\"columns\":[{\"name\":\"cust_id\",\"type\":\"INT\"},{\"name\":\"balance_ccy\",\"type\":\"SYMBOL\"},{\"name\":\"balance\",\"type\":\"DOUBLE\"},{\"name\":\"status\",\"type\":\"BYTE\"},{\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}],\"timestamp\":4,\"dataset\":[[1,\"USD\",1500.0,0,\"1970-01-01T01:40:00.000001Z\"]],\"count\":1}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
-                    1,
-                    0,
-                    false
-            );
+                    // check if we have one record
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=%0A%0Aselect+*+from+balances_x+latest+on+timestamp+partition+by+cust_id%2C+balance_ccy&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                                    "Host: localhost:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "X-Requested-With: XMLHttpRequest\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Referer: http://localhost:9000/index.html\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    "0171\r\n" +
+                                    "{\"query\":\"\\n\\nselect * from balances_x latest on timestamp partition by cust_id, balance_ccy\",\"columns\":[{\"name\":\"cust_id\",\"type\":\"INT\"},{\"name\":\"balance_ccy\",\"type\":\"SYMBOL\"},{\"name\":\"balance\",\"type\":\"DOUBLE\"},{\"name\":\"status\",\"type\":\"BYTE\"},{\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"}],\"timestamp\":4,\"dataset\":[[1,\"USD\",1500.0,0,\"1970-01-01T01:40:00.000001Z\"]],\"count\":1}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n",
+                            1,
+                            0,
+                            false
+                    );
 
-            // add column
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=alter+table+balances_x+add+column+xyz+int&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                            "Host: localhost:13005\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Accept: */*\r\n" +
-                            "X-Requested-With: XMLHttpRequest\r\n" +
-                            "User-Agent: Mozilla/5.0 (X11; Fedora; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.108 Safari/537.36\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Referer: http://localhost:13005/index.html\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            "0c\r\n" +
-                            "{\"ddl\":\"OK\"}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
-                    1,
-                    0,
-                    false
-            );
+                    // add column
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=alter+table+balances_x+add+column+xyz+int&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                                    "Host: localhost:13005\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "X-Requested-With: XMLHttpRequest\r\n" +
+                                    "User-Agent: Mozilla/5.0 (X11; Fedora; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.108 Safari/537.36\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Referer: http://localhost:13005/index.html\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    "0c\r\n" +
+                                    "{\"ddl\":\"OK\"}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n",
+                            1,
+                            0,
+                            false
+                    );
 
-            // select again expecting only metadata
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=%0A%0Aselect+*+from+balances_x+latest+on+timestamp+partition+by+cust_id%2C+balance_ccy&limit=0%2C1000&count=true HTTP/1.1\r\n" +
-                            "Host: localhost:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Accept: */*\r\n" +
-                            "X-Requested-With: XMLHttpRequest\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Referer: http://localhost:9000/index.html\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            "0192\r\n" +
-                            "{\"query\":\"\\n\\nselect * from balances_x latest on timestamp partition by cust_id, balance_ccy\",\"columns\":[{\"name\":\"cust_id\",\"type\":\"INT\"},{\"name\":\"balance_ccy\",\"type\":\"SYMBOL\"},{\"name\":\"balance\",\"type\":\"DOUBLE\"},{\"name\":\"status\",\"type\":\"BYTE\"},{\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"},{\"name\":\"xyz\",\"type\":\"INT\"}],\"timestamp\":4,\"dataset\":[[1,\"USD\",1500.0,0,\"1970-01-01T01:40:00.000001Z\",null]],\"count\":1}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
-                    1,
-                    0,
-                    false
-            );
-        }, false);
+                    // select again expecting only metadata
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=%0A%0Aselect+*+from+balances_x+latest+on+timestamp+partition+by+cust_id%2C+balance_ccy&limit=0%2C1000&count=true HTTP/1.1\r\n" +
+                                    "Host: localhost:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "X-Requested-With: XMLHttpRequest\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Referer: http://localhost:9000/index.html\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    "0192\r\n" +
+                                    "{\"query\":\"\\n\\nselect * from balances_x latest on timestamp partition by cust_id, balance_ccy\",\"columns\":[{\"name\":\"cust_id\",\"type\":\"INT\"},{\"name\":\"balance_ccy\",\"type\":\"SYMBOL\"},{\"name\":\"balance\",\"type\":\"DOUBLE\"},{\"name\":\"status\",\"type\":\"BYTE\"},{\"name\":\"timestamp\",\"type\":\"TIMESTAMP\"},{\"name\":\"xyz\",\"type\":\"INT\"}],\"timestamp\":4,\"dataset\":[[1,\"USD\",1500.0,0,\"1970-01-01T01:40:00.000001Z\",null]],\"count\":1}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n",
+                            1,
+                            0,
+                            false
+                    );
+                }, false
+        );
     }
 
     @Test
@@ -5199,7 +5241,8 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonQueryTopLimitHttp1() throws Exception {
-        testJsonQuery0(2, (engine, sqlExecutionContext) -> {
+        testJsonQuery0(
+                2, (engine, sqlExecutionContext) -> {
                     // create table with all column types
                     createTableX(engine, 20);
                     sendAndReceive(
@@ -5237,35 +5280,37 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonQueryVacuumTable() throws Exception {
-        testJsonQuery0(2, (engine, sqlExecutionContext) -> {
-            createTableX(engine, 20);
+        testJsonQuery0(
+                2, (engine, sqlExecutionContext) -> {
+                    createTableX(engine, 20);
 
-            final String vacuumQuery = "vacuum table x";
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=" + urlEncodeQuery(vacuumQuery) + "&count=true HTTP/1.1\r\n" +
-                            "Host: localhost:9001\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Cache-Control: max-age=0\r\n" +
-                            "Upgrade-Insecure-Requests: 1\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            JSON_DDL_RESPONSE,
-                    1,
-                    0,
-                    false
-            );
-        }, false);
+                    final String vacuumQuery = "vacuum table x";
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /query?query=" + urlEncodeQuery(vacuumQuery) + "&count=true HTTP/1.1\r\n" +
+                                    "Host: localhost:9001\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Cache-Control: max-age=0\r\n" +
+                                    "Upgrade-Insecure-Requests: 1\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                                    "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    JSON_DDL_RESPONSE,
+                            1,
+                            0,
+                            false
+                    );
+                }, false
+        );
     }
 
     @Test
@@ -5513,7 +5558,8 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testJsonSelectNull() throws Exception {
-        testJsonQuery(0, "GET /query?query=select+null+from+long_sequence(1)&count=true&src=con HTTP/1.1\r\n" +
+        testJsonQuery(
+                0, "GET /query?query=select+null+from+long_sequence(1)&count=true&src=con HTTP/1.1\r\n" +
                         "Host: localhost:9000\r\n" +
                         "Connection: keep-alive\r\n" +
                         "Accept: */*\r\n" +
@@ -5840,60 +5886,86 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testMissingURL() throws Exception {
-        testJsonQuery0(2, (engine, sqlExecutionContext) -> {
-            long fd = Net.socketTcp(true);
-            try {
-                long sockAddrInfo = Net.getAddrInfo("127.0.0.1", 9001);
-                try {
-                    TestUtils.assertConnectAddrInfo(fd, sockAddrInfo);
-                    Assert.assertEquals(0, NetworkFacadeImpl.INSTANCE.setTcpNoDelay(fd, true));
-
-                    final String request = "GET HTTP/1.1\r\n" +
-                            "Host: localhost:9001\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Cache-Control: max-age=0\r\n" +
-                            "Upgrade-Insecure-Requests: 1\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
-                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n";
-                    final int len = request.length() * 2;
-                    final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-                    long ptr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+        testJsonQuery0(
+                2, (engine, sqlExecutionContext) -> {
+                    long fd = Net.socketTcp(true);
                     try {
-                        int sent = 0;
-                        int reqLen = request.length();
-                        Utf8s.strCpyAscii(request, reqLen, ptr);
-                        boolean disconnected = false;
-                        while (sent < reqLen) {
-                            int n = nf.sendRaw(fd, ptr + sent, reqLen - sent);
-                            if (n < 0) {
-                                disconnected = true;
-                                break;
-                            }
-                            if (n > 0) {
-                                sent += n;
-                            }
-                        }
-                        if (!disconnected) {
-                            while (true) {
-                                int n = nf.recvRaw(fd, ptr, len);
-                                if (n < 0) {
-                                    break;
+                        long sockAddrInfo = Net.getAddrInfo("127.0.0.1", 9001);
+                        try {
+                            TestUtils.assertConnectAddrInfo(fd, sockAddrInfo);
+                            Assert.assertEquals(0, NetworkFacadeImpl.INSTANCE.setTcpNoDelay(fd, true));
+
+                            final String request = "GET HTTP/1.1\r\n" +
+                                    "Host: localhost:9001\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Cache-Control: max-age=0\r\n" +
+                                    "Upgrade-Insecure-Requests: 1\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                                    "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n";
+                            final int len = request.length() * 2;
+                            final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+                            long ptr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+                            try {
+                                int sent = 0;
+                                int reqLen = request.length();
+                                Utf8s.strCpyAscii(request, reqLen, ptr);
+                                boolean disconnected = false;
+                                while (sent < reqLen) {
+                                    int n = nf.sendRaw(fd, ptr + sent, reqLen - sent);
+                                    if (n < 0) {
+                                        disconnected = true;
+                                        break;
+                                    }
+                                    if (n > 0) {
+                                        sent += n;
+                                    }
                                 }
+                                if (!disconnected) {
+                                    while (true) {
+                                        int n = nf.recvRaw(fd, ptr, len);
+                                        if (n < 0) {
+                                            break;
+                                        }
+                                    }
+                                }
+                            } finally {
+                                Unsafe.free(ptr, len, MemoryTag.NATIVE_DEFAULT);
                             }
+                        } finally {
+                            Net.freeAddrInfo(sockAddrInfo);
                         }
                     } finally {
-                        Unsafe.free(ptr, len, MemoryTag.NATIVE_DEFAULT);
+                        Net.close(fd);
                     }
-                } finally {
-                    Net.freeAddrInfo(sockAddrInfo);
+                }, false
+        );
+    }
+
+    @Test
+    public void testNetworkErrorCouldNotBindSocket() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            HttpFullFatServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
+            try (IODispatcher<HttpConnectionContext> ignored1 = IODispatchers.create(
+                    DefaultIODispatcherConfiguration.INSTANCE,
+                    (fd, d) -> new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE)
+            )) {
+                // Simulate a scenario where the socket cannot be bound
+                try {
+                    try (IODispatcher<HttpConnectionContext> ignored2 = IODispatchers.create(
+                            DefaultIODispatcherConfiguration.INSTANCE,
+                            (fd, d) -> new HttpConnectionContext(httpServerConfiguration, PlainSocketFactory.INSTANCE)
+                    )) {
+                        Assert.fail("ignored2 should not have been created as the socket binding failed");
+                    }
+                } catch (NetworkError e) {
+                    TestUtils.assertContains(e.getMessage(), "could not bind socket");
                 }
-            } finally {
-                Net.close(fd);
             }
-        }, false);
+        });
     }
 
     @Test
@@ -6136,6 +6208,42 @@ public class IODispatcherTest extends AbstractTest {
                     );
 
                     Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
+                });
+    }
+
+    @Test
+    public void testQueryImplicitCastExceptionInWindowFunctionFirstRecord() throws Exception {
+        getSimpleTester()
+                .run((engine, sqlExecutionContext) -> {
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.execute(
+                                "CREATE TABLE 'trades' ( " +
+                                        " symbol SYMBOL, " +
+                                        " side SYMBOL, " +
+                                        " price DOUBLE, " +
+                                        " amount DOUBLE, " +
+                                        " timestamp TIMESTAMP " +
+                                        ") timestamp(timestamp) PARTITION BY DAY;",
+                                executionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO trades VALUES ('ETH-USD', 'sell', 2615.54, 0.00044, '2022-03-08T18:03:57.609765Z');",
+                                executionContext
+                        );
+
+                        testHttpClient.setKeepConnection(true);
+                        testHttpClient.assertGet(
+                                "{\"query\":\"SELECT timestamp, price, lag('timestamp') OVER (ORDER BY timestamp) AS previous_price FROM trades LIMIT 10;\",\"error\":\"inconvertible value: `timestamp` [STRING -> DOUBLE]\",\"position\":0}",
+                                "SELECT timestamp, price, lag('timestamp') OVER (ORDER BY timestamp) AS previous_price FROM trades LIMIT 10;"
+                        );
+
+                        // verify that HTTP server is healthy, use the same connection
+                        testHttpClient.setKeepConnection(false);
+                        testHttpClient.assertGet(
+                                "{\"query\":\"SELECT count() FROM trades;\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
+                                "SELECT count() FROM trades;"
+                        );
+                    }
                 });
     }
 
@@ -7314,7 +7422,6 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTextQueryCorrectQuoting() throws Exception {
-
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
                 .withMicrosecondClock(new TestMicroClock(0, 0))
@@ -7353,7 +7460,6 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTextQueryCorrectQuotingOfHeader() throws Exception {
-
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
                 .withMicrosecondClock(new TestMicroClock(0, 0))
@@ -7392,7 +7498,6 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTextQueryCorrectQuotingWithSpecialChars() throws Exception {
-
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
                 .withMicrosecondClock(new TestMicroClock(0, 0))
@@ -7470,6 +7575,45 @@ public class IODispatcherTest extends AbstractTest {
                         "\"q\",\"u10\",\"questd\",\"questdb12345\",\"1\"\r\n",
                 "/exp"
         );
+    }
+
+    @Test
+    public void testTextQueryImplicitCastExceptionInWindowFunctionFirstRecord() throws Exception {
+        getSimpleTester()
+                .run((engine, sqlExecutionContext) -> {
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        engine.execute(
+                                "CREATE TABLE 'trades' ( " +
+                                        " symbol SYMBOL, " +
+                                        " side SYMBOL, " +
+                                        " price DOUBLE, " +
+                                        " amount DOUBLE, " +
+                                        " timestamp TIMESTAMP " +
+                                        ") timestamp(timestamp) PARTITION BY DAY;",
+                                executionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO trades VALUES ('ETH-USD', 'sell', 2615.54, 0.00044, '2022-03-08T18:03:57.609765Z');",
+                                executionContext
+                        );
+
+                        testHttpClient.setKeepConnection(true);
+                        testHttpClient.assertGet(
+                                "/exp",
+                                "{\"query\":\"SELECT timestamp, price, lag('timestamp') OVER (ORDER BY timestamp) AS previous_price FROM trades LIMIT 10;\",\"error\":\"inconvertible value: `timestamp` [STRING -> DOUBLE]\",\"position\":0}",
+                                "SELECT timestamp, price, lag('timestamp') OVER (ORDER BY timestamp) AS previous_price FROM trades LIMIT 10;"
+                        );
+
+                        // verify that HTTP server is healthy, use the same connection
+                        testHttpClient.setKeepConnection(false);
+                        testHttpClient.assertGet(
+                                "/exp",
+                                "\"count\"\r\n" +
+                                        "1\r\n",
+                                "SELECT count() FROM trades;"
+                        );
+                    }
+                });
     }
 
     @Test
@@ -8225,35 +8369,39 @@ public class IODispatcherTest extends AbstractTest {
                         registryListener.queryText = command;
                         registryListener.queryFound.setCount(1);
 
-                        new Thread(() -> {
-                            try (TestHttpClient testHttpClient = new TestHttpClient()) {
-                                started.countDown();
-                                try {
-                                    testHttpClient.assertGetRegexp(url, ".*(\"dml\":\"OK\").*", command, null, null, null);
-                                } catch (Throwable e) {
-                                    queryError.set(e);
-                                }
-                            } finally {
-                                stopped.countDown();
-                            }
-                        }, "command_thread").start();
+                        new Thread(
+                                () -> {
+                                    try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                                        started.countDown();
+                                        try {
+                                            testHttpClient.assertGetRegexp(url, ".*(\"dml\":\"OK\").*", command, null, null, null);
+                                        } catch (Throwable e) {
+                                            queryError.set(e);
+                                        }
+                                    } finally {
+                                        stopped.countDown();
+                                    }
+                                }, "command_thread"
+                        ).start();
 
-                        Thread walJob = new Thread(() -> {
-                            started.countDown();
+                        Thread walJob = new Thread(
+                                () -> {
+                                    started.countDown();
 
-                            try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
-                                while (queryError.get() == null) {
-                                    walApplyJob.drain(0);
-                                    new CheckWalTransactionsJob(engine).run(0);
-                                    // run once again as there might be notifications to handle now
-                                    walApplyJob.drain(0);
-                                }
-                            } finally {
-                                // release native path memory used by the job
-                                Path.clearThreadLocals();
-                                stopped.countDown();
-                            }
-                        }, "wal_job");
+                                    try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+                                        while (queryError.get() == null) {
+                                            walApplyJob.drain(0);
+                                            new CheckWalTransactionsJob(engine).run(0);
+                                            // run once again as there might be notifications to handle now
+                                            walApplyJob.drain(0);
+                                        }
+                                    } finally {
+                                        // release native path memory used by the job
+                                        Path.clearThreadLocals();
+                                        stopped.countDown();
+                                    }
+                                }, "wal_job"
+                        );
                         walJob.start();
 
                         started.await();
@@ -8366,35 +8514,39 @@ public class IODispatcherTest extends AbstractTest {
                     registryListener.queryText = command;
                     registryListener.queryFound.setCount(1);
 
-                    new Thread(() -> {
-                        try (TestHttpClient testHttpClient = new TestHttpClient()) {
-                            started.countDown();
-                            try {
-                                testHttpClient.assertGetRegexp("/query", ".*(\"dml\":\"OK\").*", command, null, null, null);
-                            } catch (Throwable e) {
-                                queryError.set(e);
-                            }
-                        } finally {
-                            stopped.countDown();
-                        }
-                    }, "command_thread").start();
+                    new Thread(
+                            () -> {
+                                try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                                    started.countDown();
+                                    try {
+                                        testHttpClient.assertGetRegexp("/query", ".*(\"dml\":\"OK\").*", command, null, null, null);
+                                    } catch (Throwable e) {
+                                        queryError.set(e);
+                                    }
+                                } finally {
+                                    stopped.countDown();
+                                }
+                            }, "command_thread"
+                    ).start();
 
-                    Thread walJob = new Thread(() -> {
-                        started.countDown();
+                    Thread walJob = new Thread(
+                            () -> {
+                                started.countDown();
 
-                        try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
-                            while (queryError.get() == null) {
-                                walApplyJob.drain(0);
-                                new CheckWalTransactionsJob(engine).run(0);
-                                // run once again as there might be notifications to handle now
-                                walApplyJob.drain(0);
-                            }
-                        } finally {
-                            // release native path memory used by the job
-                            Path.clearThreadLocals();
-                            stopped.countDown();
-                        }
-                    }, "wal_job");
+                                try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1)) {
+                                    while (queryError.get() == null) {
+                                        walApplyJob.drain(0);
+                                        new CheckWalTransactionsJob(engine).run(0);
+                                        // run once again as there might be notifications to handle now
+                                        walApplyJob.drain(0);
+                                    }
+                                } finally {
+                                    // release native path memory used by the job
+                                    Path.clearThreadLocals();
+                                    stopped.countDown();
+                                }
+                            }, "wal_job"
+                    );
                     walJob.start();
 
                     started.await();
@@ -8544,6 +8696,7 @@ public class IODispatcherTest extends AbstractTest {
         delayThread.start();
         return delayThread;
     }
+
 
     private static HttpServer createHttpServer(
             ServerConfiguration serverConfiguration,
@@ -9095,7 +9248,6 @@ public class IODispatcherTest extends AbstractTest {
         String select1 = "select 1 from long_sequence(1) where sleep(120000)";
         String select2 = "select sleep(120000) from long_sequence(1)";
         String selectWithJoin = "select 1 from long_sequence(1) ls1 join long_sequence(1) on sleep(120000)";
-        String insert = "insert into tab values (sleep(120000), 100000000000000L::timestamp, 'A' )";
         String insertAsSelect1 = "insert into tab select true, 100000000000000L::timestamp, 'B' from long_sequence(1) where sleep(120000)";
         String insertAsSelect2 = "insert into tab select sleep(120000), 100000000000000L::timestamp, 'B' from long_sequence(1)";
         String insertAsSelectBatched = "insert batch 100 into tab select true, 100000000000000L::timestamp, 'B' from long_sequence(1) where sleep(120000)";
@@ -9115,7 +9267,6 @@ public class IODispatcherTest extends AbstractTest {
                     select1,
                     select2,
                     selectWithJoin,
-                    insert,
                     insertAsSelect1,
                     insertAsSelect2,
                     insertAsSelectBatched,
@@ -9190,24 +9341,26 @@ public class IODispatcherTest extends AbstractTest {
                                     registryListener.queryText = command;
                                     registryListener.queryFound.setCount(1);
 
-                                    new Thread(() -> {
-                                        try (TestHttpClient testHttpClient = new TestHttpClient()) {
-                                            started.countDown();
-                                            try {
-                                                testHttpClient.assertGetRegexp(
-                                                        url,
-                                                        ".*(cancelled by user|Could not create table|timeout, query aborted|\"ddl\":\"OK\").*",
-                                                        command,
-                                                        null, null,
-                                                        null
-                                                );
-                                            } catch (Throwable e) {
-                                                queryError.set(e);
-                                            }
-                                        } finally {
-                                            stopped.countDown();
-                                        }
-                                    }, "command_thread").start();
+                                    new Thread(
+                                            () -> {
+                                                try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                                                    started.countDown();
+                                                    try {
+                                                        testHttpClient.assertGetRegexp(
+                                                                url,
+                                                                ".*(cancelled by user|Could not create table|timeout, query aborted|\"ddl\":\"OK\").*",
+                                                                command,
+                                                                null, null,
+                                                                null
+                                                        );
+                                                    } catch (Throwable e) {
+                                                        queryError.set(e);
+                                                    }
+                                                } finally {
+                                                    stopped.countDown();
+                                                }
+                                            }, "command_thread"
+                                    ).start();
 
                                     started.await();
 
@@ -9284,9 +9437,11 @@ public class IODispatcherTest extends AbstractTest {
                                     }
 
                                 } catch (Throwable t) {
-                                    throw new RuntimeException("Failed on\n ddl: " + ddl +
-                                            "\n query: " + command +
-                                            "\n exception: ", t);
+                                    throw new RuntimeException(
+                                            "Failed on\n ddl: " + ddl +
+                                                    "\n query: " + command +
+                                                    "\n exception: ", t
+                                    );
                                 } finally {
                                     queryError.set(new Exception());//stop wal thread
                                     stopped.await();
@@ -9328,18 +9483,20 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     private HttpQueryTestBuilder testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount, boolean telemetry) throws Exception {
-        return testJsonQuery0(2, (engine, sqlExecutionContext) -> {
-            // create table with all column types
-            createTableX(engine, recordCount);
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    request,
-                    expectedResponse,
-                    requestCount,
-                    0,
-                    false
-            );
-        }, telemetry);
+        return testJsonQuery0(
+                2, (engine, sqlExecutionContext) -> {
+                    // create table with all column types
+                    createTableX(engine, recordCount);
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            request,
+                            expectedResponse,
+                            requestCount,
+                            0,
+                            false
+                    );
+                }, telemetry
+        );
     }
 
     private void testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount) throws Exception {

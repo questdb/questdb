@@ -65,6 +65,7 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -89,9 +90,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final IntList columnTypesAndFlags = new IntList();
     private final StringSink columnsQueryParameter = new StringSink();
     private final RecordCursor.Counter counter = new RecordCursor.Counter();
-    private final int doubleScale;
     private final SCSequence eventSubSequence = new SCSequence();
-    private final int floatScale;
     private final HttpConnectionContext httpConnectionContext;
     private final CharSequence keepAliveHeader;
     private final NanosecondClock nanosecondClock;
@@ -132,8 +131,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     public JsonQueryProcessorState(
             HttpConnectionContext httpConnectionContext,
             NanosecondClock nanosecondClock,
-            int floatScale,
-            int doubleScale,
             CharSequence keepAliveHeader
     ) {
         this.httpConnectionContext = httpConnectionContext;
@@ -148,8 +145,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         resumeActions.extendAndSet(QUERY_SUFFIX, this::doQuerySuffix);
 
         this.nanosecondClock = nanosecondClock;
-        this.floatScale = floatScale;
-        this.doubleScale = doubleScale;
         this.statementTimeout = httpConnectionContext.getRequestHeader().getStatementTimeout();
         this.keepAliveHeader = keepAliveHeader;
     }
@@ -884,11 +879,11 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private void putDoubleValue(HttpChunkedResponse response, Record rec, int col) {
-        response.put(rec.getDouble(col), doubleScale);
+        response.put(rec.getDouble(col));
     }
 
     private void putFloatValue(HttpChunkedResponse response, Record rec, int col) {
-        response.put(rec.getFloat(col), floatScale);
+        response.put(rec.getFloat(col));
     }
 
     private void putVarcharValue(HttpChunkedResponse response, int columnIdx) {
@@ -1002,7 +997,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     void querySuffixWithError(
             HttpChunkedResponse response,
             int code,
-            CharSequence message
+            @Nullable CharSequence message
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         // we no longer need cursor when we reached query suffix
         // closing cursor here guarantees that by the time http client finished reading response the table

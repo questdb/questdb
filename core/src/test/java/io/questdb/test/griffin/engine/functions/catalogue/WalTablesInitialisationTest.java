@@ -33,6 +33,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 public class WalTablesInitialisationTest extends AbstractBootstrapTest {
+
     @Before
     public void setUp() {
         super.setUp();
@@ -40,13 +41,12 @@ public class WalTablesInitialisationTest extends AbstractBootstrapTest {
         dbPath.parent().$();
     }
 
-
     @Test
     public void testWalTablesFunctionBeforeSeqTrackerInitialized() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             assert Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN) == 0;
 
-            // Need many table, single table will be initialized way too quickly on a background thread
+            // Need many tables, single table will be initialized way too quickly on a background thread
             int tableCount = 100;
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.start();
@@ -59,8 +59,11 @@ public class WalTablesInitialisationTest extends AbstractBootstrapTest {
             for (int i = 0; i < 5; i++) {
                 try (final TestServerMain serverMain = startWithEnvVariables()) {
                     serverMain.start();
-                    serverMain.assertSql("select max(name), min(name), min(sequencerTxn), max(writerTxn), count() from wal_tables()", "max\tmin\tmin1\tmax1\tcount\n" +
-                            "A99\tA0\t0\t0\t" + tableCount + "\n");
+                    serverMain.assertSql(
+                            "select max(name), min(name), min(sequencerTxn), max(writerTxn), count() from wal_tables()",
+                            "max\tmin\tmin1\tmax1\tcount\n" +
+                                    "A99\tA0\t0\t0\t" + tableCount + "\n"
+                    );
                 }
             }
         });

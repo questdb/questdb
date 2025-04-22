@@ -31,7 +31,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
-import io.questdb.cairo.mv.MatViewRefreshState;
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.log.Log;
@@ -171,11 +171,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
             boolean tableDropped = false;
             discoverWalSegments();
-            int seqPartsCount = discoverSequencerParts();
+            discoverSequencerParts();
 
             if (logic.hasOnDiskSegments()) {
                 try {
-                    tableDropped = fetchSequencerPairs(seqPartsCount);
+                    tableDropped = fetchSequencerPairs();
                 } catch (Throwable th) {
                     logic.releaseLocks();
                     throw th;
@@ -234,13 +234,13 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         } catch (CairoException ce) {
             LOG.error().$("broad sweep failed [table=").$(tableToken)
                     .$(", msg=").$((Throwable) ce)
-                    .$(", errno=").$(ff.errno()).$(']').$();
+                    .$(", errno=").$(ff.errno())
+                    .I$();
         }
     }
 
-    private int discoverSequencerParts() {
+    private void discoverSequencerParts() {
         LPSZ path = setSeqPartPath(tableToken).$();
-        int partsFound = 0;
         if (ff.exists(path)) {
             long p = ff.findFirst(path);
             if (p > 0) {
@@ -253,7 +253,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                             try {
                                 final int partNo = Numbers.parseInt(walName);
                                 logic.trackSeqPart(partNo);
-                                partsFound++;
                             } catch (NumericException ne) {
                                 // Non-Part file directory, ignore.
                             }
@@ -264,7 +263,6 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 }
             }
         }
-        return partsFound;
     }
 
     private void discoverWalSegments() {
@@ -341,7 +339,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    private boolean fetchSequencerPairs(int partsFound) {
+    private boolean fetchSequencerPairs() {
         setTxnPath(tableToken);
         if (!engine.isTableDropped(tableToken)) {
             try {
@@ -360,7 +358,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
                 try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, safeToPurgeTxn)) {
                     int txnPartSize = transactionLogCursor.getPartitionSize();
-                    long currentSeqPart = getCurrentSeqPart(tableToken, safeToPurgeTxn, txnPartSize, partsFound);
+                    long currentSeqPart = getCurrentSeqPart(safeToPurgeTxn, txnPartSize);
                     logic.trackCurrentSeqPart(currentSeqPart);
                     while (onDiskWalIDSet.size() > 0 && transactionLogCursor.hasNext()) {
                         int walId = transactionLogCursor.getWalId();
@@ -391,10 +389,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     private long getSafeToPurgeUpToTxn(long readerSeqTxn) {
         long safeToPurgeTxn = readerSeqTxn;
         childViewSink.clear();
-        engine.getMatViewGraph().getDependentMatViews(tableToken, childViewSink);
+        engine.getMatViewGraph().getDependentViews(tableToken, childViewSink);
         for (int v = 0, n = childViewSink.size(); v < n; v++) {
             final TableToken viewToken = childViewSink.get(v);
-            final MatViewRefreshState state = engine.getMatViewGraph().getViewRefreshState(viewToken);
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
             if (state != null && !state.isPendingInvalidation() && !state.isInvalid() && !state.isDropped()) {
                 final long appliedToViewTxn = Math.max(1, state.getLastRefreshBaseTxn());
                 safeToPurgeTxn = Math.min(safeToPurgeTxn, appliedToViewTxn);
@@ -404,7 +402,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     private boolean recursiveDelete(Path path) {
-        if (!ff.rmdir(path, false) && !CairoException.errnoPathDoesNotExist(ff.errno())) {
+        if (!ff.rmdir(path, false) && !Files.errnoFileDoesNotExist(ff.errno())) {
             LOG.debug()
                     .$("could not delete directory [path=").$(path)
                     .$(", errno=").$(ff.errno())
@@ -463,7 +461,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId);
     }
 
-    protected long getCurrentSeqPart(TableToken tableToken, long lastAppliedTxn, int txnPartSize, int partsFound) {
+    protected long getCurrentSeqPart(long lastAppliedTxn, int txnPartSize) {
         // There can be more advanced override which uses more parameters than this implementation.
         if (txnPartSize > 0) {
             // we don't want to purge the part where the last txn is in. Txn is 1-based.

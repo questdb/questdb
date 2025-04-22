@@ -63,17 +63,20 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
         startedCounter.incrementAndGet();
 
         final boolean owner = stealingAtom != null && stealingAtom == atom;
-        final int slotId = atom.maybeAcquire(workerId, owner, (ExecutionCircuitBreaker) circuitBreaker);
         try {
-            if (circuitBreaker.checkIfTripped()) {
-                return;
+            final int slotId = atom.maybeAcquire(workerId, owner, (ExecutionCircuitBreaker) circuitBreaker);
+            try {
+                if (circuitBreaker.checkIfTripped()) {
+                    return;
+                }
+                atom.mergeShard(slotId, shardIndex);
+            } finally {
+                atom.release(slotId);
             }
-            atom.mergeShard(slotId, shardIndex);
-        } catch (Throwable e) {
-            LOG.error().$("merge shard failed [ex=").$(e).I$();
+        } catch (Throwable th) {
+            LOG.error().$("merge shard failed [error=").$(th).I$();
             circuitBreaker.cancel();
         } finally {
-            atom.release(slotId);
             doneLatch.countDown();
         }
     }

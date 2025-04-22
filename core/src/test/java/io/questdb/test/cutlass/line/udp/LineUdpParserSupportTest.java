@@ -180,8 +180,8 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
                 ColumnType.FLOAT,
                 "column\tlocation\ttimestamp\n" +
                         "null\tsp052w\t1970-01-01T00:00:01.000000Z\n" +
-                        "3.1416\t\t1970-01-01T00:00:02.000000Z\n" +
-                        "5.0000\t\t1970-01-01T00:00:05.000000Z\n",
+                        "3.14159\t\t1970-01-01T00:00:02.000000Z\n" +
+                        "5.0\t\t1970-01-01T00:00:05.000000Z\n",
                 (sender) -> {
                     sender.metric(tableName)
                             .field(targetColumnName, Double.MAX_VALUE)

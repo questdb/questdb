@@ -24,29 +24,14 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.test.AbstractCairoTest;
-import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 public class ShowTablesTest extends AbstractCairoTest {
-
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
-        AbstractCairoTest.setUpStatic();
-    }
-
-    @Before
-    public void setUp() {
-        super.setUp();
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
-    }
 
     @Test
     public void testDropAndRecreateTable() throws Exception {
@@ -70,9 +55,16 @@ public class ShowTablesTest extends AbstractCairoTest {
                 // this mimic behavior of a query cache.
                 try (RecordCursorFactory recordCursorFactory = compile.getRecordCursorFactory()) {
                     try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
-                        assertCursor("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\n" +
+                        assertCursor(
+                                "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\n" +
                                         "1\tx\tts\tDAY\t1000\t300000000\tfalse\tx~\tfalse\t0\tHOUR\tfalse\n",
-                                false, true, true, cursor, recordCursorFactory.getMetadata(), false);
+                                false,
+                                true,
+                                true,
+                                cursor,
+                                recordCursorFactory.getMetadata(),
+                                false
+                        );
                     }
 
                     // recreate the same table again
@@ -82,9 +74,16 @@ public class ShowTablesTest extends AbstractCairoTest {
 
                     try (RecordCursor cursor = recordCursorFactory.getCursor(sqlExecutionContext)) {
                         // note the ID is 2 now!
-                        assertCursor("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\n" +
+                        assertCursor(
+                                "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\n" +
                                         "2\tx\tts\tDAY\t1000\t300000000\tfalse\tx~\tfalse\t0\tHOUR\tfalse\n",
-                                false, true, true, cursor, recordCursorFactory.getMetadata(), false);
+                                false,
+                                true,
+                                true,
+                                cursor,
+                                recordCursorFactory.getMetadata(),
+                                false
+                        );
                     }
                 }
             }
@@ -114,7 +113,7 @@ public class ShowTablesTest extends AbstractCairoTest {
             execute("create table balances(cust_id int, ccy symbol, balance double)");
             assertException(
                     "select * from table_columns('balances2')",
-                    14,
+                    28,
                     "table does not exist"
             );
         });
@@ -253,7 +252,7 @@ public class ShowTablesTest extends AbstractCairoTest {
             assertSql(
                     "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\tmatView\n" +
                             "1\tbalances\tts\tDAY\t1000\t300000000\ttrue\tbalances~1\tfalse\t0\tHOUR\tfalse\n" +
-                            "2\tbalances_1h\tts\tWEEK\t0\t-1\ttrue\tbalances_1h~2\ttrue\t0\tHOUR\ttrue\n",
+                            "2\tbalances_1h\tts\tWEEK\t1000\t-1\ttrue\tbalances_1h~2\ttrue\t0\tHOUR\ttrue\n",
                     "tables() order by table_name"
             );
         });

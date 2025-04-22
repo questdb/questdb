@@ -246,6 +246,12 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
         }
     }
 
+    /**
+     * Attempts to acquire a slot for the given worker thread.
+     * On success, a {@link #release(int)} call must follow.
+     *
+     * @throws io.questdb.cairo.CairoException when circuit breaker has tripped
+     */
     public int maybeAcquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
         if (workerId == -1 && owner) {
             // Owner thread is free to use its own private filter, function updaters, etc. anytime.
