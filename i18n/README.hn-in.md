@@ -16,7 +16,7 @@
 </p>
 
 [English](https://github.com/questdb/questdb) | [简体中文](README.zh-cn.md) | [繁體中文](README.zh-hk.md) | [العربية](README.ar-dz.md) | [Italiano](README.it-it.md) | [Українська](README.ua-ua.md) | [Español](README.es-es.md) | [Português](README.pt.md) | [日本語](README.ja-ja.md) | [Türkçe](README.tr-tr.md) |
-हिंदी  | [Tiếng Việt](README.vi-vn.md)
+हिंदी | [Tiếng Việt](README.vi-vn.md)
 
 # QuestDB
 
@@ -129,7 +129,7 @@ questdb stop  // To stop questdb
 
 - [QuestDB दस्तावेज़ीकरण:](https://questdb.io/docs/introduction/) QuestDB को चलाने
   और कॉन्फ़िगर करने का तरीका समझें।
-- [ट्यूटोरियल:](https://questdb.io/tutorial/) चरण दर चरण जानें
+- [ट्यूटोरियल:](https://questdb.com/blog/?tag=tutorial) चरण दर चरण जानें
   कि QuestDB के साथ क्या संभव है।
 - [उत्पाद रोडमैप:](https://github.com/questdb/questdb/projects) आगामी रिलीज़ के लिए
   हमारी योजना देखें।
@@ -145,10 +145,10 @@ questdb stop  // To stop questdb
 
 ### 🚢 QuestDB तैनात करें
 
-- [AWS AMI](https://questdb.io/docs/guides/aws-official-ami)
-- [Google Cloud Platform](https://questdb.io/docs/guides/google-cloud-platform)
-- [Official Docker image](https://questdb.io/docs/get-started/docker)
-- [DigitalOcean droplets](https://questdb.io/docs/guides/digitalocean)
+- [AWS AMI](https://questdb.com/docs/deployment/aws/)
+- [Google Cloud Platform](https://questdb.com/docs/deployment/gcp/)
+- [Official Docker image](https://questdb.com/docs/quick-start/#docker)
+- [DigitalOcean droplets](https://questdb.com/docs/deployment/digital-ocean/)
 - [Kubernetes Helm charts](https://questdb.io/docs/guides/kubernetes)
 
 ## Contribute
