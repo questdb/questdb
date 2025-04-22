@@ -44,12 +44,20 @@ public interface MultiArgFunction extends Function {
 
     @Override
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        Function.init(getArgs(), symbolTableSource, executionContext);
+        Function.init(getArgs(), symbolTableSource, executionContext, null);
     }
 
     @Override
-    default void initCursor() {
-        Function.initCursor(getArgs());
+    default void offerStateTo(Function that) {
+        if (that instanceof MultiArgFunction) {
+            ObjList<Function> thatArgs = ((MultiArgFunction) that).getArgs();
+            ObjList<Function> thisArgs = getArgs();
+            if (thatArgs.size() == thisArgs.size()) {
+                for (int i = 0; i < thisArgs.size(); i++) {
+                    thisArgs.getQuick(i).offerStateTo(thatArgs.getQuick(i));
+                }
+            }
+        }
     }
 
     @Override

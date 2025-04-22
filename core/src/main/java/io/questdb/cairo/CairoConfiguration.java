@@ -172,6 +172,8 @@ public interface CairoConfiguration {
     @NotNull
     String getDbRoot(); // some folder with suffix env['cairo.root'] e.g. /.../db
 
+    boolean getDebugWalApplyBlockFailureNoRetry();
+
     @NotNull
     DateLocale getDefaultDateLocale();
 
@@ -182,8 +184,6 @@ public interface CairoConfiguration {
     int getDefaultSymbolCapacity();
 
     int getDetachedMkDirMode();
-
-    int getDoubleToStrCastScale();
 
     default Map<String, String> getEnv() {
         return System.getenv();
@@ -198,8 +198,6 @@ public interface CairoConfiguration {
 
     @NotNull
     FilesFacade getFilesFacade();
-
-    int getFloatToStrCastScale();
 
     long getGroupByAllocatorDefaultChunkSize();
 
@@ -265,7 +263,13 @@ public interface CairoConfiguration {
 
     long getMatViewInsertAsSelectBatchSize();
 
-    int getMatViewMaxRecompileAttempts();
+    int getMatViewMaxRefreshRetries();
+
+    long getMatViewMinRefreshInterval();
+
+    long getMatViewRefreshOomRetryTimeout();
+
+    int getMatViewRowsPerQueryEstimate();
 
     int getMaxCrashFiles();
 
@@ -498,6 +502,8 @@ public interface CairoConfiguration {
 
     int getSqlPageFrameMinRows();
 
+    double getSqlParallelFilterPreTouchThreshold();
+
     int getSqlParallelWorkStealingThreshold();
 
     int getSqlParquetFrameCacheCapacity();
@@ -619,6 +625,8 @@ public interface CairoConfiguration {
     int getWithClauseModelPoolCapacity();
 
     long getWorkStealTimeoutNanos();
+
+    long getWriteBackOffTimeoutOnMemPressureMs();
 
     long getWriterAsyncCommandBusyWaitTimeout();
 

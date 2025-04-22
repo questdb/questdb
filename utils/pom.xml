@@ -27,7 +27,7 @@
 
     <groupId>io.questdb</groupId>
     <artifactId>utils</artifactId>
-    <version>8.2.3-SNAPSHOT</version>
+    <version>8.3.1-SNAPSHOT</version>
 
     <name>Command line utils for QuestDB</name>
 
@@ -62,7 +62,6 @@
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
             <version>42.7.2</version>
-            <scope>test</scope>
         </dependency>
     </dependencies>
 

@@ -64,19 +64,7 @@ public class LogRecordSinkAdapter implements Utf16Sink {
     }
 
     @Override
-    public Utf16Sink put(float value, int scale) {
-        line.$(value);
-        return this;
-    }
-
-    @Override
     public Utf16Sink put(double value) {
-        line.$(value);
-        return this;
-    }
-
-    @Override
-    public Utf16Sink put(double value, int scale) {
         line.$(value);
         return this;
     }

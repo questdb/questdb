@@ -34,9 +34,19 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.*;
+import io.questdb.std.AtomicIntList;
+import io.questdb.std.BoolList;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -102,6 +112,32 @@ class WalEventWriter implements Closeable {
                 appendFunctionValue(bindVariableService.getFunction(sink));
             }
         }
+    }
+
+    private int appendData(byte txnType, long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder, long lastRefreshBaseTxn, long lastRefreshTimestamp) {
+        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
+        eventMem.putLong(txn);
+        eventMem.putByte(txnType);
+        eventMem.putLong(startRowID);
+        eventMem.putLong(endRowID);
+        eventMem.putLong(minTimestamp);
+        eventMem.putLong(maxTimestamp);
+        eventMem.putBool(outOfOrder);
+        if (txnType == WalTxnType.MAT_VIEW_DATA) {
+            assert lastRefreshBaseTxn != Numbers.LONG_NULL;
+            eventMem.putLong(lastRefreshBaseTxn);
+            eventMem.putLong(lastRefreshTimestamp);
+        }
+        writeSymbolMapDiffs();
+        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
+        eventMem.putInt(-1);
+
+        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
+        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        if (txnType == WalTxnType.MAT_VIEW_DATA) {
+            eventMem.putInt(WAL_FORMAT_OFFSET_32, WALE_MAT_VIEW_FORMAT_VERSION);
+        }
+        return txn++;
     }
 
     private void appendFunctionValue(Function function) {
@@ -174,13 +210,13 @@ class WalEventWriter implements Closeable {
     private void appendIndex(long value) {
         Unsafe.getUnsafe().putLong(longBuffer, value);
         if (ff.append(indexFd, longBuffer, Long.BYTES) != Long.BYTES) {
-            throw CairoException.critical(ff.errno()).put("could not append WAL invent index value [value=").put(value).put(']');
+            throw CairoException.critical(ff.errno()).put("could not append WAL event index value [value=").put(value).put(']');
         }
     }
 
     private void init() {
         eventMem.putInt(0);
-        eventMem.putInt(WAL_FORMAT_VERSION);
+        eventMem.putInt(WALE_FORMAT_VERSION);
         eventMem.putInt(-1);
 
         appendIndex(WALE_HEADER_SIZE);
@@ -189,13 +225,13 @@ class WalEventWriter implements Closeable {
 
     private void writeSymbolMapDiffs() {
         final int columns = txnSymbolMaps.size();
-        for (int i = 0; i < columns; i++) {
-            final CharSequenceIntHashMap symbolMap = txnSymbolMaps.getQuick(i);
+        for (int columnIndex = 0; columnIndex < columns; columnIndex++) {
+            final CharSequenceIntHashMap symbolMap = txnSymbolMaps.getQuick(columnIndex);
             if (symbolMap != null) {
-                final int initialCount = initialSymbolCounts.get(i);
+                final int initialCount = initialSymbolCounts.get(columnIndex);
                 if (initialCount > 0 || (initialCount == 0 && symbolMap.size() > 0)) {
-                    eventMem.putInt(i);
-                    eventMem.putBool(symbolMapNullFlags.get(i));
+                    eventMem.putInt(columnIndex);
+                    eventMem.putBool(symbolMapNullFlags.get(columnIndex));
                     eventMem.putInt(initialCount);
 
                     final int size = symbolMap.size();
@@ -211,7 +247,7 @@ class WalEventWriter implements Closeable {
                         if (value >= initialCount) {
                             eventMem.putInt(value);
                             eventMem.putStr(symbol);
-                            symbolCount += 1;
+                            symbolCount++;
                         }
                     }
                     // Update the size with the exact symbolCount
@@ -227,21 +263,36 @@ class WalEventWriter implements Closeable {
     }
 
     int appendData(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
+        return appendData(
+                startRowID,
+                endRowID,
+                minTimestamp,
+                maxTimestamp,
+                outOfOrder,
+                Numbers.LONG_NULL,
+                Numbers.LONG_NULL
+        );
+    }
+
+    int appendData(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder, long lastRefreshBaseTxn, long lastRefreshTimestamp) {
+        byte msgType = lastRefreshBaseTxn != Numbers.LONG_NULL ? WalTxnType.MAT_VIEW_DATA : WalTxnType.DATA;
+        return appendData(msgType, startRowID, endRowID, minTimestamp, maxTimestamp, outOfOrder, lastRefreshBaseTxn, lastRefreshTimestamp);
+    }
+
+    int appendMatViewInvalidate(long lastRefreshBaseTxn, long lastRefreshTimestamp, boolean invalid, @Nullable CharSequence invalidationReason) {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
-        eventMem.putByte(WalTxnType.DATA);
-        eventMem.putLong(startRowID);
-        eventMem.putLong(endRowID);
-        eventMem.putLong(minTimestamp);
-        eventMem.putLong(maxTimestamp);
-        eventMem.putBool(outOfOrder);
-        writeSymbolMapDiffs();
+        eventMem.putByte(WalTxnType.MAT_VIEW_INVALIDATE);
+        eventMem.putLong(lastRefreshBaseTxn);
+        eventMem.putLong(lastRefreshTimestamp);
+        eventMem.putBool(invalid);
+        eventMem.putStr(invalidationReason);
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);
 
         appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
-
         eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        eventMem.putInt(WAL_FORMAT_OFFSET_32, WALE_MAT_VIEW_FORMAT_VERSION);
         return txn++;
     }
 

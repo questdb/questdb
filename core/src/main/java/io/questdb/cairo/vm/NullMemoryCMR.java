@@ -26,7 +26,12 @@ package io.questdb.cairo.vm;
 
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryCMR;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Acceptor;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.LPSZ;
@@ -89,12 +94,7 @@ public class NullMemoryCMR implements MemoryCMR {
     }
 
     @Override
-    public DirectUtf8Sequence getDirectVarcharA(long offset, int size, boolean ascii) {
-        return null;
-    }
-
-    @Override
-    public DirectUtf8Sequence getDirectVarcharB(long offset, int size, boolean ascii) {
+    public DirectUtf8Sequence getDirectVarchar(long offset, int size, boolean ascii) {
         return null;
     }
 

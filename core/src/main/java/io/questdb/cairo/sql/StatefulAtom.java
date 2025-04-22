@@ -49,13 +49,4 @@ public interface StatefulAtom extends QuietCloseable, Mutable {
      */
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
     }
-
-    /**
-     * Initializes cursor-based data structures used by cursor functions, like 'symbol_col IN (SELECT ...)'.
-     * Must be called after {@link #init(SymbolTableSource, SqlExecutionContext)}.
-     *
-     * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
-     */
-    default void initCursor() {
-    }
 }

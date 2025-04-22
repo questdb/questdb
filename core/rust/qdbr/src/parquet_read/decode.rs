@@ -1,6 +1,5 @@
 use crate::allocator::{AcVec, QdbAllocator};
-use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
-use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
+use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
 use crate::parquet_read::column_sink::fixed::{
     FixedBooleanColumnSink, FixedDoubleColumnSink, FixedFloatColumnSink, FixedInt2ByteColumnSink,
@@ -32,6 +31,7 @@ use parquet2::schema::types::{
     PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
 };
 use parquet2::write::Version;
+use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use std::cmp;
 use std::cmp::min;
 use std::collections::VecDeque;
@@ -136,7 +136,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
     ) -> ParquetResult<usize> {
         if row_group_index > self.row_group_count {
             return Err(fmt_err!(
-                Invalid,
+                InvalidLayout,
                 "row group index {} out of range [0,{})",
                 row_group_index,
                 self.row_group_count
@@ -162,7 +162,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
 
             if column_type != to_column_type {
                 return Err(fmt_err!(
-                    Invalid,
+                    InvalidType,
                     "requested column type {} does not match file column type {}, column index: {}",
                     to_column_type,
                     column_type,
@@ -202,7 +202,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                 Ok(column_chunk_decoded) => {
                     if decoded > 0 && decoded != column_chunk_decoded {
                         return Err(fmt_err!(
-                            Invalid,
+                            InvalidLayout,
                             "column chunk size {} does not match previous size {}",
                             column_chunk_decoded,
                             decoded
@@ -298,7 +298,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
     ) -> ParquetResult<()> {
         if row_group_index >= self.row_group_count {
             return Err(fmt_err!(
-                Invalid,
+                InvalidLayout,
                 "row group index {} out of range [0,{})",
                 row_group_index,
                 self.row_group_count
@@ -312,7 +312,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             let column_type = self.columns[column_idx].column_type;
             if column_type != to_column_type {
                 return Err(fmt_err!(
-                    Invalid,
+                    InvalidType,
                     "requested column type {} does not match file column type {}, column index: {}",
                     to_column_type,
                     column_type,
@@ -356,7 +356,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
     ) -> ParquetResult<u64> {
         if timestamp_column_index >= self.col_count {
             return Err(fmt_err!(
-                Invalid,
+                InvalidLayout,
                 "timestamp column index {} out of range [0,{})",
                 timestamp_column_index,
                 self.col_count
@@ -367,7 +367,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         let column_type = self.columns[timestamp_column_index].column_type;
         if column_type.tag() != ColumnTypeTag::Timestamp {
             return Err(fmt_err!(
-                Invalid,
+                InvalidType,
                 "expected timestamp column, but got {}, column index: {}",
                 column_type,
                 timestamp_column_index
@@ -382,7 +382,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             let column_chunk = column_metadata.column_chunk();
             let column_chunk_meta = column_chunk.meta_data.as_ref().ok_or_else(|| {
                 fmt_err!(
-                    Invalid,
+                    InvalidType,
                     "metadata not found for timestamp column, column index: {}",
                     timestamp_column_index
                 )
@@ -396,7 +396,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                 let column_chunk_stats =
                     column_chunk_meta.statistics.as_ref().ok_or_else(|| {
                         fmt_err!(
-                            Invalid,
+                            InvalidLayout,
                             "statistics not found for timestamp column, column index: {}",
                             timestamp_column_index
                         )
@@ -1310,10 +1310,10 @@ pub fn get_selected_rows(page: &DataPage) -> VecDeque<Interval> {
 fn long_stat_value(value: &Option<Vec<u8>>) -> ParquetResult<i64> {
     let value = value
         .as_ref()
-        .ok_or_else(|| fmt_err!(Invalid, "missing statistics value"))?;
+        .ok_or_else(|| fmt_err!(InvalidLayout, "missing statistics value"))?;
     if value.len() != 8 {
         return Err(fmt_err!(
-            Invalid,
+            InvalidLayout,
             "unexpected value byte array size of {}",
             value.len()
         ));
@@ -1326,8 +1326,8 @@ fn long_stat_value(value: &Option<Vec<u8>>) -> ParquetResult<i64> {
 #[cfg(test)]
 mod tests {
     use crate::allocator::{AcVec, TestAllocatorState};
-    use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
     use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
+    use crate::parquet::tests::ColumnTypeTagExt;
     use crate::parquet_read::decode::{INT_NULL, LONG_NULL, UUID_NULL};
     use crate::parquet_read::{ColumnChunkBuffers, ParquetDecoder};
     use crate::parquet_write::file::ParquetWriter;
@@ -1337,6 +1337,7 @@ mod tests {
     use bytes::Bytes;
     use parquet::file::reader::Length;
     use parquet2::write::Version;
+    use qdb_core::col_type::{ColumnType, ColumnTypeTag};
     use rand::Rng;
     use std::fs::File;
     use std::io::{Cursor, Write};

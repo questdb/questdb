@@ -213,6 +213,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             LongList rows,
             boolean fragmentedSymbolTables
     ) {
+        long cursorSizeBeforeFetch = cursor.size();
         if (expected == null) {
             Assert.assertFalse(cursor.hasNext());
             cursor.toTop();
@@ -248,6 +249,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
         if (cursorSize != -1) {
             Assert.assertEquals("Actual cursor records vs cursor.size()", count, cursorSize);
+            if (cursorSizeBeforeFetch != -1) {
+                Assert.assertEquals("Cursor size before fetch and after", cursorSizeBeforeFetch, cursorSize);
+            }
         }
 
         TestUtils.assertEquals(expected, sink);
@@ -479,6 +483,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         configuration = node1.getConfiguration();
         securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getRootContext();
         engine = node1.getEngine();
+        engine.load();
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.clearCache();
         }
@@ -532,13 +537,14 @@ public abstract class AbstractCairoTest extends AbstractTest {
         TestFilesFacadeImpl.resetTracking();
         memoryUsage = -1;
         forEachNode(QuestDBTestNode::setUpGriffin);
+        sqlExecutionContext.resetFlags();
         sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
         sqlExecutionContext.setParallelGroupByEnabled(configuration.isSqlParallelGroupByEnabled());
         sqlExecutionContext.setParallelReadParquetEnabled(configuration.isSqlParallelReadParquetEnabled());
         // 30% chance to enable paranoia checking FD mode
         Files.PARANOIA_FD_MODE = new Rnd(System.nanoTime(), System.currentTimeMillis()).nextInt(100) > 70;
         engine.getMetrics().clear();
-        engine.getMatViewGraph().clear();
+        engine.getMatViewStateStore().clear();
     }
 
     @After
@@ -623,7 +629,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 }
             }
         }
-        Assert.fail();
+        Assert.fail("SQL statement should have failed");
     }
 
     private static void assertSymbolColumnThreadSafety(int numberOfIterations, int symbolColumnCount, ObjList<SymbolTable> symbolTables, int[] symbolTableKeySnapshot, String[][] symbolTableValueSnapshot) {
@@ -1020,9 +1026,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         } catch (Throwable e) {
             if (e instanceof FlyweightMessageContainer) {
                 TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), contains);
-                if (errorPos > -1) {
-                    Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
-                }
+                Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
             } else {
                 throw e;
             }
@@ -1480,7 +1484,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static void printSql(CharSequence sql, boolean fullFatJoins) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.setFullFatJoins(fullFatJoins);
-            TestUtils.printSql(compiler, sqlExecutionContext, sql, sink);
+            try {
+                TestUtils.printSql(compiler, sqlExecutionContext, sql, sink);
+            } finally {
+                compiler.setFullFatJoins(false);
+            }
         }
     }
 

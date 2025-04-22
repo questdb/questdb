@@ -41,6 +41,7 @@ import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.metrics.QueryTracingJob;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cutlass.http.TestHttpClient;
 import io.questdb.test.tools.TestUtils;
@@ -62,6 +63,7 @@ import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static org.junit.Assert.assertFalse;
@@ -133,7 +135,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 TestUtils.assertEventually(() -> Assert.assertEquals(0, metrics.httpMetrics().connectionCountGauge().getValue()));
                 TestUtils.assertEventually(() -> Assert.assertTrue(3 < metrics.httpMetrics().listenerStateChangeCounter().getValue()));
 
-                assertReloadConfig(true);
+                assertReloadConfigEventually();
 
                 // we should be able to open two connections eventually
                 TestUtils.assertEventually(() -> {
@@ -197,7 +199,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("http.recv.buffer.size=300\n");
                 }
 
-                assertReloadConfig(true);
+                assertReloadConfigEventually();
 
                 // second reload should not reload (no changes)
                 assertReloadConfig(false);
@@ -220,7 +222,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("http.recv.buffer.size=300\n");
                 }
 
-                assertReloadConfig(true);
+                assertReloadConfigEventually();
 
                 // second reload should not reload (no changes)
                 assertReloadConfig(false);
@@ -264,7 +266,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("http.send.buffer.size=200\n");
                 }
 
-                assertReloadConfig(true);
+                assertReloadConfigEventually();
 
                 try (TestHttpClient testHttpClient = new TestHttpClient()) {
                     testHttpClient.assertGet(
@@ -290,7 +292,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("pg.named.statement.limit=10\n");
                 }
 
-                assertReloadConfig(true);
+                assertReloadConfigEventually();
 
                 namedStatementLimit = serverMain.getConfiguration().getPGWireConfiguration().getNamedStatementLimit();
                 Assert.assertEquals(10, namedStatementLimit);
@@ -429,7 +431,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("pg.password=sklar\n");
                 }
 
-                assertReloadConfig(true);
+                assertReloadConfigEventually();
 
                 try (Connection conn = getConnection("steven", "sklar")) {
                     assertFalse(conn.isClosed());
@@ -455,7 +457,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("pg.password=sklar\n");
                 }
 
-                assertReloadConfig(true);
+                assertReloadConfigEventually();
 
                 try (Connection conn = getConnection("steven", "sklar")) {
                     assertFalse(conn.isClosed());
@@ -496,7 +498,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("pg.recv.buffer.size=512\n");
                 }
 
-                assertReloadConfig(true);
+                assertReloadConfigEventually();
 
                 // now we should be able to insert
                 try (
@@ -537,7 +539,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     w.write("pg.send.buffer.size=512\n");
                 }
 
-                assertReloadConfig(true);
+                assertReloadConfigEventually();
 
                 try (
                         Connection conn = getConnection("admin", "quest");
@@ -572,7 +574,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
                     // this executes a query, and would trigger query tracing (if it was enabled) as a side effect
                     assertTableEmpty.run();
-                    Thread.sleep(1_000);
+                    Os.sleep(1_000);
                     // by this time the query_trace table would most likely exist if tracing was enabled
                     assertTableEmpty.run();
 
@@ -580,11 +582,11 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                         w.write("query.tracing.enabled=true\n");
                     }
                     // This is also a query. With tracing now on, it triggers creating the query_trace table:
-                    assertReloadConfig(true);
+                    assertReloadConfigEventually();
 
                     int sleepMillis = 100;
                     while (true) {
-                        Thread.sleep(sleepMillis);
+                        Os.sleep(sleepMillis);
                         try (ResultSet rs = queryTraceStmt.executeQuery()) {
                             Assert.assertTrue(rs.next());
                             break;
@@ -749,6 +751,26 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
         ) {
             Assert.assertTrue(rs.next());
             Assert.assertEquals(expectedResult, rs.getBoolean(1));
+        }
+    }
+
+    private void assertReloadConfigEventually() throws SQLException {
+        final long timeoutSeconds = 10;
+        long maxSleepingTimeMillis = 1000;
+        long nextSleepingTimeMillis = 10;
+        long startTime = System.nanoTime();
+        long deadline = startTime + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        for (; ; ) {
+            try {
+                assertReloadConfig(true);
+                return;
+            } catch (AssertionError error) {
+                if (System.nanoTime() >= deadline) {
+                    throw error;
+                }
+            }
+            Os.sleep(nextSleepingTimeMillis);
+            nextSleepingTimeMillis = Math.min(maxSleepingTimeMillis, nextSleepingTimeMillis << 1);
         }
     }
 

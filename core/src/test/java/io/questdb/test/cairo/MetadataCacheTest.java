@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
+import io.questdb.cairo.MetadataCache;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -165,7 +166,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     }
                 } catch (SqlException | CairoException ignore) {
                 } catch (Throwable e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     exception.set(e);
                 } finally {
                     Path.clearThreadLocals();
@@ -180,7 +181,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     }
                 } catch (SqlException | CairoException ignore) {
                 } catch (Throwable e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     exception.set(e);
                 } finally {
                     Path.clearThreadLocals();
@@ -200,7 +201,8 @@ public class MetadataCacheTest extends AbstractCairoTest {
                 s = dumpTables(ss);
                 Assert.assertTrue(
                         TestUtils.dumpMetadataCache(engine),
-                        s.contains("foo\t") ^ s.contains("bah\t"));
+                        s.contains("foo\t") ^ s.contains("bah\t")
+                );
                 Thread.sleep(50);
             }
 
@@ -269,7 +271,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     }
                 } catch (InterruptedException | SqlException | CairoException ignore) {
                 } catch (Throwable e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     exception.set(e);
                 } finally {
                     Path.clearThreadLocals();
@@ -285,7 +287,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     }
                 } catch (InterruptedException | SqlException | CairoException ignore) {
                 } catch (Throwable e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     exception.set(e);
                 } finally {
                     Path.clearThreadLocals();
@@ -300,7 +302,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
                     }
                 } catch (SqlException | CairoException ignored) {
                 } catch (Throwable e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     exception.set(e);
                 } finally {
                     Path.clearThreadLocals();
@@ -631,6 +633,19 @@ public class MetadataCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateBeforeCacheHydrated() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MetadataCache cache = new MetadataCache(engine)) {
+                TableToken yToken = createY();
+
+                var writer = cache.writeLock();
+                writer.hydrateTable(yToken);
+                writer.close();
+            }
+        });
+    }
+
+    @Test
     public void testDropAndRecreateTableRefreshSnapshots() throws Exception {
         assertMemoryLeak(() -> {
             createX();
@@ -661,10 +676,23 @@ public class MetadataCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropBeforeCacheHydrated() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken yToken = createY();
+
+            try (MetadataCache cache = new MetadataCache(engine)) {
+                execute("DROP TABLE y");
+
+                var writer = cache.writeLock();
+                writer.dropTable(yToken);
+                writer.close();
+            }
+        });
+    }
+
+    @Test
     public void testDropTable() throws Exception {
         assertMemoryLeak(() -> {
-
-
             execute("CREATE TABLE y ( ts TIMESTAMP, x INT ) timestamp(ts) partition by day wal;");
             drainWalQueue();
 
@@ -676,7 +704,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
             execute("DROP TABLE y");
             drainWalQueue();
 
-            assertException("table_columns('y')", -1, "table does not exist");
+            assertException("table_columns('y')", 14, "table does not exist");
         });
     }
 
@@ -697,6 +725,22 @@ public class MetadataCacheTest extends AbstractCairoTest {
                             "1\tbah\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\t0\tHOUR\tfalse\n",
                     "tables()"
             );
+        });
+    }
+
+    @Test
+    public void testRenameBeforeCacheHydrated() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken yToken = createY();
+
+            try (MetadataCache cache = new MetadataCache(engine)) {
+                execute("RENAME TABLE y TO y2");
+                TableToken y2Token = engine.verifyTableName("y2");
+
+                var writer = cache.writeLock();
+                writer.renameTable(yToken, y2Token);
+                writer.close();
+            }
         });
     }
 
@@ -782,8 +826,9 @@ public class MetadataCacheTest extends AbstractCairoTest {
         );
     }
 
-    private void createY() throws SqlException {
+    private TableToken createY() throws SqlException {
         execute("create table y ( ts timestamp ) timestamp(ts) partition by day wal;");
+        return engine.verifyTableName("y");
     }
 
     private void createZ() throws SqlException {

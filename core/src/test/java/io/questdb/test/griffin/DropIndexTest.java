@@ -495,7 +495,7 @@ public class DropIndexTest extends AbstractCairoTest {
                 "ALTER TABLE sensors ALTER COLUMN sensor_id dope INDEX",
                 CREATE_TABLE_STMT,
                 43,
-                "'add', 'drop', 'cache' or 'nocache' expected found 'dope'"
+                "'add', 'drop', 'symbol', 'cache' or 'nocache' expected found 'dope'"
         );
     }
 

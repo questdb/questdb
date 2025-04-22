@@ -247,6 +247,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getDebugWalApplyBlockFailureNoRetry() {
+        return getDelegate().getDebugWalApplyBlockFailureNoRetry();
+    }
+
+    @Override
     public @NotNull DateLocale getDefaultDateLocale() {
         return getDelegate().getDefaultDateLocale();
     }
@@ -272,11 +277,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getDoubleToStrCastScale() {
-        return getDelegate().getDoubleToStrCastScale();
-    }
-
-    @Override
     public int getExplainPoolCapacity() {
         return getDelegate().getExplainPoolCapacity();
     }
@@ -294,11 +294,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public @NotNull FilesFacade getFilesFacade() {
         return getDelegate().getFilesFacade();
-    }
-
-    @Override
-    public int getFloatToStrCastScale() {
-        return getDelegate().getFloatToStrCastScale();
     }
 
     @Override
@@ -437,8 +432,23 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getMatViewMaxRecompileAttempts() {
-        return getDelegate().getMatViewMaxRecompileAttempts();
+    public int getMatViewMaxRefreshRetries() {
+        return getDelegate().getMatViewMaxRefreshRetries();
+    }
+
+    @Override
+    public long getMatViewMinRefreshInterval() {
+        return getDelegate().getMatViewMinRefreshInterval();
+    }
+
+    @Override
+    public long getMatViewRefreshOomRetryTimeout() {
+        return getDelegate().getMatViewRefreshOomRetryTimeout();
+    }
+
+    @Override
+    public int getMatViewRowsPerQueryEstimate() {
+        return getDelegate().getMatViewRowsPerQueryEstimate();
     }
 
     @Override
@@ -867,6 +877,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public double getSqlParallelFilterPreTouchThreshold() {
+        return getDelegate().getSqlParallelFilterPreTouchThreshold();
+    }
+
+    @Override
     public int getSqlParallelWorkStealingThreshold() {
         return getDelegate().getSqlParallelWorkStealingThreshold();
     }
@@ -1124,6 +1139,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getWorkStealTimeoutNanos() {
         return getDelegate().getWorkStealTimeoutNanos();
+    }
+
+    @Override
+    public long getWriteBackOffTimeoutOnMemPressureMs() {
+        return getDelegate().getWriteBackOffTimeoutOnMemPressureMs();
     }
 
     @Override

@@ -27,6 +27,8 @@ package io.questdb.test.cutlass.http.line;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class LineHttpReceiverFuzzTest extends AbstractLineHttpFuzzTest {
@@ -35,8 +37,12 @@ public class LineHttpReceiverFuzzTest extends AbstractLineHttpFuzzTest {
 
     @Test
     public void testAddColumns() throws Exception {
-        initLoadParameters(15, 2, 2, 5, 75);
-        initFuzzParameters(-1, -1, -1, 4, -1, false, true, false, 0.05);
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        initLoadParameters(15 + rnd.nextInt(100), 5 + rnd.nextInt(5),
+                2 + rnd.nextInt(20), 1 + rnd.nextInt(4),
+                rnd.nextInt(75));
+
+        initFuzzParameters(-1, -1, 1, 1 + rnd.nextInt(3), -1, false, true, false, 0.05);
         runTest();
     }
 

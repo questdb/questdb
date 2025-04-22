@@ -186,8 +186,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(9000, configuration.getHttpServerConfiguration().getBindPort());
 
         Assert.assertEquals(1_000_000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getConnectionCheckFrequency());
-        Assert.assertEquals(4, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getFloatScale());
-        Assert.assertEquals(12, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getDoubleScale());
         Assert.assertEquals("Keep-Alive: timeout=5, max=10000" + Misc.EOL, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getKeepAliveHeader());
 
         Assert.assertFalse(configuration.getHttpServerConfiguration().isPessimisticHealthCheckEnabled());
@@ -207,9 +205,12 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(2097152, configuration.getCairoConfiguration().getSqlCopyBufferSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getCopyPoolCapacity());
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
-        Assert.assertFalse(configuration.getCairoConfiguration().isMatViewEnabled());
-        Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewMaxRecompileAttempts());
+        Assert.assertTrue(configuration.getCairoConfiguration().isMatViewEnabled());
+        Assert.assertEquals(60_000_000, configuration.getCairoConfiguration().getMatViewMinRefreshInterval());
+        Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());
+        Assert.assertEquals(200, configuration.getCairoConfiguration().getMatViewRefreshOomRetryTimeout());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
+        Assert.assertEquals(10_000_000, configuration.getCairoConfiguration().getMatViewRowsPerQueryEstimate());
         Assert.assertTrue(configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().getDefaultSymbolCacheFlag());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getDefaultSymbolCapacity());
@@ -296,6 +297,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().ownThread());
 
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelFilterPreTouchEnabled());
+        Assert.assertEquals(0.05, configuration.getCairoConfiguration().getSqlParallelFilterPreTouchThreshold(), 0.000001);
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelGroupByEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelReadParquetEnabled());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getSqlParallelWorkStealingThreshold());
@@ -476,7 +478,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(7_000, configuration.getWalApplyPoolConfiguration().getNapThreshold());
         Assert.assertEquals(10_000, configuration.getWalApplyPoolConfiguration().getSleepThreshold());
         Assert.assertEquals(1000, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
-        Assert.assertEquals(20, configuration.getCairoConfiguration().getWalApplyLookAheadTransactionCount());
+        Assert.assertEquals(200, configuration.getCairoConfiguration().getWalApplyLookAheadTransactionCount());
         Assert.assertEquals(4, configuration.getCairoConfiguration().getO3LagCalculationWindowsSize());
         Assert.assertEquals(200_000, configuration.getCairoConfiguration().getWalSegmentRolloverRowCount());
         Assert.assertEquals(20.0d, configuration.getCairoConfiguration().getWalLagRowsMultiplier(), 0.00001);
@@ -667,20 +669,6 @@ public class PropServerConfigurationTest {
                 "Replaced by `http.min.net.connection.rcvbuf` and `http.net.connection.rcvbuf`"));
     }
 
-    @Test(expected = ServerConfigurationException.class)
-    public void testDoubleCastScaleGreaterThanMax() throws Exception {
-        Properties properties = new Properties();
-        properties.setProperty("cairo.sql.double.cast.scale", Integer.toString(Numbers.MAX_DOUBLE_SCALE + 1));
-        newPropServerConfiguration(properties);
-    }
-
-    @Test(expected = ServerConfigurationException.class)
-    public void testDoubleScaleGreaterThanMax() throws Exception {
-        Properties properties = new Properties();
-        properties.setProperty("http.json.query.double.scale", Integer.toString(Numbers.MAX_DOUBLE_SCALE + 1));
-        newPropServerConfiguration(properties);
-    }
-
     @Test
     public void testEmptyTimestampTimezone() throws Exception {
         Properties properties = new Properties();
@@ -760,20 +748,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(60_000, configuration.getCairoConfiguration().getO3MaxLag());
         Assert.assertTrue(configuration.getCairoConfiguration().getTextConfiguration().isUseLegacyStringDefault());
         Assert.assertEquals(3000, configuration.getCairoConfiguration().getTelemetryConfiguration().getDbSizeEstimateTimeout());
-    }
-
-    @Test(expected = ServerConfigurationException.class)
-    public void testFloatCastScaleGreaterThanMax() throws Exception {
-        Properties properties = new Properties();
-        properties.setProperty("cairo.sql.float.cast.scale", Integer.toString(Numbers.MAX_FLOAT_SCALE + 1));
-        newPropServerConfiguration(properties);
-    }
-
-    @Test(expected = ServerConfigurationException.class)
-    public void testFloatScaleGreaterThanMax() throws Exception {
-        Properties properties = new Properties();
-        properties.setProperty("http.json.query.float.scale", Integer.toString(Numbers.MAX_FLOAT_SCALE + 1));
-        newPropServerConfiguration(properties);
     }
 
     @Test
@@ -1271,7 +1245,6 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(168101918, configuration.getHttpServerConfiguration().getBindIPv4Address());
             Assert.assertEquals(9900, configuration.getHttpServerConfiguration().getBindPort());
             Assert.assertEquals(2_000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getConnectionCheckFrequency());
-            Assert.assertEquals(4, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getFloatScale());
             Assert.assertSame(FilesFacadeImpl.INSTANCE, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getFilesFacade());
             Assert.assertEquals("Keep-Alive: timeout=10, max=50000" + Misc.EOL, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getKeepAliveHeader());
 
@@ -1334,9 +1307,12 @@ public class PropServerConfigurationTest {
 
             Assert.assertTrue(configuration.getMetricsConfiguration().isEnabled());
 
-            Assert.assertTrue(configuration.getCairoConfiguration().isMatViewEnabled());
-            Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRecompileAttempts());
+            Assert.assertFalse(configuration.getCairoConfiguration().isMatViewEnabled());
+            Assert.assertEquals(1000, configuration.getCairoConfiguration().getMatViewMinRefreshInterval());
+            Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());
+            Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewRefreshOomRetryTimeout());
             Assert.assertEquals(1000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
+            Assert.assertEquals(10000, configuration.getCairoConfiguration().getMatViewRowsPerQueryEstimate());
             Assert.assertFalse(configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());
 
             // PG wire
@@ -1725,14 +1701,12 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(8192, configuration.getTextConfiguration().getUtf8SinkSize());
         Assert.assertEquals(4194304, configuration.getSqlCopyBufferSize());
         Assert.assertEquals(64, configuration.getCopyPoolCapacity());
-        Assert.assertEquals(8, configuration.getDoubleToStrCastScale());
-        Assert.assertEquals(3, configuration.getFloatToStrCastScale());
         Assert.assertEquals("test-id-42", configuration.getSnapshotInstanceId());
         Assert.assertFalse(configuration.isCheckpointRecoveryEnabled());
 
         Assert.assertEquals(CommitMode.ASYNC, configuration.getCommitMode());
         Assert.assertEquals(12, configuration.getCreateAsSelectRetryCount());
-        Assert.assertTrue(configuration.isMatViewEnabled());
+        Assert.assertFalse(configuration.isMatViewEnabled());
         Assert.assertTrue(configuration.getDefaultSymbolCacheFlag());
         Assert.assertEquals(512, configuration.getDefaultSymbolCapacity());
         Assert.assertEquals(10, configuration.getFileOperationRetryCount());
@@ -1817,6 +1791,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertFalse(configuration.isSqlParallelFilterEnabled());
         Assert.assertFalse(configuration.isSqlParallelFilterPreTouchEnabled());
+        Assert.assertEquals(0.1, configuration.getSqlParallelFilterPreTouchThreshold(), 0.000001);
         Assert.assertFalse(configuration.isSqlParallelGroupByEnabled());
         Assert.assertFalse(configuration.isSqlParallelReadParquetEnabled());
         Assert.assertFalse(configuration.isSqlOrderBySortEnabled());

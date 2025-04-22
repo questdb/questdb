@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.vm;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
@@ -177,8 +178,8 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         }
 
         final long oldSize = size();
-        final long newPageCount = getNewPageCount(requiredSize, oldSize);
-        final long newSize = newPageCount << sizeMsb;
+        long newPageCount = getNewPageCount(requiredSize, oldSize);
+        long newSize = newPageCount << sizeMsb;
 
         // sometimes the resize request ends up being the same
         // as existing memory size
@@ -189,7 +190,21 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         if (newPageCount > maxPages) {
             throw LimitOverflowException.instance().put("Maximum number of pages (").put(maxPages).put(") breached in VirtualMemory");
         }
-        final long newBaseAddress = reallocateMemory(pageAddress, size(), newSize);
+
+        long newBaseAddress;
+        try {
+            newBaseAddress = reallocateMemory(pageAddress, size(), newSize);
+        } catch (CairoException e) {
+            if (e.isOutOfMemory()) {
+                // allocate exact number of pages, without doubling
+                newPageCount = getNewPageCount(requiredSize, 0);
+                newSize = newPageCount << sizeMsb;
+                newBaseAddress = reallocateMemory(pageAddress, size(), newSize);
+            } else {
+                throw e;
+            }
+
+        }
         if (oldSize > 0) {
             LOG.debug().$("extended [oldBase=").$(pageAddress).$(", newBase=").$(newBaseAddress).$(", oldSize=").$(oldSize).$(", newSize=").$(newSize).$(']').$();
         }
@@ -198,10 +213,12 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
 
     private long getNewPageCount(long requiredSize, long oldSize) {
         final long minPageCount = requiredSize > 0 ? ((requiredSize - 1) >>> sizeMsb) + 1 : 1;
-        if (oldSize > 0 && requiredSize > 0 && minPageCount * 2 < maxPages) {
-            // double the page count on each resize to avoid frequent resizes, unless this is
-            // a request to downsize the memory or aggressive resize will throw us over the limit
-            return minPageCount * 2;
+        final long oldPageCount = oldSize > 0 ? ((oldSize - 1) >>> sizeMsb) + 1 : 0;
+
+        // double the page count on each resize to avoid frequent resizes, unless this is
+        // a request to downsize the memory or aggressive resize will throw us over the limit
+        if (minPageCount > oldPageCount) {
+            return Math.max(Math.min(oldPageCount * 2, maxPages / 2), minPageCount);
         }
         return minPageCount;
     }

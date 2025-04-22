@@ -24,11 +24,6 @@
 
 package io.questdb.griffin;
 
-import java.util.ArrayDeque;
-
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
-
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
@@ -116,6 +111,10 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.ArrayDeque;
 
 import static io.questdb.griffin.SqlKeywords.*;
 
@@ -402,7 +401,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         SqlException ex = SqlException.position(node.position);
         if (descriptor != null) {
             if (args != null) {
-                if (args.size() != descriptor.getSigArgCount()) {
+                if (args.size() != descriptor.getNotVarArgsSigCount()) {
                     ex.put("wrong number of arguments for function `").put(node.token)
                             .put("`; expected: ").put(descriptor.getSigArgCount())
                             .put(", provided: ").put(args.size());
@@ -826,7 +825,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     if (sigArgTypeTag == argTypeTag ||
                             (argTypeTag == ColumnType.CHAR &&              // 'a' could also be a string literal, so it should count as proper match
                                     sigArgTypeTag == ColumnType.STRING &&  // for both string and char, otherwise ? > 'a' matches char function even though
-                                    arg.isConstant() &&                    // bind variable parameter might be a string and throw error during execution.
+                                    factory.supportImplicitCastCharToStr() &&
+                                    arg.isConstant() && // bind variable parameter might be a string and throw error during execution.
                                     arg != CharTypeConstant.INSTANCE) ||   // Ignore type constant to keep cast(X as char) working
                             (sigArgTypeTag == ColumnType.GEOHASH && ColumnType.isGeoHash(argType))) {
                         switch (match) {
@@ -862,6 +862,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                                 // prefer CHAR -> STRING to STRING -> CHAR conversion
                                 overloadDistance = 2 * overloadDistance;
                             }
+                        } else if (argTypeTag == ColumnType.CHAR && sigArgTypeTag == ColumnType.STRING && !factory.supportImplicitCastCharToStr()) {
+                            overloadDistance = ColumnType.OVERLOAD_NONE;
                         }
 
                         sigArgTypeScore += overloadDistance;

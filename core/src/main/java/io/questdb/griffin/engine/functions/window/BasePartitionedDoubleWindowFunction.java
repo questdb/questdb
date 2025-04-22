@@ -57,7 +57,7 @@ abstract class BasePartitionedDoubleWindowFunction extends BaseDoubleWindowFunct
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         super.init(symbolTableSource, executionContext);
-        Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext);
+        Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
     }
 
     @Override

@@ -79,16 +79,16 @@ public class SignFunctionFactoryTest extends AbstractCairoTest {
                     "(-1.4E-45F), (-1.0), (-3.4028235E38F), (cast('-Infinity' as float))," +
                     "(null) ");
             assertSql("f\tsign\n" +
-                            "0.0000\t0.0000\n" +
-                            "-0.0000\t-0.0000\n" +
-                            "0.0000\t1.0000\n" +
-                            "1.0000\t1.0000\n" +
-                            "3.4028235E38\t1.0000\n" +
-                            "null\t1.0000\n" +
-                            "-0.0000\t-1.0000\n" +
-                            "-1.0000\t-1.0000\n" +
-                            "-3.4028235E38\t-1.0000\n" +
-                            "null\t-1.0000\n" +
+                            "0.0\t0.0\n" +
+                            "-0.0\t-0.0\n" +
+                            "1.4E-45\t1.0\n" +
+                            "1.0\t1.0\n" +
+                            "3.4028235E38\t1.0\n" +
+                            "null\t1.0\n" +
+                            "-1.4E-45\t-1.0\n" +
+                            "-1.0\t-1.0\n" +
+                            "-3.4028235E38\t-1.0\n" +
+                            "null\t-1.0\n" +
                             "null\tnull\n",
                     "select f, sign(f) from tab");
         });

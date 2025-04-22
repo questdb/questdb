@@ -122,7 +122,7 @@ public class TableWriterAsyncCmdTest extends AbstractCairoTest {
                             qf.await();
                             Assert.fail();
                         } catch (SqlException exception) {
-                            TestUtils.assertContains(exception.getFlyweightMessage(), "Duplicate column [name=column5]");
+                            TestUtils.assertContains(exception.getFlyweightMessage(), "duplicate column [name=column5]");
                         }
                     }
                 }

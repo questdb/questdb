@@ -67,13 +67,15 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        // Forcefully disable column pre-touch for nested filter queries.
+        executionContext.setColumnPreTouchEnabled(false);
         RecordCursor cursorA = null;
         RecordCursor cursorB = null;
         try {
             cursorA = factoryA.getCursor(executionContext);
             cursorB = factoryB.getCursor(executionContext);
-            Function.initNc(castFunctionsA, cursorA, executionContext);
-            Function.initNc(castFunctionsB, cursorB, executionContext);
+            Function.initNc(castFunctionsA, cursorA, executionContext, null);
+            Function.initNc(castFunctionsB, cursorB, executionContext, null);
             cursor.of(cursorA, cursorB, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable ex) {

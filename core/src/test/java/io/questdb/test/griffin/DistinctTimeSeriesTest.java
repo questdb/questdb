@@ -87,7 +87,7 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
                         "8\tibm\t1970-01-06T19:31:50.000000Z\n" +
                         "9\tmsft\t1970-01-06T19:37:20.000000Z\n" +
                         "10\tibm\t1970-01-06T19:42:50.000000Z\n",
-                "select distinct * from x",
+                "select distinct * from x order by ts",
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -97,7 +97,7 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
                         ") timestamp (ts) partition by DAY",
                 "ts",
                 true,
-                false
+                true
         ));
     }
 
@@ -151,7 +151,7 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
                     "ibm\t1970-01-06T19:42:50.000000Z\n";
             assertQuery(
                     expected,
-                    "select distinct sym, ts from x",
+                    "select distinct sym, ts from x order by ts",
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -165,7 +165,7 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
                     expected,
                     true,
                     false,
-                    false
+                    true
             );
         });
     }
@@ -186,7 +186,7 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
                     "msft\t1970-01-06T18:53:20.000000Z\n";
             assertQuery(
                     expected,
-                    "select distinct sym, ts from (x order by ts desc)",
+                    "select distinct sym, ts from (x order by ts desc) order by ts desc",
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -199,7 +199,7 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
                     "insert into x values (11, 'ibm', '1970-01-06T19:42:50.000000Z')",
                     expected,
                     true,
-                    false,
+                    true,
                     false
             );
         });

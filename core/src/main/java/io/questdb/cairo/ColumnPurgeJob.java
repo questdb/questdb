@@ -371,13 +371,14 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         if (inErrorCount >= MAX_ERRORS) {
             return false;
         }
-        if (checkpointStatus.partitionsLocked()) {
-            // do not purge anything before checkpoint is released
-            return false;
-        }
 
         try {
             boolean useful = processInQueue();
+            if (checkpointStatus.partitionsLocked()) {
+                // do not purge anything before checkpoint is released
+                return false;
+            }
+
             boolean cleanupUseful = purge();
             if (cleanupUseful) {
                 LOG.debug().$("cleaned column version, outstanding tasks: ").$(retryQueue.size()).$();

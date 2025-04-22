@@ -42,16 +42,18 @@ public interface UnaryFunction extends Function {
         getArg().cursorClosed();
     }
 
+    @Override
+    default void offerStateTo(Function that) {
+        if (that instanceof UnaryFunction) {
+            getArg().offerStateTo(((UnaryFunction) that).getArg());
+        }
+    }
+
     Function getArg();
 
     @Override
     default void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         getArg().init(symbolTableSource, executionContext);
-    }
-
-    @Override
-    default void initCursor() {
-        getArg().initCursor();
     }
 
     @Override

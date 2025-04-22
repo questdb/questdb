@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.network.NetworkError;
 import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Os;
@@ -70,7 +71,6 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
     private static final int SEND_SYMBOLS_WITH_SPACE_RANDOMIZE_FACTOR = 2;
     private static final short[] integerColumnTypes = new short[]{ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG};
     private static final StringSink sink = new StringSink();
-    private static int defaultFloatScale;
     protected final short[] colTypes = new short[]{STRING, DOUBLE, DOUBLE, DOUBLE, STRING, DOUBLE};
     private final int batchSize = 10;
     private final String[][] colNameBases = new String[][]{
@@ -139,18 +139,11 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
-        defaultFloatScale = CursorPrinter.FLOAT_SCALE;
         AbstractBootstrapTest.setUpStatic();
-        // Max out printer float scale so that float printed same as doubles, e.g.
-        // Without that float 54.0 is printed as 54.0000 and double 54.0 is printed as 54.0
-        // This is needed to allow random column conversions that can change a double column to float
-        // in the table and still match the expected sent row values.
-        CursorPrinter.FLOAT_SCALE = 10;
     }
 
     @AfterClass
     public static void tearDownStatic() {
-        CursorPrinter.FLOAT_SCALE = defaultFloatScale;
         AbstractBootstrapTest.tearDownStatic();
     }
 
@@ -211,36 +204,52 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
 
     public void runTest() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            int httpPortRandom = 7000 + random.nextInt(1000);
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048",
-                    PropertyKey.HTTP_BIND_TO.getEnvVarName(), "127.0.0.1:" + httpPortRandom
-            )) {
-                Assert.assertEquals(0, tables.size());
-                for (int i = 0; i < numOfTables; i++) {
-                    final CharSequence tableName = getTableName(i);
-                    tables.put(tableName, new TableData(tableName));
-                }
-
-                try {
-                    ingest(serverMain.getEngine(), serverMain.getHttpServerPort());
-
+            while (true) {
+                int httpPortRandom = 7000 + random.nextInt(1000);
+                try (final TestServerMain serverMain = startWithEnvVariables(
+                        PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048",
+                        PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
+                        PropertyKey.PG_ENABLED.getEnvVarName(), "false",
+                        PropertyKey.PG_LEGACY_MODE_ENABLED.getEnvVarName(), "false",
+                        PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
+                        PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
+                        PropertyKey.PG_ENABLED.getEnvVarName(), "false",
+                        PropertyKey.PG_LEGACY_MODE_ENABLED.getEnvVarName(), "false",
+                        PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false",
+                        PropertyKey.HTTP_NET_CONNECTION_LIMIT.getEnvVarName(), String.valueOf(2 * numOfThreads),
+                        PropertyKey.HTTP_BIND_TO.getEnvVarName(), "127.0.0.1:" + httpPortRandom
+                )) {
+                    Assert.assertEquals(0, tables.size());
                     for (int i = 0; i < numOfTables; i++) {
-                        final String tableName = getTableName(i);
-                        final TableData table = tables.get(tableName);
-                        if (table.size() > 0) {
-                            serverMain.awaitTable(tableName);
-                            assertTable(serverMain, table, tableName);
-                        }
+                        final CharSequence tableName = getTableName(i);
+                        tables.put(tableName, new TableData(tableName));
                     }
-                } catch (Exception e) {
-                    getLog().errorW().$(e).$();
-                    setError(e.getMessage());
-                }
-            }
 
-            if (errorMsg != null) {
-                Assert.fail(errorMsg);
+                    try {
+                        ingest(serverMain.getEngine(), serverMain.getHttpServerPort());
+
+                        for (int i = 0; i < numOfTables; i++) {
+                            final String tableName = getTableName(i);
+                            final TableData table = tables.get(tableName);
+                            if (table.size() > 0) {
+                                serverMain.awaitTable(tableName);
+                                assertTable(serverMain, table, tableName);
+                            }
+                        }
+                    } catch (Exception e) {
+                        getLog().errorW().$(e).$();
+                        setError(e.getMessage());
+                    }
+                } catch (NetworkError e) {
+                    LOG.error().$("Failed to start server [e=").$((Throwable) e).I$();
+                    Os.sleep(100);
+                    continue;
+                }
+
+                if (errorMsg != null) {
+                    Assert.fail(errorMsg);
+                }
+                return;
             }
         });
     }
@@ -533,6 +542,8 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                     Sender sender = Sender.builder(Sender.Transport.HTTP)
                             .address("localhost:" + port)
                             .httpUsernamePassword(username, password)
+                            .retryTimeoutMillis(0)
+                            .httpTimeoutMillis(60000)
                             .build()
             ) {
                 LineHttpSender httpSender = (LineHttpSender) sender;

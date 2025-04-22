@@ -26,8 +26,14 @@
 #define QUESTDB_OOO_DISPATCH_H
 
 #include "dispatcher.h"
+#include "util.h"
 
-typedef struct index_t {
+struct index_l {
+    int64_t ts;
+    uint64_t i;
+};
+
+struct index_t {
     uint64_t ts;
     uint64_t i;
 
@@ -66,7 +72,7 @@ typedef struct index_t {
     uint64_t operator&(uint64_t mask) const{
         return ts & mask;
     }
-} index_t;
+};
 
 typedef struct __attribute__ ((packed)) long_256bit {
     uint64_t long0;

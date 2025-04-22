@@ -66,7 +66,7 @@ public class TimestampFormatUtils {
     private static final DateFormat[] FORMATS;
     private static final String GREEDY_MILLIS1_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.Sz";
     private static final String GREEDY_MILLIS2_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSz";
-    private static final DateFormat HTTP_FORMAT;
+    private static final DateFormat[] HTTP_FORMATS;
     private static final String PG_TIMESTAMP_MILLI_TIME_Z_PATTERN = "y-MM-dd HH:mm:ss.SSSz";
     private static final String SEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ssz";
     private static final String USEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSUUUz";
@@ -298,7 +298,7 @@ public class TimestampFormatUtils {
                 + micros;
 
         if (timezone > -1) {
-            datetime -= locale.getZoneRules(timezone, RESOLUTION_MICROS).getOffset(datetime, year, leap);
+            datetime -= locale.getZoneRules(timezone, RESOLUTION_MICROS).getOffset(datetime, year);
         } else if (offset > Long.MIN_VALUE) {
             datetime -= offset;
         }
@@ -314,10 +314,6 @@ public class TimestampFormatUtils {
         Numbers.append(sink, y);
         append0(sink.putAscii('-'), m);
         append0(sink.putAscii('-'), Timestamps.getDayOfMonth(millis, y, m, l));
-    }
-
-    public static void formatHTTP(@NotNull CharSink<?> sink, long millis) {
-        HTTP_FORMAT.format(millis, EN_LOCALE, "GMT", sink);
     }
 
     // YYYY-MM
@@ -353,7 +349,14 @@ public class TimestampFormatUtils {
     }
 
     public static long parseHTTP(@NotNull CharSequence in) throws NumericException {
-        return HTTP_FORMAT.parse(in, EN_LOCALE);
+        for (int i = 0, n = HTTP_FORMATS.length; i < n; i++) {
+            try {
+                return HTTP_FORMATS[i].parse(in, EN_LOCALE);
+            } catch (NumericException ignore) {
+                // try next
+            }
+        }
+        throw NumericException.INSTANCE;
     }
 
     // YYYY-MM-DDThh:mm:ss.mmmZ
@@ -411,13 +414,22 @@ public class TimestampFormatUtils {
 
     static {
         updateReferenceYear(Os.currentTimeMicros());
-        TimestampFormatCompiler compiler = new TimestampFormatCompiler();
-        HTTP_FORMAT = compiler.compile("E, d MMM yyyy HH:mm:ss Z");
+
+        final TimestampFormatCompiler compiler = new TimestampFormatCompiler();
         PG_TIMESTAMP_FORMAT = compiler.compile("y-MM-dd HH:mm:ss.SSSUUU");
         PG_TIMESTAMP_TIME_Z_FORMAT = compiler.compile("y-MM-dd HH:mm:ssz");
         NANOS_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUNNNz");
 
-        String[] patterns = new String[]{ // priority sorted
+        final String[] httpPatterns = new String[]{ // priority sorted
+                "E, d MMM yyyy HH:mm:ss Z",     // HTTP standard
+                "E, d-MMM-yyyy HH:mm:ss Z"      // Microsoft EntraID
+        };
+        HTTP_FORMATS = new DateFormat[httpPatterns.length];
+        for (int i = 0; i < httpPatterns.length; i++) {
+            HTTP_FORMATS[i] = compiler.compile(httpPatterns[i]);
+        }
+
+        final String[] patterns = new String[]{ // priority sorted
                 PG_TIMESTAMP_MILLI_TIME_Z_PATTERN, // y-MM-dd HH:mm:ss.SSSz
                 GREEDY_MILLIS1_UTC_PATTERN,        // yyyy-MM-ddTHH:mm:ss.Sz
                 USEC_UTC_PATTERN,                  // yyyy-MM-ddTHH:mm:ss.SSSUUUz

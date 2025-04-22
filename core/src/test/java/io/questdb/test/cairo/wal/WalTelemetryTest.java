@@ -59,6 +59,10 @@ public class WalTelemetryTest extends AbstractCairoTest {
                 execute("insert into " + tableName +
                         " values (101, 'dfd', '2022-02-24T01', 'asd')");
 
+                var tt = engine.verifyTableName(tableName);
+                var control = engine.getTableSequencerAPI().getTxnTracker(tt).getMemPressureControl();
+                control.setMaxBlockRowCount(1);
+
                 setCurrentMicros(3000);
                 drainWalQueue();
 
@@ -76,10 +80,10 @@ public class WalTelemetryTest extends AbstractCairoTest {
 
             CharSequence sysPrefix = configuration.getSystemTableNamePrefix();
             assertSql("created\tevent\ttableId\twalId\tseqTxn\trowCount\tphysicalRowCount\tlatency\n" +
-                    "1970-01-01T00:00:00.004000Z\t103\t5\t1\t1\t-1\t-1\t2.0000\n" +
-                    "1970-01-01T00:00:00.004000Z\t105\t5\t1\t1\t5\t5\t0.0000\n" +
-                    "1970-01-01T00:00:00.004000Z\t103\t5\t1\t2\t-1\t-1\t1.0000\n" +
-                    "1970-01-01T00:00:00.004000Z\t105\t5\t1\t2\t1\t1\t0.0000\n", sysPrefix + TelemetryWalTask.TABLE_NAME);
+                    "1970-01-01T00:00:00.004000Z\t103\t5\t1\t1\t-1\t-1\t2.0\n" +
+                    "1970-01-01T00:00:00.004000Z\t105\t5\t1\t1\t5\t5\t0.0\n" +
+                    "1970-01-01T00:00:00.004000Z\t103\t5\t1\t2\t-1\t-1\t1.0\n" +
+                    "1970-01-01T00:00:00.004000Z\t105\t5\t1\t2\t1\t1\t0.0\n", sysPrefix + TelemetryWalTask.TABLE_NAME);
 
             assertSql("created\tevent\torigin\n" +
                     "1970-01-01T00:00:00.001000Z\t100\t1\n" +

@@ -57,7 +57,7 @@ abstract class BasePartitionedLongWindowFunction extends BaseLongWindowFunction 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         super.init(symbolTableSource, executionContext);
-        Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext);
+        Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
     }
 
     @Override

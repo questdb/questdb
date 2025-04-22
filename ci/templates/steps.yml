@@ -9,6 +9,7 @@ steps:
 
   - task: Cache@2
     displayName: "Cache non-default Maven"
+    continueOnError: true
     inputs:
       key: '"maven_version" | "$(MAVEN_VERSION)"'
       path: $(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)
@@ -16,11 +17,13 @@ steps:
     condition: ne(variables['MAVEN_VERSION_OPTION'], 'Default')
   - task: Cache@2
     displayName: "Cache .m2/repository"
+    continueOnError: true
     inputs:
       key: '"questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven"'
       path: $(MAVEN_CACHE_FOLDER)
   - task: Cache@2
     displayName: "Cache .cargo/registry"
+    continueOnError: true
     inputs:
       key: '"cargo-registry" | "$(RUSTC_HOST_TRIPLE)" | "$(RUSTC_RELEASE)" | "$(LINUX_GLIBC_VERSION)" | **/Cargo.lock'
       restoreKeys: |
@@ -145,7 +148,17 @@ steps:
   - bash: find . -type f -name 'hs_*.log' -exec sh -c 'x="{}"; mv "$x" "$(ARCHIVED_CRASH_LOG)"' \;
     displayName: "Tests failed -- rename crash dump"
     workingDirectory: $(Build.SourcesDirectory)/core/
-    condition: failed()
+    condition: and(failed(), not(eq(variables['os'], 'Windows')))
+  - task: PowerShell@2
+    inputs:
+      targetType: "inline"
+      script: |
+        Get-ChildItem -Path . -Filter "hs_*.log" -File | ForEach-Object {
+            Move-Item -Path $_.FullName -Destination "$(ARCHIVED_CRASH_LOG)"
+        }
+      workingDirectory: $(Build.SourcesDirectory)\core\
+    displayName: "Tests failed -- rename crash dump -- windows"
+    condition: and(failed(), eq(variables['os'], 'Windows'))
   - task: PublishBuildArtifacts@1
     displayName: "Tests failed -- Upload crash logs"
     condition: failed()

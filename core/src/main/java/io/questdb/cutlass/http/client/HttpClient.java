@@ -529,6 +529,10 @@ public abstract class HttpClient implements QuietCloseable {
             if (fd < 0) {
                 throw new HttpClientException("could not allocate a file descriptor").errno(nf.errno());
             }
+            if (nf.setTcpNoDelay(fd, true) < 0) {
+                LOG.info().$("could not turn off Nagle's algorithm [fd=").$(fd)
+                        .$(", errno=").$(nf.errno()).I$();
+            }
             socket.of(fd);
 
             nf.configureKeepAlive(fd);

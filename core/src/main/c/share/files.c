@@ -377,7 +377,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
     jint fd = open((const char *) lpszName, O_CREAT | O_RDWR, 0644);
     if (fd < 0) {
         // error opening / creating file
-        return fd;
+        return -1;
     }
 
     jlong fileSize = Java_io_questdb_std_Files_length(e, cl, fd);
@@ -391,7 +391,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
                 if (Java_io_questdb_std_Files_allocate(e, cl, fd, size) == JNI_TRUE) {
                     // Zero the file and msync, so that we have no unpleasant side effects like non-zero bytes read on ZFS.
                     // See https://github.com/questdb/questdb/issues/4756
-                    void *addr = mmap(addr, (size_t) size, PROT_READ | PROT_WRITE, MAP_SHARED, (int) fd, 0);
+                    void *addr = mmap(NULL, (size_t) size, PROT_READ | PROT_WRITE, MAP_SHARED, (int) fd, 0);
                     if (addr != MAP_FAILED) {
                         memset(addr, 0, size);
                         if (msync(addr, size, MS_SYNC) == 0) {

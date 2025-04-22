@@ -1010,6 +1010,29 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMissingWalSegmentColumnFile() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+
+            execute("insert into " + tableToken.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
+
+            engine.releaseInactive();
+            Path path = Path.getThreadLocal(root).concat(tableToken).concat("wal1").concat("0").concat("x.d");
+            Assert.assertTrue(configuration.getFilesFacade().removeQuiet(path.$()));
+
+            drainWalQueue();
+
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            execute("insert into " + tableToken.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            execute("ALTER TABLE " + tableToken.getTableName() + " RESUME WAL FROM TXN 3");
+
+            drainWalQueue();
+            assertSql("x\tsym\tts\tsym2\n" +
+                    "1\tab\t2022-02-24T23:00:00.000000Z\tef\n", tableToken.getTableName());
+        });
+    }
+
+    @Test
     public void testNonWalTableTransactionNotificationIsIgnored() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();

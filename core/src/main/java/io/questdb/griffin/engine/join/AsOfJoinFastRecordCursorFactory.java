@@ -28,7 +28,12 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SingleRecordSink;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.TimeFrame;
+import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -183,14 +188,15 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
 
             // make sure the cursor points to the right frame - since `nextSlave()` might have moved it under our feet
             TimeFrame timeFrame = slaveCursor.getTimeFrame();
-            int slaveFrameIndex = ((PageFrameMemoryRecord) slaveRecB).getFrameIndex();
+            long rowId = slaveRecB.getRowId();
+            int slaveFrameIndex = Rows.toPartitionIndex(rowId);
             origSlaveFrameIndex = slaveFrameIndex;
             int cursorFrameIndex = timeFrame.getFrameIndex();
             slaveCursor.jumpTo(slaveFrameIndex);
             slaveCursor.open();
 
             long rowLo = timeFrame.getRowLo();
-            long keyedRowId = ((PageFrameMemoryRecord) slaveRecB).getRowIndex();
+            long keyedRowId = Rows.toLocalRowID(rowId);
             origSlaveRowId = keyedRowId;
             int keyedFrameIndex = timeFrame.getFrameIndex();
             for (; ; ) {
@@ -207,7 +213,8 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                     // ops, we exhausted this frame, let's try the previous one
                     if (!slaveCursor.prev()) {
                         // there is no previous frame, we are done, no match :(
-                        // if we are here, chances are we are also pretty slow because we are scanning the entire slave cursor!
+                        // if we are here, chances are we are also pretty slow because we are scanning the entire slave cursor
+                        // until we either exhaust the cursor or find a matching key.
                         record.hasSlave(false);
                         break;
                     }

@@ -24,7 +24,12 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntObjHashMap;
+import io.questdb.std.Long256;
+import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 
 // ColumnType layout - 32bit
@@ -445,34 +450,42 @@ public final class ColumnType {
         // on the left are used only if none of signature types on the right exist.
         //
         // All types must be mentioned at all times.
+        //
+        /// Note that the overload rule here must align with the corresponding function implementation, or specific
+        /// rules specified by {@link io.questdb.griffin.FunctionParser}, which add explicit cast function(like uuid -> string).
+        /// For instance, in {@link io.questdb.griffin.engine.functions.SymbolFunction},
+        /// apart from getChar(), getStr(), getTimestamp(), getVarchar(), and getInt(),
+        /// all other getxxx methods throw an UnSupportException. Therefore, the Symbol datatype only supports
+        /// overloading by STRING, VARCHAR, CHAR, INT, and TIMESTAMP.
+
         OVERLOAD_PRIORITY = new short[][]{
                 /* 0 UNDEFINED  */  {DOUBLE, FLOAT, STRING, VARCHAR, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
                 /* 1  BOOLEAN   */, {BOOLEAN}
                 /* 2  BYTE      */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE}
-                /* 3  SHORT     */, {SHORT, INT, LONG, FLOAT, DOUBLE}
-                /* 4  CHAR      */, {CHAR, STRING, VARCHAR}
+                /* 3  SHORT     */, {SHORT, INT, LONG, FLOAT, DOUBLE, CHAR}
+                /* 4  CHAR      */, {CHAR, STRING, VARCHAR, SHORT, INT, LONG, FLOAT, DOUBLE}
                 /* 5  INT       */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE}
                 /* 6  LONG      */, {LONG, DOUBLE, TIMESTAMP, DATE}
-                /* 7  DATE      */, {DATE, TIMESTAMP, LONG}
-                /* 8  TIMESTAMP */, {TIMESTAMP, LONG, DATE}
+                /* 7  DATE      */, {DATE, TIMESTAMP, LONG, DOUBLE}
+                /* 8  TIMESTAMP */, {TIMESTAMP, LONG, DATE, DOUBLE}
                 /* 9  FLOAT     */, {FLOAT, DOUBLE}
                 /* 10 DOUBLE    */, {DOUBLE}
-                /* 11 STRING    */, {STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE}
-                /* 12 SYMBOL    */, {SYMBOL, STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE}
-                /* 13 LONG256   */, {LONG256}
+                /* 11 STRING    */, {STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
+                /* 12 SYMBOL    */, {SYMBOL, STRING, VARCHAR, CHAR, INT, TIMESTAMP}
+                /* 13 LONG256   */, {LONG256, LONG}
                 /* 14 GEOBYTE   */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
                 /* 15 GEOSHORT  */, {GEOSHORT, GEOINT, GEOLONG, GEOHASH}
                 /* 16 GEOINT    */, {GEOINT, GEOLONG, GEOHASH}
                 /* 17 GEOLONG   */, {GEOLONG, GEOHASH}
                 /* 18 BINARY    */, {BINARY}
-                /* 19 UUID      */, {UUID, STRING, VARCHAR}
+                /* 19 UUID      */, {UUID, STRING}
                 /* 20 CURSOR    */, {CURSOR}
                 /* 21 unused    */, {}
                 /* 22 unused    */, {}
                 /* 23 unused    */, {}
                 /* 24 LONG128   */, {LONG128}
-                /* 25 IPv4      */, {IPv4}
-                /* 26 VARCHAR   */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE}
+                /* 25 IPv4      */, {IPv4, STRING, VARCHAR}
+                /* 26 VARCHAR   */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE, SYMBOL, IPv4}
                 /* 27 unused    */, {}
                 /* 28 unused    */, {}
                 /* 29 unused    */, {}
@@ -537,6 +550,7 @@ public final class ColumnType {
         nameTypeMap.put("double", DOUBLE);
         nameTypeMap.put("float", FLOAT);
         nameTypeMap.put("int", INT);
+        nameTypeMap.put("integer", INT);
         nameTypeMap.put("long", LONG);
         nameTypeMap.put("short", SHORT);
         nameTypeMap.put("char", CHAR);

@@ -60,6 +60,8 @@ public interface PGWireConfiguration extends IODispatcherConfiguration, WorkerPo
 
     int getForceRecvFragmentationChunkSize();
 
+    int getPipelineCapacity();
+
     int getForceSendFragmentationChunkSize();
 
     int getInsertCacheBlockCount();

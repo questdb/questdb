@@ -123,7 +123,7 @@ public class BlockFileTest extends AbstractCairoTest {
                 try (BlockFileReader reader = new BlockFileReader(configuration)) {
                     reader.of(path.$());
                 } catch (Exception e) {
-                    TestUtils.assertContains(e.getMessage(), "cannot read block file, expected at least 40 bytes");
+                    TestUtils.assertContains(e.getMessage(), "block file too small [expected=40, actual=0");
                 }
             }
         });
@@ -159,7 +159,7 @@ public class BlockFileTest extends AbstractCairoTest {
                     reader.of(path.$());
                     Assert.fail("Expected exception");
                 } catch (Exception e) {
-                    TestUtils.assertContains(e.getMessage(), "[2] cannot open block file");
+                    TestUtils.assertContains(e.getMessage(), "cannot open block file");
                 }
             }
         });
@@ -437,7 +437,7 @@ public class BlockFileTest extends AbstractCairoTest {
 
                     WritableBlock memory2 = writer.reserve(commitedLength);
                     Assert.assertEquals(commitedLength, memory2.length());
-                    commitMsgA1RW(memory2, 1);
+                    commitMsgA1RW(memory2);
 
                     AppendableBlock memory3 = writer.append();
                     commitMsgA2(memory3, 1);
@@ -598,13 +598,13 @@ public class BlockFileTest extends AbstractCairoTest {
         return memory.length();
     }
 
-    private static void commitMsgA1RW(WritableBlock memory, long regionVersion) {
+    private static void commitMsgA1RW(WritableBlock memory) {
         String hello = "Hello";
         Utf8Sequence worldUtf8 = new GcUtf8String("World");
         int offset = 0;
         memory.putStr(offset, hello);
         offset += Vm.getStorageLength(hello);
-        memory.putLong(offset, regionVersion);
+        memory.putLong(offset, 1);
         offset += Long.BYTES;
         memory.putVarchar(offset, worldUtf8);
         offset += STRING_LENGTH_BYTES + worldUtf8.size();

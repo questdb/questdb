@@ -39,16 +39,19 @@ public final class InsertRowImpl {
     private final Function timestampFunction;
     private final int tupleIndex;
     private final VirtualRecord virtualRecord;
+    private final int timestampFunctionPosition;
 
     public InsertRowImpl(
             VirtualRecord virtualRecord,
             RecordToRowCopier copier,
             Function timestampFunction,
+            int timestampFunctionPosition,
             int tupleIndex
     ) {
         this.virtualRecord = virtualRecord;
         this.copier = copier;
         this.timestampFunction = timestampFunction;
+        this.timestampFunctionPosition = timestampFunctionPosition;
         this.tupleIndex = tupleIndex;
         if (timestampFunction != null) {
             int type = timestampFunction.getType();
@@ -64,13 +67,18 @@ public final class InsertRowImpl {
 
     public void append(TableWriterAPI writer) {
         final TableWriter.Row row = rowFactory.getRow(writer);
-        copier.copy(virtualRecord, row);
-        row.append();
+        try {
+            copier.copy(virtualRecord, row);
+            row.append();
+        } catch (Throwable e) {
+            row.cancel();
+            throw e;
+        }
     }
 
     public void initContext(SqlExecutionContext executionContext) throws SqlException {
         final ObjList<? extends Function> functions = virtualRecord.getFunctions();
-        Function.init(functions, null, executionContext);
+        Function.init(functions, null, executionContext, null);
         if (timestampFunction != null) {
             timestampFunction.init(null, executionContext);
         }
@@ -79,20 +87,34 @@ public final class InsertRowImpl {
     private TableWriter.Row getRowWithStringTimestamp(TableWriterAPI tableWriter) {
         CharSequence timestampValue = timestampFunction.getStrA(null);
         if (timestampValue != null) {
-            return tableWriter.newRow(
-                    SqlUtil.parseFloorPartialTimestamp(
-                            timestampFunction.getStrA(null),
-                            tupleIndex,
-                            timestampFunction.getType(),
-                            ColumnType.TIMESTAMP
-                    )
-            );
+            try {
+                return tableWriter.newRow(
+                        SqlUtil.parseFloorPartialTimestamp(
+                                timestampFunction.getStrA(null),
+                                tupleIndex,
+                                timestampFunction.getType(),
+                                ColumnType.TIMESTAMP
+                        )
+                );
+            } catch (CairoException e) {
+                if (!e.isCritical()) {
+                    e.position(timestampFunctionPosition);
+                }
+                throw e;
+            }
         }
         throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
     }
 
     private TableWriter.Row getRowWithTimestamp(TableWriterAPI tableWriter) {
-        return tableWriter.newRow(timestampFunction.getTimestamp(null));
+        try {
+            return tableWriter.newRow(timestampFunction.getTimestamp(null));
+        } catch (CairoException e) {
+            if (!e.isCritical()) {
+                e.position(timestampFunctionPosition);
+            }
+            throw e;
+        }
     }
 
     private TableWriter.Row getRowWithoutTimestamp(TableWriterAPI tableWriter) {

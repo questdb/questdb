@@ -33,7 +33,7 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static org.junit.Assert.fail;
+import static org.junit.Assert.*;
 
 public class RssMemoryLimitTest extends AbstractCairoTest {
 
@@ -80,17 +80,19 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
 
             for (int i = 0; i < batchCount; i++) {
                 execute("insert into x select" +
-                        " rnd_timestamp(to_timestamp('2024-01-01', 'yyyy-mm-dd'), to_timestamp('2025-01-01', 'yyyy-mm-dd'), 0) ts," +
+                        " rnd_timestamp('2024-01-01', '2025-01-01', 0) ts," +
                         " rnd_int(), rnd_long(), rnd_double(), rnd_varchar(1, 50, 0)" +
                         " from long_sequence(" + batchSize + ");");
                 System.out.println("Tx no. " + i + " done -----");
             }
 
+            TableToken tt = engine.getTableTokenIfExists("x");
 
             int expectedRowCount = batchCount * batchSize;
             TestUtils.assertEventually(() -> {
                 drainWalQueue();
                 assertTableNotSuspended();
+                assertTrue(engine.getTableSequencerAPI().getTxnTracker(tt).getMemPressureControl().isReadyToProcess());
 
                 try {
                     // cannot use assertQuery, because it clears CairoEngine - this clears all seqTxnTrackers

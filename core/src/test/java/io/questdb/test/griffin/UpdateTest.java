@@ -24,10 +24,25 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
-import io.questdb.cairo.sql.*;
-import io.questdb.griffin.*;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.MemoryTag;
@@ -839,7 +854,7 @@ public class UpdateTest extends AbstractCairoTest {
                     " cast(x as double) xdouble," +
                     " cast(x as short) xshort," +
                     " cast(x as byte) xbyte," +
-                    " cast(x as char) xchar," +
+                    " cast(x+48 as char) xchar," +
                     " cast(x as date) xdate," +
                     " cast(x as float) xfloat," +
                     " cast(x as timestamp) xts, " +
@@ -891,8 +906,8 @@ public class UpdateTest extends AbstractCairoTest {
             );
 
             String expected = "ts\txint\txlong\txdouble\txshort\txbyte\txchar\txdate\txfloat\txts\txbool\txl256\n" +
-                    "1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1\t1\t\u0001\t1970-01-01T00:00:00.001Z\t1.0000\t1970-01-01T00:00:00.000001Z\ttrue\t0x01\n" +
-                    "1970-01-01T00:00:01.000000Z\t2\t2\t2.0\t2\t2\t\u0002\t1970-01-01T00:00:00.002Z\t2.0000\t1970-01-01T00:00:00.000002Z\ttrue\t0x02\n";
+                    "1970-01-01T00:00:00.000000Z\t1\t1\t1.0\t1\t1\t1\t1970-01-01T00:00:00.001Z\t1.0\t1970-01-01T00:00:00.000001Z\ttrue\t0x01\n" +
+                    "1970-01-01T00:00:01.000000Z\t2\t2\t2.0\t2\t2\t2\t1970-01-01T00:00:00.002Z\t2.0\t1970-01-01T00:00:00.000002Z\ttrue\t0x02\n";
 
             update("UPDATE up SET xint=xshort");
             assertSql(expected, "up");
@@ -934,9 +949,9 @@ public class UpdateTest extends AbstractCairoTest {
             update("UPDATE up SET xshort=xchar WHERE ts='1970-01-01'");
             assertSql(expected, "up");
 
-            update("UPDATE up SET xchar=xshort");
+            update("UPDATE up SET xchar=(xshort+48)::short");
             assertSql(expected, "up");
-            update("UPDATE up SET xchar=xshort WHERE ts='1970-01-01'");
+            update("UPDATE up SET xchar=(xshort+48)::short WHERE ts='1970-01-01'");
             assertSql(expected, "up");
 
             update("UPDATE up SET xint=xchar");
@@ -3116,7 +3131,7 @@ public class UpdateTest extends AbstractCairoTest {
                     "select distinct symCol from up order by symCol",
                     null,
                     true,
-                    false
+                    true
             );
 
             assertSql(

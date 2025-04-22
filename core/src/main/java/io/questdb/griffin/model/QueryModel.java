@@ -109,7 +109,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private static final ObjList<String> modelTypeName = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> aliasToColumnNameMap = new LowerCaseCharSequenceObjHashMap<>();
-    private final ObjList<CharSequence> bottomUpColumnAliases = new ObjList<>();
     private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap columnAliasIndexes = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> columnNameToAliasMap = new LowerCaseCharSequenceObjHashMap<>();
@@ -142,6 +141,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<ExpressionNode> updateSetColumns = new ObjList<>();
     private final ObjList<CharSequence> updateTableColumnNames = new ObjList<>();
     private final IntList updateTableColumnTypes = new IntList();
+    private final ObjList<CharSequence> wildcardColumnNames = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauseModel = new LowerCaseCharSequenceObjHashMap<>();
     // used for the parallel sample by rewrite. In the future, if we deprecate original SAMPLE BY, then these will
     // be the only fields for these values.
@@ -311,9 +311,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         int aliasKeyIndex = aliasToColumnNameMap.keyIndex(alias);
         if (aliasKeyIndex > -1) {
             aliasToColumnNameMap.putAt(aliasKeyIndex, alias, ast.token);
-            bottomUpColumnAliases.add(alias);
+            wildcardColumnNames.add(alias);
             columnNameToAliasMap.put(ast.token, alias);
-            columnAliasIndexes.put(alias, bottomUpColumnAliases.size() - 1);
+            columnAliasIndexes.put(alias, wildcardColumnNames.size() - 1);
             return true;
         }
         return false;
@@ -440,7 +440,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         tableNameFunction = null;
         tableId = -1;
         metadataVersion = -1;
-        bottomUpColumnAliases.clear();
+        wildcardColumnNames.clear();
         expressionModels.clear();
         distinct = false;
         nestedModelIsSubQuery = false;
@@ -480,7 +480,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void clearColumnMapStructs() {
         this.aliasToColumnNameMap.clear();
-        this.bottomUpColumnAliases.clear();
+        this.wildcardColumnNames.clear();
         this.aliasToColumnMap.clear();
         this.bottomUpColumns.clear();
         this.columnAliasIndexes.clear();
@@ -547,8 +547,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             }
             aliasToColumnMap.put(alias, qc);
         }
-        ObjList<CharSequence> columnNames = other.bottomUpColumnAliases;
-        this.bottomUpColumnAliases.addAll(columnNames);
+        ObjList<CharSequence> columnNames = other.wildcardColumnNames;
+        this.wildcardColumnNames.addAll(columnNames);
         for (int i = 0, n = columnNames.size(); i < n; i++) {
             final CharSequence name = columnNames.getQuick(i);
             this.aliasToColumnNameMap.put(name, name);
@@ -637,7 +637,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(aliasToColumnNameMap, that.aliasToColumnNameMap)
                 && Objects.equals(columnNameToAliasMap, that.columnNameToAliasMap)
                 && Objects.equals(aliasToColumnMap, that.aliasToColumnMap)
-                && Objects.equals(bottomUpColumnAliases, that.bottomUpColumnAliases)
+                && Objects.equals(wildcardColumnNames, that.wildcardColumnNames)
                 && Objects.equals(orderBy, that.orderBy)
                 && Objects.equals(groupBy, that.groupBy)
                 && Objects.equals(orderByDirection, that.orderByDirection)
@@ -715,10 +715,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean getAllowPropagationOfOrderByAdvice() {
         return allowPropagationOfOrderByAdvice;
-    }
-
-    public ObjList<CharSequence> getBottomUpColumnAliases() {
-        return bottomUpColumnAliases;
     }
 
     public ObjList<QueryColumn> getBottomUpColumns() {
@@ -1009,6 +1005,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return whereClause;
     }
 
+    public ObjList<CharSequence> getWildcardColumnNames() {
+        return wildcardColumnNames;
+    }
+
     public LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses() {
         return withClauseModel;
     }
@@ -1031,7 +1031,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return 31 * hash + Objects.hash(
                 bottomUpColumns, topDownNameSet, topDownColumns,
                 aliasToColumnNameMap, columnNameToAliasMap, aliasToColumnMap,
-                bottomUpColumnAliases, orderBy,
+                wildcardColumnNames, orderBy,
                 orderByPosition, groupBy, orderByDirection,
                 dependencies, orderedJoinModels1, orderedJoinModels2,
                 columnAliasIndexes, modelAliasIndexes, expressionModels,
@@ -1245,7 +1245,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public void removeColumn(int columnIndex) {
         CharSequence columnAlias = bottomUpColumns.getQuick(columnIndex).getAlias();
         bottomUpColumns.remove(columnIndex);
-        bottomUpColumnAliases.remove(columnAlias);
+        wildcardColumnNames.remove(columnAlias);
         aliasToColumnMap.remove(columnAlias);
         aliasToColumnNameMap.remove(columnAlias);
         columnAliasIndexes.remove(columnAlias);
@@ -1494,7 +1494,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public void updateColumnAliasIndexes() {
         columnAliasIndexes.clear();
         for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
-            columnAliasIndexes.put(bottomUpColumnAliases.getQuick(i), i);
+            columnAliasIndexes.put(wildcardColumnNames.getQuick(i), i);
         }
     }
 
@@ -1713,7 +1713,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                     sinkColumns(sink, topDownColumns);
                     sink.putAscii(']');
                 }
-                if (this.bottomUpColumns.size() > 0) {
+                if (bottomUpColumns.size() > 0) {
                     sink.putAscii(' ');
                     sinkColumns(sink, bottomUpColumns);
                 }

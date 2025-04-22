@@ -173,7 +173,6 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
             if (cursor > -1) {
                 final PageFrameReduceTask task = queue.get(cursor);
                 final PageFrameSequence<?> frameSequence = task.getFrameSequence();
-                boolean circuitBreakerRestorePending = false;
                 try {
                     LOG.debug()
                             .$("reducing [shard=").$(frameSequence.getShard())
@@ -185,19 +184,8 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
                             .$(", cursor=").$(cursor)
                             .I$();
                     if (frameSequence.isActive()) {
-                        // The circuit breaker could be the one from this job, or the one belongs to stealingFrameSequence.
-                        // If this is work stealing (workerId == -1), and the frame sequence stealing work is processing
-                        // its own task (stealingFrameSequence == frameSequence), the circuit breaker wrapper has been
-                        // initialized with the circuit breaker instance belongs to this task.
-                        // If this is not work stealing, or the stealing frame sequence is not working on its own task,
-                        // we need to initialize the circuit breaker wrapper with the task's circuit breaker.
-                        if (workerId != -1 || frameSequence != stealingFrameSequence) {
-                            circuitBreaker.backup();
-                            circuitBreaker.init(frameSequence.getWorkStealCircuitBreaker());
-                            circuitBreakerRestorePending = true;
-                        } else { // workerId == -1 here
-                            frameSequence.validateWorkStealingCircuitBreaker();
-                        }
+                        // always initialize the circuit breaker
+                        circuitBreaker.init(frameSequence.getCircuitBreaker());
                         reduce(workerId, record, circuitBreaker, task, frameSequence, stealingFrameSequence);
                     }
                 } catch (Throwable th) {
@@ -220,10 +208,6 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
                     // Reduced counter has to be incremented only when we make
                     // sure that the task is available for consumers.
                     frameSequence.getReduceFinishedCounter().incrementAndGet();
-                    // Restore frame sequence's circuit breaker to the original state.
-                    if (circuitBreakerRestorePending) {
-                        circuitBreaker.restore();
-                    }
                 }
                 return false;
             } else if (cursor == -1) {
@@ -246,9 +230,9 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
         // we deliberately hold the queue item because
         // processing is daisy-chained. If we were to release item before
         // finishing reduction, next step (job) will be processing an incomplete task
-        int cbState = frameSequence.isUninterruptible()
+        final int cbState = frameSequence.isUninterruptible()
                 ? SqlExecutionCircuitBreaker.STATE_OK
-                : circuitBreaker.getState(frameSequence.getStartTime(), frameSequence.getCircuitBreakerFd());
+                : circuitBreaker.getState(frameSequence.getStartTime(), frameSequence.getCircuitBreaker().getFd());
 
         if (cbState == SqlExecutionCircuitBreaker.STATE_OK) {
             record.of(frameSequence.getSymbolTableSource());
