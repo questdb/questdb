@@ -129,7 +129,8 @@ lavoratori su 32 CPU e 64 GB di RAM::
 
 - [Documentazione di QuestDB:](https://questdb.io/docs/introduction/) impara come eseguire e configurare correttamente
   QuestDB.
-- [Tutorial:](https://questdb.io/tutorial/) scopri passo dopo passo cosa sei in grado di fare utilizzando QuestDB.
+- [Tutorial:](https://questdb.com/blog/?tag=tutorial) scopri passo dopo passo cosa sei in grado di fare utilizzando
+  QuestDB.
 - [Roadmap del prodotto:](https://github.com/questdb/questdb/projects) dai un'occhiata al nostro piano di sviluppo per
   le prossime versioni.
 
@@ -143,10 +144,10 @@ lavoratori su 32 CPU e 64 GB di RAM::
 
 ### 🚢 Distribuzione di QuestDB
 
-- [AMI AWS](https://questdb.io/docs/guides/aws-official-ami)
-- [Piattaforma Google Cloud](https://questdb.io/docs/guides/google-cloud-platform)
-- [Immagine Docker ufficiale](https://questdb.io/docs/get-started/docker)
-- [Droplets DigitalOcean](https://questdb.io/docs/guides/digitalocean)
+- [AMI AWS](https://questdb.com/docs/deployment/aws/)
+- [Piattaforma Google Cloud](https://questdb.com/docs/deployment/gcp/)
+- [Immagine Docker ufficiale](https://questdb.com/docs/quick-start/#docker)
+- [Droplets DigitalOcean](https://questdb.com/docs/deployment/digital-ocean/)
 - [Grafici Helm di Kubernetes](https://questdb.io/docs/guides/kubernetes)
 
 ## Collabora
