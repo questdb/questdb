@@ -118,9 +118,9 @@ public interface CompiledQuery {
     UpdateOperation getUpdateOperation();
 
     /**
-     * Returns and transfers ownership of the current insertion operation.
+     * Returns and move ownership of the current insertion operation.
      * After invocation, the lifecycle management becomes the caller's responsibility.
-     * The internal reference will be cleared to prevent memory double free.
+     * The internal reference will be cleared to prevent double free.
      *
      * @return InsertOperation
      */
