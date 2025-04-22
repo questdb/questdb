@@ -78,8 +78,10 @@ de instalacion en una variedad de plataformas.
 
 ### QuestDB Cloud
 
-QuestDB Cloud es la versión gestionada de QuestDB, con funcionalidades añadidas como control de acceso basado en roles (RBAC), 
-replicación nativa en nube, compresión, monitorización, o snapshots en nube. La [prueba gratuita](https://cloud.questdb.com)
+QuestDB Cloud es la versión gestionada de QuestDB, con funcionalidades añadidas como control de acceso basado en roles (
+RBAC),
+replicación nativa en nube, compresión, monitorización, o snapshots en nube.
+La [prueba gratuita](https://cloud.questdb.com)
 incluye un crédito de $200.
 
 ### Conéctate con QuestDB
@@ -142,7 +144,7 @@ servidor `c5.metal` usando 16 de los 96 hilos disponibles:
 
 - [Documentación de QuestDB:](https://questdb.io/docs/introduction/) entiende cómo instalar, configurar y correr
   QuestDB.
-- [Tutoriales:](https://questdb.io/tutorial/) aprende paso a paso todo lo que puedes hacer con QuestDB.
+- [Tutoriales:](https://questdb.com/blog/?tag=tutorial ) aprende paso a paso todo lo que puedes hacer con QuestDB.
 - [Product roadmap:](https://github.com/questdb/questdb/projects/) echa un vistazo a nuestro plan para las versiones que
   vienen.
 
@@ -155,10 +157,10 @@ servidor `c5.metal` usando 16 de los 96 hilos disponibles:
 
 ### 🚢 Despliega QuestDB
 
-- [AWS AMI](https://questdb.io/docs/guides/aws-official-ami/)
-- [Plataforma en la nube de Google](https://questdb.io/docs/guides/google-cloud-platform/)
-- [Imagen oficial de Docker](https://questdb.io/docs/get-started/docker/)
-- [DigitalOcean droplets](https://questdb.io/docs/guides/digitalocean/)
+- [AWS AMI](https://questdb.com/docs/deployment/aws/)
+- [Plataforma en la nube de Google](https://questdb.com/docs/deployment/gcp/)
+- [Imagen oficial de Docker](https://questdb.com/docs/quick-start/#docker)
+- [DigitalOcean droplets](https://questdb.com/docs/deployment/digital-ocean/)
 - [Kubernetes Helm charts](https://questdb.io/docs/guides/kubernetes/)
 
 ## Contribuye

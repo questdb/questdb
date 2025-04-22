@@ -115,7 +115,7 @@ AMD Ryzen 3970X で 6 ワーカーの「cpu-only」ユース ケースを使用�
 
 - [QuestDB ドキュメント:](https://questdb.io/docs/introduction/) 方法を理解する
   QuestDB を実行および構成します。
-- [チュートリアル:](https://questdb.io/tutorial/) QuestDB で何ができるかを学ぶ
+- [チュートリアル:](https://questdb.com/blog/?tag=tutorial) QuestDB で何ができるかを学ぶ
   一歩一歩。
 - [製品ロードマップ:](https://github.com/questdb/questdb/projects) チェックアウト
   今後のリリースの計画。
@@ -133,10 +133,10 @@ AMD Ryzen 3970X で 6 ワーカーの「cpu-only」ユース ケースを使用�
 
 ### 🚢 QuestDB をデプロイする
 
-- [AWS AMI](https://questdb.io/docs/guides/aws-official-ami)
-- [Google クラウド プラットフォーム](https://questdb.io/docs/guides/google-cloud-platform)
-- [公式 Docker イメージ](https://questdb.io/docs/get-started/docker)
-- [DigitalOcean ドロップレット](https://questdb.io/docs/guides/digitalocean)
+- [AWS AMI](https://questdb.com/docs/deployment/aws/)
+- [Google クラウド プラットフォーム](https://questdb.com/docs/deployment/gcp/)
+- [公式 Docker イメージ](https://questdb.com/docs/quick-start/#docker)
+- [DigitalOcean ドロップレット](https://questdb.com/docs/deployment/digital-ocean/)
 - [Kubernetes Helm チャート](https://questdb.io/docs/guides/kubernetes)
 
 ## 助ける

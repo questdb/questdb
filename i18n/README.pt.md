@@ -114,7 +114,7 @@ A tabela a seguir mostra o tempo de execução da consulta de um bilhão de linh
 
 - [Documentação do QuestDB:](https://questdb.io/docs/introduction/) entender como
   para executar e configurar o QuestDB.
-- [Tutoriais:](https://questdb.io/tutorial/) aprenda o que é possível com o QuestDB
+- [Tutoriais:](https://questdb.com/blog/?tag=tutorial) aprenda o que é possível com o QuestDB
   passo a passo.
 - [Roteiro do produto:](https://github.com/questdb/questdb/projects) confira nosso
   planos para os próximos lançamentos.
@@ -132,10 +132,10 @@ A tabela a seguir mostra o tempo de execução da consulta de um bilhão de linh
 
 ### 🚢 Implantar QuestDB
 
-- [AWS AMI](https://questdb.io/docs/guides/aws-official-ami)
-- [Plataforma de Google Cloud](https://questdb.io/docs/guides/google-cloud-platform)
-- [Imagem oficial do Docker](https://questdb.io/docs/get-started/docker)
-- [Gotículas DigitalOcean](https://questdb.io/docs/guides/digitalocean)
+- [AWS AMI](https://questdb.com/docs/deployment/aws/)
+- [Plataforma de Google Cloud](https://questdb.com/docs/deployment/gcp/)
+- [Imagem oficial do Docker](https://questdb.com/docs/quick-start/#docker)
+- [Gotículas DigitalOcean](https://questdb.com/docs/deployment/digital-ocean/)
 - [Gráficos de leme do Kubernetes](https://questdb.io/docs/guides/kubernetes)
 
 ## Contribuir
