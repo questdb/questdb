@@ -211,6 +211,28 @@ public class FixedOffsetIntervalIteratorTest extends AbstractIntervalIteratorTes
     }
 
     @Test
+    public void testTxnIntervalToTop() throws Exception {
+        final FixedOffsetIntervalIterator iterator = new FixedOffsetIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);
+        final LongList txnIntervals = new LongList();
+
+        txnIntervals.add(0, Timestamps.DAY_MICROS - 1);
+        iterator.of(sampler, 0, txnIntervals, 0, 3 * Timestamps.DAY_MICROS - 1, 1);
+
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(0, iterator.getTimestampLo());
+        Assert.assertEquals(Timestamps.DAY_MICROS, iterator.getTimestampHi());
+        Assert.assertFalse(iterator.next());
+
+        iterator.toTop(1);
+
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(0, iterator.getTimestampLo());
+        Assert.assertEquals(Timestamps.DAY_MICROS, iterator.getTimestampHi());
+        Assert.assertFalse(iterator.next());
+    }
+
+    @Test
     public void testTxnIntervalsEmpty() throws Exception {
         final FixedOffsetIntervalIterator iterator = new FixedOffsetIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(1, 'd', 0);

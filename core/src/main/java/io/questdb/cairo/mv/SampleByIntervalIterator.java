@@ -78,14 +78,15 @@ public abstract class SampleByIntervalIterator {
      * @return true if the iterator moved to the next interval; false if the iteration has ended
      */
     public boolean next() {
+        final int txnIntervalsSize = txnIntervals != null ? txnIntervals.size() : -1;
         OUT:
         while (next0()) {
-            if (txnIntervals != null) {
-                for (int n = txnIntervals.size(); txnIntervalLoIndex < n; txnIntervalLoIndex += 2) {
+            if (txnIntervalsSize != -1) {
+                final long iteratorLo = getTimestampLo();
+                final long iteratorHi = getTimestampHi() - 1; // hi is exclusive, hence -1
+                while (txnIntervalLoIndex < txnIntervalsSize) {
                     final long intervalLo = txnIntervals.getQuick(txnIntervalLoIndex);
                     final long intervalHi = txnIntervals.getQuick(txnIntervalLoIndex + 1);
-                    final long iteratorLo = getTimestampLo();
-                    final long iteratorHi = getTimestampHi() - 1; // hi is exclusive, hence -1
 
                     if (iteratorHi < intervalLo) {
                         // iterator timestamps are before the txn interval
@@ -97,6 +98,7 @@ public abstract class SampleByIntervalIterator {
                     }
                     // otherwise, iterator timestamps are after the txn interval
                     // continue to the next txn interval
+                    txnIntervalLoIndex += 2;
                 }
                 // all txn intervals are before the txn interval
                 return false;
@@ -113,6 +115,7 @@ public abstract class SampleByIntervalIterator {
      */
     public void toTop(int step) {
         this.step = step;
+        this.txnIntervalLoIndex = 0;
         toTop0();
     }
 
@@ -124,7 +127,6 @@ public abstract class SampleByIntervalIterator {
     ) {
         this.sampler = sampler;
         this.txnIntervals = txnIntervals;
-        this.txnIntervalLoIndex = 0;
     }
 
     protected abstract void toTop0();
