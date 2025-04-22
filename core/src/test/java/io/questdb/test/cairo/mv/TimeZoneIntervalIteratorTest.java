@@ -324,7 +324,7 @@ public class TimeZoneIntervalIteratorTest {
     }
 
     @Test
-    public void testTimeZoneWithDstSingleRow() throws Exception {
+    public void testTimeZoneWithDstSingleRow1() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(30, 'm', 0);
         iterator.of(
@@ -342,6 +342,29 @@ public class TimeZoneIntervalIteratorTest {
         Assert.assertTrue(iterator.next());
         Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2024-10-27T00:00:00.000000Z"), iterator.getTimestampLo());
         Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2024-10-27T02:00:00.000000Z"), iterator.getTimestampHi());
+
+        Assert.assertFalse(iterator.next());
+    }
+
+    @Test
+    public void testTimeZoneWithDstSingleRow2() throws Exception {
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(30, 'm', 0);
+        iterator.of(
+                sampler,
+                Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "Europe/London"),
+                0,
+                TimestampFormatUtils.parseTimestamp("2024-03-31T00:30:06.000000Z"),
+                TimestampFormatUtils.parseTimestamp("2024-03-31T00:30:06.000000Z"),
+                2
+        );
+
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2024-03-31T00:30:00.000000Z"), iterator.getMinTimestamp());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2024-03-31T01:00:00.000000Z"), iterator.getMaxTimestamp());
+
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2024-03-31T00:30:00.000000Z"), iterator.getTimestampLo());
+        Assert.assertEquals(TimestampFormatUtils.parseTimestamp("2024-03-31T01:00:00.000000Z"), iterator.getTimestampHi());
 
         Assert.assertFalse(iterator.next());
     }
