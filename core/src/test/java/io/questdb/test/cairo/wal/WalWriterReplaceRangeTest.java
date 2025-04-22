@@ -25,80 +25,25 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TxReader;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.wal.SymbolMapDiff;
-import io.questdb.cairo.wal.SymbolMapDiffEntry;
-import io.questdb.cairo.wal.WalDataRecord;
-import io.questdb.cairo.wal.WalDirectoryPolicy;
-import io.questdb.cairo.wal.WalEventCursor;
-import io.questdb.cairo.wal.WalReader;
-import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlUtil;
-import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.mp.SOCountDownLatch;
-import io.questdb.mp.WorkerPool;
-import io.questdb.mp.WorkerPoolUtils;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Chars;
-import io.questdb.std.DirectBinarySequence;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.IntList;
-import io.questdb.std.Long256Impl;
-import io.questdb.std.LongHashSet;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
-import io.questdb.std.Os;
-import io.questdb.std.Rnd;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.DirectUtf8String;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
-import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.cairo.TableModel;
-import io.questdb.test.cairo.TestTableReaderRecordCursor;
-import io.questdb.test.mp.TestWorkerPool;
-import io.questdb.test.std.TestFilesFacadeImpl;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.io.File;
-import java.io.IOException;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Consumer;
-
-import static io.questdb.cairo.wal.WalUtils.*;
-import static org.junit.Assert.*;
+import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     @Test
@@ -313,7 +258,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             if (commitWithRangeReplace) {
                 long rangeStart = IntervalUtils.parseFloorPartialTimestamp(rangeStartStr);
                 long rangeEnd = IntervalUtils.parseFloorPartialTimestamp(rangeEndStr);
-                ww.commitWitParams(rangeStart, rangeEnd, WAL_DEDUP_MODE_REPLACE_RANGE);
+                ww.commitWithParams(rangeStart, rangeEnd, WAL_DEDUP_MODE_REPLACE_RANGE);
             } else {
                 ww.commit();
             }

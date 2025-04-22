@@ -267,7 +267,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     public void testOneView() throws Exception {
         final String tableName = testName.getMethodName();
         final String mvName = testName.getMethodName() + "_mv";
-        final Rnd rnd = fuzzer.generateRandom(LOG);
+        final Rnd rnd = fuzzer.generateRandom(LOG, 317639342085792L, 1745326750652L);
         final int mins = 1 + rnd.nextInt(300);
         final String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by " + mins + "m";
         testMvFuzz(tableName, mvName, viewSql);

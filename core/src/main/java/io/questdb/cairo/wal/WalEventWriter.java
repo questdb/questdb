@@ -266,18 +266,6 @@ class WalEventWriter implements Closeable {
         eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS);
     }
 
-    int appendData(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
-        return appendData(
-                startRowID,
-                endRowID,
-                minTimestamp,
-                maxTimestamp,
-                outOfOrder,
-                Numbers.LONG_NULL,
-                Numbers.LONG_NULL
-        );
-    }
-
     int appendData(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder, long lastRefreshBaseTxn, long lastRefreshTimestamp, long replaceRangeLowTs, long replaceRangeHiTs, byte dedupMode) {
         byte msgType = lastRefreshBaseTxn != Numbers.LONG_NULL ? WalTxnType.MAT_VIEW_DATA : WalTxnType.DATA;
         return appendData(
@@ -295,7 +283,7 @@ class WalEventWriter implements Closeable {
         );
     }
 
-    int appendMatViewInvalidate(long lastRefreshBaseTxn, long lastRefreshTimestamp, boolean invalid, @Nullable CharSequence invalidationReason, long replaceRangeLowTs, long replaceRangeHiTs, byte dedupMode) {
+    int appendMatViewInvalidate(long lastRefreshBaseTxn, long lastRefreshTimestamp, boolean invalid, @Nullable CharSequence invalidationReason) {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
         eventMem.putByte(WalTxnType.MAT_VIEW_INVALIDATE);

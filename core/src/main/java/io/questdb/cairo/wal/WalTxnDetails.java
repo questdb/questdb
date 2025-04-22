@@ -47,8 +47,7 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.wal.WalTxnType.NONE;
-import static io.questdb.cairo.wal.WalUtils.MIN_WAL_ID;
-import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
+import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalTxnDetails implements QuietCloseable {
     public static final long FORCE_FULL_COMMIT = Long.MAX_VALUE;

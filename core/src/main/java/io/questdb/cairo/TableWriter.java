@@ -2801,13 +2801,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long replaceRangeTsLo = walTxnDetails.getReplaceRangeTsLow(seqTxn);
         long replaceRangeTsHi = walTxnDetails.getReplaceRangeTsHi(seqTxn);
 
-        LOG.info().$("processing WAL [path=").$substr(pathRootSize, walPath)
+        LogRecord logLine = LOG.info();
+        logLine.$("processing WAL [path=").$substr(pathRootSize, walPath)
                 .$(", roLo=").$(rowLo)
                 .$(", roHi=").$(rowHi)
                 .$(", seqTxn=").$(seqTxn)
                 .$(", tsMin=").$ts(txnMinTs).$(", tsMax=").$ts(txnMaxTs)
-                .$(", commitToTs=").$ts(commitToTimestamp)
-                .I$();
+                .$(", commitToTs=").$ts(commitToTimestamp);
+
+        if (replaceRangeTsLo < replaceRangeTsHi) {
+            logLine.$(", replaceRangeTsLo=").$ts(replaceRangeTsLo)
+                    .$(", replaceRangeTsHi=").$ts(replaceRangeTsHi);
+        }
+        logLine.I$();
 
         final int segmentId = walTxnDetails.getSegmentId(seqTxn);
         boolean isLastSegmentUsage = walTxnDetails.isLastSegmentUsage(seqTxn);

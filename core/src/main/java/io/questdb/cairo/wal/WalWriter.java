@@ -63,6 +63,7 @@ import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.std.AtomicIntList;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.BoolList;
@@ -144,8 +145,10 @@ public class WalWriter implements TableWriterAPI {
     private boolean distressed;
     private boolean isCommittingData;
     private byte lastDedupMode = WAL_DEDUP_MODE_DEFAULT;
-    private long lastReplaceRangeHiTs = Long.MAX_VALUE;
-    private long lastReplaceRangeLowTs = Long.MIN_VALUE;
+    private long lastRefreshBaseTxn;
+    private long lastRefreshTimestamp;
+    private long lastReplaceRangeHiTs = 0;
+    private long lastReplaceRangeLowTs = 0;
     private int lastSegmentTxn = -1;
     private long lastSeqTxn = NO_TXN;
     private boolean open;
@@ -309,13 +312,22 @@ public class WalWriter implements TableWriterAPI {
     @Override
     public void commit() {
         // plain old commit
-        commit0(Long.MIN_VALUE, Long.MIN_VALUE);
+        commit0(Long.MIN_VALUE, Long.MIN_VALUE, 0, 0, WAL_DEDUP_MODE_DEFAULT);
     }
 
     // Called as the last transaction of a materialized view refresh.
-    public void commitMatView(long lastRefreshBaseTxn, long lastRefreshTimestamp) {
+    public void commitMatView(long lastRefreshBaseTxn, long lastRefreshTimestamp, long lastReplaceRangeLowTs, long lastReplaceRangeHiTs) {
         assert lastRefreshBaseTxn != Numbers.LONG_NULL;
-        commit0(lastRefreshBaseTxn, lastRefreshTimestamp);
+        if (!(lastReplaceRangeLowTs == 0 && lastReplaceRangeHiTs == 0)) {
+            assert lastReplaceRangeLowTs < lastReplaceRangeHiTs;
+            assert txnMinTimestamp >= lastReplaceRangeLowTs;
+            assert txnMaxTimestamp <= lastReplaceRangeHiTs;
+        }
+        commit0(lastRefreshBaseTxn, lastRefreshTimestamp, lastReplaceRangeLowTs, lastReplaceRangeHiTs, WAL_DEDUP_MODE_DEFAULT);
+    }
+
+    public void commitWithParams(long replaceRangeLowTs, long replaceRangeHiTs, byte dedupMode) {
+        commit0(Long.MIN_VALUE, Long.MIN_VALUE, replaceRangeLowTs, replaceRangeHiTs, dedupMode);
     }
 
     public void doClose(boolean truncate) {
@@ -937,12 +949,18 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private void commit0(long lastRefreshBaseTxn, long lastRefreshTimestamp) {
+    private void commit0(long lastRefreshBaseTxn, long lastRefreshTimestamp, long replaceRangeLowTs, long replaceRangeHiTs, byte dedupMode) {
         checkDistressed();
         try {
             if (inTransaction()) {
                 isCommittingData = true;
                 final long rowsToCommit = getUncommittedRowCount();
+                lastReplaceRangeLowTs = replaceRangeLowTs;
+                lastReplaceRangeHiTs = replaceRangeHiTs;
+                lastDedupMode = dedupMode;
+                this.lastRefreshBaseTxn = lastRefreshBaseTxn;
+                this.lastRefreshTimestamp = lastRefreshTimestamp;
+
                 lastSegmentTxn = events.appendData(
                         currentTxnStartRowNum,
                         segmentRowCount,
@@ -950,16 +968,27 @@ public class WalWriter implements TableWriterAPI {
                         txnMaxTimestamp,
                         txnOutOfOrder,
                         lastRefreshBaseTxn,
-                        lastRefreshTimestamp
+                        lastRefreshTimestamp,
+                        replaceRangeLowTs,
+                        replaceRangeHiTs,
+                        dedupMode
                 );
                 // flush disk before getting next txn
                 syncIfRequired();
                 final long seqTxn = getSequencerTxn();
-                LOG.info().$("commit [wal=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
-                        .$(", segTxn=").$(lastSegmentTxn)
-                        .$(", seqTxn=").$(seqTxn)
-                        .$(", rowLo=").$(currentTxnStartRowNum).$(", rowHi=").$(segmentRowCount)
-                        .$(", minTs=").$ts(txnMinTimestamp).$(", maxTs=").$ts(txnMaxTimestamp).I$();
+                LogRecord logLine = LOG.info();
+                try {
+                    logLine.$("commit [wal=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
+                            .$(", segTxn=").$(lastSegmentTxn)
+                            .$(", seqTxn=").$(seqTxn)
+                            .$(", rowLo=").$(currentTxnStartRowNum).$(", rowHi=").$(segmentRowCount)
+                            .$(", minTs=").$ts(txnMinTimestamp).$(", maxTs=").$ts(txnMaxTimestamp);
+                    if (replaceRangeHiTs > replaceRangeLowTs) {
+                        logLine.$(", replaceRangeLo=").$ts(replaceRangeLowTs).$(", replaceRangeHi=").$ts(replaceRangeHiTs);
+                    }
+                } finally {
+                    logLine.I$();
+                }
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
                 metrics.walMetrics().addRowsWritten(rowsToCommit);
@@ -1566,6 +1595,8 @@ public class WalWriter implements TableWriterAPI {
                     txnMinTimestamp,
                     txnMaxTimestamp,
                     txnOutOfOrder,
+                    lastRefreshBaseTxn,
+                    lastRefreshTimestamp,
                     lastReplaceRangeLowTs,
                     lastReplaceRangeHiTs,
                     lastDedupMode

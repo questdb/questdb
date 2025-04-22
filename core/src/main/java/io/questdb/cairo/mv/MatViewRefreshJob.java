@@ -385,6 +385,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         try {
             factory = state.acquireRecordFactory();
             copier = state.getRecordToRowCopier();
+            long rowsCommitted = 0;
 
             for (int i = 0; i <= maxRetries; i++) {
                 try {
@@ -422,20 +423,38 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     long rowCount = 0;
 
                     intervalIterator.toTop(intervalStep);
+                    long replacementTimestampLo = Long.MIN_VALUE;
+                    long replacementTimestampHi = Long.MIN_VALUE;
+
                     while (intervalIterator.next()) {
                         refreshExecutionContext.setRange(intervalIterator.getTimestampLo(), intervalIterator.getTimestampHi());
+                        if (replacementTimestampLo == Long.MIN_VALUE) {
+                            replacementTimestampLo = intervalIterator.getTimestampLo();
+                        }
+                        // TODO: check that interval hi is exclusive
+                        replacementTimestampHi = intervalIterator.getTimestampHi() - 1;
+
                         try (RecordCursor cursor = factory.getCursor(refreshExecutionContext)) {
                             final Record record = cursor.getRecord();
                             while (cursor.hasNext()) {
                                 TableWriter.Row row = walWriter.newRow(record.getTimestamp(cursorTimestampIndex));
                                 copier.copy(record, row);
                                 row.append();
-                                if (++rowCount >= commitTarget) {
-                                    walWriter.commit();
-                                    commitTarget = rowCount + batchSize;
-                                }
+                                rowCount++;
+                            }
+
+                            if (rowCount >= commitTarget) {
+                                walWriter.commitMatView(baseTableTxn, refreshTimestamp, replacementTimestampLo, replacementTimestampHi);
+                                replacementTimestampLo = intervalIterator.getTimestampHi();
+                                commitTarget = rowCount + batchSize;
+                                rowsCommitted = rowCount;
                             }
                         }
+                    }
+
+                    if (rowCount > rowsCommitted) {
+                        walWriter.commitMatView(baseTableTxn, refreshTimestamp, replacementTimestampLo, replacementTimestampHi);
+                        rowsCommitted = rowCount;
                     }
                     break;
                 } catch (TableReferenceOutOfDateException e) {
@@ -464,7 +483,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
             }
 
-            walWriter.commitMatView(baseTableTxn, refreshTimestamp);
+            if (rowsCommitted == 0) {
+                // No data was written, but we should mark the view as refreshed anyway.
+                walWriter.commitMatView(baseTableTxn, refreshTimestamp, 0, 0);
+            }
             state.refreshSuccess(factory, copier, walWriter.getMetadata().getMetadataVersion(), refreshTimestamp, refreshTriggeredTimestamp, baseTableTxn);
             state.setLastRefreshBaseTableTxn(baseTableTxn);
         } catch (Throwable th) {

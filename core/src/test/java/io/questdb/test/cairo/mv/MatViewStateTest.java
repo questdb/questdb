@@ -109,7 +109,7 @@ public class MatViewStateTest extends AbstractCairoTest {
                     row.putStr(0, "ABC");
                     row.putDouble(1, rnd.nextDouble());
                     row.append();
-                    walWriter.commitMatView(i, i);
+                    walWriter.commitMatView(i, i, 0, 0);
                 }
                 assertState(tableToken, iterations - 1, iterations - 1, false, null);
 
@@ -120,7 +120,7 @@ public class MatViewStateTest extends AbstractCairoTest {
                     row.putStr(0, "ABC");
                     row.putDouble(1, rnd.nextDouble());
                     row.append();
-                    walWriter.commitMatView(i, i);
+                    walWriter.commitMatView(i, i, 0, 0);
                     drainWalQueue();
                     assertState(tableToken, iterations - 1, iterations - 1, false, null);
                 }
@@ -156,7 +156,7 @@ public class MatViewStateTest extends AbstractCairoTest {
                     row.putDouble(1, 0.0);
                     row.append();
                     if (i % 2 == 0) {
-                        walWriter.commitMatView(i, i);
+                        walWriter.commitMatView(i, i, 0, 0);
                     } else {
                         walWriter.commit();
                     }

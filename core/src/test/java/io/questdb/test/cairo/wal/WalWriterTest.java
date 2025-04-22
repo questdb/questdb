@@ -1804,7 +1804,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 if (rnd.nextBoolean()) {
                     walWriter.commit();
                 } else {
-                    walWriter.commitMatView(0, 0);
+                    walWriter.commitMatView(0, 0, 0, 0);
                 }
 
                 drainWalQueue();
@@ -2340,16 +2340,12 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void testReadMatViewStateV1() throws Exception {
-        assertMemoryLeak(() -> {
-            testReadMatViewState(0);
-        });
+        assertMemoryLeak(() -> testReadMatViewState(0));
     }
 
     @Test
     public void testReadMatViewStateV2() throws Exception {
-        assertMemoryLeak(() -> {
-            testReadMatViewState(2);
-        });
+        assertMemoryLeak(() -> testReadMatViewState(2));
     }
 
     @Test
@@ -4023,7 +4019,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     row.putSym(1, "sym" + i);
                     row.append();
                     if (i == 1) {
-                        walWriter.commitMatView(42, 42);
+                        walWriter.commitMatView(42, 42, 0, 0);
                     } else {
                         walWriter.commit();
                     }
@@ -4129,7 +4125,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     walWriter.commit();
                 } else {
                     if (newFormat) {
-                        walWriter.commitMatView(refreshTxn + i, i);
+                        walWriter.commitMatView(refreshTxn + i, i, 0, 0);
                     } else {
                         walWriter.commit();
                     }
