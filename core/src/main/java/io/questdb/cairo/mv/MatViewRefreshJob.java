@@ -327,7 +327,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         } catch (Throwable th) {
             // If we're here, we either couldn't obtain the WAL writer or the writer couldn't write
             // invalid state transaction. Update the in-memory state and call it a day.
-            LOG.critical()
+            LOG.error()
                     .$("could not perform incremental refresh, unexpected error [view=").$(viewToken)
                     .$(", ex=").$(th)
                     .I$();
@@ -615,7 +615,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 } catch (Throwable th) {
                     // If we're here, we either couldn't obtain the WAL writer or the writer couldn't write
                     // invalid state transaction. Update the in-memory state and call it a day.
-                    LOG.critical()
+                    LOG.error()
                             .$("could not get table writer for view [view=").$(viewToken)
                             .$(", ex=").$(th)
                             .I$();
@@ -703,7 +703,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         } catch (Throwable th) {
             // If we're here, we either couldn't obtain the WAL writer or the writer couldn't write
             // invalid state transaction. Update the in-memory state and call it a day.
-            LOG.critical()
+            LOG.error()
                     .$("could not perform incremental refresh, unexpected error [view=").$(viewToken)
                     .$(", ex=").$(th)
                     .I$();
