@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
 import io.questdb.std.Rnd;
@@ -527,6 +528,74 @@ public class MatViewTest extends AbstractCairoTest {
 
             Assert.assertNull(engine.getMatViewStateStore().getViewState(matViewToken1));
             Assert.assertNotNull(engine.getMatViewStateStore().getViewState(matViewToken2));
+        });
+    }
+
+    @Test
+    public void testCreateMatViewLoop() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE 'trades' (" +
+                            "symbol SYMBOL CAPACITY 256 CACHE, " +
+                            "side SYMBOL CAPACITY 256 CACHE, " +
+                            "price DOUBLE, " +
+                            "amount DOUBLE, " +
+                            "timestamp TIMESTAMP " +
+                            ") timestamp(timestamp) PARTITION BY HOUR WAL;"
+            );
+
+            execute("INSERT INTO trades VALUES('BTC-USD', 'BUY', 29432.50, 0.5, '2023-08-15T09:30:45.789Z');");
+            execute("INSERT INTO trades VALUES('BTC-USD', 'SELL', 29435.20, 1.2, '2023-08-15T09:31:12.345Z');");
+
+            drainQueues();
+            execute("CREATE MATERIALIZED VIEW a AS (\n" +
+                    "  SELECT\n" +
+                    "    timestamp,\n" +
+                    "    symbol,\n" +
+                    "    avg(price) AS avg_price\n" +
+                    "  FROM trades\n" +
+                    "  SAMPLE BY 1d\n" +
+                    ") partition by HOUR;");
+
+            execute("create MATERIALIZED view b as (\n" +
+                    "  SELECT\n" +
+                    "    timestamp,\n" +
+                    "    symbol,\n" +
+                    "    avg(avg_price) AS avg_price\n" +
+                    "  FROM a\n" +
+                    "  SAMPLE BY 2d\n" +
+                    ") partition by HOUR;");
+
+            execute("create MATERIALIZED view c as (\n" +
+                    "  SELECT\n" +
+                    "    timestamp,\n" +
+                    "    symbol,\n" +
+                    "    avg(avg_price) AS avg_price\n" +
+                    "  FROM b\n" +
+                    "  SAMPLE BY 2d\n" +
+                    ") partition by HOUR;");
+
+            drainQueues();
+            execute("drop MATERIALIZED VIEW a;");
+
+            drainQueues();
+
+            try {
+                execute("create MATERIALIZED view A as (\n" +
+                        "  SELECT\n" +
+                        "    timestamp,\n" +
+                        "    symbol,\n" +
+                        "    avg(avg_price) AS avg_price\n" +
+                        "  FROM c\n" +
+                        "  SAMPLE BY 2d\n" +
+                        ") partition by HOUR;");
+                Assert.fail("Expected a dependency loop exception");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
+            }
+            // mat view table should be dropped
+            TableToken token = engine.getTableTokenIfExists("a");
+            Assert.assertNull(token);
         });
     }
 
@@ -1610,6 +1679,46 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshSkipsUnchangedBuckets() throws Exception {
+        // Verify that incremental refresh skips unchanged SAMPLE BY buckets.
+        assertMemoryLeak(() -> {
+            TestTimestampCounterFactory.COUNTER.set(0);
+
+            execute(
+                    "create table base_price (" +
+                            "  price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL;"
+            );
+
+            final String viewSql = "select ts, test_timestamp_counter(ts) ts0, max(price) max_price " +
+                    "from base_price " +
+                    "sample by 1d";
+            createMatView(viewSql);
+
+            execute("insert into base_price(price, ts) values (1.320, '2024-01-01T00:01'), (1.321, '2024-01-30T00:01');");
+
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "view_name\tbase_table_name\tview_status\n" +
+                            "price_1h\tbase_price\tvalid\n",
+                    "select view_name, base_table_name, view_status from materialized_views",
+                    null,
+                    false
+            );
+
+            // The function must have been called for two days only although the full interval is 30 days.
+            Assert.assertEquals(2, TestTimestampCounterFactory.COUNTER.get());
+
+            final String expected = "ts\tts0\tmax_price\n" +
+                    "2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.32\n" +
+                    "2024-01-30T00:00:00.000000Z\t2024-01-30T00:00:00.000000Z\t1.321\n";
+            assertQueryNoLeakCheck(expected, viewSql + " order by ts", "ts", true, true);
+            assertQueryNoLeakCheck(expected, "price_1h order by ts", "ts", true, true);
+        });
+    }
+
+    @Test
     public void testResumeSuspendMatView() throws Exception {
         assertMemoryLeak(() -> {
             // create table and mat view
@@ -2220,74 +2329,6 @@ public class MatViewTest extends AbstractCairoTest {
                     true,
                     true
             );
-        });
-    }
-
-    @Test
-    public void testCreateMatViewLoop() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    "CREATE TABLE 'trades' (" +
-                            "symbol SYMBOL CAPACITY 256 CACHE, " +
-                            "side SYMBOL CAPACITY 256 CACHE, " +
-                            "price DOUBLE, " +
-                            "amount DOUBLE, " +
-                            "timestamp TIMESTAMP " +
-                            ") timestamp(timestamp) PARTITION BY HOUR WAL;"
-            );
-
-            execute("INSERT INTO trades VALUES('BTC-USD', 'BUY', 29432.50, 0.5, '2023-08-15T09:30:45.789Z');");
-            execute("INSERT INTO trades VALUES('BTC-USD', 'SELL', 29435.20, 1.2, '2023-08-15T09:31:12.345Z');");
-
-            drainQueues();
-            execute("CREATE MATERIALIZED VIEW a AS (\n" +
-                    "  SELECT\n" +
-                    "    timestamp,\n" +
-                    "    symbol,\n" +
-                    "    avg(price) AS avg_price\n" +
-                    "  FROM trades\n" +
-                    "  SAMPLE BY 1d\n" +
-                    ") partition by HOUR;");
-
-            execute("create MATERIALIZED view b as (\n" +
-                    "  SELECT\n" +
-                    "    timestamp,\n" +
-                    "    symbol,\n" +
-                    "    avg(avg_price) AS avg_price\n" +
-                    "  FROM a\n" +
-                    "  SAMPLE BY 2d\n" +
-                    ") partition by HOUR;");
-
-            execute("create MATERIALIZED view c as (\n" +
-                    "  SELECT\n" +
-                    "    timestamp,\n" +
-                    "    symbol,\n" +
-                    "    avg(avg_price) AS avg_price\n" +
-                    "  FROM b\n" +
-                    "  SAMPLE BY 2d\n" +
-                    ") partition by HOUR;");
-
-            drainQueues();
-            execute("drop MATERIALIZED VIEW a;");
-
-            drainQueues();
-
-            try {
-                execute("create MATERIALIZED view A as (\n" +
-                        "  SELECT\n" +
-                        "    timestamp,\n" +
-                        "    symbol,\n" +
-                        "    avg(avg_price) AS avg_price\n" +
-                        "  FROM c\n" +
-                        "  SAMPLE BY 2d\n" +
-                        ") partition by HOUR;");
-                Assert.fail("Expected a dependency loop exception");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "circular dependency detected");
-            }
-            // mat view table should be dropped
-            TableToken token = engine.getTableTokenIfExists("a");
-            Assert.assertNull(token);
         });
     }
 

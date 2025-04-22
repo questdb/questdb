@@ -377,6 +377,7 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
                 sampler,
                 Timestamps.getTimezoneRules(TimestampFormatUtils.EN_LOCALE, "Europe/London"),
                 0,
+                null,
                 TimestampFormatUtils.parseTimestamp("2024-03-31T00:30:06.000000Z"),
                 TimestampFormatUtils.parseTimestamp("2024-03-31T00:30:06.000000Z"),
                 2

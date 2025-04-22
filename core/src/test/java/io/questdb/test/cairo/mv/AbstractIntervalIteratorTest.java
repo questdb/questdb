@@ -37,6 +37,21 @@ import org.junit.Assert;
 
 public abstract class AbstractIntervalIteratorTest {
 
+    private static void intersectInPlace(LongList dest, long lo, long hi) {
+        dest.add(lo, hi);
+        IntervalUtils.intersectInPlace(dest, dest.size() - 2);
+    }
+
+    private static void subtractInPlace(LongList dest, long lo, long hi) {
+        dest.add(lo, hi);
+        IntervalUtils.subtract(dest, dest.size() - 2);
+    }
+
+    private static void unionInPlace(LongList dest, long lo, long hi) {
+        dest.add(lo, hi);
+        IntervalUtils.unionInPlace(dest, dest.size() - 2);
+    }
+
     protected abstract SampleByIntervalIterator createIterator(
             TimestampSampler sampler,
             @Nullable TimeZoneRules tzRules,
@@ -73,7 +88,7 @@ public abstract class AbstractIntervalIteratorTest {
             long lo = start + rnd.nextLong() % Timestamps.HOUR_MICROS;
             long hi = lo + rnd.nextLong(Timestamps.HOUR_MICROS);
             for (int i = 0; i < intervalCount; i++) {
-                txnIntervals.add(lo, hi);
+                unionInPlace(txnIntervals, lo, hi);
                 lo = hi + rnd.nextLong() % Timestamps.HOUR_MICROS;
                 hi = lo + rnd.nextLong(Timestamps.HOUR_MICROS);
             }
@@ -93,20 +108,33 @@ public abstract class AbstractIntervalIteratorTest {
         final long maxTs = iterator.getMaxTimestamp();
         Assert.assertTrue(minTs < maxTs);
 
+        LongList intervals = null;
+        LongList remainingTxnIntervals = null;
+        if (txnIntervals != null) {
+            // used for intersection calculation, etc.
+            intervals = new LongList(txnIntervals.capacity() + 2);
+            // holds remaining txn intervals intersected with [min_ts,max_ts)
+            remainingTxnIntervals = new LongList(txnIntervals);
+            intersectInPlace(remainingTxnIntervals, minTs, maxTs - 1);
+        }
+
         long minObservedTs = Long.MAX_VALUE;
         long maxObservedTs = Long.MIN_VALUE;
         long prevTsHi = Long.MIN_VALUE;
-        LongList intersection = txnIntervals != null ? new LongList(txnIntervals.capacity() + 2) : null;
         while (iterator.next()) {
             final long lo = iterator.getTimestampLo();
             final long hi = iterator.getTimestampHi();
             Assert.assertTrue(lo < hi);
             if (txnIntervals != null) {
-                intersection.clear();
-                intersection.addAll(txnIntervals);
-                intersection.add(lo, hi);
-                IntervalUtils.intersectInPlace(intersection, intersection.size() - 2);
-                Assert.assertTrue(intersection.size() > 0);
+                // assert that the iterated bucket has an intersection with txn min-max timestamp intervals
+                intervals.clear();
+                intervals.addAll(txnIntervals);
+                intersectInPlace(intervals, lo, hi - 1);
+                Assert.assertTrue(intervals.size() > 0);
+                // at this point, at least one interval should remain
+                Assert.assertTrue(remainingTxnIntervals.size() > 0);
+                // subtract the bucket from the remaining intervals
+                subtractInPlace(remainingTxnIntervals, lo, hi - 1);
             } else {
                 if (prevTsHi != Long.MIN_VALUE) {
                     Assert.assertEquals(prevTsHi, lo);
@@ -117,12 +145,14 @@ public abstract class AbstractIntervalIteratorTest {
             maxObservedTs = Math.max(maxObservedTs, hi);
         }
 
-        if (txnIntervals == null) {
-            Assert.assertEquals(minTs, minObservedTs);
-            Assert.assertEquals(maxTs, maxObservedTs);
-        } else {
+        if (txnIntervals != null) {
+            // we should have seen all buckets that intersect with txn intervals
+            Assert.assertEquals(0, remainingTxnIntervals.size());
             Assert.assertTrue(minObservedTs >= minTs);
             Assert.assertTrue(maxObservedTs <= maxTs);
+        } else {
+            Assert.assertEquals(minTs, minObservedTs);
+            Assert.assertEquals(maxTs, maxObservedTs);
         }
     }
 }
