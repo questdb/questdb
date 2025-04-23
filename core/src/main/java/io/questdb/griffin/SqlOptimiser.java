@@ -3427,6 +3427,26 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private void propagateHints(QueryModel model) {
+        if (model == null) {
+            return;
+        }
+        // propagate hints to nested model
+        QueryModel nested = model.getNestedModel();
+        if (nested != null) {
+            nested.copyHints(model.getHints());
+            propagateHints(nested);
+        }
+
+        // propagate hints to join models
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            QueryModel jm = joinModels.getQuick(i);
+            jm.copyHints(model.getHints());
+            propagateHints(jm);
+        }
+    }
+
     private void propagateTopDownColumns(QueryModel model, boolean allowColumnChange) {
         propagateTopDownColumns0(model, true, null, allowColumnChange);
     }
@@ -6161,6 +6181,7 @@ public class SqlOptimiser implements Mutable {
             root.setUnionModel(model.getUnionModel());
             root.setSetOperationType(model.getSetOperationType());
             root.setModelPosition(model.getModelPosition());
+            root.copyHints(model.getHints());
             if (model.isUpdate()) {
                 root.setIsUpdate(true);
                 root.copyUpdateTableMetadata(model);
@@ -6649,6 +6670,7 @@ public class SqlOptimiser implements Mutable {
             enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
             rewriteSampleByFromTo(rewrittenModel);
+            propagateHints(rewrittenModel);
             rewrittenModel = rewriteDistinct(rewrittenModel);
             rewrittenModel = rewriteSampleBy(rewrittenModel, sqlExecutionContext);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);

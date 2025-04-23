@@ -4268,6 +4268,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         sqlControlSymbols.add(")");
         sqlControlSymbols.add(",");
         sqlControlSymbols.add("/*");
+        sqlControlSymbols.add("/*+");
         sqlControlSymbols.add("*/");
         sqlControlSymbols.add("--");
         sqlControlSymbols.add("[");

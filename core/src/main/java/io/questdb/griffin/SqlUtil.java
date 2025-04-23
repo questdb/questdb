@@ -225,6 +225,73 @@ public class SqlUtil {
                 continue;
             }
 
+            // ignoring hints. why? there is a dedicated method to obtain hints. it's opt-in.
+            // we do not want to surprise callers with hints in the middle of the token stream.
+            if (Chars.equals("/*+", cs)) {
+                blockCount++;
+                continue;
+            }
+
+            if (Chars.equals("*/", cs) && blockCount > 0) {
+                blockCount--;
+                continue;
+            }
+
+            if (blockCount == 0 && GenericLexer.WHITESPACE.excludes(cs)) {
+                // unclosed quote check
+                if (cs.length() == 1 && cs.charAt(0) == '"') {
+                    throw SqlException.$(lexer.lastTokenPosition(), "unclosed quotation mark");
+                }
+                return cs;
+            }
+        }
+        return null;
+    }
+
+    public static CharSequence fetchNextHint(GenericLexer lexer) throws SqlException {
+        // assumption: comments with hints cannot be nested or combined with line comments
+        while (lexer.hasNext()) {
+            CharSequence cs = lexer.next();
+
+            // end of hints
+            if (Chars.equals("*/", cs)) {
+                return null;
+            }
+
+            if (GenericLexer.WHITESPACE.excludes(cs)) {
+                // unclosed quote check
+                if (cs.length() == 1 && cs.charAt(0) == '"') {
+                    throw SqlException.$(lexer.lastTokenPosition(), "unclosed quotation mark");
+                }
+                return cs;
+            }
+        }
+        return null;
+    }
+
+    public static CharSequence fetchNextIncludingHint(GenericLexer lexer) throws SqlException {
+        int blockCount = 0;
+        boolean lineComment = false;
+        while (lexer.hasNext()) {
+            CharSequence cs = lexer.next();
+
+            if (lineComment) {
+                if (Chars.equals(cs, '\n') || Chars.equals(cs, '\r')) {
+                    lineComment = false;
+                }
+                continue;
+            }
+
+            if (Chars.equals("--", cs)) {
+                lineComment = true;
+                continue;
+            }
+
+            if (Chars.equals("/*", cs)) {
+                blockCount++;
+                continue;
+            }
+
             if (Chars.equals("*/", cs) && blockCount > 0) {
                 blockCount--;
                 continue;

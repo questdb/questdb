@@ -728,6 +728,14 @@ public class SqlParser {
         return tok;
     }
 
+    private CharSequence optTokIncludingHint(GenericLexer lexer) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNextIncludingHint(lexer);
+        if (tok == null || (subQueryMode && Chars.equals(tok, ')') && !overClauseMode)) {
+            return null;
+        }
+        return tok;
+    }
+
     private QueryModel parseAsSubQueryAndExpectClosingBrace(
             GenericLexer lexer,
             LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses,
@@ -2248,6 +2256,64 @@ public class SqlParser {
         parseTableName(lexer, model);
     }
 
+    private void parseHints(GenericLexer lexer, QueryModel model) throws SqlException {
+        CharSequence hintToken;
+        boolean parsingParams = false;
+        CharSequence hintKey = null;
+        CharacterStoreEntry hintValuesEntry = null;
+        while (((hintToken = SqlUtil.fetchNextHint(lexer)) != null)) {
+            if (Chars.equals(hintToken, '(')) {
+                if (parsingParams) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected '(', hint parameters cannot be nested");
+                }
+                if (hintKey == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "missing hint key");
+                }
+                parsingParams = true;
+            } else if (Chars.equals(hintToken, ')')) {
+                if (!parsingParams) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "unexpected ')' when parsing hint");
+                }
+                if (hintValuesEntry == null) {
+                    // store last parameter-less hint, e.g. KEY()
+                    model.addHint(hintKey, null);
+                } else {
+                    // ok, there are some parameters
+                    model.addHint(hintKey, hintValuesEntry.toImmutable());
+                    hintValuesEntry = null;
+                }
+                hintKey = null;
+                parsingParams = false;
+            } else {
+                if (parsingParams) {
+                    if (hintValuesEntry == null) {
+                        // store first parameter
+                        hintValuesEntry = characterStore.newEntry();
+                        hintValuesEntry.put(hintToken);
+                    } else {
+                        hintValuesEntry.put(' ');
+                        hintValuesEntry.put(hintToken);
+                    }
+                } else {
+                    if (hintKey != null) {
+                        // store previous parameter-less hint
+                        model.addHint(hintKey, null);
+                    }
+                    CharacterStoreEntry entry = characterStore.newEntry();
+                    entry.put(hintToken);
+                    hintKey = entry.toImmutable();
+                }
+            }
+        }
+        if (parsingParams) {
+            throw SqlException.$(lexer.lastTokenPosition(), "missing hint parameter closing parenthesis");
+        }
+        if (hintKey != null) {
+            // store last parameter-less hint
+            model.addHint(hintKey, null);
+        }
+    }
+
     private void parseInVolume(GenericLexer lexer, CreateTableOperationBuilderImpl tableOpBuilder) throws SqlException {
         int volumeKwPos = lexer.getPosition();
         expectTok(lexer, "volume");
@@ -2572,7 +2638,11 @@ public class SqlParser {
     }
 
     private void parseSelectClause(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
-        CharSequence tok = tok(lexer, "[distinct] column");
+        CharSequence tok = tokIncludingHints(lexer, "[distinct] column");
+        if (Chars.equals(tok, "/*+")) {
+            parseHints(lexer, model);
+            tok = tok(lexer, "[distinct] column");
+        }
 
         ExpressionNode expr;
         if (isDistinctKeyword(tok)) {
@@ -3603,6 +3673,16 @@ public class SqlParser {
         }
         return tok;
     }
+
+    private @NotNull CharSequence tokIncludingHints(GenericLexer lexer, String expectedList) throws SqlException {
+        final int pos = lexer.getPosition();
+        CharSequence tok = optTokIncludingHint(lexer);
+        if (tok == null) {
+            throw SqlException.position(pos).put(expectedList).put(" expected");
+        }
+        return tok;
+    }
+
 
     private @NotNull CharSequence tokIncludingLocalBrace(GenericLexer lexer, String expectedList) throws SqlException {
         final int pos = lexer.getPosition();

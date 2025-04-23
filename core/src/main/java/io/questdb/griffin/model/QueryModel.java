@@ -116,6 +116,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final IntHashSet dependencies = new IntHashSet();
     private final ObjList<ExpressionNode> expressionModels = new ObjList<>();
     private final ObjList<ExpressionNode> groupBy = new ObjList<>();
+    private final LowerCaseCharSequenceObjHashMap<CharSequence> hintsMap = new LowerCaseCharSequenceObjHashMap<>();
     private final ObjList<ExpressionNode> joinColumns = new ObjList<>(4);
     private final ObjList<QueryModel> joinModels = new ObjList<>();
     private final ObjList<ExpressionNode> latestBy = new ObjList<>();
@@ -323,6 +324,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         groupBy.add(node);
     }
 
+    public void addHint(CharSequence key, CharSequence value) {
+        hintsMap.put(key, value);
+    }
+
     public void addJoinColumn(ExpressionNode node) {
         joinColumns.add(node);
     }
@@ -476,6 +481,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         decls.clear();
         orderDescendingByDesignatedTimestampOnly = false;
         forceBackwardScan = false;
+        hintsMap.clear();
     }
 
     public void clearColumnMapStructs() {
@@ -563,6 +569,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         if (decls != null && decls.size() > 0) {
             this.decls.putAll(decls);
         }
+    }
+
+    public void copyHints(LowerCaseCharSequenceObjHashMap<CharSequence> hints) {
+        this.hintsMap.putAll(hints);
     }
 
     public void copyOrderByAdvice(ObjList<ExpressionNode> orderByAdvice) {
@@ -771,6 +781,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ObjList<ExpressionNode> getGroupBy() {
         return groupBy;
+    }
+
+    public LowerCaseCharSequenceObjHashMap<CharSequence> getHints() {
+        return hintsMap;
     }
 
     public ObjList<ExpressionNode> getJoinColumns() {
