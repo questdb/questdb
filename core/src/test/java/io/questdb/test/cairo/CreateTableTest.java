@@ -58,12 +58,12 @@ public class CreateTableTest extends AbstractCairoTest {
 
     @Test
     public void testCannotUse_eventName() throws Exception {
-        assertMemoryLeak(() -> assertException("create table x (_event int)", 16, "Invalid column name: _event"));
+        assertException("create table x (_event int)", 16, "Invalid column name: _event");
     }
 
     @Test
     public void testCannotUse_eventName2() throws Exception {
-        assertMemoryLeak(() -> assertException("create table x as (select 5 as _event)", -1, "Invalid column name: _event"));
+        assertException("create table x as (select 5 as _event)", -1, "Invalid column name: _event");
     }
 
 

@@ -682,7 +682,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     public void testCannotUse_eventName() throws Exception {
         assertMemoryLeak(() -> {
             createX();
-            assertException("alter table x add _event int", 18, "Invalid column name: _event");
+            assertExceptionNoLeakCheck("alter table x add _event int", 18, "Invalid column name: _event");
         });
     }
 
