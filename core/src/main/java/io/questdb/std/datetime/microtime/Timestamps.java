@@ -790,8 +790,15 @@ public final class Timestamps {
         return 1;
     }
 
-    public static char getStrideUnit(CharSequence str) throws SqlException {
+    public static char getStrideUnit(CharSequence str, int position) throws SqlException {
         assert str.length() > 0;
+        int unitIndex = extractUnitIndex(str);
+        if (unitIndex != str.length() - 1) {
+            String invalidUnit = str.subSequence(unitIndex, str.length()).toString();
+            throw SqlException
+                    .position(position + unitIndex + 1)
+                    .put("Invalid unit: ").put(invalidUnit);
+        }
         final char unit = str.charAt(str.length() - 1);
         switch (unit) {
             case 'M':
@@ -805,8 +812,18 @@ public final class Timestamps {
             case 'U':
                 return unit;
             default:
-                throw SqlException.position(-1).put("Invalid unit: ").put(unit);
+                throw SqlException.position(position + (str.length() - 1)).put("Invalid unit: ").put(unit);
         }
+    }
+
+    private static int extractUnitIndex(CharSequence str) {
+        int startIndexOfUnit = str.length() - 1;
+        for (; startIndexOfUnit > -1; startIndexOfUnit--) {
+            if (Character.isDigit(str.charAt(startIndexOfUnit))) {
+                return startIndexOfUnit + 1;
+            }
+        }
+        return 0; // no stride, only unit
     }
 
     public static TimeZoneRules getTimezoneRules(@NotNull DateLocale locale, @NotNull CharSequence timezone) throws NumericException {

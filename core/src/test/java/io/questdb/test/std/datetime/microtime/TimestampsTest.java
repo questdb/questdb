@@ -25,6 +25,7 @@
 package io.questdb.test.std.datetime.microtime;
 
 import io.questdb.cairo.PartitionBy;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.DateFormat;
@@ -41,6 +42,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.time.temporal.ChronoUnit;
+import java.util.List;
 
 import static io.questdb.cairo.PartitionBy.getPartitionDirFormatMethod;
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
@@ -868,6 +870,43 @@ public class TimestampsTest {
         long micros2 = TimestampFormatUtils.parseTimestamp("2024-04-24T01:49:12.005Z");
         Assert.assertEquals(4, Timestamps.getYearsBetween(micros1, micros2));
         Assert.assertEquals(4, Timestamps.getYearsBetween(micros2, micros1));
+    }
+
+    @Test
+    public void testGetStrideUnit() {
+        CharSequence invalidUnit = "15ABCD";
+        try {
+            Timestamps.getStrideUnit(invalidUnit, 10); // first char of unit string is at index 10
+            Assert.fail("Expected SqlException exception when parsing invalid unit");
+        } catch (SqlException e) {
+            Assert.assertEquals("[12] " + "Invalid unit: ABCD", e.getMessage()); // invalid unit start at index 12
+        }
+
+        invalidUnit = "150Days";
+        try {
+            Timestamps.getStrideUnit(invalidUnit, 10);
+            Assert.fail("Expected SqlException exception when parsing invalid unit");
+        } catch (SqlException e) {
+            Assert.assertEquals("[13] " + "Invalid unit: Days", e.getMessage());
+        }
+
+        invalidUnit = "1X";
+        try {
+            Timestamps.getStrideUnit(invalidUnit, 10);
+            Assert.fail("Expected SqlException exception when parsing invalid unit");
+        } catch (SqlException e) {
+            Assert.assertEquals("[11] " + "Invalid unit: X", e.getMessage());
+        }
+
+        String validUnit = "12";
+        List<Character> validUnits = List.of('M','y','w','d','h','m','s','T','U');
+        for (char unit : validUnits) {
+            try {
+                Assert.assertEquals(unit, Timestamps.getStrideUnit(validUnit + unit, 10));
+            } catch (SqlException e) {
+                Assert.fail("Expected unit parsing to succeed but fail with exception " + e.getMessage());
+            }
+        }
     }
 
     private void assertTrue(String date) throws NumericException {
