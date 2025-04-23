@@ -2454,15 +2454,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             );
                                         }
                                     } else {
-                                        boolean binarySearchHinted = false;
                                         CharSequence hintParams = model.getHints().get(ASOF_JOIN_BINARY_SEARCH_HINT);
-                                        if (hintParams != null) {
-                                            // todo: investigate the exact data flow to aliases and when it can be null
-                                            // todo: better parsing
-                                            if (masterAlias != null && Chars.contains(hintParams, masterAlias) && Chars.contains(hintParams, slaveModel.getName())) {
-                                                binarySearchHinted = true;
-                                            }
-                                        }
+                                        boolean binarySearchHinted = Chars.containsWord(hintParams, masterAlias, SqlParser.HINTS_PARAMS_DELIMITER) &&
+                                                Chars.containsWord(hintParams, slaveModel.getName(), ' ');
                                         boolean created = false;
                                         if (fastAsOfJoins || binarySearchHinted) {
                                             // when slave directly supports time frame cursor then it's strictly better to use it, even without any hint

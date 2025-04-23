@@ -174,6 +174,28 @@ public final class Chars {
         return indexOfLowerCase(sequence, 0, sequence.length(), termLC) != -1;
     }
 
+    public static boolean containsWord(CharSequence seq, CharSequence term, char separator) {
+        if (Chars.isBlank(seq)) {
+            return false;
+        }
+        if (Chars.isBlank(term)) {
+            return false;
+        }
+        int i = Chars.indexOf(seq, 0, seq.length(), term);
+        if (i < 0) {
+            return false;
+        }
+        if (i > 0) {
+            if (seq.charAt(i - 1) != separator) {
+                return false;
+            }
+        }
+        if (i + term.length() < seq.length()) {
+            return seq.charAt(i + term.length()) == separator;
+        }
+        return true;
+    }
+
     public static void copyStrChars(CharSequence value, int pos, int len, long address) {
         for (int i = 0; i < len; i++) {
             char c = value.charAt(i + pos);

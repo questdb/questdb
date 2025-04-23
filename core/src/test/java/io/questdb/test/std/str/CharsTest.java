@@ -281,6 +281,77 @@ public class CharsTest {
     }
 
     @Test
+    public void testContainsWord() {
+        // --- Positive Cases ---
+        // Middle
+        Assert.assertTrue(Chars.containsWord("a b c", "b", ' '));
+        Assert.assertTrue(Chars.containsWord("alpha beta gamma", "beta", ' '));
+        Assert.assertTrue(Chars.containsWord("a,b,c", "b", ','));
+        // Start
+        Assert.assertTrue(Chars.containsWord("b c d", "b", ' '));
+        Assert.assertTrue(Chars.containsWord("beta gamma", "beta", ' '));
+        Assert.assertTrue(Chars.containsWord("b,c,d", "b", ','));
+        // End
+        Assert.assertTrue(Chars.containsWord("a b c", "c", ' '));
+        Assert.assertTrue(Chars.containsWord("alpha beta", "beta", ' '));
+        Assert.assertTrue(Chars.containsWord("a,b,c", "c", ','));
+        // Single word sequence
+        Assert.assertTrue(Chars.containsWord("word", "word", ' '));
+        Assert.assertTrue(Chars.containsWord("word", "word", ','));
+        // Multiple occurrences
+        Assert.assertTrue(Chars.containsWord("a b a", "a", ' '));
+        Assert.assertTrue(Chars.containsWord("beta alpha beta", "beta", ' '));
+        Assert.assertTrue(Chars.containsWord("a b,c d", "b,c", ' '));
+
+        // --- Negative Cases ---
+        // Term not present
+        Assert.assertFalse(Chars.containsWord("a b c", "d", ' '));
+        Assert.assertFalse(Chars.containsWord("alpha beta", "gamma", ' '));
+        // Term is substring (start)
+        Assert.assertFalse(Chars.containsWord("abc d", "ab", ' '));
+        Assert.assertFalse(Chars.containsWord("alphabet soup", "alpha", ' '));
+        // Term is substring (middle) - not preceded by separator
+        Assert.assertFalse(Chars.containsWord("xabc d", "abc", ' '));
+        Assert.assertFalse(Chars.containsWord("alphabet soup", "lphabe", ' '));
+        // Term is substring (middle) - not followed by separator
+        Assert.assertFalse(Chars.containsWord("a bcd", "bc", ' '));
+        Assert.assertFalse(Chars.containsWord("alpha beta", "bet", ' '));
+        // Term is substring (end)
+        Assert.assertFalse(Chars.containsWord("the alphabet", "bet", ' '));
+        // Incorrect separator used in check
+        Assert.assertFalse(Chars.containsWord("a,b,c", "b", ' '));
+        Assert.assertFalse(Chars.containsWord("a b c", "b", ','));
+        // Term matches but wrong separator before
+        Assert.assertFalse(Chars.containsWord("a,b c", "b", ' '));
+        // Term matches but wrong separator after
+        Assert.assertFalse(Chars.containsWord("a b,c", "b", ' '));
+        // Term contains separator char, but boundaries don't match separator
+        Assert.assertFalse(Chars.containsWord("a b,c d", "b,c", ',')); // Space before/after != ','
+
+        // --- Edge Cases ---
+        // Null inputs
+        Assert.assertFalse(Chars.containsWord(null, "a", ' '));
+        Assert.assertFalse(Chars.containsWord("a b c", null, ' '));
+        Assert.assertFalse(Chars.containsWord(null, null, ' '));
+        // Empty inputs (Assuming empty term is not a word)
+        Assert.assertFalse(Chars.containsWord("", "a", ' '));
+        Assert.assertFalse(Chars.containsWord("a b c", "", ' '));
+        Assert.assertFalse(Chars.containsWord("", "", ' '));
+        Assert.assertFalse(Chars.containsWord(" ", "", ' '));
+        // Sequence equals term
+        Assert.assertTrue(Chars.containsWord("abc", "abc", ' '));
+        Assert.assertTrue(Chars.containsWord("abc", "abc", ','));
+        // Sequence contains only separators
+        Assert.assertFalse(Chars.containsWord("   ", "a", ' '));
+        Assert.assertFalse(Chars.containsWord(",,,", "a", ','));
+        // Using StringBuilder (different CharSequence type)
+        Assert.assertTrue(Chars.containsWord(new StringBuilder("a b c"), "b", ' '));
+        Assert.assertFalse(Chars.containsWord(new StringBuilder("abc d"), "ab", ' '));
+        Assert.assertFalse(Chars.containsWord(new StringBuilder("a b c"), null, ' '));
+        Assert.assertFalse(Chars.containsWord(new StringBuilder("a b c"), "", ' '));
+    }
+
+    @Test
     public void testEmptyString() {
         TestUtils.assertEquals("", extractor.of(Utf8String.EMPTY));
     }
