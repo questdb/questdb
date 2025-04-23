@@ -3057,7 +3057,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 freeColumns(false);
                 txWriter.unsafeLoadAll();
                 rollbackIndexes();
-                rollbackSymbolTables();
+                rollbackSymbolTables(true);
                 columnVersionWriter.readUnsafe();
                 closeActivePartition(false);
                 purgeUnusedPartitions();
@@ -6643,7 +6643,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void performRecovery() {
         rollbackIndexes();
-        rollbackSymbolTables();
+        rollbackSymbolTables(false);
         performRecovery = false;
     }
 
@@ -8728,10 +8728,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void rollbackSymbolTables() {
+    private void rollbackSymbolTables(boolean quiet) {
         int expectedMapWriters = txWriter.unsafeReadSymbolColumnCount();
         for (int i = 0; i < expectedMapWriters; i++) {
-            denseSymbolMapWriters.getQuick(i).rollback(txWriter.unsafeReadSymbolWriterIndexOffset(i));
+            try {
+                denseSymbolMapWriters.get(i).rollback(txWriter.unsafeReadSymbolWriterIndexOffset(i));
+            } catch (Throwable th) {
+                if (quiet) {
+                    distressed = true;
+                    CharSequence columnName = metadata.getColumnName(i);
+                    LOG.error().$("could not rollback symbol table [table=").$(tableToken).$(", columnName=").$(columnName)
+                            .$(", exception=").$(th)
+                            .I$();
+                } else {
+                    throw th;
+                }
+            }
         }
     }
 

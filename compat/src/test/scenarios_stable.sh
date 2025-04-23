@@ -126,18 +126,18 @@ else
   echo "skipping php tests"
 fi
 
-if [[ $CLIENTS == 'ALL' || $CLIENTS == *'nodejs'* ]]; then
-  echo "starting nodejs tests"
+if [[ $CLIENTS == 'ALL' || $CLIENTS == *'nodejs-pg'* ]]; then
+  echo "starting nodejs tests with the pg driver"
 
-  # check if php is installed
+  # check if nodejs is installed
   if ! command -v node &> /dev/null
   then
       echo "node.js could not be found! Please install nodejs or exclude nodejs tests"
       exit 1
   fi
 
-  echo "$base_dir/compat/src/test/nodejs"
-  cd "$base_dir/compat/src/test/nodejs" || exit
+  echo "$base_dir/compat/src/test/nodejs-pg"
+  cd "$base_dir/compat/src/test/nodejs-pg" || exit
 
   # install deps
   npm install
@@ -145,10 +145,37 @@ if [[ $CLIENTS == 'ALL' || $CLIENTS == *'nodejs'* ]]; then
   # run
   node runner.js ../resources/test_cases.yaml
   if [ $? -ne 0 ]; then
-      echo "nodejs tests failed"
+      echo "nodejs pg tests failed"
       exit 1
   fi
-  echo "nodejs tests finished"
+  echo "nodejs pg driver tests finished"
 else
-  echo "skipping nodejs tests"
+  echo "skipping nodejs pg driver tests"
+fi
+
+if [[ $CLIENTS == 'ALL' || $CLIENTS == *'nodejs-postgres'* ]]; then
+  echo "starting nodejs tests with the postgres driver"
+
+  # check if nodejs is installed
+  if ! command -v node &> /dev/null
+  then
+      echo "node.js could not be found! Please install nodejs or exclude nodejs tests"
+      exit 1
+  fi
+
+  echo "$base_dir/compat/src/test/nodejs-postgres"
+  cd "$base_dir/compat/src/test/nodejs-postgres" || exit
+
+  # install deps
+  npm install
+
+  # run
+  node runner.js ../resources/test_cases.yaml
+  if [ $? -ne 0 ]; then
+      echo "nodejs postgres driver tests failed"
+      exit 1
+  fi
+  echo "nodejs postgres driver tests finished"
+else
+  echo "skipping nodejs postgres driver tests"
 fi
