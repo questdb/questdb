@@ -351,15 +351,13 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             indexWriter.rollbackValues(keyToOffset(symbolCount - 1));
             offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
             valueCountCollector.collectValueCount(symbolIndexInTxWriter, symbolCount);
-            if (cache != null) {
-                cache.clear();
-            }
+            Misc.clear(cache);
             // This line can throw if the data is corrupt
             // run it last
             jumpCharMemToSymbolCount(symbolCount);
-        } catch (CairoException e) {
+        } catch (Throwable th) {
             closeNoTruncate();
-            throw e;
+            throw th;
         }
     }
 
@@ -407,9 +405,8 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     }
 
     private void closeNoTruncate() {
-        // if we fail to rebuild files, we need to close them without truncates
-        // the files are links to previous version of symbol map
-        // truncating them will corrupt the symbol map we are trying to rebuild
+        // If we fail to rebuild or open the files, we need to close them without truncate.
+        // Truncating them can lead to full symbol map data loss when truncate offsets are not set correctly.
         if (charMem != null) {
             charMem.close(false);
         }

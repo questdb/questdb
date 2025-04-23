@@ -8721,15 +8721,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = 0; i < expectedMapWriters; i++) {
             try {
                 denseSymbolMapWriters.get(i).rollback(txWriter.unsafeReadSymbolWriterIndexOffset(i));
-            } catch (CairoException e) {
+            } catch (Throwable th) {
                 if (quiet) {
                     distressed = true;
                     CharSequence columnName = metadata.getColumnName(i);
-                    LOG.error().$("could not rollback symbol table [columnName=").$(columnName)
-                            .$(", error=").$(e.getFlyweightMessage())
+                    LOG.error().$("could not rollback symbol table [table=").$(tableToken).$(", columnName=").$(columnName)
+                            .$(", exception=").$(th)
                             .I$();
                 } else {
-                    throw e;
+                    throw th;
                 }
             }
         }
