@@ -55,6 +55,7 @@ public class TxnScoreboardPoolV2 implements TxnScoreboardPool {
                 pool.remove(tableDir, scoreboard);
                 if (!scoreboard.tryFullClose()) {
                     scoreboard.closePending = true;
+                    scoreboard.tryFullClose();
                 }
             }
         }
@@ -84,7 +85,7 @@ public class TxnScoreboardPoolV2 implements TxnScoreboardPool {
 
     @Override
     public void remove(TableToken token) {
-        var scoreboard = pool.remove(token.getDirName());
+        final var scoreboard = pool.remove(token.getDirName());
         if (scoreboard != null) {
             scoreboard.closePending = true;
             scoreboard.tryFullClose();
