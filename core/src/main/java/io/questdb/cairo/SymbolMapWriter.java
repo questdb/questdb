@@ -145,7 +145,9 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             // trust _txn file, not the key count in the files
             indexWriter.rollbackValues(keyToOffset(symbolCount - 1));
         } catch (Throwable e) {
-            close();
+            // if .o file is corrupt, for example because of a disk unmount
+            // we should not truncate .c files and other files, it will result to a data loss.
+            closeNoTruncate();
             throw e;
         } finally {
             path.trimTo(plen);
@@ -338,30 +340,24 @@ public class SymbolMapWriter implements Closeable, MapWriter {
                 indexWriter.add(hash, offset);
             }
         } catch (Throwable th) {
-            // if we fail to rebuild files, we need to close them without truncates
-            // the files are links to previous version of symbol map
-            // truncating them will corrupt the symbol map we are trying to rebuild
-            if (charMem != null) {
-                charMem.close(false);
-            }
-            if (offsetMem != null) {
-                offsetMem.close(false);
-            }
-            if (indexWriter != null) {
-                indexWriter.closeNoTruncate();
-            }
+            closeNoTruncate();
             throw th;
         }
     }
 
     @Override
     public void rollback(int symbolCount) {
-        indexWriter.rollbackValues(keyToOffset(symbolCount - 1));
-        offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
-        jumpCharMemToSymbolCount(symbolCount);
-        valueCountCollector.collectValueCount(symbolIndexInTxWriter, symbolCount);
-        if (cache != null) {
-            cache.clear();
+        try {
+            indexWriter.rollbackValues(keyToOffset(symbolCount - 1));
+            offsetMem.jumpTo(keyToOffset(symbolCount) + Long.BYTES);
+            valueCountCollector.collectValueCount(symbolIndexInTxWriter, symbolCount);
+            Misc.clear(cache);
+            // This line can throw if the data is corrupt
+            // run it last
+            jumpCharMemToSymbolCount(symbolCount);
+        } catch (Throwable th) {
+            closeNoTruncate();
+            throw th;
         }
     }
 
@@ -408,9 +404,35 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         return Math.max(Numbers.ceilPow2(symbolCapacity / 2) - 1, 1);
     }
 
+    private void closeNoTruncate() {
+        // If we fail to rebuild or open the files, we need to close them without truncate.
+        // Truncating them can lead to full symbol map data loss when truncate offsets are not set correctly.
+        if (charMem != null) {
+            charMem.close(false);
+        }
+        if (offsetMem != null) {
+            offsetMem.close(false);
+        }
+        if (indexWriter != null) {
+            indexWriter.closeNoTruncate();
+        }
+    }
+
     private void jumpCharMemToSymbolCount(int symbolCount) {
         if (symbolCount > 0) {
-            charMem.jumpTo(offsetMem.getLong(keyToOffset(symbolCount)));
+            long cFileSize = offsetMem.getLong(keyToOffset(symbolCount));
+            long minExpectedSize = symbolCount * Vm.getStorageLength(1) - 2;
+            if (cFileSize < minExpectedSize) {
+                // There should be at least 1 character per symbol
+                // the size read from .o file is less than that
+                // it means .o is corrupt, e.g. binary zeros at the end
+                // This can happen in case of hard resets on power failures.
+                throw CairoException.nonCritical().put("symbol column map is corrupt, offsetFileLastOffset=").put(cFileSize)
+                        .put(", symbolCount=").put(symbolCount)
+                        .put(", expectedMin=").put(minExpectedSize)
+                        .put(']');
+            }
+            charMem.jumpTo(cFileSize);
         } else {
             charMem.jumpTo(0);
         }
