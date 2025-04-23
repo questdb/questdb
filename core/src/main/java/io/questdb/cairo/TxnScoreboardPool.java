@@ -24,18 +24,18 @@
 
 package io.questdb.cairo;
 
-import java.io.Closeable;
+import io.questdb.std.Mutable;
+import io.questdb.std.QuietCloseable;
 
-public interface TxnScoreboardPool extends Closeable {
-    void clear();
+public interface TxnScoreboardPool extends QuietCloseable, Mutable {
 
     default void close() {
         clear();
     }
 
-    void remove(TableToken token);
-
     TxnScoreboard getTxnScoreboard(TableToken token);
 
     boolean releaseInactive();
+
+    void remove(TableToken token);
 }

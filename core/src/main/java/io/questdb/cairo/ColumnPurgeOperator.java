@@ -62,8 +62,8 @@ public class ColumnPurgeOperator implements Closeable {
 
     public ColumnPurgeOperator(CairoEngine engine, TableWriter purgeLogWriter, String updateCompleteColumnName) {
         try {
-            CairoConfiguration configuration = engine.getConfiguration();
             this.engine = engine;
+            final CairoConfiguration configuration = engine.getConfiguration();
             this.ff = configuration.getFilesFacade();
             this.path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
             path.of(configuration.getDbRoot());
@@ -82,8 +82,8 @@ public class ColumnPurgeOperator implements Closeable {
 
     public ColumnPurgeOperator(CairoEngine engine) {
         try {
-            CairoConfiguration configuration = engine.getConfiguration();
             this.engine = engine;
+            final CairoConfiguration configuration = engine.getConfiguration();
             this.ff = configuration.getFilesFacade();
             this.path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
             path.of(configuration.getDbRoot());

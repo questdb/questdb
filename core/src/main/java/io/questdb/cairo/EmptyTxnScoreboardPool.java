@@ -24,6 +24,9 @@
 
 package io.questdb.cairo;
 
+/**
+ * Provides stub txn scoreboards for COPY SQL.
+ */
 public class EmptyTxnScoreboardPool implements TxnScoreboardPool {
     public static final EmptyTxnScoreboardPool INSTANCE = new EmptyTxnScoreboardPool();
 
@@ -49,7 +52,22 @@ public class EmptyTxnScoreboardPool implements TxnScoreboardPool {
             }
 
             @Override
+            public TableToken getTableToken() {
+                return null;
+            }
+
+            @Override
             public boolean hasEarlierTxnLocks(long maxTxn) {
+                return false;
+            }
+
+            @Override
+            public boolean incrementTxn(int id, long txn) {
+                return false;
+            }
+
+            @Override
+            public boolean isMax(long txn) {
                 return false;
             }
 
@@ -66,21 +84,6 @@ public class EmptyTxnScoreboardPool implements TxnScoreboardPool {
             @Override
             public long releaseTxn(int id, long txn) {
                 return 0;
-            }
-
-            @Override
-            public TableToken getTableToken() {
-                return null;
-            }
-
-            @Override
-            public boolean isMax(long txn) {
-                return false;
-            }
-
-            @Override
-            public boolean incrementTxn(int id, long txn) {
-                return false;
             }
         };
     }
