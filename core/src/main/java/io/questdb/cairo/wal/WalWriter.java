@@ -96,8 +96,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableWriter.validateDesignatedTimestampBounds;
-import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_DEFAULT;
-import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
+import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 
 public class WalWriter implements TableWriterAPI {
@@ -323,7 +322,7 @@ public class WalWriter implements TableWriterAPI {
             assert txnMinTimestamp >= lastReplaceRangeLowTs;
             assert txnMaxTimestamp <= lastReplaceRangeHiTs;
         }
-        commit0(lastRefreshBaseTxn, lastRefreshTimestamp, lastReplaceRangeLowTs, lastReplaceRangeHiTs, WAL_DEDUP_MODE_DEFAULT);
+        commit0(lastRefreshBaseTxn, lastRefreshTimestamp, lastReplaceRangeLowTs, lastReplaceRangeHiTs, WAL_DEDUP_MODE_REPLACE_RANGE);
     }
 
     public void commitWithParams(long replaceRangeLowTs, long replaceRangeHiTs, byte dedupMode) {
