@@ -86,6 +86,9 @@ set(
 # JNI includes
 include_directories($ENV{JAVA_HOME}/include/)
 
+# Current directory includes and build directory includes
+include_directories(${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_SOURCE_DIR})
+
 if (OS_DARWIN)
     include_directories($ENV{JAVA_HOME}/include/darwin/)
     set(
@@ -168,10 +171,7 @@ FetchContent_Declare(
         GIT_TAG 4ec760a3d1f69e32ba460ecd2513f29b8428700b # Fixed typos in documentation
 )
 
-FetchContent_GetProperties(asmjit)
-if (NOT asmjit_POPULATED)
-    FetchContent_Populate(asmjit)
-endif ()
+FetchContent_MakeAvailable(asmjit)
 include("${asmjit_SOURCE_DIR}/CMakeLists.txt")
 include_directories(${asmjit_SOURCE_DIR}/src SYSTEM)
 add_compile_definitions(ASMJIT_NO_STDCXX)
@@ -188,12 +188,6 @@ if (JIT_TEST)
     add_executable(jittests src/test/c/jittests/test_app.cpp)
     target_link_libraries(jittests questdb)
 endif ()
-
-#zlib
-
-set(ZLIB_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/zlib-1.2.8)
-
-include(${ZLIB_SOURCE_DIR}/CMakeLists.txt)
 
 #liburing
 
@@ -218,8 +212,7 @@ if (OS_LINUX)
     target_link_libraries(liburing INTERFACE ${SOURCE_DIR}/src/liburing.a)
 endif ()
 
-# ZLIB_SRCS is defined in Zlib Cmake config
-add_library(questdb SHARED ${SOURCE_FILES} ${ZLIB_SRCS} ${ASMJIT_SRC})
+add_library(questdb SHARED ${SOURCE_FILES} ${ASMJIT_SRC})
 
 set(COMMON_OPTIONS "-Wno-gnu-anonymous-struct;-Wno-nested-anon-types;-Wno-unused-parameter;-fPIC;-fno-rtti;-fno-exceptions")
 
@@ -228,6 +221,13 @@ set(RELEASE_OPTIONS "-O3")
 
 list(APPEND DEBUG_OPTIONS "${ASMJIT_CFLAGS};${COMMON_OPTIONS}")
 list(APPEND RELEASE_OPTIONS "${ASMJIT_CFLAGS};${COMMON_OPTIONS}")
+
+#zlib
+
+set(SKIP_INSTALL_ALL OFF CACHE BOOL "Disable install" FORCE)
+set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "Disable examples" FORCE)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/zlib)
+target_link_libraries(questdb zlibstatic)
 
 if (OS_LINUX)
     target_link_libraries(questdb liburing)
